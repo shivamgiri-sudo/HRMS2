@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { formatINR } from "./DashboardKit";
 import { fmtN } from "./lpCallShared";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /** Shapes mirror backend/src/modules/process-performance/appreciate-wealth-dashboard.service.ts. */
 
@@ -170,7 +172,13 @@ export function Note({ children, tone = "slate" }: { children: ReactNode; tone?:
   );
 }
 
-export interface Col<T> { key: string; header: string; align?: "left" | "right"; render: (r: T) => ReactNode; className?: string }
+/**
+ * `get` is optional: when present, that column becomes Excel-style sortable + filterable
+ * (its header switches from a plain `<th>` to `FilterSortTh`, using `get`'s raw value for
+ * both sort order and the filter's value list). Columns without `get` stay plain, unsorted
+ * headers -- unchanged behaviour, so existing callers that never pass `get` are unaffected.
+ */
+export interface Col<T> { key: string; header: string; align?: "left" | "right"; render: (r: T) => ReactNode; className?: string; get?: (r: T) => string | number | null | undefined }
 
 /** Every row is clickable (drill-down mandate); rows without a target pass onRow = undefined only for read-only totals. */
 export function DataTable<T>({
@@ -178,15 +186,37 @@ export function DataTable<T>({
 }: {
   cols: Array<Col<T>>; rows: T[]; onRow?: (r: T) => void; rowKey: (r: T, i: number) => string; empty?: string; maxHeight?: string;
 }) {
+  const filterCols = useMemo<Array<FilterColumn<T>>>(
+    () => cols.filter((c): c is Col<T> & { get: NonNullable<Col<T>["get"]> } => !!c.get).map((c) => ({ key: c.key, get: c.get })),
+    [cols],
+  );
+  const filters = useColumnFilters(rows, filterCols);
+  const colGetter = (r: T, key: string) => cols.find((c) => c.key === key)?.get?.(r);
+  const { sorted, sortKey, sortDir, toggleSort } = useSortableRows(filters.filtered, colGetter);
+
   if (rows.length === 0) return <None />;
   return (
     <div className={`overflow-auto rounded-xl border border-slate-100 ${maxHeight}`}>
+      {filterCols.length > 0 && filters.activeCount > 0 && (
+        <div className="flex justify-end border-b border-slate-100 bg-slate-50/70 px-2 py-1">
+          <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+          </button>
+        </div>
+      )}
       <table className="w-full min-w-max border-collapse text-xs tabular-nums">
         <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
-          <tr>{cols.map((c) => <th key={c.key} className={`px-3 py-2 font-semibold ${c.align === "right" ? "text-right" : "text-left"}`}>{c.header}</th>)}</tr>
+          <tr>{cols.map((c) => (c.get ? (
+            <FilterSortTh
+              key={c.key} label={c.header} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={filters}
+              className={`px-3 py-2 font-semibold ${c.align === "right" ? "text-right" : "text-left"}`}
+            />
+          ) : (
+            <th key={c.key} className={`px-3 py-2 font-semibold ${c.align === "right" ? "text-right" : "text-left"}`}>{c.header}</th>
+          )))}</tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <tr
               key={rowKey(r, i)}
               onClick={onRow ? () => onRow(r) : undefined}
@@ -197,6 +227,9 @@ export function DataTable<T>({
               {cols.map((c) => <td key={c.key} className={`px-3 py-2 text-slate-700 ${c.align === "right" ? "text-right" : "text-left"} ${c.className ?? ""}`}>{c.render(r)}</td>)}
             </tr>
           ))}
+          {filterCols.length > 0 && sorted.length === 0 && rows.length > 0 && (
+            <tr><td colSpan={cols.length} className="px-3 py-4 text-center text-slate-400">No rows match the filters.</td></tr>
+          )}
         </tbody>
       </table>
       <span className="sr-only">{empty}</span>

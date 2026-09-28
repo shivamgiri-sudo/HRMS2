@@ -149,3 +149,14 @@ privacy-inventory-findings.json
 # on disk for reference only; excluded by directory so it can never enter
 # this public repo's history via a broad `git add`.
 /scripts/apps-script/
+
+# uploader/ -- ad hoc data-load scripts (see uploader/upload_housing_premium_cdr.py).
+# Downloaded CDR exports carry real customer/call data and callerdesk.env holds a
+# live third-party login -- neither belongs in this public repo's history.
+/uploader/downloads/
+/uploader/callerdesk.env
+/uploader/db.env
+/uploader/logs/
+/uploader/google_service_account.json
+/uploader/sale_sheet_checkpoint.json
+/uploader/__pycache__/

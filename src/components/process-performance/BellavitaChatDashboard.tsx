@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState, useEffect, useCallback, type ReactNode } from "react";
 import {
   AreaChart, Area, PieChart, Pie, Cell, ComposedChart, Bar, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -15,6 +15,8 @@ import {
 } from "./DashboardKit";
 import { BellavitaChatLobSnapshot } from "./BellavitaChatLobSnapshot";
 import { BellavitaChatOverview } from "./BellavitaChatOverview";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 const CHAT_API = "/api/process-performance/bellavita-chat-dashboard";
 
@@ -237,42 +239,111 @@ function AgentTrendDrawer({
   );
 }
 
-/** Compact 5-row table shared by the Top 5 / Bottom 5 Performers cards. */
+interface AgentMiniCol { key: string; label: string; get: (r: AgentRow) => string | number | null; cell: (r: AgentRow) => ReactNode; className: string; thClassName: string }
+const AGENT_MINI_COLS: AgentMiniCol[] = [
+  { key: "agent", label: "Agent", get: (r) => r.agent,
+    cell: (r) => (<><div className="font-medium text-rose-700 underline-offset-2 hover:underline">{r.agent}</div><div className="text-[11px] text-slate-400">{r.empId || "—"}</div></>),
+    className: "py-2.5 pr-3", thClassName: "py-2 pr-3 font-semibold" },
+  { key: "unique", label: "Unique", get: (r) => r.uniqueCount, cell: (r) => r.uniqueCount.toLocaleString("en-IN"),
+    className: "py-2.5 pr-3 text-right text-slate-600", thClassName: "py-2 pr-3 text-right font-semibold" },
+  { key: "conversionPct", label: "Conversion %", get: (r) => r.conversionPct, cell: (r) => `${r.conversionPct}%`,
+    className: "py-2.5 pr-3 text-right font-semibold text-emerald-600", thClassName: "py-2 pr-3 text-right font-semibold" },
+  { key: "revenue", label: "Revenue", get: (r) => r.revenue, cell: (r) => (r.revenue !== null ? formatINR(r.revenue) : "—"),
+    className: "py-2.5 pr-0 text-right font-semibold text-amber-700", thClassName: "py-2 pr-0 text-right font-semibold" },
+];
+const AGENT_MINI_FILTER_COLS: Array<FilterColumn<AgentRow>> = AGENT_MINI_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentMiniColGetter = (r: AgentRow, key: string) => AGENT_MINI_COLS.find((c) => c.key === key)?.get(r);
+
+/** Compact table shared by the Top 5 / Bottom 5 Performers cards -- Excel-style sortable/filterable. */
 function AgentMiniTable({ rows, onRowClick }: { rows: AgentRow[]; onRowClick: (a: AgentRow) => void }) {
+  const filters = useColumnFilters(rows, AGENT_MINI_FILTER_COLS);
+  const { sorted: filteredRows, sortKey, sortDir, toggleSort } = useSortableRows(filters.filtered, agentMiniColGetter);
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-xs">
-        <thead>
-          <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-            <th className="py-2 pr-3 font-semibold">Agent</th>
-            <th className="py-2 pr-3 text-right font-semibold">Unique</th>
-            <th className="py-2 pr-3 text-right font-semibold">Conversion %</th>
-            <th className="py-2 pr-0 text-right font-semibold">Revenue</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((a) => (
-            <tr
-              key={`${a.empId}-${a.agent}`} onClick={() => onRowClick(a)} role="button" tabIndex={0}
-              className="cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-rose-50/40"
-            >
-              <td className="py-2.5 pr-3">
-                <div className="font-medium text-rose-700 underline-offset-2 hover:underline">{a.agent}</div>
-                <div className="text-[11px] text-slate-400">{a.empId || "—"}</div>
-              </td>
-              <td className="py-2.5 pr-3 text-right text-slate-600">{a.uniqueCount.toLocaleString("en-IN")}</td>
-              <td className="py-2.5 pr-3 text-right font-semibold text-emerald-600">{a.conversionPct}%</td>
-              <td className="py-2.5 pr-0 text-right font-semibold text-amber-700">{a.revenue !== null ? formatINR(a.revenue) : "—"}</td>
+    <div>
+      {filters.activeCount > 0 && (
+        <div className="mb-2 flex justify-end">
+          <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+          </button>
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
+              {AGENT_MINI_COLS.map((c) => (
+                <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={filters} className={c.thClassName} />
+              ))}
             </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr><td colSpan={4} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {filteredRows.map((a) => (
+              <tr
+                key={`${a.empId}-${a.agent}`} onClick={() => onRowClick(a)} role="button" tabIndex={0}
+                className="cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-rose-50/40"
+              >
+                {AGENT_MINI_COLS.map((c) => <td key={c.key} className={c.className}>{c.cell(a)}</td>)}
+              </tr>
+            ))}
+            {filteredRows.length === 0 && (
+              <tr><td colSpan={AGENT_MINI_COLS.length} className="py-6 text-center text-slate-400">{rows.length === 0 ? "No data for this period." : "No rows match the filters."}</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
+
+interface TlCol { key: string; label: string; get: (r: TlRow) => string | number | null; cell: (r: TlRow) => ReactNode; thClassName: string; tdClassName: string }
+const TL_COLS: TlCol[] = [
+  { key: "tlName", label: "TL Name", get: (r) => r.tlName, cell: (r) => r.tlName,
+    thClassName: "border-b border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white",
+    tdClassName: "border-b border-slate-50 py-2.5 px-3 text-center font-medium text-rose-700 underline-offset-2 hover:underline" },
+  { key: "tickets", label: "Total Chat", get: (r) => r.tickets, cell: (r) => r.tickets.toLocaleString("en-IN"),
+    thClassName: "border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white",
+    tdClassName: "border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600" },
+  { key: "uniqueCount", label: "Unique Chat", get: (r) => r.uniqueCount, cell: (r) => r.uniqueCount.toLocaleString("en-IN"),
+    thClassName: "border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white",
+    tdClassName: "border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600" },
+  { key: "frtPct", label: "FRT %", get: (r) => r.frtPct, cell: (r) => `${r.frtPct}%`,
+    thClassName: "border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white",
+    tdClassName: "border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600" },
+  { key: "inTatPct", label: "IN TAT %", get: (r) => r.inTatPct, cell: (r) => `${r.inTatPct}%`,
+    thClassName: "border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white",
+    tdClassName: "border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600" },
+  { key: "repeatPct", label: "Repeat %", get: (r) => r.repeatPct, cell: (r) => `${r.repeatPct}%`,
+    thClassName: "border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white",
+    tdClassName: "border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600" },
+  { key: "saleCount", label: "Sale Count", get: (r) => r.saleCount, cell: (r) => r.saleCount.toLocaleString("en-IN"),
+    thClassName: "border-b border-l-2 border-emerald-400/40 bg-emerald-900 py-2.5 px-3 font-bold text-white",
+    tdClassName: "border-b border-l-2 border-emerald-100 bg-emerald-50/40 py-2.5 px-3 text-center font-semibold text-emerald-700" },
+  { key: "amount", label: "Amount", get: (r) => r.amount, cell: (r) => formatINR(r.amount),
+    thClassName: "border-b border-emerald-900 bg-emerald-900 py-2.5 px-3 font-bold text-white",
+    tdClassName: "border-b border-emerald-100 bg-emerald-50/40 py-2.5 px-3 text-center font-semibold text-emerald-700" },
+  { key: "conversionPct", label: "Conversion %", get: (r) => r.conversionPct, cell: (r) => `${r.conversionPct}%`,
+    thClassName: "border-b border-l-2 border-indigo-400/40 bg-indigo-950 py-2.5 px-3 font-bold text-white",
+    tdClassName: "border-b border-l-2 border-indigo-100 bg-indigo-50/40 py-2.5 px-3 text-center font-bold text-indigo-700" },
+];
+const TL_FILTER_COLS: Array<FilterColumn<TlRow>> = TL_COLS.map((c) => ({ key: c.key, get: c.get }));
+const tlColGetter = (r: TlRow, key: string) => TL_COLS.find((c) => c.key === key)?.get(r);
+
+interface AgentWiseCol { key: string; label: string; get: (r: AgentRow) => string | number | null; cell: (r: AgentRow) => ReactNode; className: string; thClassName: string }
+const AGENT_WISE_COLS: AgentWiseCol[] = [
+  { key: "agent", label: "Agent", get: (r) => r.agent,
+    cell: (r) => (<><div className="font-medium text-rose-700 underline-offset-2 hover:underline">{r.agent}</div><div className="text-[11px] text-slate-400">{r.empId || "—"}</div></>),
+    className: "py-2.5 pr-3", thClassName: "py-2 pr-3 font-semibold" },
+  { key: "lob", label: "LOB", get: (r) => r.lobs, cell: (r) => r.lobs || "—", className: "py-2.5 pr-3 text-slate-600", thClassName: "py-2 pr-3 font-semibold" },
+  { key: "tickets", label: "Total Chats", get: (r) => r.tickets, cell: (r) => r.tickets.toLocaleString("en-IN"), className: "py-2.5 pr-3 text-right text-slate-600", thClassName: "py-2 pr-3 text-right font-semibold" },
+  { key: "uniqueCount", label: "Unique", get: (r) => r.uniqueCount, cell: (r) => r.uniqueCount.toLocaleString("en-IN"), className: "py-2.5 pr-3 text-right text-slate-600", thClassName: "py-2 pr-3 text-right font-semibold" },
+  { key: "saleChatCount", label: "Sale Chats", get: (r) => r.saleChatCount, cell: (r) => r.saleChatCount.toLocaleString("en-IN"), className: "py-2.5 pr-3 text-right text-slate-600", thClassName: "py-2 pr-3 text-right font-semibold" },
+  { key: "conversionPct", label: "Conversion %", get: (r) => r.conversionPct, cell: (r) => `${r.conversionPct}%`, className: "py-2.5 pr-3 text-right font-semibold text-emerald-600", thClassName: "py-2 pr-3 text-right font-semibold" },
+  { key: "resolvedPct", label: "Resolved %", get: (r) => r.resolvedPct, cell: (r) => `${r.resolvedPct}%`, className: "py-2.5 pr-3 text-right font-semibold text-slate-800", thClassName: "py-2 pr-3 text-right font-semibold" },
+  { key: "avgWaitTimeMin", label: "Avg Wait Time", get: (r) => r.avgWaitTimeMin, cell: (r) => (r.avgWaitTimeMin ? `${r.avgWaitTimeMin}m` : "—"), className: "py-2.5 pr-3 text-right text-slate-600", thClassName: "py-2 pr-3 text-right font-semibold" },
+  { key: "revenue", label: "Revenue", get: (r) => r.revenue, cell: (r) => (r.revenue !== null ? formatINR(r.revenue) : "—"), className: "py-2.5 pr-0 text-right font-semibold text-amber-700", thClassName: "py-2 pr-0 text-right font-semibold" },
+];
+const AGENT_WISE_FILTER_COLS: Array<FilterColumn<AgentRow>> = AGENT_WISE_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentWiseColGetter = (r: AgentRow, key: string) => AGENT_WISE_COLS.find((c) => c.key === key)?.get(r);
 
 /** "overview" is the new Chat Dashboard BVO snapshot (new_bb_chat). The other
  * tabs -- including "legacy", the previous Overview -- still read the older
@@ -339,15 +410,22 @@ export function BellavitaChatDashboard() {
    * same few names -- for those LOBs only the full Agent-wise table is shown. */
   const smallLob = ["kenaz", "bevzilla"].includes(lob.trim().toLowerCase());
 
-  const filteredAgents = useMemo(() => {
+  const searchedAgents = useMemo(() => {
     const rows = data?.agents ?? [];
     const q = agentSearch.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((a) => a.agent.toLowerCase().includes(q) || a.empId.toLowerCase().includes(q));
   }, [data, agentSearch]);
+  // Excel-style column filters + sort stack on top of the name/ID search box above.
+  const agentWiseFilters = useColumnFilters(searchedAgents, AGENT_WISE_FILTER_COLS);
+  const { sorted: filteredAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentWiseFilters.filtered, agentWiseColGetter);
 
-  /** Column totals for the Agent-wise table header (over the agents currently listed). Percentages
-   * are chat-weighted, not a plain average of the per-agent percentages. */
+  const tlFilters = useColumnFilters(data?.byTl ?? [], TL_FILTER_COLS);
+  const { sorted: sortedTl, sortKey: tlSortKey, sortDir: tlSortDir, toggleSort: toggleTlSort } = useSortableRows(tlFilters.filtered, tlColGetter);
+
+  /** Column totals for the Agent-wise table header (over the agents currently listed, after
+   * both the search box and any column filters). Percentages are chat-weighted, not a plain
+   * average of the per-agent percentages. */
   const agentTotals = useMemo(() => {
     const rows = filteredAgents;
     const tickets = rows.reduce((n, a) => n + a.tickets, 0);
@@ -630,40 +708,33 @@ export function BellavitaChatDashboard() {
           />}
           footnote="Click a TL name for its date-wise and week-wise breakdown. Amount is SUM(bb_sale.amount) for that TL where campaign = 'Chat', over the same date range — a real figure from Bellavita's sale table, matched by TL name. It reflects every Chat-channel sale for that TL and does not narrow further when the LOB filter above is set to Bevzilla or Kenaz specifically, since bb_sale has no such split."
         >
+          {tlFilters.activeCount > 0 && (
+            <div className="mb-2 flex justify-end">
+              <button type="button" onClick={tlFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {tlFilters.activeCount} filter{tlFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            </div>
+          )}
           <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full min-w-[880px] border-collapse text-center text-xs">
               <thead>
                 <tr className="text-[10px] uppercase tracking-wide text-slate-300">
-                  <th className="border-b border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white">TL Name</th>
-                  <th className="border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white">Total Chat</th>
-                  <th className="border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white">Unique Chat</th>
-                  <th className="border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white">FRT %</th>
-                  <th className="border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white">IN TAT %</th>
-                  <th className="border-b border-l border-slate-700 bg-slate-800 py-2.5 px-3 font-bold text-white">Repeat %</th>
-                  <th className="border-b border-l-2 border-emerald-400/40 bg-emerald-900 py-2.5 px-3 font-bold text-white">Sale Count</th>
-                  <th className="border-b border-emerald-900 bg-emerald-900 py-2.5 px-3 font-bold text-white">Amount</th>
-                  <th className="border-b border-l-2 border-indigo-400/40 bg-indigo-950 py-2.5 px-3 font-bold text-white">Conversion %</th>
+                  {TL_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={tlSortKey} sortDir={tlSortDir} onSort={toggleTlSort} filters={tlFilters} className={c.thClassName} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {data.byTl.map((r, i) => (
+                {sortedTl.map((r, i) => (
                   <tr
                     key={r.tlName} onClick={() => setDrawerTl(r.tlName)} role="button" tabIndex={0}
                     className={`cursor-pointer transition-colors hover:bg-rose-50/40 ${i % 2 === 1 ? "bg-slate-50/60" : "bg-white"}`}
                   >
-                    <td className="border-b border-slate-50 py-2.5 px-3 text-center font-medium text-rose-700 underline-offset-2 hover:underline">{r.tlName}</td>
-                    <td className="border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600">{r.tickets.toLocaleString("en-IN")}</td>
-                    <td className="border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600">{r.uniqueCount.toLocaleString("en-IN")}</td>
-                    <td className="border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600">{r.frtPct}%</td>
-                    <td className="border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600">{r.inTatPct}%</td>
-                    <td className="border-b border-l border-slate-50 py-2.5 px-3 text-center text-slate-600">{r.repeatPct}%</td>
-                    <td className="border-b border-l-2 border-emerald-100 bg-emerald-50/40 py-2.5 px-3 text-center font-semibold text-emerald-700">{r.saleCount.toLocaleString("en-IN")}</td>
-                    <td className="border-b border-emerald-100 bg-emerald-50/40 py-2.5 px-3 text-center font-semibold text-emerald-700">{formatINR(r.amount)}</td>
-                    <td className="border-b border-l-2 border-indigo-100 bg-indigo-50/40 py-2.5 px-3 text-center font-bold text-indigo-700">{r.conversionPct}%</td>
+                    {TL_COLS.map((c) => <td key={c.key} className={c.tdClassName}>{c.cell(r)}</td>)}
                   </tr>
                 ))}
-                {data.byTl.length === 0 && (
-                  <tr><td colSpan={9} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                {sortedTl.length === 0 && (
+                  <tr><td colSpan={TL_COLS.length} className="py-6 text-center text-slate-400">{data.byTl.length === 0 ? "No data for this period." : "No TLs match the filters."}</td></tr>
                 )}
               </tbody>
             </table>
@@ -692,6 +763,11 @@ export function BellavitaChatDashboard() {
           <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500">
             <ListFilter className="h-3 w-3" />{filteredAgents.length} of {data.agents.length} agents
           </span>
+          {agentWiseFilters.activeCount > 0 && (
+            <button type="button" onClick={agentWiseFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {agentWiseFilters.activeCount} filter{agentWiseFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          )}
         </div>
         <SectionCard
           icon={Users} title="Overall Agent-wise Chat Performance" tone="rose"
@@ -709,15 +785,9 @@ export function BellavitaChatDashboard() {
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Agent</th>
-                  <th className="py-2 pr-3 font-semibold">LOB</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Total Chats</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Unique</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Sale Chats</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Conversion %</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Resolved %</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Avg Wait Time</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Revenue</th>
+                  {AGENT_WISE_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentWiseFilters} className={c.thClassName} />
+                  ))}
                 </tr>
                 <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold normal-case tracking-normal text-slate-800">
                   <th className="py-2 pl-2 pr-3">Total ({filteredAgents.length} agents)</th>
@@ -737,22 +807,11 @@ export function BellavitaChatDashboard() {
                     key={`${a.empId}-${a.agent}`} onClick={() => setDrawerAgent({ agent: a.agent, empId: a.empId })} role="button" tabIndex={0}
                     className="cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-rose-50/40"
                   >
-                    <td className="py-2.5 pr-3">
-                      <div className="font-medium text-rose-700 underline-offset-2 hover:underline">{a.agent}</div>
-                      <div className="text-[11px] text-slate-400">{a.empId || "—"}</div>
-                    </td>
-                    <td className="py-2.5 pr-3 text-slate-600">{a.lobs || "—"}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.tickets.toLocaleString("en-IN")}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.uniqueCount.toLocaleString("en-IN")}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.saleChatCount.toLocaleString("en-IN")}</td>
-                    <td className="py-2.5 pr-3 text-right font-semibold text-emerald-600">{a.conversionPct}%</td>
-                    <td className="py-2.5 pr-3 text-right font-semibold text-slate-800">{a.resolvedPct}%</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.avgWaitTimeMin ? `${a.avgWaitTimeMin}m` : "—"}</td>
-                    <td className="py-2.5 pr-0 text-right font-semibold text-amber-700">{a.revenue !== null ? formatINR(a.revenue) : "—"}</td>
+                    {AGENT_WISE_COLS.map((c) => <td key={c.key} className={c.className}>{c.cell(a)}</td>)}
                   </tr>
                 ))}
                 {filteredAgents.length === 0 && (
-                  <tr><td colSpan={9} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
+                  <tr><td colSpan={AGENT_WISE_COLS.length} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
                 )}
               </tbody>
             </table>

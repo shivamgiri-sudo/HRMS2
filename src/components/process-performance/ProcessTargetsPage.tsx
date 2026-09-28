@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner, KpiCard, SectionCard, TableExcelIconButton, formatINR } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 /**
@@ -90,6 +92,14 @@ function TargetDrawer({ api: API, topLevel, topLabel, target, month, tableAvaila
     return () => { cancelled = true; };
   }, [target.level, target.name, month, reload]);
 
+  type ChildRow = Detail["children"][number];
+  const CHILD_FILTER_COLS: Array<FilterColumn<ChildRow>> = [
+    { key: "name", get: (c) => c.name }, { key: "baselineTarget", get: (c) => c.baselineTarget }, { key: "effectiveTarget", get: (c) => c.effectiveTarget },
+  ];
+  const childColGetter = (c: ChildRow, key: string) => CHILD_FILTER_COLS.find((x) => x.key === key)?.get(c);
+  const childFilters = useColumnFilters(detail?.children ?? [], CHILD_FILTER_COLS);
+  const { sorted: sortedChildren, sortKey: childSortKey, sortDir: childSortDir, toggleSort: toggleChildSort } = useSortableRows(childFilters.filtered, childColGetter);
+
   async function save() {
     setSaving(true); setSaveError("");
     try {
@@ -162,25 +172,39 @@ function TargetDrawer({ api: API, topLevel, topLabel, target, month, tableAvaila
                 <section className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                   <p className={label}>{target.level === topLevel ? `TLs under this ${topLabel}` : "Agents under this TL"} (click to open)</p>
-                  {detail.children.length > 0 && (
-                    <TableExcelIconButton
-                      fileBase={`Target_${target.name}_${monthLabel(month)}`}
-                      getSheets={() => [{ name: "Children", columns: [target.level === topLevel ? "TL" : "Agent", "Roster target", "Effective target"], rows: detail.children.map((c) => [c.name, Math.round(c.baselineTarget), Math.round(c.effectiveTarget)]) }]}
-                    />
-                  )}
+                  <div className="flex items-center gap-2">
+                    {childFilters.activeCount > 0 && (
+                      <button type="button" onClick={childFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                        Clear {childFilters.activeCount}
+                      </button>
+                    )}
+                    {detail.children.length > 0 && (
+                      <TableExcelIconButton
+                        fileBase={`Target_${target.name}_${monthLabel(month)}`}
+                        getSheets={() => [{ name: "Children", columns: [target.level === topLevel ? "TL" : "Agent", "Roster target", "Effective target"], rows: detail.children.map((c) => [c.name, Math.round(c.baselineTarget), Math.round(c.effectiveTarget)]) }]}
+                      />
+                    )}
+                  </div>
                 </div>
                   {detail.children.length === 0 ? <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">None</p> : (
                     <div className="overflow-hidden rounded-xl border border-slate-100">
                       <table className="w-full text-xs">
-                        <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400"><th className="px-3 py-2 text-left font-semibold">{target.level === topLevel ? "TL" : "Agent"}</th><th className="px-3 py-2 font-semibold">Roster</th><th className="px-3 py-2 font-semibold">Effective</th></tr></thead>
+                        <thead>
+                          <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400">
+                            <FilterSortTh label={target.level === topLevel ? "TL" : "Agent"} columnKey="name" sortKey={childSortKey} sortDir={childSortDir} onSort={toggleChildSort} filters={childFilters} className="px-3 py-2 text-left font-semibold" />
+                            <FilterSortTh label="Roster" columnKey="baselineTarget" sortKey={childSortKey} sortDir={childSortDir} onSort={toggleChildSort} filters={childFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Effective" columnKey="effectiveTarget" sortKey={childSortKey} sortDir={childSortDir} onSort={toggleChildSort} filters={childFilters} className="px-3 py-2 font-semibold" />
+                          </tr>
+                        </thead>
                         <tbody>
-                          {detail.children.map((c) => (
+                          {sortedChildren.map((c) => (
                             <tr key={c.name} onClick={() => onOpen({ level: c.kind === "TL" ? "tl" : "agent", name: c.name })} className="cursor-pointer border-t border-slate-50 hover:bg-orange-50/50">
                               <td className="px-3 py-2 font-medium text-slate-700">{c.name}</td>
                               <td className="px-3 py-2 text-center text-slate-500">{formatINR(c.baselineTarget)}</td>
                               <td className="px-3 py-2 text-center font-bold text-slate-800">{formatINR(c.effectiveTarget)}<Diff base={c.baselineTarget} eff={c.effectiveTarget} /></td>
                             </tr>
                           ))}
+                          {sortedChildren.length === 0 && <tr><td colSpan={3} className="py-4 text-center text-slate-400">No rows match the current filters.</td></tr>}
                         </tbody>
                       </table>
                     </div>
@@ -352,6 +376,23 @@ export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCo
     return q ? list.filter((r) => r.name.toLowerCase().includes(q) || (r.tl ?? "").toLowerCase().includes(q) || (r.group ?? "").toLowerCase().includes(q)) : list;
   }, [data, level, search, topLevel]);
 
+  // Excel-style sort + filter for the scorecard table, layered on top of the name/TL/group search above. Column set
+  // varies by level, same as the `cols` header labels below -- `colKeys` lines up with them position for position.
+  const changeOf = (r: Entity): number => Math.round((r.effectiveTarget - r.baselineTarget) * 100) / 100;
+  const ENTITY_GETTERS: Record<string, (r: Entity) => string | number | null> = {
+    name: (r) => r.name, tl: (r) => r.tl, group: (r) => r.group, status: (r) => r.status, agentCount: (r) => r.agentCount,
+    baselineTarget: (r) => r.baselineTarget, effectiveTarget: (r) => r.effectiveTarget, change: changeOf,
+  };
+  const colKeys = level === "agent"
+    ? ["name", "tl", "group", "status", "baselineTarget", "effectiveTarget", "change"]
+    : level === "tl"
+      ? ["name", "group", "agentCount", "baselineTarget", "effectiveTarget", "change"]
+      : ["name", "agentCount", "baselineTarget", "effectiveTarget", "change"];
+  const ROW_FILTER_COLS: Array<FilterColumn<Entity>> = colKeys.map((k) => ({ key: k, get: ENTITY_GETTERS[k] }));
+  const rowColGetter = (r: Entity, key: string) => ENTITY_GETTERS[key]?.(r) ?? null;
+  const rowFilters = useColumnFilters(rows, ROW_FILTER_COLS);
+  const { sorted: sortedRows, sortKey: rowSortKey, sortDir: rowSortDir, toggleSort: toggleRowSort } = useSortableRows(rowFilters.filtered, rowColGetter);
+
   async function saveRow(r: Entity) {
     if (!editing) return;
     setRowBusy(r.name); setRowError("");
@@ -447,15 +488,31 @@ export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCo
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name…" className="w-[180px] rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-2 text-xs text-slate-700 focus:border-orange-400 focus:outline-none" />
             </div>
+            {rowFilters.activeCount > 0 && (
+              <button type="button" onClick={rowFilters.clearAll} className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {rowFilters.activeCount} filter{rowFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            )}
           </div>
         }
         footnote="Click a row for its full detail and history. Pencil = change the target from the chosen month onwards (it replaces the roster target; the uploaded roster is not touched). A TL / {topLabel} target is the total for that TL / {topLabel} and is shared over their Active agents; agents and TLs with a target of their own keep it.">
         {rowError && <p className="mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{rowError}</p>}
         <div className="max-h-[560px] overflow-auto rounded-lg border border-slate-100">
           <table className="w-full text-center text-xs">
-            <thead><tr className="sticky top-0 z-10 bg-slate-800 text-white">{[...cols, ""].map((h, i) => <th key={i} className={`whitespace-nowrap px-3 py-2 font-semibold text-white ${i === 0 ? "text-left" : ""}`}>{h}</th>)}</tr></thead>
+            <thead>
+              <tr className="sticky top-0 z-10 bg-slate-800 text-white">
+                {[...cols, ""].map((h, i) => (
+                  i < colKeys.length ? (
+                    <FilterSortTh
+                      key={i} label={h} columnKey={colKeys[i]} sortKey={rowSortKey} sortDir={rowSortDir} onSort={toggleRowSort} filters={rowFilters}
+                      className={`whitespace-nowrap px-3 py-2 font-semibold text-white ${i === 0 ? "text-left" : ""}`}
+                    />
+                  ) : <th key={i} className="whitespace-nowrap px-3 py-2 font-semibold text-white" />
+                ))}
+              </tr>
+            </thead>
             <tbody>
-              {rows.map((r, i) => {
+              {sortedRows.map((r, i) => {
                 const key = `${r.level}|${r.name}`;
                 const isEditing = editing?.key === key;
                 return (
@@ -495,7 +552,7 @@ export function ProcessTargetsPage({ api: API, topLevel, topLabel, title, pageCo
                   </tr>
                 );
               })}
-              {rows.length === 0 && <tr><td colSpan={cols.length + 1} className="py-6 text-slate-400">None</td></tr>}
+              {sortedRows.length === 0 && <tr><td colSpan={cols.length + 1} className="py-6 text-slate-400">{rows.length === 0 ? "None" : "No rows match the current filters."}</td></tr>}
             </tbody>
           </table>
         </div>

@@ -12,6 +12,8 @@ import type { DrawerTarget } from "./AppreciateWealthDrawer";
 import {
   TOOLTIP_PROPS, fmtHms, fmtMins, fmtNum, fmtPctVal, deltaOf, DeltaText, CcShell, CcHeader, CcPanel, CcTile, Ring, CoverageNote,
 } from "./AwControlKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Appreciate Wealth -- Agent-wise "Performance Control Center". Every figure
@@ -41,6 +43,31 @@ interface Data {
   sources: { total: number; items: Array<{ name: string; legs: number; answered: number; source: "inbound" | "cdr" }> };
 }
 
+/** "Agent wise key metrics" table columns -- one row per agent. */
+const AGENT_COLS: Array<{ key: string; label: string; get: (a: Agent) => string | number | null }> = [
+  { key: "name", label: "Agent", get: (a) => a.name },
+  { key: "connected", label: "Connected", get: (a) => a.connected },
+  { key: "talkS", label: "Talk Time", get: (a) => a.talkS },
+  { key: "productivePct", label: "Productive", get: (a) => (a.calls > 0 || a.productivePct > 0 ? a.productivePct : null) },
+  { key: "latePct", label: "Late Login %", get: (a) => a.latePct },
+];
+const AGENT_FILTER_COLS: Array<FilterColumn<Agent>> = AGENT_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentColGetter = (a: Agent, key: string) => AGENT_COLS.find((c) => c.key === key)?.get(a);
+
+/** "Daily Operational Snapshot" table columns -- one row per date. */
+const SNAPSHOT_COLS: Array<{ key: string; label: string; get: (d: Day) => string | number | null }> = [
+  { key: "date", label: "Date", get: (d) => d.date },
+  { key: "calls", label: "Total Calls", get: (d) => d.calls },
+  { key: "connected", label: "Connected", get: (d) => d.connected },
+  { key: "connectedPct", label: "Connected %", get: (d) => d.connectedPct },
+  { key: "talkS", label: "Talk Time", get: (d) => d.talkS },
+  { key: "productivePct", label: "Productive", get: (d) => d.productivePct },
+  { key: "breakAvgS", label: "Break", get: (d) => d.breakAvgS },
+  { key: "latePct", label: "Late Login %", get: (d) => d.latePct },
+];
+const SNAPSHOT_FILTER_COLS: Array<FilterColumn<Day>> = SNAPSHOT_COLS.map((c) => ({ key: c.key, get: c.get }));
+const snapshotColGetter = (d: Day, key: string) => SNAPSHOT_COLS.find((c) => c.key === key)?.get(d);
+
 export function AppreciateWealthControlCenter({ from, to, onOpen }: { from: string; to: string; onOpen: (t: DrawerTarget) => void }) {
   const [data, setData] = useState<Data | null>(null);
   const [loading, setLoading] = useState(true);
@@ -60,6 +87,10 @@ export function AppreciateWealthControlCenter({ from, to, onOpen }: { from: stri
   const top10 = useMemo(() => (data?.agents ?? []).slice(0, 10), [data]);
   const maxConnected = Math.max(1, ...top10.map((a) => a.connected));
   const last7 = useMemo(() => (data?.daily ?? []).slice(-7), [data]);
+  const agentFilters = useColumnFilters(data?.agents ?? [], AGENT_FILTER_COLS);
+  const { sorted: agentSorted, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
+  const snapshotFilters = useColumnFilters(last7, SNAPSHOT_FILTER_COLS);
+  const { sorted: snapshotSorted, sortKey: snapshotSortKey, sortDir: snapshotSortDir, toggleSort: toggleSnapshotSort } = useSortableRows(snapshotFilters.filtered, snapshotColGetter);
 
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -184,12 +215,21 @@ export function AppreciateWealthControlCenter({ from, to, onOpen }: { from: stri
               )}
             </div>
             <div>
-              <p className="mb-1 text-[11px] font-bold text-slate-500">Agent wise key metrics</p>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-bold text-slate-500">Agent wise key metrics</p>
+                {agentFilters.activeCount > 0 && (
+                  <button type="button" onClick={agentFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                    Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+                  </button>
+                )}
+              </div>
               <div className="max-h-[300px] overflow-auto rounded-lg border border-slate-200">
                 <table className="w-full text-center text-[11px]">
-                  <thead><tr className="sticky top-0 bg-indigo-950 text-white">{["Agent", "Connected", "Talk Time", "Productive", "Late Login %"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-bold">{h}</th>)}</tr></thead>
+                  <thead><tr className="sticky top-0 bg-indigo-950 text-white">{AGENT_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="whitespace-nowrap px-2 py-1.5 font-bold" />
+                  ))}</tr></thead>
                   <tbody>
-                    {data.agents.map((a, i) => (
+                    {agentSorted.map((a, i) => (
                       <tr key={a.agentId} onClick={() => onOpen({ kind: "agent", key: a.agentId })} className={`cursor-pointer hover:bg-indigo-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
                         <td className="whitespace-nowrap px-2 py-1 text-left font-semibold text-slate-700">{a.name}</td>
                         <td className="px-2 py-1">{fmtNum(a.connected)}</td>
@@ -198,7 +238,7 @@ export function AppreciateWealthControlCenter({ from, to, onOpen }: { from: stri
                         <td className={`px-2 py-1 font-bold ${a.latePct >= 50 ? "bg-rose-200 text-rose-800" : a.latePct > 0 ? "bg-amber-100 text-amber-800" : "text-slate-600"}`}>{fmtPctVal(a.latePct)}</td>
                       </tr>
                     ))}
-                    {data.agents.length === 0 && <tr><td colSpan={5} className="py-4 text-slate-400">None</td></tr>}
+                    {agentSorted.length === 0 && <tr><td colSpan={5} className="py-4 text-slate-400">{data.agents.length === 0 ? "None" : "No agents match the filters."}</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -257,11 +297,20 @@ export function AppreciateWealthControlCenter({ from, to, onOpen }: { from: stri
         </CcPanel>
 
         <CcPanel title="Daily Operational Snapshot (last 7 days with data)" icon={CalendarClock}>
+          {snapshotFilters.activeCount > 0 && (
+            <div className="mb-1 flex justify-end">
+              <button type="button" onClick={snapshotFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {snapshotFilters.activeCount} filter{snapshotFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            </div>
+          )}
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="w-full text-center text-[11px]">
-              <thead><tr className="bg-indigo-950 text-white">{["Date", "Total Calls", "Connected", "Connected %", "Talk Time", "Productive", "Break", "Late Login %"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-bold">{h}</th>)}</tr></thead>
+              <thead><tr className="bg-indigo-950 text-white">{SNAPSHOT_COLS.map((c) => (
+                <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={snapshotSortKey} sortDir={snapshotSortDir} onSort={toggleSnapshotSort} filters={snapshotFilters} className="whitespace-nowrap px-2 py-1.5 font-bold" />
+              ))}</tr></thead>
               <tbody>
-                {last7.map((d, i) => (
+                {snapshotSorted.map((d, i) => (
                   <tr key={d.date} onClick={() => openDay(d.date, d.date, fullDay(d.date))} className={`cursor-pointer hover:bg-indigo-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
                     <td className="whitespace-nowrap px-2 py-1 font-semibold text-slate-700">{fullDay(d.date)}</td>
                     <td className="px-2 py-1">{fmtNum(d.calls)}</td><td className="px-2 py-1">{fmtNum(d.connected)}</td>
@@ -270,7 +319,7 @@ export function AppreciateWealthControlCenter({ from, to, onOpen }: { from: stri
                     <td className={`px-2 py-1 font-bold ${d.latePct >= 40 ? "bg-rose-200 text-rose-800" : d.latePct > 0 ? "bg-amber-100 text-amber-800" : "text-slate-600"}`}>{fmtPctVal(d.latePct)}</td>
                   </tr>
                 ))}
-                {last7.length === 0 && <tr><td colSpan={8} className="py-4 text-slate-400">No agent-day data in this range.</td></tr>}
+                {snapshotSorted.length === 0 && <tr><td colSpan={8} className="py-4 text-slate-400">{last7.length === 0 ? "No agent-day data in this range." : "No days match the filters."}</td></tr>}
               </tbody>
             </table>
           </div>

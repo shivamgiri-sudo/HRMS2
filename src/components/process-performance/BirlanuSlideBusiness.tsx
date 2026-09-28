@@ -5,6 +5,8 @@ import {
   BCard, DetailsBtn, Empty, Funnel, Insights, Kpi, LegendList, Th, TOOLTIP_STYLE, PALETTE, delta, int, lacs, pct1, ppDelta,
   type DrawerCol, type DrawerSeries, type DrawerSpec,
 } from "./BirlanuKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Slide 2 -- Business Dashboard. Logic = the workbook's "Business Dashboard" sheet, filtered to
@@ -28,6 +30,16 @@ const STATUS_COLORS: Record<string, string> = { followup: "#2563eb", underproces
 
 export function BirlanuSlideBusiness({ data, open }: { data: BirlanuMis; open: (s: DrawerSpec) => void }) {
   const { perMonth, ytd, closureBreakup, closureTotal, groups } = data.business;
+  // Excel-style sort + filter for the Closure Breakup table -- hooks must run every render, so this is computed before
+  // the `perMonth.length === 0` early return further down.
+  type ClosureRow = (typeof closureBreakup)[number];
+  const CLOSURE_FILTER_COLS: Array<FilterColumn<ClosureRow>> = [
+    { key: "status", get: (r) => r.status }, { key: "count", get: (r) => r.count }, { key: "pct", get: (r) => r.pct },
+  ];
+  const closureColGetter = (r: ClosureRow, key: string) => CLOSURE_FILTER_COLS.find((c) => c.key === key)?.get(r);
+  const closureFilters = useColumnFilters(closureBreakup, CLOSURE_FILTER_COLS);
+  const { sorted: sortedClosure, sortKey: closureSortKey, sortDir: closureSortDir, toggleSort: closureToggleSort } = useSortableRows(closureFilters.filtered, closureColGetter);
+
   if (perMonth.length === 0) return <Empty />;
   const latest = perMonth[perMonth.length - 1];
   const prev = perMonth.length > 1 ? perMonth[perMonth.length - 2] : undefined;
@@ -160,16 +172,31 @@ export function BirlanuSlideBusiness({ data, open }: { data: BirlanuMis; open: (
           </div>
         </BCard>
 
-        <BCard className="lg:col-span-3" icon={Table2} title="Closure Breakup (YTD)" footnote="a and b are counted by closer month, c to r by register month — the sheet's own mix, so the total can differ from validated queries.">
+        <BCard
+          className="lg:col-span-3" icon={Table2} title="Closure Breakup (YTD)"
+          footnote="a and b are counted by closer month, c to r by register month — the sheet's own mix, so the total can differ from validated queries."
+          action={closureFilters.activeCount > 0 ? (
+            <button type="button" onClick={closureFilters.clearAll} className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold text-white hover:bg-white/20">
+              Clear {closureFilters.activeCount} filter{closureFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          ) : undefined}
+        >
           <div className="max-h-[210px] overflow-auto">
             <table className="w-full text-xs">
-              <thead><tr className="sticky top-0"><Th className="rounded-l-md text-left">Closure Status</Th><Th>Count</Th><Th className="rounded-r-md">% of Total</Th></tr></thead>
+              <thead>
+                <tr className="sticky top-0">
+                  <FilterSortTh label="Closure Status" columnKey="status" sortKey={closureSortKey} sortDir={closureSortDir} onSort={closureToggleSort} filters={closureFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-left text-[10px] font-bold text-white rounded-l-md" />
+                  <FilterSortTh label="Count" columnKey="count" sortKey={closureSortKey} sortDir={closureSortDir} onSort={closureToggleSort} filters={closureFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white" />
+                  <FilterSortTh label="% of Total" columnKey="pct" sortKey={closureSortKey} sortDir={closureSortDir} onSort={closureToggleSort} filters={closureFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white rounded-r-md" />
+                </tr>
+              </thead>
               <tbody>
-                {closureBreakup.map((c, i) => (
+                {sortedClosure.map((c, i) => (
                   <tr key={c.status} role="button" tabIndex={0} onClick={() => open({ title: c.status, subtitle: "Closure status", columns: [{ key: "metric", label: "Metric", fmt: "text" }, { key: "value", label: "Value", fmt: "text" }], rows: [{ metric: "Count", value: int(c.count) }, { metric: "% of total", value: pct1(c.pct) }, { metric: "Total leads", value: int(closureTotal) }] })} className={`cursor-pointer hover:bg-amber-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
                     <td className="px-2 py-1 text-left text-slate-700">{c.status}</td><td className="px-2 py-1 text-center">{int(c.count)}</td><td className="px-2 py-1 text-center">{pct1(c.pct)}</td>
                   </tr>
                 ))}
+                {sortedClosure.length === 0 && <tr><td colSpan={3} className="py-4 text-slate-400">No statuses match the current filters.</td></tr>}
               </tbody>
               <tfoot><tr className="bg-amber-100 font-bold"><td className="px-2 py-1 text-left">Grand Total</td><td className="px-2 py-1 text-center">{int(closureTotal)}</td><td className="px-2 py-1 text-center">100.0%</td></tr></tfoot>
             </table>

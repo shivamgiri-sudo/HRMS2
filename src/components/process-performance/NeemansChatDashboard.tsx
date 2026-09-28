@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { MessageSquare, Gauge, Clock3, Trophy, Layers, Users, Search } from "lucide-react";
 import { Spinner, KpiCard, SectionCard, DashboardExportMenu, type ExportSlide } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Neemans Chat, as its own standalone LOB dashboard -- same real
@@ -20,6 +22,29 @@ interface ChatData {
   byLob: Array<{ lob: string; tickets: number; resolvedPct: number }>;
   agents: Array<{ agent: string; empId: string; tickets: number; resolvedPct: number; avgCsat: number }>;
 }
+
+type LobRow = ChatData["byLob"][number];
+type ChatAgentRow = ChatData["agents"][number];
+
+interface HeaderCol<T> extends FilterColumn<T> {
+  label: string;
+  className: string;
+}
+
+const LOB_COLS: Array<HeaderCol<LobRow>> = [
+  { key: "lob", label: "LOB", get: (r) => r.lob, className: "py-2 pr-3 font-semibold" },
+  { key: "tickets", label: "Tickets", get: (r) => r.tickets, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "resolvedPct", label: "Resolved %", get: (r) => r.resolvedPct, className: "py-2 pr-0 text-right font-semibold" },
+];
+const lobColGetter = (r: LobRow, key: string) => LOB_COLS.find((c) => c.key === key)?.get(r);
+
+const CHAT_AGENT_COLS: Array<HeaderCol<ChatAgentRow>> = [
+  { key: "agent", label: "Agent", get: (r) => r.agent, className: "py-2 pr-3 font-semibold" },
+  { key: "tickets", label: "Tickets", get: (r) => r.tickets, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "resolvedPct", label: "Resolved %", get: (r) => r.resolvedPct, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "avgCsat", label: "Avg CSAT", get: (r) => r.avgCsat, className: "py-2 pr-0 text-right font-semibold" },
+];
+const chatAgentColGetter = (r: ChatAgentRow, key: string) => CHAT_AGENT_COLS.find((c) => c.key === key)?.get(r);
 
 export function NeemansChatDashboard() {
   const [data, setData] = useState<ChatData | null>(null);
@@ -50,6 +75,14 @@ export function NeemansChatDashboard() {
     if (!q) return rows;
     return rows.filter((a) => a.agent.toLowerCase().includes(q) || a.empId.toLowerCase().includes(q));
   }, [data, search]);
+
+  // Excel-style: every header sorts (click) and filters (funnel icon); filters AND together, then the sort applies.
+  const lobRows = useMemo(() => data?.byLob ?? [], [data]);
+  const lobFilters = useColumnFilters(lobRows, LOB_COLS);
+  const { sorted: sortedLob, sortKey: lobSortKey, sortDir: lobSortDir, toggleSort: toggleLobSort } = useSortableRows(lobFilters.filtered, lobColGetter);
+
+  const agentFilters = useColumnFilters(filteredAgents, CHAT_AGENT_COLS);
+  const { sorted: sortedAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, chatAgentColGetter);
 
   /** Export slide for "Download Snap"/"Download Excel" — this dashboard has
    * no tabs and no date-range toolbar, so a single slide mirrors everything
@@ -137,25 +170,32 @@ export function NeemansChatDashboard() {
           tone="indigo"
           footnote="Which product line is generating the most chat volume, and how well each is being resolved — useful for spotting a LOB that needs more staffing or a process fix."
         >
+          {lobFilters.activeCount > 0 && (
+            <div className="mb-2 flex justify-end">
+              <button type="button" onClick={lobFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {lobFilters.activeCount} filter{lobFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">LOB</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Tickets</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Resolved %</th>
+                  {LOB_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={lobSortKey} sortDir={lobSortDir} onSort={toggleLobSort} filters={lobFilters} className={c.className} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {data.byLob.map((r) => (
+                {sortedLob.map((r) => (
                   <tr key={r.lob} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40">
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{r.lob}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{r.tickets}</td>
                     <td className={`py-2.5 pr-0 text-right font-semibold ${r.resolvedPct >= 90 ? "text-emerald-600" : r.resolvedPct >= 75 ? "text-amber-600" : "text-red-600"}`}>{r.resolvedPct}%</td>
                   </tr>
                 ))}
-                {data.byLob.length === 0 && (
-                  <tr><td colSpan={3} className="py-6 text-center text-slate-400">No data uploaded yet.</td></tr>
+                {sortedLob.length === 0 && (
+                  <tr><td colSpan={3} className="py-6 text-center text-slate-400">{data.byLob.length === 0 ? "No data uploaded yet." : "No LOBs match the filters."}</td></tr>
                 )}
               </tbody>
             </table>
@@ -163,15 +203,22 @@ export function NeemansChatDashboard() {
         </SectionCard>
 
         <div className="space-y-3">
-          <div className="relative w-full">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search agent..."
-              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm transition-colors focus:border-violet-400 focus:outline-none"
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full max-w-[260px]">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search agent..."
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm transition-colors focus:border-violet-400 focus:outline-none"
+              />
+            </div>
+            {agentFilters.activeCount > 0 && (
+              <button type="button" onClick={agentFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            )}
           </div>
           <SectionCard
             icon={Users}
@@ -183,14 +230,13 @@ export function NeemansChatDashboard() {
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="py-2 pr-3 font-semibold">Agent</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Tickets</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Resolved %</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Avg CSAT</th>
+                    {CHAT_AGENT_COLS.map((c) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={c.className} />
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAgents.map((a) => (
+                  {sortedAgents.map((a) => (
                     <tr key={`${a.empId}-${a.agent}`} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-violet-50/40">
                       <td className="py-2.5 pr-3">
                         <div className="font-medium text-slate-700">{a.agent}</div>
@@ -201,7 +247,7 @@ export function NeemansChatDashboard() {
                       <td className="py-2.5 pr-0 text-right text-slate-600">{a.avgCsat || "—"}</td>
                     </tr>
                   ))}
-                  {filteredAgents.length === 0 && (
+                  {sortedAgents.length === 0 && (
                     <tr><td colSpan={4} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
                   )}
                 </tbody>

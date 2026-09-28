@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   LineChart, Line, BarChart, Bar, ComposedChart, PieChart, Pie, Cell, Area, AreaChart,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -17,7 +17,7 @@ import { GncAgentDrawer } from "./GncAgentDrawer";
 import { GncCampaignDrawer } from "./GncCampaignDrawer";
 import { GncLobOverview } from "./GncLobOverview";
 import { useSortableRows } from "./useSortableRows";
-import { SortTh } from "./SortTh";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 interface DashboardData {
   headline: {
@@ -64,6 +64,76 @@ interface DashboardData {
 }
 
 const CAMPAIGN_COLORS = ["#059669", "#0ea5e9", "#f59e0b", "#8b5cf6", "#e11d48"];
+
+/* --------------------------- table column defs (Excel-style sort/filter) --------------------------- */
+
+type LobSummaryRow = DashboardData["campaignRevenue"][number];
+interface LobSummaryCol {
+  key: string; label: string; className: string;
+  get: (r: LobSummaryRow) => string | number | null;
+  cell: (r: LobSummaryRow) => ReactNode;
+}
+const LOB_SUMMARY_COLS: LobSummaryCol[] = [
+  { key: "campaign", label: "LOB", get: (c) => c.campaign, cell: (c) => c.campaign, className: "py-2.5 px-3 text-left font-semibold text-teal-700 underline-offset-2 hover:underline" },
+  { key: "saleCount", label: "Sale Count", get: (c) => c.saleCount, cell: (c) => c.saleCount, className: "py-2.5 px-3 text-slate-600" },
+  { key: "codCount", label: "COD", get: (c) => c.codCount, cell: (c) => c.codCount, className: "py-2.5 px-3 font-medium text-amber-600" },
+  { key: "paidCount", label: "Paid", get: (c) => c.paidCount, cell: (c) => c.paidCount, className: "py-2.5 px-3 font-medium text-emerald-600" },
+  { key: "codPct", label: "COD %", get: (c) => c.codPct, cell: (c) => `${c.codPct}%`, className: "py-2.5 px-3 font-medium text-amber-600" },
+  { key: "paidPct", label: "Paid %", get: (c) => c.paidPct, cell: (c) => `${c.paidPct}%`, className: "py-2.5 px-3 font-medium text-emerald-600" },
+  {
+    key: "conversionPct", label: "Conversion % (Achi%)", get: (c) => c.conversionPct, className: "py-2.5 px-3",
+    cell: (c) => (c.conversionPct === null ? <span className="text-slate-400">—</span> : <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 font-bold text-indigo-700">{c.conversionPct}%</span>),
+  },
+  { key: "turnover", label: "Revenue", get: (c) => c.turnover, cell: (c) => formatINR(c.turnover), className: "py-2.5 px-3 font-bold text-teal-700" },
+  {
+    key: "target", label: "Target", get: (c) => c.target ?? null, className: "py-2.5 px-3 text-slate-600",
+    cell: (c) => (c.target != null ? formatINR(c.target) : <span className="text-slate-400">—</span>),
+  },
+  {
+    key: "achPct", label: "Target Achi %", get: (c) => c.achPct ?? null, className: "py-2.5 px-3",
+    cell: (c) => (c.achPct != null
+      ? <span className={`rounded-full px-2.5 py-0.5 font-bold ${c.achPct >= 100 ? "bg-emerald-100 text-emerald-700" : c.achPct >= 60 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{c.achPct}%</span>
+      : <span className="text-slate-400">—</span>),
+  },
+];
+const LOB_SUMMARY_FILTER_COLS: Array<FilterColumn<LobSummaryRow>> = LOB_SUMMARY_COLS.map((c) => ({ key: c.key, get: c.get }));
+const lobSummaryColGetter = (r: LobSummaryRow, key: string) => LOB_SUMMARY_COLS.find((c) => c.key === key)?.get(r);
+
+type AgentPerfRow = DashboardData["agentPerformance"][number];
+interface AgentPerfCol {
+  key: string; label: string; headerClassName: string; tdClassName: string;
+  get: (r: AgentPerfRow) => string | number | null;
+  cell: (r: AgentPerfRow) => ReactNode;
+}
+const BUCKET_CLS: Record<string, string> = {
+  "180 Above": "bg-emerald-100 text-emerald-700",
+  "121-180": "bg-teal-100 text-teal-700",
+  "91-120": "bg-sky-100 text-sky-700",
+  "0-30": "bg-amber-100 text-amber-700",
+};
+const AGENT_PERF_COLS: AgentPerfCol[] = [
+  { key: "empId", label: "EMP Id", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3 text-slate-500", get: (a) => a.empId, cell: (a) => a.empId },
+  { key: "empName", label: "Agent Name", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3 font-medium text-slate-700", get: (a) => a.empName, cell: (a) => a.empName },
+  { key: "doj", label: "DOJ", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3 text-slate-500", get: (a) => a.doj, cell: (a) => formatDDMMYYYY(a.doj) },
+  { key: "tenureDays", label: "Tenure", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.tenureDays, cell: (a) => a.tenureDays ?? "—" },
+  {
+    key: "bucket", label: "Bucket", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3", get: (a) => a.bucket,
+    cell: (a) => <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${BUCKET_CLS[a.bucket] ?? "bg-slate-100 text-slate-600"}`}>{a.bucket}</span>,
+  },
+  { key: "tl", label: "TL Name", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3 text-slate-500", get: (a) => a.tl, cell: (a) => a.tl },
+  { key: "lob", label: "LOB", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3 text-slate-500", get: (a) => a.lob, cell: (a) => a.lob },
+  { key: "saleCount", label: "Sale Made", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.saleCount, cell: (a) => a.saleCount },
+  { key: "codCount", label: "COD", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.codCount, cell: (a) => a.codCount },
+  { key: "paidCount", label: "Paid", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.paidCount, cell: (a) => a.paidCount },
+  { key: "codPct", label: "COD %", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.codPct, cell: (a) => `${a.codPct}%` },
+  { key: "paidPct", label: "Paid %", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.paidPct, cell: (a) => `${a.paidPct}%` },
+  { key: "revenue", label: "Revenue", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right font-semibold text-slate-800", get: (a) => a.revenue, cell: (a) => formatINR(a.revenue) },
+  { key: "target", label: "Target", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.target ?? null, cell: (a) => (a.target != null ? formatINR(a.target) : "—") },
+  { key: "achPct", label: "Achi %", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right font-bold", get: (a) => a.achPct ?? null, cell: (a) => (a.achPct != null ? `${a.achPct}%` : "—") },
+  { key: "attendanceDays", label: "Attendance", headerClassName: "py-2 pr-0 text-right font-semibold", tdClassName: "py-2.5 pr-0 text-right text-slate-600", get: (a) => a.attendanceDays, cell: (a) => a.attendanceDays },
+];
+const AGENT_PERF_FILTER_COLS: Array<FilterColumn<AgentPerfRow>> = AGENT_PERF_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentPerfColGetter = (r: AgentPerfRow, key: string) => AGENT_PERF_COLS.find((c) => c.key === key)?.get(r);
 
 /**
  * GNC's real "Sale Performance" dashboard — every number here is a live
@@ -118,43 +188,12 @@ export function GncSaleDashboard() {
     return rows.filter((a) => a.empName.toLowerCase().includes(q) || a.empId.toLowerCase().includes(q) || a.tl.toLowerCase().includes(q));
   }, [data, agentSearch]);
 
-  const agentSort = useSortableRows<DashboardData["agentPerformance"][number]>(filteredAgents, (a, key) => {
-    switch (key) {
-      case "empName": return a.empName;
-      case "empId": return a.empId;
-      case "doj": return a.doj;
-      case "tenureDays": return a.tenureDays;
-      case "bucket": return a.bucket;
-      case "tl": return a.tl;
-      case "lob": return a.lob;
-      case "saleCount": return a.saleCount;
-      case "codCount": return a.codCount;
-      case "paidCount": return a.paidCount;
-      case "codPct": return a.codPct;
-      case "paidPct": return a.paidPct;
-      case "revenue": return a.revenue;
-      case "target": return a.target ?? null;
-      case "achPct": return a.achPct ?? null;
-      case "attendanceDays": return a.attendanceDays;
-      default: return null;
-    }
-  });
+  // Excel-style: every header sorts (click) and filters (funnel icon); filters AND together, then the sort applies.
+  const agentFilters = useColumnFilters(filteredAgents, AGENT_PERF_FILTER_COLS);
+  const agentSort = useSortableRows(agentFilters.filtered, agentPerfColGetter);
 
-  const lobSummarySort = useSortableRows<DashboardData["campaignRevenue"][number]>(data?.campaignRevenue ?? [], (c, key) => {
-    switch (key) {
-      case "campaign": return c.campaign;
-      case "saleCount": return c.saleCount;
-      case "codCount": return c.codCount;
-      case "paidCount": return c.paidCount;
-      case "codPct": return c.codPct;
-      case "paidPct": return c.paidPct;
-      case "conversionPct": return c.conversionPct;
-      case "turnover": return c.turnover;
-      case "target": return c.target ?? null;
-      case "achPct": return c.achPct ?? null;
-      default: return null;
-    }
-  });
+  const lobSummaryFilters = useColumnFilters(data?.campaignRevenue ?? [], LOB_SUMMARY_FILTER_COLS);
+  const lobSummarySort = useSortableRows(lobSummaryFilters.filtered, lobSummaryColGetter);
 
   /** COD/Prepaid orders as a share of that day's total, for the side lines
    * on "COD vs Prepaid Orders" -- computed from the same counts the stacked
@@ -419,20 +458,19 @@ export function GncSaleDashboard() {
         icon={Layers} title="LOB-wise Summary" tone="teal"
         footnote="Conversion % (Achi%) = Sale Count ÷ addressable contacts. Abandon Cart: ÷ Total Allocation (Connected + Not Connected) from gnc_allocation. Chat: ÷ Total chat tickets from gnc_chat. Inbound has no allocation/ticket source in this app, so it shows “—” rather than a guessed figure. Target = the LOB's monthly revenue target from the GNC Targets page (pro-rated for a part-month range); Target Achi % = revenue ÷ that target. LOBs without a configured target show “—”, and the Grand Total compares only the LOBs that have one."
       >
+        {lobSummaryFilters.activeCount > 0 && (
+          <button type="button" onClick={lobSummaryFilters.clearAll} className="mb-2 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {lobSummaryFilters.activeCount} filter{lobSummaryFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        )}
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full border-collapse text-center text-xs">
             <thead>
               <tr className="bg-teal-800 text-[11px] uppercase tracking-wide text-white">
-                <SortTh label="LOB" sortKey="campaign" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 text-left font-bold text-white" />
-                <SortTh label="Sale Count" sortKey="saleCount" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
-                <SortTh label="COD" sortKey="codCount" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
-                <SortTh label="Paid" sortKey="paidCount" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
-                <SortTh label="COD %" sortKey="codPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
-                <SortTh label="Paid %" sortKey="paidPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
-                <SortTh label="Conversion % (Achi%)" sortKey="conversionPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
-                <SortTh label="Revenue" sortKey="turnover" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
-                <SortTh label="Target" sortKey="target" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
-                <SortTh label="Target Achi %" sortKey="achPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
+                {LOB_SUMMARY_COLS.map((c) => (
+                  <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={lobSummarySort.sortKey} sortDir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} filters={lobSummaryFilters}
+                    className={`py-2.5 px-3 font-bold text-white ${c.key === "campaign" ? "text-left" : ""}`} />
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -441,22 +479,12 @@ export function GncSaleDashboard() {
                   key={c.campaign} onClick={() => setDrawerCampaign(c.campaign)} role="button" tabIndex={0}
                   className={`cursor-pointer border-b border-slate-100 transition-colors last:border-0 hover:bg-teal-50/60 ${i % 2 === 1 ? "bg-teal-50/40" : "bg-white"}`}
                 >
-                  <td className="py-2.5 px-3 text-left font-semibold text-teal-700 underline-offset-2 hover:underline">{c.campaign}</td>
-                  <td className="py-2.5 px-3 text-slate-600">{c.saleCount}</td>
-                  <td className="py-2.5 px-3 font-medium text-amber-600">{c.codCount}</td>
-                  <td className="py-2.5 px-3 font-medium text-emerald-600">{c.paidCount}</td>
-                  <td className="py-2.5 px-3 font-medium text-amber-600">{c.codPct}%</td>
-                  <td className="py-2.5 px-3 font-medium text-emerald-600">{c.paidPct}%</td>
-                  <td className="py-2.5 px-3">
-                    {c.conversionPct === null
-                      ? <span className="text-slate-400">—</span>
-                      : <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 font-bold text-indigo-700">{c.conversionPct}%</span>}
-                  </td>
-                  <td className="py-2.5 px-3 font-bold text-teal-700">{formatINR(c.turnover)}</td>
-                  <td className="py-2.5 px-3 text-slate-600">{c.target != null ? formatINR(c.target) : <span className="text-slate-400">—</span>}</td>
-                  <td className="py-2.5 px-3">{c.achPct != null ? <span className={`rounded-full px-2.5 py-0.5 font-bold ${c.achPct >= 100 ? "bg-emerald-100 text-emerald-700" : c.achPct >= 60 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{c.achPct}%</span> : <span className="text-slate-400">—</span>}</td>
+                  {LOB_SUMMARY_COLS.map((col) => <td key={col.key} className={col.className}>{col.cell(c)}</td>)}
                 </tr>
               ))}
+              {data.campaignRevenue.length > 0 && lobSummarySort.sorted.length === 0 && (
+                <tr><td colSpan={LOB_SUMMARY_COLS.length} className="py-6 text-center text-slate-400">No rows match the filters.</td></tr>
+              )}
               {data.campaignRevenue.length > 0 && (() => {
                 const totalSale = data.campaignRevenue.reduce((s, c) => s + c.saleCount, 0);
                 const totalCod = data.campaignRevenue.reduce((s, c) => s + c.codCount, 0);
@@ -624,26 +652,19 @@ export function GncSaleDashboard() {
         <SectionCard icon={Users} title="Agent-wise Performance" tone="indigo"
           footnote="Click a row to see that agent's date-wise performance. Target = the per-agent monthly target of the agent's LOB from the GNC Targets page (pro-rated for a part-month range; Abandon Cart shows one only when its agent count is set); Achi % = revenue ÷ target. TQ-MQ-BQ and RTO columns are not shown — db_masmis.gnc_sale has no RTO/return-status column."
         >
+          {agentFilters.activeCount > 0 && (
+            <button type="button" onClick={agentFilters.clearAll} className="mb-2 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <SortTh label="EMP Id" sortKey="empId" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
-                  <SortTh label="Agent Name" sortKey="empName" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
-                  <SortTh label="DOJ" sortKey="doj" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
-                  <SortTh label="Tenure" sortKey="tenureDays" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                  <SortTh label="Bucket" sortKey="bucket" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
-                  <SortTh label="TL Name" sortKey="tl" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
-                  <SortTh label="LOB" sortKey="lob" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
-                  <SortTh label="Sale Made" sortKey="saleCount" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                  <SortTh label="COD" sortKey="codCount" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                  <SortTh label="Paid" sortKey="paidCount" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                  <SortTh label="COD %" sortKey="codPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                  <SortTh label="Paid %" sortKey="paidPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                  <SortTh label="Revenue" sortKey="revenue" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                  <SortTh label="Target" sortKey="target" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                  <SortTh label="Achi %" sortKey="achPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                  <SortTh label="Attendance" sortKey="attendanceDays" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-0 text-right font-semibold" />
+                  {AGENT_PERF_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={agentSort.sortKey} sortDir={agentSort.sortDir} onSort={agentSort.toggleSort} filters={agentFilters}
+                      className={c.headerClassName} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -654,34 +675,16 @@ export function GncSaleDashboard() {
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDrawerEmpId(a.empId); } }}
                     className={`cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/60 focus:bg-indigo-50/70 focus:outline-none ${i % 2 === 1 ? "bg-indigo-50/20" : "bg-white"}`}
                   >
-                    <td className="py-2.5 pr-3 text-slate-500">{a.empId}</td>
-                    <td className="py-2.5 pr-3 font-medium text-slate-700">{a.empName}</td>
-                    <td className="py-2.5 pr-3 text-slate-500">{formatDDMMYYYY(a.doj)}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.tenureDays ?? "—"}</td>
-                    <td className="py-2.5 pr-3">
-                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                        a.bucket === "180 Above" ? "bg-emerald-100 text-emerald-700"
-                        : a.bucket === "121-180" ? "bg-teal-100 text-teal-700"
-                        : a.bucket === "91-120" ? "bg-sky-100 text-sky-700"
-                        : a.bucket === "0-30" ? "bg-amber-100 text-amber-700"
-                        : "bg-slate-100 text-slate-600"
-                      }`}>{a.bucket}</span>
-                    </td>
-                    <td className="py-2.5 pr-3 text-slate-500">{a.tl}</td>
-                    <td className="py-2.5 pr-3 text-slate-500">{a.lob}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.saleCount}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.codCount}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.paidCount}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.codPct}%</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.paidPct}%</td>
-                    <td className="py-2.5 pr-3 text-right font-semibold text-slate-800">{formatINR(a.revenue)}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.target != null ? formatINR(a.target) : "—"}</td>
-                    <td className={`py-2.5 pr-3 text-right font-bold ${a.achPct == null ? "text-slate-400" : a.achPct >= 100 ? "text-emerald-600" : a.achPct >= 60 ? "text-amber-600" : "text-rose-600"}`}>{a.achPct != null ? `${a.achPct}%` : "—"}</td>
-                    <td className="py-2.5 pr-0 text-right text-slate-600">{a.attendanceDays}</td>
+                    {AGENT_PERF_COLS.map((c) => (
+                      <td key={c.key} className={`${c.tdClassName} ${c.key === "achPct" ? (a.achPct == null ? "text-slate-400" : a.achPct >= 100 ? "text-emerald-600" : a.achPct >= 60 ? "text-amber-600" : "text-rose-600") : ""}`}>{c.cell(a)}</td>
+                    ))}
                   </tr>
                 ))}
+                {filteredAgents.length > 0 && agentSort.sorted.length === 0 && (
+                  <tr><td colSpan={AGENT_PERF_COLS.length} className="py-6 text-center text-slate-400">No agents match the filters.</td></tr>
+                )}
                 {filteredAgents.length === 0 && (
-                  <tr><td colSpan={16} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
+                  <tr><td colSpan={AGENT_PERF_COLS.length} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
                 )}
               </tbody>
             </table>

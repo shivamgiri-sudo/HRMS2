@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, type ReactNode } from "react";
 import {
   ComposedChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -13,6 +13,8 @@ import {
 } from "./DashboardKit";
 import { ComboTrend, Donut, fmtNum, PALETTE } from "./NeemansCharts";
 import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 const API = "/api/process-performance/gnc-chat-dashboard";
 
@@ -69,6 +71,73 @@ function ViewDetailsBtn({ onClick }: { onClick: () => void }) {
     </button>
   );
 }
+
+/* --------------------------- table column defs (Excel-style sort/filter) --------------------------- */
+
+type QrcRow = DashboardData["qrcBreakdown"][number];
+interface QrcCol { key: string; label: string; className: string; get: (r: QrcRow) => string | number | null; cell: (r: QrcRow) => ReactNode }
+const QRC_COLS: QrcCol[] = [
+  { key: "qrc", label: "Chat Type", get: (r) => r.qrc, cell: (r) => r.qrc, className: "py-1.5 px-2.5 text-left font-medium text-slate-700" },
+  { key: "count", label: "Total Chat", get: (r) => r.count, cell: (r) => fmtNum(r.count), className: "py-1.5 px-2.5 text-slate-600" },
+  { key: "pct", label: "% Share", get: (r) => r.pct, cell: (r) => `${r.pct}%`, className: "py-1.5 px-2.5 font-semibold text-violet-700" },
+];
+const QRC_FILTER_COLS: Array<FilterColumn<QrcRow>> = QRC_COLS.map((c) => ({ key: c.key, get: c.get }));
+const qrcColGetter = (r: QrcRow, key: string) => QRC_COLS.find((c) => c.key === key)?.get(r);
+
+type DailyDetailRow = TrendRow & { conversionPct: number };
+interface DailyDetailCol { key: string; label: string; className: string; get: (r: DailyDetailRow) => string | number | null; cell: (r: DailyDetailRow) => ReactNode }
+const DAILY_DETAIL_COLS: DailyDetailCol[] = [
+  { key: "date", label: "Date", get: (d) => d.date, cell: (d) => formatShortDate(d.date), className: "py-1 px-2 text-left font-medium text-slate-700" },
+  { key: "totalChats", label: "Over All Chat", get: (d) => d.totalChats, cell: (d) => d.totalChats, className: "py-1 px-2 text-slate-600" },
+  { key: "uniqueChats", label: "Unique Chat", get: (d) => d.uniqueChats, cell: (d) => d.uniqueChats, className: "py-1 px-2 text-slate-600" },
+  { key: "repeatChats", label: "Repeat Chat", get: (d) => d.repeatChats, cell: (d) => d.repeatChats, className: "py-1 px-2 text-slate-600" },
+  { key: "frtInTatCount", label: "In TAT (≤60s)", get: (d) => d.frtInTatCount, cell: (d) => d.frtInTatCount, className: "py-1 px-2 text-emerald-600" },
+  { key: "frtOutTatCount", label: "Out TAT (>60s)", get: (d) => d.frtOutTatCount, cell: (d) => d.frtOutTatCount, className: "py-1 px-2 text-rose-600" },
+  { key: "frtInTatPct", label: "In TAT %", get: (d) => d.frtInTatPct, cell: (d) => `${d.frtInTatPct}%`, className: "py-1 px-2 font-semibold text-indigo-600" },
+  { key: "orders", label: "Sale Done", get: (d) => d.orders, cell: (d) => d.orders, className: "py-1 px-2 text-slate-600" },
+  { key: "conversionPct", label: "Sale Conv %", get: (d) => d.conversionPct, cell: (d) => `${d.conversionPct}%`, className: "py-1 px-2 text-slate-600" },
+  { key: "codCount", label: "COD", get: (d) => d.codCount, cell: (d) => d.codCount, className: "py-1 px-2 text-amber-600" },
+  { key: "paidCount", label: "Prepaid", get: (d) => d.paidCount, cell: (d) => d.paidCount, className: "py-1 px-2 text-emerald-600" },
+  { key: "revenue", label: "Revenue Gross", get: (d) => d.revenue, cell: (d) => formatINR(d.revenue), className: "py-1 px-2 text-slate-600" },
+  { key: "netRevenue", label: "Revenue Net", get: (d) => d.netRevenue, cell: (d) => formatINR(d.netRevenue), className: "py-1 px-2 font-semibold text-slate-800" },
+  { key: "aov", label: "AOV", get: (d) => d.aov, cell: (d) => formatINR(d.aov), className: "py-1 px-2 text-slate-600" },
+];
+const DAILY_DETAIL_FILTER_COLS: Array<FilterColumn<DailyDetailRow>> = DAILY_DETAIL_COLS.map((c) => ({ key: c.key, get: c.get }));
+const dailyDetailColGetter = (r: DailyDetailRow, key: string) => DAILY_DETAIL_COLS.find((c) => c.key === key)?.get(r);
+
+type ChatAgentRow = AgentRow;
+interface ChatAgentCol { key: string; label: string; headerClassName: string; tdClassName: string; get: (r: ChatAgentRow) => string | number | null; cell: (r: ChatAgentRow) => ReactNode }
+const CHAT_AGENT_COLS: ChatAgentCol[] = [
+  { key: "agent", label: "Agent", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3 font-medium text-slate-700", get: (a) => a.agent, cell: (a) => a.agent },
+  { key: "totalChats", label: "Total Chats", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.totalChats, cell: (a) => fmtNum(a.totalChats) },
+  { key: "uniqueChats", label: "Unique", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.uniqueChats, cell: (a) => fmtNum(a.uniqueChats) },
+  { key: "frtInTatPct", label: "FRT In-TAT %", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right font-semibold text-teal-600", get: (a) => a.frtInTatPct, cell: (a) => `${a.frtInTatPct}%` },
+  { key: "resolutionInTatPct", label: "Resolution In-TAT %", headerClassName: "py-2 pr-0 text-right font-semibold", tdClassName: "py-2.5 pr-0 text-right font-semibold text-indigo-600", get: (a) => a.resolutionInTatPct, cell: (a) => `${a.resolutionInTatPct}%` },
+];
+const CHAT_AGENT_FILTER_COLS: Array<FilterColumn<ChatAgentRow>> = CHAT_AGENT_COLS.map((c) => ({ key: c.key, get: c.get }));
+const chatAgentColGetter = (r: ChatAgentRow, key: string) => CHAT_AGENT_COLS.find((c) => c.key === key)?.get(r);
+
+type MatchedRow = DashboardData["saleLinkage"]["matched"][number];
+interface MatchedCol { key: string; label: string; headerClassName: string; tdClassName: string; get: (r: MatchedRow) => string | number | null; cell: (r: MatchedRow) => ReactNode }
+const MATCHED_COLS: MatchedCol[] = [
+  { key: "agent", label: "Agent", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3 font-medium text-slate-700", get: (r) => r.agent, cell: (r) => r.agent },
+  { key: "saleCount", label: "Sale Count", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (r) => r.saleCount, cell: (r) => fmtNum(r.saleCount) },
+  { key: "revenue", label: "Revenue", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right font-semibold text-emerald-600", get: (r) => r.revenue, cell: (r) => formatINR(r.revenue) },
+  { key: "target", label: "Target", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (r) => r.target ?? null, cell: (r) => (r.target != null ? formatINR(r.target) : "—") },
+  { key: "achPct", label: "Achi %", headerClassName: "py-2 pr-0 text-right font-semibold", tdClassName: "py-2.5 pr-0 text-right font-bold", get: (r) => r.achPct ?? null, cell: (r) => (r.achPct != null ? `${r.achPct}%` : "—") },
+];
+const MATCHED_FILTER_COLS: Array<FilterColumn<MatchedRow>> = MATCHED_COLS.map((c) => ({ key: c.key, get: c.get }));
+const matchedColGetter = (r: MatchedRow, key: string) => MATCHED_COLS.find((c) => c.key === key)?.get(r);
+
+type UnmatchedRow = DashboardData["saleLinkage"]["unmatchedSaleNames"][number];
+interface UnmatchedCol { key: string; label: string; headerClassName: string; tdClassName: string; get: (r: UnmatchedRow) => string | number | null; cell: (r: UnmatchedRow) => ReactNode }
+const UNMATCHED_COLS: UnmatchedCol[] = [
+  { key: "name", label: "Name (as in gnc_sale)", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3 font-medium text-slate-700", get: (r) => r.name, cell: (r) => r.name },
+  { key: "saleCount", label: "Sale Count", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (r) => r.saleCount, cell: (r) => fmtNum(r.saleCount) },
+  { key: "revenue", label: "Revenue", headerClassName: "py-2 pr-0 text-right font-semibold", tdClassName: "py-2.5 pr-0 text-right font-semibold text-amber-600", get: (r) => r.revenue, cell: (r) => formatINR(r.revenue) },
+];
+const UNMATCHED_FILTER_COLS: Array<FilterColumn<UnmatchedRow>> = UNMATCHED_COLS.map((c) => ({ key: c.key, get: c.get }));
+const unmatchedColGetter = (r: UnmatchedRow, key: string) => UNMATCHED_COLS.find((c) => c.key === key)?.get(r);
 
 type TabKey = "overview" | "agents" | "sale_linkage";
 const TABS: Array<{ key: TabKey; label: string }> = [

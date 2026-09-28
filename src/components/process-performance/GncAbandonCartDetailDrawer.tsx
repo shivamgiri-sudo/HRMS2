@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { formatINR, formatShortDate } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 export interface DrawerSeries {
   /** Unique per series -- used as the React key, so two series reading the same field (e.g. "Overall Unique attempted" and "Same Day Unique Attempt", both real, both sourced from the same real column) still need distinct `key`s. */
@@ -41,6 +43,20 @@ export function GncDetailDrawer({
   onClose: () => void;
 }) {
   const [shown, setShown] = useState(false);
+
+  type Row = Record<string, string | number>;
+  const weekFilterCols: Array<FilterColumn<Row>> = [{ key: "label", get: (r) => r.label }, ...series.map((s) => ({ key: s.key, get: (r: Row) => r[s.dataKey ?? s.key] }))];
+  const weekColGetter = (r: Row, key: string) => (key === "label" ? r.label : r[series.find((s) => s.key === key)?.dataKey ?? key]);
+  const weekFilters = useColumnFilters(weeklyRows, weekFilterCols);
+  const { sorted: sortedWeekly, sortKey: weekSortKey, sortDir: weekSortDir, toggleSort: toggleWeekSort } = useSortableRows(weekFilters.filtered, weekColGetter);
+
+  const dateFilterCols: Array<FilterColumn<Row>> = [{ key: "date", get: (r) => r.date }, ...series.map((s) => ({ key: s.key, get: (r: Row) => r[s.dataKey ?? s.key] }))];
+  const dateColGetter = (r: Row, key: string) => (key === "date" ? r.date : r[series.find((s) => s.key === key)?.dataKey ?? key]);
+  const dateFilters = useColumnFilters(dailyRows, dateFilterCols);
+  const { sorted: sortedDaily, sortKey: dateSortKey, sortDir: dateSortDir, toggleSort: toggleDateSort } = useSortableRows(dateFilters.filtered, dateColGetter);
+  // Default (no column sort chosen) shows newest-first, same as the original `[...dailyRows].reverse()`; an explicit
+  // column sort is the user's own choice and must not be re-reversed.
+  const sortedDailyDesc = dateSortKey ? sortedDaily : [...sortedDaily].reverse();
 
   useEffect(() => { const id = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(id); }, []);
   useEffect(() => {
@@ -95,7 +111,14 @@ export function GncDetailDrawer({
           </section>
 
           <section className="space-y-2">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Week-wise</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Week-wise</p>
+              {weekFilters.activeCount > 0 && (
+                <button type="button" onClick={weekFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                  Clear {weekFilters.activeCount} filter{weekFilters.activeCount > 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
             {weeklyRows.length === 0 ? (
               <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">None</p>
             ) : (
@@ -103,17 +126,20 @@ export function GncDetailDrawer({
                 <table className="w-full text-center text-xs">
                   <thead>
                     <tr className="bg-rose-800 text-[11px] uppercase tracking-wide text-white">
-                      <th className="px-3 py-2 text-left font-bold text-white">Week</th>
-                      {series.map((s) => <th key={s.key} className="px-3 py-2 font-bold text-white">{s.label}</th>)}
+                      <FilterSortTh label="Week" columnKey="label" sortKey={weekSortKey} sortDir={weekSortDir} onSort={toggleWeekSort} filters={weekFilters} className="px-3 py-2 text-left font-bold text-white" />
+                      {series.map((s) => (
+                        <FilterSortTh key={s.key} label={s.label} columnKey={s.key} sortKey={weekSortKey} sortDir={weekSortDir} onSort={toggleWeekSort} filters={weekFilters} className="px-3 py-2 font-bold text-white" />
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {weeklyRows.map((r, i) => (
+                    {sortedWeekly.map((r, i) => (
                       <tr key={String(r.label)} className={`border-b border-slate-50 last:border-0 ${i % 2 === 1 ? "bg-rose-50/30" : "bg-white"}`}>
                         <td className="px-3 py-2 text-left font-medium text-slate-700">{String(r.label)}</td>
                         {series.map((s) => <td key={s.key} className="px-3 py-2 font-semibold text-slate-700">{fmtVal(r[s.dataKey ?? s.key], s.fmt)}</td>)}
                       </tr>
                     ))}
+                    {sortedWeekly.length === 0 && <tr><td colSpan={series.length + 1} className="py-4 text-center text-slate-400">No weeks match the current filters.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -121,7 +147,14 @@ export function GncDetailDrawer({
           </section>
 
           <section className="space-y-2">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise</p>
+              {dateFilters.activeCount > 0 && (
+                <button type="button" onClick={dateFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                  Clear {dateFilters.activeCount} filter{dateFilters.activeCount > 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
             {dailyRows.length === 0 ? (
               <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">None</p>
             ) : (
@@ -129,17 +162,20 @@ export function GncDetailDrawer({
                 <table className="w-full text-center text-xs">
                   <thead>
                     <tr className="sticky top-0 z-10 bg-pink-800 text-[11px] uppercase tracking-wide text-white">
-                      <th className="px-3 py-2 text-left font-bold text-white">Date</th>
-                      {series.map((s) => <th key={s.key} className="px-3 py-2 font-bold text-white">{s.label}</th>)}
+                      <FilterSortTh label="Date" columnKey="date" sortKey={dateSortKey} sortDir={dateSortDir} onSort={toggleDateSort} filters={dateFilters} className="px-3 py-2 text-left font-bold text-white" />
+                      {series.map((s) => (
+                        <FilterSortTh key={s.key} label={s.label} columnKey={s.key} sortKey={dateSortKey} sortDir={dateSortDir} onSort={toggleDateSort} filters={dateFilters} className="px-3 py-2 font-bold text-white" />
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {[...dailyRows].reverse().map((r, i) => (
+                    {sortedDailyDesc.map((r, i) => (
                       <tr key={String(r.date)} className={`border-b border-slate-50 last:border-0 ${i % 2 === 1 ? "bg-pink-50/30" : "bg-white"}`}>
                         <td className="px-3 py-2 text-left font-medium text-slate-700">{formatShortDate(String(r.date))}</td>
                         {series.map((s) => <td key={s.key} className="px-3 py-2 text-slate-600">{fmtVal(r[s.dataKey ?? s.key], s.fmt)}</td>)}
                       </tr>
                     ))}
+                    {sortedDailyDesc.length === 0 && <tr><td colSpan={series.length + 1} className="py-4 text-center text-slate-400">No dates match the current filters.</td></tr>}
                   </tbody>
                 </table>
               </div>

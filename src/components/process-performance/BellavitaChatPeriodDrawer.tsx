@@ -3,6 +3,8 @@ import { X, Loader2 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatINR } from "./DashboardKit";
 import { fmtDate, fmtN } from "./lpCallShared";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 export interface PeriodTarget { label: string; from: string; to: string }
 
@@ -39,15 +41,13 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   );
 }
 
-function SimpleTable({ head, children }: { head: string[]; children: ReactNode }) {
+function SimpleTable({ head, children }: { head: ReactNode; children: ReactNode }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-100">
       <table className="w-full text-left text-xs">
         <thead>
           <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-            {head.map((h, i) => (
-              <th key={h} className={`px-3 py-2 font-semibold ${i === 0 ? "" : "text-right"}`}>{h}</th>
-            ))}
+            {head}
           </tr>
         </thead>
         <tbody>{children}</tbody>
@@ -55,6 +55,64 @@ function SimpleTable({ head, children }: { head: string[]; children: ReactNode }
     </div>
   );
 }
+
+/** Small "Clear N filter(s)" pill, shown above a table only once a column filter is active. */
+function ClearFiltersButton({ filters }: { filters: { activeCount: number; clearAll: () => void } }) {
+  if (filters.activeCount === 0) return null;
+  return (
+    <div className="mb-2 flex justify-end">
+      <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+        Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+      </button>
+    </div>
+  );
+}
+
+type ByUserTypeRow = PeriodDetail["byUserType"][number];
+type ByTlRow = PeriodDetail["byTl"][number];
+type ByAgentRow = PeriodDetail["byAgent"][number];
+type DupOrderRow = PeriodDetail["duplicateOrders"][number];
+
+interface Col<T> { key: string; label: string; get: (r: T) => string | number | null; cell: (r: T) => ReactNode }
+const thCls = (i: number) => `px-3 py-2 font-semibold ${i === 0 ? "" : "text-right"}`;
+
+const USERTYPE_COLS: Array<Col<ByUserTypeRow>> = [
+  { key: "userType", label: "User type", get: (r) => r.userType, cell: (r) => r.userType },
+  { key: "overall", label: "Chats", get: (r) => r.overall, cell: (r) => fmtN(r.overall) },
+  { key: "unique", label: "Unique", get: (r) => r.unique, cell: (r) => fmtN(r.unique) },
+  { key: "frtPct", label: "FRT %", get: (r) => r.frtPct, cell: (r) => `${r.frtPct}%` },
+  { key: "repeat24", label: "Repeat 24h", get: (r) => r.repeat24, cell: (r) => fmtN(r.repeat24) },
+];
+const USERTYPE_FILTER_COLS: Array<FilterColumn<ByUserTypeRow>> = USERTYPE_COLS.map((c) => ({ key: c.key, get: c.get }));
+const userTypeColGetter = (r: ByUserTypeRow, key: string) => USERTYPE_COLS.find((c) => c.key === key)?.get(r);
+
+const DUP_ORDER_COLS: Array<Col<DupOrderRow>> = [
+  { key: "orderId", label: "Order id", get: (r) => r.orderId, cell: (r) => r.orderId },
+  { key: "date", label: "Date", get: (r) => r.date, cell: (r) => fmtDate(r.date) },
+  { key: "amount", label: "Amount", get: (r) => r.amount, cell: (r) => formatINR(r.amount) },
+  { key: "rows", label: "Rows", get: (r) => r.rows, cell: (r) => r.rows },
+  { key: "extraRevenue", label: "Extra revenue", get: (r) => r.extraRevenue, cell: (r) => formatINR(r.extraRevenue) },
+];
+const DUP_ORDER_FILTER_COLS: Array<FilterColumn<DupOrderRow>> = DUP_ORDER_COLS.map((c) => ({ key: c.key, get: c.get }));
+const dupOrderColGetter = (r: DupOrderRow, key: string) => DUP_ORDER_COLS.find((c) => c.key === key)?.get(r);
+
+const TL_COLS: Array<Col<ByTlRow>> = [
+  { key: "tlName", label: "TL", get: (r) => r.tlName, cell: (r) => r.tlName },
+  { key: "overall", label: "Chats", get: (r) => r.overall, cell: (r) => fmtN(r.overall) },
+  { key: "unique", label: "Unique", get: (r) => r.unique, cell: (r) => fmtN(r.unique) },
+  { key: "frtPct", label: "FRT %", get: (r) => r.frtPct, cell: (r) => `${r.frtPct}%` },
+];
+const TL_FILTER_COLS: Array<FilterColumn<ByTlRow>> = TL_COLS.map((c) => ({ key: c.key, get: c.get }));
+const tlColGetter = (r: ByTlRow, key: string) => TL_COLS.find((c) => c.key === key)?.get(r);
+
+const AGENT_COLS: Array<Col<ByAgentRow>> = [
+  { key: "agent", label: "Agent", get: (r) => r.agent, cell: () => null },
+  { key: "overall", label: "Chats", get: (r) => r.overall, cell: (r) => fmtN(r.overall) },
+  { key: "unique", label: "Unique", get: (r) => r.unique, cell: (r) => fmtN(r.unique) },
+  { key: "frtPct", label: "FRT %", get: (r) => r.frtPct, cell: (r) => `${r.frtPct}%` },
+];
+const AGENT_FILTER_COLS: Array<FilterColumn<ByAgentRow>> = AGENT_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentColGetter = (r: ByAgentRow, key: string) => AGENT_COLS.find((c) => c.key === key)?.get(r);
 
 export function BellavitaChatPeriodDrawer({
   apiPath, target, userType, onClose,
@@ -87,6 +145,19 @@ export function BellavitaChatPeriodDrawer({
 
   const range = target.from === target.to ? fmtDate(target.from) : `${fmtDate(target.from)} to ${fmtDate(target.to)}`;
 
+  // Excel-style: every header sorts (click) and filters (funnel icon); one independent pair of hooks per table.
+  const userTypeFilters = useColumnFilters(data?.byUserType ?? [], USERTYPE_FILTER_COLS);
+  const { sorted: sortedUserType, sortKey: userTypeSortKey, sortDir: userTypeSortDir, toggleSort: toggleUserTypeSort } = useSortableRows(userTypeFilters.filtered, userTypeColGetter);
+
+  const dupOrderFilters = useColumnFilters(data?.duplicateOrders ?? [], DUP_ORDER_FILTER_COLS);
+  const { sorted: sortedDupOrders, sortKey: dupOrderSortKey, sortDir: dupOrderSortDir, toggleSort: toggleDupOrderSort } = useSortableRows(dupOrderFilters.filtered, dupOrderColGetter);
+
+  const tlFilters = useColumnFilters(data?.byTl ?? [], TL_FILTER_COLS);
+  const { sorted: sortedTl, sortKey: tlSortKey, sortDir: tlSortDir, toggleSort: toggleTlSort } = useSortableRows(tlFilters.filtered, tlColGetter);
+
+  const agentFilters = useColumnFilters(data?.byAgent ?? [], AGENT_FILTER_COLS);
+  const { sorted: sortedAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`${target.label} detail`}>
       <button
@@ -118,17 +189,22 @@ export function BellavitaChatPeriodDrawer({
             <>
               <Section title="By user type">
                 {data.byUserType.length === 0 ? <None /> : (
-                  <SimpleTable head={["User type", "Chats", "Unique", "FRT %", "Repeat 24h"]}>
-                    {data.byUserType.map((r) => (
-                      <tr key={r.userType} className="border-t border-slate-50">
-                        <td className="px-3 py-2 font-medium text-slate-700">{r.userType}</td>
-                        <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.overall)}</td>
-                        <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.unique)}</td>
-                        <td className="px-3 py-2 text-right font-semibold text-slate-800">{r.frtPct}%</td>
-                        <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.repeat24)}</td>
-                      </tr>
-                    ))}
-                  </SimpleTable>
+                  <>
+                    <ClearFiltersButton filters={userTypeFilters} />
+                    <SimpleTable head={USERTYPE_COLS.map((c, i) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={userTypeSortKey} sortDir={userTypeSortDir} onSort={toggleUserTypeSort} filters={userTypeFilters} className={thCls(i)} />
+                    ))}>
+                      {sortedUserType.map((r) => (
+                        <tr key={r.userType} className="border-t border-slate-50">
+                          <td className="px-3 py-2 font-medium text-slate-700">{r.userType}</td>
+                          <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.overall)}</td>
+                          <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.unique)}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-800">{r.frtPct}%</td>
+                          <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.repeat24)}</td>
+                        </tr>
+                      ))}
+                    </SimpleTable>
+                  </>
                 )}
               </Section>
 
@@ -148,17 +224,22 @@ export function BellavitaChatPeriodDrawer({
                       <Stat label="Without order id" value={fmtN(data.integrity.blankOrderIdRows)} sub="can't be de-duplicated" />
                     </div>
                     {data.duplicateOrders.length === 0 ? <None /> : (
-                      <SimpleTable head={["Order id", "Date", "Amount", "Rows", "Extra revenue"]}>
-                        {data.duplicateOrders.map((o) => (
-                          <tr key={o.orderId} className="border-t border-slate-50">
-                            <td className="px-3 py-2 font-medium text-slate-700">{o.orderId}</td>
-                            <td className="px-3 py-2 text-right text-slate-600">{fmtDate(o.date)}</td>
-                            <td className="px-3 py-2 text-right text-slate-600">{formatINR(o.amount)}</td>
-                            <td className="px-3 py-2 text-right font-semibold text-slate-800">{o.rows}</td>
-                            <td className="px-3 py-2 text-right text-rose-600">{formatINR(o.extraRevenue)}</td>
-                          </tr>
-                        ))}
-                      </SimpleTable>
+                      <>
+                        <ClearFiltersButton filters={dupOrderFilters} />
+                        <SimpleTable head={DUP_ORDER_COLS.map((c, i) => (
+                          <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={dupOrderSortKey} sortDir={dupOrderSortDir} onSort={toggleDupOrderSort} filters={dupOrderFilters} className={thCls(i)} />
+                        ))}>
+                          {sortedDupOrders.map((o) => (
+                            <tr key={o.orderId} className="border-t border-slate-50">
+                              <td className="px-3 py-2 font-medium text-slate-700">{o.orderId}</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{fmtDate(o.date)}</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{formatINR(o.amount)}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-800">{o.rows}</td>
+                              <td className="px-3 py-2 text-right text-rose-600">{formatINR(o.extraRevenue)}</td>
+                            </tr>
+                          ))}
+                        </SimpleTable>
+                      </>
                     )}
                   </div>
                 )}
@@ -166,34 +247,44 @@ export function BellavitaChatPeriodDrawer({
 
               <Section title="TL-wise">
                 {data.byTl.length === 0 ? <None /> : (
-                  <SimpleTable head={["TL", "Chats", "Unique", "FRT %"]}>
-                    {data.byTl.map((r) => (
-                      <tr key={r.tlName} className="border-t border-slate-50">
-                        <td className="px-3 py-2 font-medium text-slate-700">{r.tlName}</td>
-                        <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.overall)}</td>
-                        <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.unique)}</td>
-                        <td className="px-3 py-2 text-right font-semibold text-slate-800">{r.frtPct}%</td>
-                      </tr>
-                    ))}
-                  </SimpleTable>
+                  <>
+                    <ClearFiltersButton filters={tlFilters} />
+                    <SimpleTable head={TL_COLS.map((c, i) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={tlSortKey} sortDir={tlSortDir} onSort={toggleTlSort} filters={tlFilters} className={thCls(i)} />
+                    ))}>
+                      {sortedTl.map((r) => (
+                        <tr key={r.tlName} className="border-t border-slate-50">
+                          <td className="px-3 py-2 font-medium text-slate-700">{r.tlName}</td>
+                          <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.overall)}</td>
+                          <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.unique)}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-800">{r.frtPct}%</td>
+                        </tr>
+                      ))}
+                    </SimpleTable>
+                  </>
                 )}
               </Section>
 
               <Section title="Agent-wise">
                 {data.byAgent.length === 0 ? <None /> : (
-                  <SimpleTable head={["Agent", "Chats", "Unique", "FRT %"]}>
-                    {data.byAgent.map((r) => (
-                      <tr key={`${r.empId}-${r.agent}`} className="border-t border-slate-50">
-                        <td className="px-3 py-2">
-                          <div className="font-medium text-slate-700">{r.agent}</div>
-                          <div className="text-[10px] text-slate-400">{r.empId || "—"}</div>
-                        </td>
-                        <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.overall)}</td>
-                        <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.unique)}</td>
-                        <td className="px-3 py-2 text-right font-semibold text-slate-800">{r.frtPct}%</td>
-                      </tr>
-                    ))}
-                  </SimpleTable>
+                  <>
+                    <ClearFiltersButton filters={agentFilters} />
+                    <SimpleTable head={AGENT_COLS.map((c, i) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={thCls(i)} />
+                    ))}>
+                      {sortedAgents.map((r) => (
+                        <tr key={`${r.empId}-${r.agent}`} className="border-t border-slate-50">
+                          <td className="px-3 py-2">
+                            <div className="font-medium text-slate-700">{r.agent}</div>
+                            <div className="text-[10px] text-slate-400">{r.empId || "—"}</div>
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.overall)}</td>
+                          <td className="px-3 py-2 text-right text-slate-600">{fmtN(r.unique)}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-800">{r.frtPct}%</td>
+                        </tr>
+                      ))}
+                    </SimpleTable>
+                  </>
                 )}
               </Section>
             </>

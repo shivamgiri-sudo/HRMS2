@@ -3,6 +3,15 @@ import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Respons
 import { X, Loader2 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatINR, formatShortDate } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
+
+type CampaignDailyRow = CampaignDetail["daily"][number];
+const CAMPAIGN_DAILY_FILTER_COLS: Array<FilterColumn<CampaignDailyRow>> = [
+  { key: "date", get: (d) => d.date }, { key: "saleCount", get: (d) => d.saleCount }, { key: "codCount", get: (d) => d.codCount },
+  { key: "paidCount", get: (d) => d.paidCount }, { key: "revenue", get: (d) => d.revenue }, { key: "conversionPct", get: (d) => d.conversionPct },
+];
+const campaignDailyColGetter = (d: CampaignDailyRow, key: string) => CAMPAIGN_DAILY_FILTER_COLS.find((c) => c.key === key)?.get(d);
 
 const TOOLTIP_PROPS = {
   contentStyle: { fontSize: 12, borderRadius: 10, border: "1px solid #334155", background: "#0f172a", boxShadow: "0 8px 24px rgba(15,23,42,0.4)", padding: "8px 12px" },
@@ -51,6 +60,9 @@ export function GncCampaignDrawer({
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load this LOB's detail."); });
     return () => { cancelled = true; };
   }, [campaign, from, to]);
+
+  const dailyFilters = useColumnFilters(data?.daily ?? [], CAMPAIGN_DAILY_FILTER_COLS);
+  const { sorted: sortedDaily, sortKey: dailySortKey, sortDir: dailySortDir, toggleSort: toggleDailySort } = useSortableRows(dailyFilters.filtered, campaignDailyColGetter);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="LOB date-wise performance">
@@ -107,20 +119,27 @@ export function GncCampaignDrawer({
                         <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sale Made" stroke="#047857" strokeWidth={2} dot={{ r: 2 }} />
                       </ComposedChart>
                     </ResponsiveContainer>
+                    {dailyFilters.activeCount > 0 && (
+                      <div className="flex justify-end">
+                        <button type="button" onClick={dailyFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                          Clear {dailyFilters.activeCount} filter{dailyFilters.activeCount > 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    )}
                     <div className="overflow-x-auto rounded-xl border border-slate-100">
                       <table className="w-full text-center text-xs">
                         <thead>
                           <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                            <th className="px-3 py-2 font-semibold">Date</th>
-                            <th className="px-3 py-2 font-semibold">Sale Made</th>
-                            <th className="px-3 py-2 font-semibold">COD</th>
-                            <th className="px-3 py-2 font-semibold">Paid</th>
-                            <th className="px-3 py-2 font-semibold">Revenue</th>
-                            <th className="px-3 py-2 font-semibold">Conv%</th>
+                            <FilterSortTh label="Date" columnKey="date" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Sale Made" columnKey="saleCount" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="COD" columnKey="codCount" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Paid" columnKey="paidCount" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Revenue" columnKey="revenue" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Conv%" columnKey="conversionPct" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
                           </tr>
                         </thead>
                         <tbody>
-                          {data.daily.map((d) => (
+                          {sortedDaily.map((d) => (
                             <tr key={d.date} className="border-t border-slate-50">
                               <td className="px-3 py-2 font-medium text-slate-700">{formatShortDate(d.date)}</td>
                               <td className="px-3 py-2 text-slate-600">{d.saleCount}</td>
@@ -130,6 +149,7 @@ export function GncCampaignDrawer({
                               <td className="px-3 py-2 text-slate-600">{d.conversionPct !== null ? `${d.conversionPct}%` : <span className="text-slate-300">—</span>}</td>
                             </tr>
                           ))}
+                          {sortedDaily.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-slate-400">No dates match the current filters.</td></tr>}
                         </tbody>
                       </table>
                     </div>

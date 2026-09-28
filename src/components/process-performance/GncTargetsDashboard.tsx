@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Target, IndianRupee, Gauge, Users, Layers, Pencil, X, Loader2, Plus, TrendingUp, AlertTriangle } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Input } from "@/components/ui/input";
@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner, KpiCard, SectionCard, formatINR, localDateStr } from "./DashboardKit";
 import { GncAgentDrawer } from "./GncAgentDrawer";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * GNC "Targets" page. The monthly revenue target of each LOB is defined here once (and edited
@@ -80,6 +82,47 @@ const formulaOf = (basis: Basis | null, per: number | null, n: number | null, fi
   if (basis === "fixed" && fixed !== null) return `${formatINR(fixed)} fixed / month${n ? ` (≈ ${formatINR(fixed / n)} per agent across ${n})` : ""}`;
   return monthly === null ? "No target configured" : `${formatINR(monthly)} / month`;
 };
+
+/* --------------------------- table column defs (Excel-style sort/filter) --------------------------- */
+
+interface ConfigCol {
+  key: string; label: string;
+  get: (r: TargetRow) => string | number | null;
+  cell: (r: TargetRow) => ReactNode;
+  className: string;
+}
+const CONFIG_COLS: ConfigCol[] = [
+  { key: "lob", label: "LOB", get: (r) => r.lob, className: "px-3 py-2 text-left",
+    cell: (r) => <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${LOB_TONE[r.lob]?.chip ?? "bg-slate-100 text-slate-600"}`}>{r.lob}</span> },
+  { key: "effectiveFrom", label: "Effective from", get: (r) => r.effectiveMonth, cell: (r) => monthLabel(r.effectiveMonth), className: "px-3 py-2 font-semibold" },
+  { key: "basis", label: "Basis", get: (r) => r.basis, cell: (r) => (r.basis === "per_agent" ? "Per agent × agents" : "Fixed monthly"), className: "px-3 py-2" },
+  { key: "perAgent", label: "Per agent", get: (r) => r.perAgentTarget, cell: (r) => (r.perAgentTarget != null ? formatINR(r.perAgentTarget) : "—"), className: "px-3 py-2" },
+  { key: "agents", label: "Agents", get: (r) => r.agentCount, cell: (r) => r.agentCount ?? "—", className: "px-3 py-2" },
+  { key: "monthlyTarget", label: "Monthly target", get: (r) => r.monthlyTarget, cell: (r) => formatINR(r.monthlyTarget), className: "px-3 py-2 font-bold text-slate-800" },
+  { key: "updatedBy", label: "Updated by", get: (r) => r.updatedByLabel ?? r.updatedBy, cell: (r) => r.updatedByLabel ?? r.updatedBy ?? "—", className: "px-3 py-2 text-slate-500" },
+  { key: "updatedAt", label: "Updated at", get: (r) => r.updatedAt, cell: (r) => fmtDateTime(r.updatedAt), className: "whitespace-nowrap px-3 py-2 text-slate-500" },
+];
+const CONFIG_FILTER_COLS: Array<FilterColumn<TargetRow>> = CONFIG_COLS.map((c) => ({ key: c.key, get: c.get }));
+const configColGetter = (r: TargetRow, key: string) => CONFIG_COLS.find((c) => c.key === key)?.get(r);
+
+type AgentTargetRow = SaleTargets["agentPerformance"][number];
+interface AgentTargetCol {
+  key: string; label: string;
+  get: (r: AgentTargetRow) => string | number | null;
+  cell: (r: AgentTargetRow) => ReactNode;
+  className: string;
+}
+const AGENT_TARGET_COLS: AgentTargetCol[] = [
+  { key: "agent", label: "Agent", get: (r) => r.empName, cell: (r) => r.empName, className: "whitespace-nowrap px-3 py-2 text-left font-semibold text-slate-700" },
+  { key: "lob", label: "LOB", get: (r) => r.lob, cell: (r) => <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${LOB_TONE[r.lob]?.chip ?? ""}`}>{r.lob}</span>, className: "px-3 py-2" },
+  { key: "tl", label: "TL", get: (r) => r.tl, cell: (r) => r.tl, className: "px-3 py-2 text-slate-500" },
+  { key: "saleCount", label: "Sale count", get: (r) => r.saleCount, cell: (r) => r.saleCount, className: "px-3 py-2" },
+  { key: "revenue", label: "Revenue", get: (r) => r.revenue, cell: (r) => formatINR(r.revenue), className: "px-3 py-2 font-semibold" },
+  { key: "target", label: "Target", get: (r) => r.target, cell: (r) => (r.target !== null ? formatINR(r.target) : "—"), className: "px-3 py-2" },
+  { key: "achPct", label: "Ach %", get: (r) => r.achPct, cell: (r) => (r.achPct === null ? "—" : `${r.achPct}%`), className: "px-3 py-2 font-extrabold" },
+];
+const AGENT_TARGET_FILTER_COLS: Array<FilterColumn<AgentTargetRow>> = AGENT_TARGET_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentTargetColGetter = (r: AgentTargetRow, key: string) => AGENT_TARGET_COLS.find((c) => c.key === key)?.get(r);
 
 /* ---------------------------- edit / detail drawer ---------------------------- */
 
@@ -292,6 +335,17 @@ export function GncTargetsDashboard() {
     return best;
   }, [list, ym]);
 
+  // Excel-style: every header sorts (click) and filters (funnel icon); filters AND together, then the sort applies.
+  const configFilters = useColumnFilters(list?.rows ?? [], CONFIG_FILTER_COLS);
+  const configSort = useSortableRows(configFilters.filtered, configColGetter);
+
+  const agents = useMemo(
+    () => (sale?.agentPerformance ?? []).filter((a) => ["Inbound", "Chat", "Abandon Cart"].includes(a.lob)).sort((a, b) => a.lob.localeCompare(b.lob) || b.revenue - a.revenue),
+    [sale],
+  );
+  const agentTargetFilters = useColumnFilters(agents, AGENT_TARGET_FILTER_COLS);
+  const agentTargetSort = useSortableRows(agentTargetFilters.filtered, agentTargetColGetter);
+
   if (loading && !list) return <Spinner />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!list || !sale) return null;
@@ -301,7 +355,6 @@ export function GncTargetsDashboard() {
   const monthlyTotal = blocks.reduce((s, b) => s + (b.monthlyTarget ?? 0), 0);
   const partial = sale.to < `${ym}-${String(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate()).padStart(2, "0")}`;
   const overallAch = total && monthlyTotal > 0 ? Math.round((total.revenue / monthlyTotal) * 10000) / 100 : null;
-  const agents = sale.agentPerformance.filter((a) => ["Inbound", "Chat", "Abandon Cart"].includes(a.lob)).sort((a, b) => a.lob.localeCompare(b.lob) || b.revenue - a.revenue);
 
   return (
     <div className="space-y-5">
@@ -364,23 +417,29 @@ export function GncTargetsDashboard() {
       <SectionCard icon={Layers} title="Target configuration (click a row to edit or see its history)" tone="teal"
         action={<Button size="sm" variant="outline" className="h-8" onClick={() => setDrawer({ lob: "Inbound", seed: null })} disabled={!list.tableAvailable}><Plus className="mr-1 h-3 w-3" />New target</Button>}
         footnote="A row applies from its month until a later row for the same LOB replaces it. Months before the first row have no target.">
+        {configFilters.activeCount > 0 && (
+          <button type="button" onClick={configFilters.clearAll} className="mb-2 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {configFilters.activeCount} filter{configFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        )}
         <div className="overflow-x-auto rounded-lg border border-slate-100">
           <table className="w-full text-center text-xs">
-            <thead><tr className="bg-slate-800 text-white">{["LOB", "Effective from", "Basis", "Per agent", "Agents", "Monthly target", "Updated by", "Updated at"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2 font-semibold text-white">{h}</th>)}</tr></thead>
+            <thead>
+              <tr className="bg-slate-800 text-white">
+                {CONFIG_COLS.map((c) => (
+                  <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={configSort.sortKey} sortDir={configSort.sortDir} onSort={configSort.toggleSort} filters={configFilters}
+                    className="whitespace-nowrap px-3 py-2 font-semibold text-white" />
+                ))}
+              </tr>
+            </thead>
             <tbody>
-              {list.rows.map((r, i) => (
+              {configSort.sorted.map((r, i) => (
                 <tr key={r.id} onClick={() => setDrawer({ lob: r.lob, seed: r })} className={`cursor-pointer hover:bg-emerald-50 ${i % 2 ? "bg-slate-50/60" : "bg-white"}`}>
-                  <td className="px-3 py-2 text-left"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${LOB_TONE[r.lob]?.chip ?? "bg-slate-100 text-slate-600"}`}>{r.lob}</span></td>
-                  <td className="px-3 py-2 font-semibold">{monthLabel(r.effectiveMonth)}</td>
-                  <td className="px-3 py-2">{r.basis === "per_agent" ? "Per agent × agents" : "Fixed monthly"}</td>
-                  <td className="px-3 py-2">{r.perAgentTarget != null ? formatINR(r.perAgentTarget) : "—"}</td>
-                  <td className="px-3 py-2">{r.agentCount ?? "—"}</td>
-                  <td className="px-3 py-2 font-bold text-slate-800">{formatINR(r.monthlyTarget)}</td>
-                  <td className="px-3 py-2 text-slate-500">{r.updatedByLabel ?? r.updatedBy ?? "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDateTime(r.updatedAt)}</td>
+                  {CONFIG_COLS.map((c) => <td key={c.key} className={c.className}>{c.cell(r)}</td>)}
                 </tr>
               ))}
-              {list.rows.length === 0 && <tr><td colSpan={8} className="py-4 text-slate-400">None</td></tr>}
+              {list.rows.length === 0 && <tr><td colSpan={CONFIG_COLS.length} className="py-4 text-slate-400">None</td></tr>}
+              {list.rows.length > 0 && configSort.sorted.length === 0 && <tr><td colSpan={CONFIG_COLS.length} className="py-4 text-slate-400">No rows match the filters.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -388,22 +447,31 @@ export function GncTargetsDashboard() {
 
       <SectionCard icon={Users} title={`Agent-wise target vs revenue — ${monthLabel(ym)}`} tone="violet"
         footnote="An agent's target is the per-agent target of the LOB they sold most in (Abandon Cart shows a target only when its agent count is set). Revenue is all their GNC sales in the month.">
+        {agentTargetFilters.activeCount > 0 && (
+          <button type="button" onClick={agentTargetFilters.clearAll} className="mb-2 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {agentTargetFilters.activeCount} filter{agentTargetFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        )}
         <div className="max-h-[420px] overflow-auto rounded-lg border border-slate-100">
           <table className="w-full text-center text-xs">
-            <thead><tr className="sticky top-0 bg-slate-800 text-white">{["Agent", "LOB", "TL", "Sale count", "Revenue", "Target", "Ach %"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2 font-semibold text-white">{h}</th>)}</tr></thead>
+            <thead>
+              <tr className="sticky top-0 bg-slate-800 text-white">
+                {AGENT_TARGET_COLS.map((c) => (
+                  <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={agentTargetSort.sortKey} sortDir={agentTargetSort.sortDir} onSort={agentTargetSort.toggleSort} filters={agentTargetFilters}
+                    className="whitespace-nowrap px-3 py-2 font-semibold text-white" />
+                ))}
+              </tr>
+            </thead>
             <tbody>
-              {agents.map((a, i) => (
+              {agentTargetSort.sorted.map((a, i) => (
                 <tr key={a.empId + a.lob} onClick={() => setAgentDrawer(a.empId)} className={`cursor-pointer hover:bg-violet-50 ${i % 2 ? "bg-slate-50/60" : "bg-white"}`}>
-                  <td className="whitespace-nowrap px-3 py-2 text-left font-semibold text-slate-700">{a.empName}</td>
-                  <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${LOB_TONE[a.lob]?.chip ?? ""}`}>{a.lob}</span></td>
-                  <td className="px-3 py-2 text-slate-500">{a.tl}</td>
-                  <td className="px-3 py-2">{a.saleCount}</td>
-                  <td className="px-3 py-2 font-semibold">{formatINR(a.revenue)}</td>
-                  <td className="px-3 py-2">{a.target !== null ? formatINR(a.target) : "—"}</td>
-                  <td className={`px-3 py-2 font-extrabold ${achColor(a.achPct)}`}>{a.achPct === null ? "—" : `${a.achPct}%`}</td>
+                  {AGENT_TARGET_COLS.map((c) => (
+                    <td key={c.key} className={`${c.className} ${c.key === "achPct" ? achColor(a.achPct) : ""}`}>{c.cell(a)}</td>
+                  ))}
                 </tr>
               ))}
-              {agents.length === 0 && <tr><td colSpan={7} className="py-4 text-slate-400">None</td></tr>}
+              {agents.length === 0 && <tr><td colSpan={AGENT_TARGET_COLS.length} className="py-4 text-slate-400">None</td></tr>}
+              {agents.length > 0 && agentTargetSort.sorted.length === 0 && <tr><td colSpan={AGENT_TARGET_COLS.length} className="py-4 text-slate-400">No rows match the filters.</td></tr>}
             </tbody>
           </table>
         </div>

@@ -6,6 +6,8 @@ import { apiUrl } from "@/lib/apiBase";
 import { TONE_SOLID_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { Upload, Loader2, CheckCircle2, XCircle, Trash2, UploadCloud, Download, CheckCircle } from "lucide-react";
 import { UploadCoverageBanner, useRefreshUploadCoverage, useUploadCoverage } from "./UploadCoverage";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Inline uploader embedded directly on Process Performance V2's Bellavita and
@@ -160,6 +162,17 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const RECENT_UPLOADS_PAGE_SIZE = 5;
+
+/** Excel-style sort + filter for the Recent Uploads table -- shared by every company's uploader instance. */
+interface LogCol { key: string; label: string; get: (r: UploadBatchLogRow) => string | number; className?: string }
+const LOG_COLS: LogCol[] = [
+  { key: "fileName", label: "File Name", get: (r) => r.original_file_name || "(no file name)", className: "py-2 pr-3 font-semibold" },
+  { key: "uploadedBy", label: "Uploaded By", get: (r) => r.uploaded_by_name || "—", className: "py-2 pr-3 font-semibold" },
+  { key: "dateTime", label: "Date & Time", get: (r) => r.created_at, className: "py-2 pr-3 font-semibold" },
+  { key: "status", label: "Status", get: (r) => STATUS_LABELS[r.batch_status] ?? r.batch_status, className: "py-2 pr-3 font-semibold" },
+];
+const LOG_FILTER_COLS: Array<FilterColumn<UploadBatchLogRow>> = LOG_COLS.map((c) => ({ key: c.key, get: c.get }));
+const logColGetter = (r: UploadBatchLogRow, key: string) => LOG_COLS.find((c) => c.key === key)?.get(r);
 
 export function BellavitaMasmisUploader({
   templateCode, label, tone = "slate",
@@ -487,7 +500,9 @@ export function BellavitaMasmisUploader({
   }
 
   const busy = phase === "staging" || phase === "importing";
-  const visibleLog = showAllLog ? log : log.slice(0, RECENT_UPLOADS_PAGE_SIZE);
+  const logFilters = useColumnFilters(log, LOG_FILTER_COLS);
+  const { sorted: sortedLog, sortKey: logSortKey, sortDir: logSortDir, toggleSort: toggleLogSort } = useSortableRows(logFilters.filtered, logColGetter);
+  const visibleLog = showAllLog ? sortedLog : sortedLog.slice(0, RECENT_UPLOADS_PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -613,9 +628,16 @@ export function BellavitaMasmisUploader({
 
       {/* Recent uploads */}
       <div id={`recent-uploads-${templateCode}`} className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-bold text-slate-900">Recent Uploads</div>
-          {log.length > RECENT_UPLOADS_PAGE_SIZE && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-bold text-slate-900">Recent Uploads</div>
+            {logFilters.activeCount > 0 && (
+              <button type="button" onClick={logFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {logFilters.activeCount} filter{logFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            )}
+          </div>
+          {sortedLog.length > RECENT_UPLOADS_PAGE_SIZE && (
             <button
               type="button"
               onClick={() => setShowAllLog((v) => !v)}
@@ -634,11 +656,11 @@ export function BellavitaMasmisUploader({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">File Name</th>
+                  <FilterSortTh label="File Name" columnKey="fileName" sortKey={logSortKey} sortDir={logSortDir} onSort={toggleLogSort} filters={logFilters} className="py-2 pr-3 font-semibold" />
                   <th className="py-2 pr-3 font-semibold">Type</th>
-                  <th className="py-2 pr-3 font-semibold">Uploaded By</th>
-                  <th className="py-2 pr-3 font-semibold">Date &amp; Time</th>
-                  <th className="py-2 pr-3 font-semibold">Status</th>
+                  <FilterSortTh label="Uploaded By" columnKey="uploadedBy" sortKey={logSortKey} sortDir={logSortDir} onSort={toggleLogSort} filters={logFilters} className="py-2 pr-3 font-semibold" />
+                  <FilterSortTh label="Date & Time" columnKey="dateTime" sortKey={logSortKey} sortDir={logSortDir} onSort={toggleLogSort} filters={logFilters} className="py-2 pr-3 font-semibold" />
+                  <FilterSortTh label="Status" columnKey="status" sortKey={logSortKey} sortDir={logSortDir} onSort={toggleLogSort} filters={logFilters} className="py-2 pr-3 font-semibold" />
                   <th className="py-2 pr-0 text-right font-semibold">Actions</th>
                 </tr>
               </thead>
@@ -691,6 +713,9 @@ export function BellavitaMasmisUploader({
                     </td>
                   </tr>
                 ))}
+                {visibleLog.length === 0 && (
+                  <tr><td colSpan={6} className="py-6 text-center text-slate-400">No uploads match the current filters.</td></tr>
+                )}
               </tbody>
             </table>
           </div>

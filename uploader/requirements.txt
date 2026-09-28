@@ -1,0 +1,7 @@
+selenium>=4.49
+requests>=2.31
+openpyxl>=3.1
+python-dotenv>=1.0
+PyMySQL>=1.1
+google-api-python-client>=2.100
+google-auth>=2.30

@@ -12,6 +12,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { BellavitaCartTargetTable } from "./BellavitaCartTargetTable";
 import { KpiCard, SectionCard, formatINR, type KpiTone, PeriodSection, type PeriodWeek, type PeriodRow } from "./DashboardKit";
 import type { CartHeadline, CartTrendRow, CartTopProduct } from "./BellavitaCartDashboard";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Bellavita Abandon Cart "Overview" -- every headline KPI the backend
@@ -244,10 +246,23 @@ interface OverviewData {
   topProducts: CartTopProduct[];
 }
 
+interface TopProductCol { key: string; label: string; get: (r: CartTopProduct) => string | number | null; cell: (r: CartTopProduct) => ReactNode; className?: string }
+const TOP_PRODUCT_COLS: TopProductCol[] = [
+  { key: "product", label: "Product", get: (r) => r.product, cell: (r) => <span title={r.product}>{r.product.length > 34 ? `${r.product.slice(0, 34)}…` : r.product}</span>, className: "py-1.5 pr-2 text-left text-slate-700" },
+  { key: "base", label: "Base", get: (r) => r.baseCount, cell: (r) => r.baseCount.toLocaleString("en-IN"), className: "py-1.5 pr-2 text-right text-slate-600" },
+  { key: "connectPct", label: "Connect%", get: (r) => r.connectedPct, cell: (r) => `${r.connectedPct}%`, className: "py-1.5 pr-2 text-right font-semibold text-emerald-600" },
+  { key: "sales", label: "Sales", get: (r) => r.saleCount, cell: (r) => (r.saleCount !== null ? r.saleCount.toLocaleString("en-IN") : "—"), className: "py-1.5 pr-2 text-right text-slate-600" },
+  { key: "revenue", label: "Revenue", get: (r) => r.revenue, cell: (r) => (r.revenue !== null ? formatINR(r.revenue) : "—"), className: "py-1.5 pr-0 text-right font-semibold text-amber-700" },
+];
+const TOP_PRODUCT_FILTER_COLS: Array<FilterColumn<CartTopProduct>> = TOP_PRODUCT_COLS.map((c) => ({ key: c.key, get: c.get }));
+const topProductColGetter = (r: CartTopProduct, key: string) => TOP_PRODUCT_COLS.find((c) => c.key === key)?.get(r);
+
 export function BellavitaCartOverview({ data }: { data: OverviewData }) {
   const [drawerKpi, setDrawerKpi] = useState<(KpiDef & { drill: Drill }) | null>(null);
   const [drawerChart, setDrawerChart] = useState<ChartDetail | null>(null);
   const [prevHeadline, setPrevHeadline] = useState<CartHeadline | null>(null);
+  const topProductFilters = useColumnFilters(data.topProducts, TOP_PRODUCT_FILTER_COLS);
+  const { sorted: sortedTopProducts, sortKey: topProductSortKey, sortDir: topProductSortDir, toggleSort: toggleTopProductSort } = useSortableRows(topProductFilters.filtered, topProductColGetter);
   const h = data.headline;
 
   const loadPrevious = useCallback(async () => {
@@ -655,29 +670,31 @@ export function BellavitaCartOverview({ data }: { data: OverviewData }) {
           {renderWeekComparison(240)}
         </SectionCard>
 
-        <SectionCard icon={ShoppingBag} title="Top Products" tone="amber" footnote="From bb_cart.variant_title -- bb_cart has no campaign/LOB column, so this is products only. Sales/Revenue/AOV are matched to bb_sale.line_item_name by exact text; an unmatched product shows '—', never a fabricated 0.">
+        <SectionCard
+          icon={ShoppingBag} title="Top Products" tone="amber"
+          footnote="From bb_cart.variant_title -- bb_cart has no campaign/LOB column, so this is products only. Sales/Revenue/AOV are matched to bb_sale.line_item_name by exact text; an unmatched product shows '—', never a fabricated 0."
+          action={topProductFilters.activeCount > 0 ? (
+            <button type="button" onClick={topProductFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {topProductFilters.activeCount} filter{topProductFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          ) : undefined}
+        >
           <div className="max-h-[280px] overflow-y-auto overflow-x-auto">
             <table className="w-full min-w-[520px] text-left text-[11px]">
               <thead><tr className="border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-400">
                 <th className="py-1.5 pr-2 font-semibold">#</th>
-                <th className="py-1.5 pr-2 font-semibold">Product</th>
-                <th className="py-1.5 pr-2 text-right font-semibold">Base</th>
-                <th className="py-1.5 pr-2 text-right font-semibold">Connect%</th>
-                <th className="py-1.5 pr-2 text-right font-semibold">Sales</th>
-                <th className="py-1.5 pr-0 text-right font-semibold">Revenue</th>
+                {TOP_PRODUCT_COLS.map((c) => (
+                  <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={topProductSortKey} sortDir={topProductSortDir} onSort={toggleTopProductSort} filters={topProductFilters} className="py-1.5 pr-2 font-semibold" />
+                ))}
               </tr></thead>
               <tbody>
-                {data.topProducts.map((p, i) => (
+                {sortedTopProducts.map((p, i) => (
                   <tr key={p.product} className="border-b border-slate-50 last:border-0">
                     <td className="py-1.5 pr-2 text-slate-400">{i + 1}</td>
-                    <td className="py-1.5 pr-2 text-slate-700" title={p.product}>{p.product.length > 34 ? `${p.product.slice(0, 34)}…` : p.product}</td>
-                    <td className="py-1.5 pr-2 text-right text-slate-600">{p.baseCount.toLocaleString("en-IN")}</td>
-                    <td className="py-1.5 pr-2 text-right font-semibold text-emerald-600">{p.connectedPct}%</td>
-                    <td className="py-1.5 pr-2 text-right text-slate-600">{p.saleCount !== null ? p.saleCount.toLocaleString("en-IN") : "—"}</td>
-                    <td className="py-1.5 pr-0 text-right font-semibold text-amber-700">{p.revenue !== null ? formatINR(p.revenue) : "—"}</td>
+                    {TOP_PRODUCT_COLS.map((c) => <td key={c.key} className={c.className}>{c.cell(p)}</td>)}
                   </tr>
                 ))}
-                {data.topProducts.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-400">No products for this period.</td></tr>}
+                {sortedTopProducts.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-400">{data.topProducts.length === 0 ? "No products for this period." : "No products match the current filters."}</td></tr>}
               </tbody>
             </table>
           </div>

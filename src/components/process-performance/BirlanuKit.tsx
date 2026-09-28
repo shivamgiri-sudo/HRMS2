@@ -1,6 +1,8 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { ArrowUp, ArrowDown, Eye, X, Building2 } from "lucide-react";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /** Shared look + drill-down drawer for the six Birlanu MIS slides. */
 
@@ -144,6 +146,8 @@ const FMT: Record<CellFmt, (v: number) => string> = {
 export const fmtCell = (v: string | number | null | undefined, fmt: CellFmt = "int") =>
   v === null || v === undefined || v === "" ? "—" : typeof v === "number" ? FMT[fmt](v) : String(v);
 
+type DrawerRow = Record<string, string | number | null>;
+
 /** Right-side slide-over drawer (per this app's drill-down rule): month-wise chart + full table for whatever was clicked. */
 export function BirlanuDrawer({ spec, onClose }: { spec: DrawerSpec; onClose: () => void }) {
   const [shown, setShown] = useState(false);
@@ -154,6 +158,10 @@ export function BirlanuDrawer({ spec, onClose }: { spec: DrawerSpec; onClose: ()
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   const xKey = spec.xKey ?? "month";
+  const filterCols: Array<FilterColumn<DrawerRow>> = spec.columns.map((c) => ({ key: c.key, get: (r) => r[c.key] }));
+  const filters = useColumnFilters(spec.rows, filterCols);
+  const colGetter = (r: DrawerRow, key: string) => r[key];
+  const { sorted: sortedRows, sortKey, sortDir, toggleSort } = useSortableRows(filters.filtered, colGetter);
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={spec.title}>
       <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 bg-slate-900/40" />
@@ -186,19 +194,34 @@ export function BirlanuDrawer({ spec, onClose }: { spec: DrawerSpec; onClose: ()
             </div>
           )}
           <div>
-            <p className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-400">Table</p>
+            <div className="mb-1 flex items-center justify-between">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Table</p>
+              {filters.activeCount > 0 && (
+                <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                  Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
             {spec.rows.length === 0 ? <p className="rounded-lg bg-slate-50 py-6 text-center text-xs text-slate-400">None</p> : (
               <div className="overflow-x-auto">
                 <table className="w-full text-center text-xs">
                   <thead>
-                    <tr>{spec.columns.map((c, i) => <Th key={c.key} className={i === 0 ? "rounded-l-md text-left" : i === spec.columns.length - 1 ? "rounded-r-md" : ""}>{c.label}</Th>)}</tr>
+                    <tr>
+                      {spec.columns.map((c, i) => (
+                        <FilterSortTh
+                          key={c.key} label={c.label} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={filters}
+                          className={`whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white ${i === 0 ? "rounded-l-md text-left" : i === spec.columns.length - 1 ? "rounded-r-md" : ""}`}
+                        />
+                      ))}
+                    </tr>
                   </thead>
                   <tbody>
-                    {spec.rows.map((r, ri) => (
+                    {sortedRows.map((r, ri) => (
                       <tr key={ri} className={ri % 2 ? "bg-slate-50" : "bg-white"}>
                         {spec.columns.map((c, i) => <td key={c.key} className={`px-2 py-1.5 ${i === 0 ? "text-left font-semibold text-slate-700" : "text-slate-600"}`}>{fmtCell(r[c.key], c.fmt)}</td>)}
                       </tr>
                     ))}
+                    {sortedRows.length === 0 && <tr><td colSpan={spec.columns.length} className="py-4 text-slate-400">No rows match the current filters.</td></tr>}
                   </tbody>
                 </table>
               </div>
