@@ -126,6 +126,33 @@ async function syncAddressBgvCheck(candidateId: string, status: "verified" | "fa
          result_summary = VALUES(result_summary), updated_at = NOW()`,
     [candidateId, status, now, summary]
   );
+
+  // Propagate into candidate_bgv_report.address_status, which is what actually
+  // gates appointment-letter eligibility (evaluateAppointmentLetterEligibility's
+  // outstandingBgvCategories reads address_status, not candidate_bgv_check).
+  // Without this, an auto-verified GPS-selfie match was recorded in the audit
+  // trail above but never cleared the real blocker — HR still had to mark
+  // address_status by hand, which is the manual step this endpoint exists to
+  // remove. Only a targeted UPDATE on an existing, unlocked report: this must
+  // never INSERT a new candidate_bgv_report row (that would fabricate a report
+  // with every other category null) and must never touch a locked report,
+  // matching the same lock guard bgv-verification.routes.ts enforces.
+  //
+  // address_status is ENUM('not_run','passed','failed','partial') — 'passed' is
+  // the value that clears the check (outstandingBgvCategories' done() accepts
+  // "passed"/"waived"/"verified"); there is no 'verified' enum member here.
+  if (status === "verified" || status === "failed") {
+    const addressStatus = status === "verified" ? "passed" : "failed";
+    const addressRemarks = status === "verified"
+      ? "Auto-verified via geo-tagged selfie (GPS within threshold) — no manual review required."
+      : "Address verification failed after max attempts on the geo-tagged selfie link.";
+    await db.execute(
+      `UPDATE candidate_bgv_report
+          SET address_status = ?, address_remarks = ?, updated_at = NOW()
+        WHERE candidate_id = ? AND (locked = 0 OR locked IS NULL)`,
+      [addressStatus, addressRemarks, candidateId]
+    );
+  }
 }
 
 // ── HR: initiate ──────────────────────────────────────────────────────────────
