@@ -5,9 +5,13 @@ import { ExpenseHeadsTab } from "@/components/finance/masters/ExpenseHeadsTab";
 import { SubHeadsTab } from "@/components/finance/masters/SubHeadsTab";
 import { VendorHeadMappingTab } from "@/components/finance/masters/VendorHeadMappingTab";
 import { VendorApprovalsTab } from "@/components/finance/masters/VendorApprovalsTab";
+import { RaiseVendorRequestTab } from "@/components/finance/masters/RaiseVendorRequestTab";
 
 export default function FinanceMasterPage() {
   const canApprove = useHasRole("finance_head", "super_admin");
+  // Branch Admin has no direct /vendors access (that route is finance-role gated); this is the
+  // only place they can submit a vendor create/update request for a Finance Head to approve.
+  const canRaise = useHasRole("branch_admin");
 
   return (
     <DashboardLayout>
@@ -28,6 +32,9 @@ export default function FinanceMasterPage() {
               {canApprove && (
                 <TabsTrigger value="approvals" className="text-xs h-7">Vendor Approvals</TabsTrigger>
               )}
+              {canRaise && (
+                <TabsTrigger value="raise-vendor" className="text-xs h-7">Add Vendor</TabsTrigger>
+              )}
             </TabsList>
           </div>
 
@@ -44,6 +51,11 @@ export default function FinanceMasterPage() {
             {canApprove && (
               <TabsContent value="approvals" className="m-4 mt-3">
                 <VendorApprovalsTab />
+              </TabsContent>
+            )}
+            {canRaise && (
+              <TabsContent value="raise-vendor" className="m-4 mt-3">
+                <RaiseVendorRequestTab />
               </TabsContent>
             )}
           </div>
