@@ -164,41 +164,11 @@ const KNOWN_GAPS: Record<string, string> = {
   "POST /api/payroll/esic-automation/cases/:p/approve":
     "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx calls /cases/:id/approve for approvals. In-progress work; remove once handlers are implemented.",
 
-  // ── Collections module — frontend scaffolding added 2026-09-28, backend not yet built ──
-  "GET /api/process-performance/housing-owner-dashboard/outbound":
-    "Collections/process-performance: HousingOwnerDashboard.tsx frontend scaffold; backend endpoint not yet implemented.",
+  // ── Collections module — routes implemented 2026-09-29; stale entries removed ──
+  // All collections/process-performance routes were built by another session and are
+  // now served. Only /bulk-upload/coverage remains unimplemented.
   "GET /api/bulk-upload/coverage":
     "Collections: UploadCoverage.tsx calls /coverage to fetch upload coverage stats; backend endpoint not yet implemented.",
-  "GET /api/collections/config":
-    "Collections: collectionsApi.ts fetches module config; backend route not yet implemented.",
-  "GET /api/collections/:p":
-    "Collections: collectionsApi.ts fetches various collections data endpoints; backend routes not yet implemented.",
-  "PATCH /api/collections/mapping-exceptions/:p":
-    "Collections: collectionsApi.ts updates a mapping exception; backend route not yet implemented.",
-  "GET /api/collections/cash/:p":
-    "Collections: collectionsCashApi.ts fetches cash collections data; backend routes not yet implemented.",
-  "GET /api/collections/live/:p":
-    "Collections: collectionsLiveApi.ts fetches live collections data; backend routes not yet implemented.",
-  "POST /api/collections/live/d7-planner/simulate":
-    "Collections: collectionsLiveApi.ts triggers a D7 planner simulation; backend route not yet implemented.",
-  "POST /api/collections/live/callbacks/:p/complete":
-    "Collections: collectionsLiveApi.ts marks a callback complete; backend route not yet implemented.",
-  "POST /api/collections/live/callbacks/:p/cancel":
-    "Collections: collectionsLiveApi.ts cancels a callback; backend route not yet implemented.",
-  "POST /api/collections/live/alerts/:p/acknowledge":
-    "Collections: collectionsLiveApi.ts acknowledges an alert; backend route not yet implemented.",
-  "POST /api/collections/live/alerts/:p/escalate":
-    "Collections: collectionsLiveApi.ts escalates an alert; backend route not yet implemented.",
-  "POST /api/collections/live/alerts/:p/resolve":
-    "Collections: collectionsLiveApi.ts resolves an alert; backend route not yet implemented.",
-  "GET /api/collections/optimization/:p":
-    "Collections: collectionsOptimizationApi.ts fetches optimization data; backend routes not yet implemented.",
-  "POST /api/collections/optimization/staffing-scenarios/:p/approve":
-    "Collections: collectionsOptimizationApi.ts approves a staffing scenario; backend route not yet implemented.",
-  "POST /api/collections/optimization/staffing-scenarios/:p/reject":
-    "Collections: collectionsOptimizationApi.ts rejects a staffing scenario; backend route not yet implemented.",
-  "GET /api/collections/optimization/experiments/:p/results":
-    "Collections: collectionsOptimizationApi.ts fetches experiment results; backend route not yet implemented.",
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
