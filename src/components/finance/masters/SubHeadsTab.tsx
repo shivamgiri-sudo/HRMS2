@@ -132,7 +132,7 @@ export function SubHeadsTab() {
             const isEditing = editingId === s.id;
             return (
               <div key={s.id} className={`grid grid-cols-[80px_1fr_80px_90px_60px_70px_90px_90px_60px_70px_70px] gap-0 border-b text-xs hover:bg-slate-50 transition-colors ${!s.activeStatus ? "opacity-50" : ""}`}>
-                <div className="px-2 py-1.5 font-mono text-slate-400 self-center">
+                <div className="px-2 py-1.5 font-mono text-slate-400 self-center truncate" title={s.subHeadCode}>
                   {s.subHeadCode}
                   {isCapex && <Badge variant="outline" className="ml-1 text-[9px] border-amber-300 text-amber-700 bg-amber-50 px-1 py-0" title="Excluded from P&L">CAPEX</Badge>}
                 </div>
