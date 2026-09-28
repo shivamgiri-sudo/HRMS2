@@ -76,6 +76,28 @@ export const updateEmployeeSchema = z.object({
   ctc: z.coerce.number().nonnegative().nullable().optional(),
   annualIncome: z.coerce.number().nonnegative().nullable().optional(),
   countOfDependents: z.coerce.number().int().nonnegative().nullable().optional(),
+  // Attrition fields — must be in this schema so Zod doesn't silently strip them
+  // on PATCH /employees/:id (bulk-deactivation sends them on the same PATCH path).
+  attrition_date: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").nullable().optional(),
+  attrition_reason: z.enum([
+    "Resigned - Better Opportunity",
+    "Resigned - Personal Reasons",
+    "Resigned - Higher Education",
+    "Resigned - Relocation",
+    "Resigned - Health Issues",
+    "Resigned - Salary Dissatisfaction",
+    "Resigned - Work Environment",
+    "Absconding",
+    "Terminated - Performance",
+    "Terminated - Misconduct",
+    "Terminated - Policy Violation",
+    "Terminated - Attendance",
+    "Contract End",
+    "Retirement",
+    "Death",
+    "Other",
+  ]).nullable().optional(),
+  attrition_reason_notes: z.string().trim().max(1000).nullable().optional(),
 });
 
 export const employeeFiltersSchema = z.object({
