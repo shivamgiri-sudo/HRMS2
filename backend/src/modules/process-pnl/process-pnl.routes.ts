@@ -805,7 +805,7 @@ router.post(
       primaryRole: user.role,
       userRoles: user.roles,
       currentStatus: String((request as any).status ?? ""),
-      workflow: "grn", // same two-stage shape: submitted -> branch_head -> finance_head
+      workflow: "budget", // genuinely 2-stage; "grn" stopped being that on 2026-09-12
     });
     const data = await budgetTopupService.review(
       req.params.id,

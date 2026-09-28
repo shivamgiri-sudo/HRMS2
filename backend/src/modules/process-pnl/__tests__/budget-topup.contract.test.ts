@@ -22,11 +22,12 @@ describe("budget top-up request workflow", () => {
     expect(runner).toContain('"1061_finance_budget_topup_request.sql"');
   });
 
-  it("gates the two review stages with the shared GRN-shaped role resolver, not a new one", () => {
+  it("gates the two review stages with the shared BUDGET-shaped role resolver, not a new one", () => {
     const routes = read("src/modules/process-pnl/process-pnl.routes.ts");
     expect(routes).toContain("/pnl/budget-topups");
     expect(routes).toContain("/pnl/budget-topups/:id/review");
-    expect(routes).toContain('workflow: "grn", // same two-stage shape');
+    // Deliberately BUDGET, not GRN: "grn" stopped being 2-stage on 2026-09-12.
+    expect(routes).toContain('workflow: "budget"');
     expect(routes).toContain("TOPUP_CREATE_ROLES");
     expect(routes).toContain("TOPUP_REVIEW_ROLES");
     // Branch scope must be checked before create and before review, same pattern as the rest
