@@ -478,6 +478,9 @@ export default function WaitingRoomDisplay() {
       setSseConnected(false);
       es.close();
       esRef.current = null;
+      // Clear stale queue immediately so the TV doesn't show completed
+      // candidates while reconnecting, then poll until SSE recovers.
+      setQueue([]);
       fetchSnapshot();
       pollRef.current = setInterval(fetchSnapshot, POLL_INTERVAL);
     };

@@ -1,8 +1,8 @@
-import { db } from '../../db/mysql.js';
-import { RowDataPacket } from 'mysql2/promise';
-import { randomUUID } from 'crypto';
-import { getIstDateString } from '../../utils/dateUtils.js';
-import { excludeUnregisteredLeadCandidatesSql } from './ats-reporting-scope.js';
+import { db } from "../../db/mysql.js";
+import { RowDataPacket } from "mysql2/promise";
+import { randomUUID } from "crypto";
+import { getIstDateString } from "../../utils/dateUtils.js";
+import { excludeUnregisteredLeadCandidatesSql } from "./ats-reporting-scope.js";
 
 type RecruiterRow = RowDataPacket & {
   employee_id: string;
@@ -30,7 +30,7 @@ export async function getBranchAliases() {
      FROM ats_branch_alias_master
      WHERE active_status = 1
      GROUP BY canonical_key
-     ORDER BY display_name`
+     ORDER BY display_name`,
   );
   return rows;
 }
@@ -41,7 +41,7 @@ export async function resolveBranchFromAlias(displayName: string) {
      FROM ats_branch_alias_master
      WHERE (display_name = ? OR alias_text = ?) AND active_status = 1
      LIMIT 1`,
-    [displayName, displayName]
+    [displayName, displayName],
   );
   return rows[0] ?? null;
 }
@@ -50,22 +50,23 @@ export async function resolveBranchFromAlias(displayName: string) {
 // Ensures an HR/Executive employee exists in ats_recruiter_roster (the FK target)
 // and returns their roster id. Uses INSERT … ON DUPLICATE KEY UPDATE so it's
 // idempotent — safe to call on every walk-in registration.
-export async function ensureRecruiterInRoster(
-  employee: {
-    id: string;
-    first_name: string | null;
-    last_name: string | null;
-    mobile: string | null;
-    official_mobile?: string | null;
-    email: string | null;
-    official_email?: string | null;
-    office_email?: string | null;
-    branch_name: string | null;
-  }
-): Promise<string> {
-  const fullName = `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() || "Recruiter";
+export async function ensureRecruiterInRoster(employee: {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  mobile: string | null;
+  official_mobile?: string | null;
+  email: string | null;
+  official_email?: string | null;
+  office_email?: string | null;
+  branch_name: string | null;
+}): Promise<string> {
+  const fullName =
+    `${employee.first_name ?? ""} ${employee.last_name ?? ""}`.trim() ||
+    "Recruiter";
   // Official email takes priority over personal email — never show personal email to candidates
-  const officialEmail = employee.official_email || employee.office_email || null;
+  const officialEmail =
+    employee.official_email || employee.office_email || null;
   const contactEmail = officialEmail ?? employee.email ?? null;
   // Official mobile takes priority over personal mobile
   const contactMobile = employee.official_mobile || employee.mobile || null;
@@ -73,14 +74,14 @@ export async function ensureRecruiterInRoster(
   // Check if already in roster (keyed by employee_id)
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM ats_recruiter_roster WHERE employee_id = ? LIMIT 1`,
-    [employee.id]
+    [employee.id],
   );
   if ((existing as RowDataPacket[]).length > 0) {
     const rosterId = (existing as RowDataPacket[])[0].id as string;
     // Always refresh email/mobile with official values in case they were seeded with personal email before
     await db.execute(
       `UPDATE ats_recruiter_roster SET email = ?, mobile = ?, name = ? WHERE id = ?`,
-      [contactEmail, contactMobile, fullName, rosterId]
+      [contactEmail, contactMobile, fullName, rosterId],
     );
     return rosterId;
   }
@@ -92,7 +93,14 @@ export async function ensureRecruiterInRoster(
        (id, name, email, mobile, branch, employee_id, active_status, active_flag,
         available_today, daily_capacity, assigned_today)
      VALUES (?, ?, ?, ?, ?, ?, 1, 'Y', 'Y', 999, 0)`,
-    [rosterId, fullName, contactEmail, contactMobile, employee.branch_name ?? "Unmapped", employee.id]
+    [
+      rosterId,
+      fullName,
+      contactEmail,
+      contactMobile,
+      employee.branch_name ?? "Unmapped",
+      employee.id,
+    ],
   );
   return rosterId;
 }
@@ -136,7 +144,7 @@ export async function getAvailableRecruiters(branchName: string) {
        AND (b.branch_name = ? OR b.branch_code = ?)
        AND e.active_status = 1
      ORDER BY present_today DESC, e.first_name, e.last_name`,
-    [today, branchName, branchName]
+    [today, branchName, branchName],
   );
 
   // Ensure every employee has a valid ats_recruiter_roster row (FK target for recruiter_id)
@@ -158,19 +166,22 @@ export async function getAvailableRecruiters(branchName: string) {
   return result;
 }
 
-export async function isRecruiterAvailableToday(recruiterId: string): Promise<boolean> {
+export async function isRecruiterAvailableToday(
+  recruiterId: string,
+): Promise<boolean> {
   // recruiterId can be a roster UUID or an employee UUID — resolve to employee_id first
   const [rosterRows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id FROM ats_recruiter_roster WHERE id = ? AND active_status = 1 LIMIT 1`,
-    [recruiterId]
+    [recruiterId],
   );
-  const employeeId = (rosterRows as RosterRow[]).length > 0
-    ? (rosterRows as RosterRow[])[0].employee_id
-    : recruiterId;
+  const employeeId =
+    (rosterRows as RosterRow[]).length > 0
+      ? (rosterRows as RosterRow[])[0].employee_id
+      : recruiterId;
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
-    [employeeId]
+    [employeeId],
   );
 
   return empRows.length > 0;
@@ -191,18 +202,27 @@ async function pickLeastLoadedRecruiter(
       const [queueRows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) as count FROM ats_queue_token
          WHERE recruiter_id = ? AND queue_status IN ('waiting','called','in_interview')`,
-        [rec.id]
+        [rec.id],
       );
-      return { recruiterId: rec.id ?? null, queueCount: Number(queueRows[0].count) };
-    })
+      return {
+        recruiterId: rec.id ?? null,
+        queueCount: Number(queueRows[0].count),
+      };
+    }),
   );
   loads.sort((x, y) => x.queueCount - y.queueCount);
-  return { recruiterId: loads[0]?.recruiterId ?? null, presentOnly: present.length > 0 };
+  return {
+    recruiterId: loads[0]?.recruiterId ?? null,
+    presentOnly: present.length > 0,
+  };
 }
 
-export async function assignRecruiterToCandidate(candidateId: string, preferredRecruiterId: string | null) {
+export async function assignRecruiterToCandidate(
+  candidateId: string,
+  preferredRecruiterId: string | null,
+) {
   let assignedRecruiterId = preferredRecruiterId;
-  let assignmentReason = 'Candidate selected recruiter';
+  let assignmentReason = "Candidate selected recruiter";
 
   if (preferredRecruiterId) {
     const isAvailable = await isRecruiterAvailableToday(preferredRecruiterId);
@@ -210,11 +230,11 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
     if (!isAvailable) {
       // Get candidate's branch
       const [candRows] = await db.execute<RowDataPacket[]>(
-        'SELECT applied_for_branch FROM ats_candidate WHERE id = ?',
-        [candidateId]
+        "SELECT applied_for_branch FROM ats_candidate WHERE id = ?",
+        [candidateId],
       );
 
-      if (candRows.length === 0) throw new Error('Candidate not found');
+      if (candRows.length === 0) throw new Error("Candidate not found");
 
       const branchName = candRows[0].applied_for_branch;
       const availableRecruiters = await getAvailableRecruiters(branchName);
@@ -224,21 +244,21 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
         const picked = await pickLeastLoadedRecruiter(availableRecruiters);
         assignedRecruiterId = picked.recruiterId;
         assignmentReason = picked.presentOnly
-          ? 'Preferred recruiter unavailable, reassigned to a present recruiter'
-          : 'Preferred recruiter unavailable, reassigned to an available recruiter';
+          ? "Preferred recruiter unavailable, reassigned to a present recruiter"
+          : "Preferred recruiter unavailable, reassigned to an available recruiter";
       } else {
         assignedRecruiterId = null;
-        assignmentReason = 'No recruiter available today';
+        assignmentReason = "No recruiter available today";
       }
     }
   } else {
     // No preferred recruiter selected - assign to available recruiter
     const [candRows] = await db.execute<RowDataPacket[]>(
-      'SELECT applied_for_branch FROM ats_candidate WHERE id = ?',
-      [candidateId]
+      "SELECT applied_for_branch FROM ats_candidate WHERE id = ?",
+      [candidateId],
     );
 
-    if (candRows.length === 0) throw new Error('Candidate not found');
+    if (candRows.length === 0) throw new Error("Candidate not found");
 
     const branchName = String(candRows[0].applied_for_branch ?? "");
     const availableRecruiters = await getAvailableRecruiters(branchName);
@@ -247,11 +267,11 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
       const picked = await pickLeastLoadedRecruiter(availableRecruiters);
       assignedRecruiterId = picked.recruiterId;
       assignmentReason = picked.presentOnly
-        ? 'Auto-assigned to a present recruiter'
-        : 'Auto-assigned to an available recruiter (none present today)';
+        ? "Auto-assigned to a present recruiter"
+        : "Auto-assigned to an available recruiter (none present today)";
     } else {
       assignedRecruiterId = null;
-      assignmentReason = 'No recruiter available today';
+      assignmentReason = "No recruiter available today";
     }
   }
 
@@ -263,9 +283,10 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
        FROM ats_recruiter_roster r
        LEFT JOIN employees e ON e.id = r.employee_id
        WHERE r.id = ? LIMIT 1`,
-      [assignedRecruiterId]
+      [assignedRecruiterId],
     );
-    const resolvedName = (recNameRows as RecruiterNameRow[])[0]?.full_name?.trim() ?? null;
+    const resolvedName =
+      (recNameRows as RecruiterNameRow[])[0]?.full_name?.trim() ?? null;
 
     await db.execute(
       `UPDATE ats_candidate
@@ -286,7 +307,7 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
         preferredRecruiterId,
         assignmentReason,
         candidateId,
-      ]
+      ],
     );
 
     // Log assignment
@@ -294,14 +315,14 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
       `INSERT INTO ats_recruiter_assignment_log
        (id, candidate_id, old_recruiter_id, new_recruiter_id, assignment_reason, assigned_by)
        VALUES (UUID(), ?, NULL, ?, ?, 'SYSTEM')`,
-      [candidateId, assignedRecruiterId, assignmentReason]
+      [candidateId, assignedRecruiterId, assignmentReason],
     );
   }
 
   return {
     assignedRecruiterId,
     preferredRecruiterId,
-    assignmentReason
+    assignmentReason,
   };
 }
 
@@ -312,8 +333,12 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
  * back to any active recruiter there. Candidates with no branch stay unassigned — nothing to route on.
  */
 export async function assignUnassignedCandidates(
-  opts: { sinceDays?: number; limit?: number } = {}
-): Promise<{ assigned: number; noRecruiter: number; details: { candidateId: string; recruiterId: string | null }[] }> {
+  opts: { sinceDays?: number; limit?: number } = {},
+): Promise<{
+  assigned: number;
+  noRecruiter: number;
+  details: { candidateId: string; recruiterId: string | null }[];
+}> {
   const sinceDays = opts.sinceDays ?? 30;
   const limit = Math.max(1, Math.min(500, opts.limit ?? 200));
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -323,17 +348,19 @@ export async function assignUnassignedCandidates(
         AND (recruiter_assigned_name IS NULL OR recruiter_assigned_name = '')
         AND COALESCE(applied_for_branch, '') <> ''
         AND candidate_code NOT LIKE 'IDC%'
-        AND ${excludeUnregisteredLeadCandidatesSql('ats_candidate')}
+        AND ${excludeUnregisteredLeadCandidatesSql("ats_candidate")}
         AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
       ORDER BY created_at ASC
       LIMIT ${limit}`,
-    [sinceDays]
+    [sinceDays],
   );
   const details: { candidateId: string; recruiterId: string | null }[] = [];
   let assigned = 0;
   for (const row of rows as RowDataPacket[]) {
     const candidateId = String(row.id);
-    const result = await assignRecruiterToCandidate(candidateId, null).catch(() => null);
+    const result = await assignRecruiterToCandidate(candidateId, null).catch(
+      () => null,
+    );
     const recruiterId = result?.assignedRecruiterId ?? null;
     details.push({ candidateId, recruiterId });
     if (recruiterId) assigned += 1;
@@ -344,23 +371,44 @@ export async function assignUnassignedCandidates(
 // ── Token Generation ───────────────────────────────────────────────────────────
 export async function generateTokenNumber(branchName: string): Promise<string> {
   const today = getIstDateString();
-
-  // Get count of tokens issued today for this branch
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as count FROM ats_queue_token
-     WHERE branch_name = ? AND DATE(created_at) = ?`,
-    [branchName, today]
-  );
-
-  const todayCount = rows[0].count + 1;
   const branchPrefix = branchName.substring(0, 3).toUpperCase();
-  const dateStr = getIstDateString().replace(/-/g, '');
+  const dateStr = today.replace(/-/g, "");
 
-  return `${branchPrefix}-${dateStr}-${String(todayCount).padStart(3, '0')}`;
+  // Use INSERT into a sequence table under a lock so concurrent registrations
+  // cannot read the same COUNT and produce duplicate token numbers.
+  // Falls back to MAX(token_number) + 1 if INSERT is unavailable.
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [result] = await conn.execute<RowDataPacket[]>(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(token_number, '-', -1) AS UNSIGNED)), 0) + 1 AS next_seq
+       FROM ats_queue_token
+       WHERE branch_name = ? AND DATE(created_at) = ?
+       FOR UPDATE`,
+      [branchName, today],
+    );
+    const seq = Number(result[0]?.next_seq ?? 1);
+    await conn.commit();
+    return `${branchPrefix}-${dateStr}-${String(seq).padStart(3, "0")}`;
+  } catch {
+    await conn.rollback();
+    // Non-fatal fallback: COUNT-based (may duplicate under extreme concurrency)
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM ats_queue_token WHERE branch_name = ? AND DATE(created_at) = ?`,
+      [branchName, today],
+    );
+    const todayCount = (rows[0]?.count ?? 0) + 1;
+    return `${branchPrefix}-${dateStr}-${String(todayCount).padStart(3, "0")}`;
+  } finally {
+    conn.release();
+  }
 }
 
 // ── Employee Code Generation ───────────────────────────────────────────────────
-export async function generateEmployeeCode(companyPrefix: 'MAS' | 'IDC', isOffrole: boolean): Promise<string> {
+export async function generateEmployeeCode(
+  companyPrefix: "MAS" | "IDC",
+  isOffrole: boolean,
+): Promise<string> {
   const connection = await db.getConnection();
 
   try {
@@ -370,7 +418,7 @@ export async function generateEmployeeCode(companyPrefix: 'MAS' | 'IDC', isOffro
     const [rows] = await connection.execute<RowDataPacket[]>(
       `SELECT current_sequence FROM employee_code_sequence
        WHERE company_prefix = ? FOR UPDATE`,
-      [companyPrefix]
+      [companyPrefix],
     );
 
     if (rows.length === 0) {
@@ -384,7 +432,13 @@ export async function generateEmployeeCode(companyPrefix: 'MAS' | 'IDC', isOffro
       `UPDATE employee_code_sequence
        SET current_sequence = ?, last_generated_code = ?, last_generated_at = NOW()
        WHERE company_prefix = ?`,
-      [nextSequence, isOffrole ? `${companyPrefix}${nextSequence}C` : `${companyPrefix}${nextSequence}`, companyPrefix]
+      [
+        nextSequence,
+        isOffrole
+          ? `${companyPrefix}${nextSequence}C`
+          : `${companyPrefix}${nextSequence}`,
+        companyPrefix,
+      ],
     );
 
     // Generate employee code
@@ -409,7 +463,7 @@ export async function logEmployeeCodeGeneration(
   employeeId: string | null,
   companyPrefix: string,
   isOffrole: boolean,
-  generatedBy: string | null
+  generatedBy: string | null,
 ) {
   await db.execute(
     `INSERT INTO employee_code_generation_log
@@ -421,8 +475,8 @@ export async function logEmployeeCodeGeneration(
       employeeId,
       companyPrefix,
       isOffrole ? 1 : 0,
-      parseInt(employeeCode.replace(/[^0-9]/g, '')),
-      generatedBy
-    ]
+      parseInt(employeeCode.replace(/[^0-9]/g, "")),
+      generatedBy,
+    ],
   );
 }
