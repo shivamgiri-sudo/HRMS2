@@ -17,7 +17,13 @@ import {
   XCircle,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
-import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import {
   checkTone,
@@ -128,7 +134,9 @@ function unwrap<T>(value: any): T {
   return (value?.data ?? value) as T;
 }
 
-export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (grnId: string) => void } = {}) {
+export function SmartGrnApprovalQueue({
+  onReopenForEdit,
+}: { onReopenForEdit?: (grnId: string) => void } = {}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState("submitted");
@@ -153,9 +161,10 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   const capabilitiesQuery = useQuery({
     queryKey: ["finance-capabilities-for-grn"],
     queryFn: async () => {
-      const response = await hrmsApi.get<{ success: boolean; data: Capabilities }>(
-        "/api/finance/pnl/budgets/capabilities"
-      );
+      const response = await hrmsApi.get<{
+        success: boolean;
+        data: Capabilities;
+      }>("/api/finance/pnl/budgets/capabilities");
       return response.data;
     },
   });
@@ -174,11 +183,22 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   useEffect(() => {
     if (!capabilities || didSetInitialTab.current) return;
     didSetInitialTab.current = true;
-    if (canReviewAccountsStage && !capabilities.canReviewBranchStage && !capabilities.canReviewFinanceStage) {
+    if (
+      canReviewAccountsStage &&
+      !capabilities.canReviewBranchStage &&
+      !capabilities.canReviewFinanceStage
+    ) {
       setStatus("branch_head_approved");
-    } else if (capabilities.canReviewFinanceStage && !capabilities.canReviewBranchStage) {
+    } else if (
+      capabilities.canReviewFinanceStage &&
+      !capabilities.canReviewBranchStage
+    ) {
       setStatus("accounts_head_approved");
-    } else if (capabilities.canCreate && !capabilities.canReviewBranchStage && !capabilities.canReviewFinanceStage) {
+    } else if (
+      capabilities.canCreate &&
+      !capabilities.canReviewBranchStage &&
+      !capabilities.canReviewFinanceStage
+    ) {
       // Pure raiser (branch_admin who cannot review) — show all their own GRNs by default
       setStatus("_all");
       setMyGrnsOnly(true);
@@ -190,7 +210,11 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     queryKey: ["grn-branches-list"],
     queryFn: async () => {
       const res = await hrmsApi.get<any>("/api/org/branches?limit=200");
-      return (res?.data ?? res?.rows ?? []) as Array<{ id: string; branch_name?: string; name?: string }>;
+      return (res?.data ?? res?.rows ?? []) as Array<{
+        id: string;
+        branch_name?: string;
+        name?: string;
+      }>;
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -202,12 +226,17 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     queryKey: ["grn-approval-vendor-search", vendorSearch],
     queryFn: () =>
       hrmsApi.get<any>(
-        `/api/erp/vendors?is_active=1&limit=50&q=${encodeURIComponent(vendorSearch.trim())}`
+        `/api/erp/vendors?is_active=1&limit=50&q=${encodeURIComponent(vendorSearch.trim())}`,
       ),
   });
-  const vendorOptions = ((vendorResponse?.data?.data ?? vendorResponse?.data ?? vendorResponse ?? []) as Array<{
-    id: string; vendor_name?: string; name?: string;
-  }>);
+  const vendorOptions = (vendorResponse?.data?.data ??
+    vendorResponse?.data ??
+    vendorResponse ??
+    []) as Array<{
+    id: string;
+    vendor_name?: string;
+    name?: string;
+  }>;
 
   // Per-status counts for the filter chips. Aggregated server-side, so a chip's number is the
   // true total rather than however many of that status happened to fit in the 100-row list.
@@ -215,11 +244,23 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
 
   const listQuery = useQuery({
     queryKey: [
-      "grn-list", status, grnType, search, filterBranch, filterPeriod, page, myGrnsOnly,
-      billDateFrom, billDateTo, filterVendor,
+      "grn-list",
+      status,
+      grnType,
+      search,
+      filterBranch,
+      filterPeriod,
+      page,
+      myGrnsOnly,
+      billDateFrom,
+      billDateTo,
+      filterVendor,
     ],
     queryFn: async () => {
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(page) });
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        page: String(page),
+      });
       if (status !== "_all") params.set("status", status);
       if (grnType !== "_all") params.set("grnType", grnType);
       if (search.trim()) params.set("search", search.trim());
@@ -238,7 +279,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     queryKey: ["grn-review-workspace", target?.id],
     enabled: Boolean(target),
     queryFn: async () => {
-      const response = await hrmsApi.get<any>(`/api/finance/grns/${target!.id}/workspace`);
+      const response = await hrmsApi.get<any>(
+        `/api/finance/grns/${target!.id}/workspace`,
+      );
       return unwrap<Workspace>(response);
     },
   });
@@ -246,9 +289,11 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   // The workspace row carries far more columns than the list row's GrnRow type declares, and the
   // Details tab reads several of them (invoice_number, vendor_gstin, …). Typed as the loose record
   // it actually is, rather than a union that has no such properties on one arm.
-  const parent: Record<string, any> | undefined = workspace?.grn ?? target ?? undefined;
+  const parent: Record<string, any> | undefined =
+    workspace?.grn ?? target ?? undefined;
   const blockers = (workspace?.validations ?? []).filter(
-    (item) => Number(item.is_blocking) === 1 && item.validation_status === "failed"
+    (item) =>
+      Number(item.is_blocking) === 1 && item.validation_status === "failed",
   );
 
   // Vendor State vs Billing State decides CGST+SGST vs IGST (deriveGstType — the same rule the
@@ -256,20 +301,24 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   // recorded gst_type is the invoice component split actually saved, expectedGstType is what the
   // two state codes on the same row say it should be. Silent whenever either state is missing
   // (a legacy or unbudgeted GRN may never have recorded one) or gst_type is "none" (non-GST spend).
-  const expectedGstType = deriveGstType(parent?.vendor_state_code, parent?.billing_state_code);
+  const expectedGstType = deriveGstType(
+    parent?.vendor_state_code,
+    parent?.billing_state_code,
+  );
   const recordedGstType = String(parent?.gst_type ?? "none");
   const gstStateMismatch = Boolean(
-    parent
-    && expectedGstType !== "none"
-    && recordedGstType !== "none"
-    && recordedGstType !== expectedGstType
+    parent &&
+    expectedGstType !== "none" &&
+    recordedGstType !== "none" &&
+    recordedGstType !== expectedGstType,
   );
 
   const canReview = useMemo(() => {
     if (!target || !capabilities) return false;
     if (target.status === "submitted") return capabilities.canReviewBranchStage;
     if (target.status === "branch_head_approved") return canReviewAccountsStage;
-    if (target.status === "accounts_head_approved") return capabilities.canReviewFinanceStage;
+    if (target.status === "accounts_head_approved")
+      return capabilities.canReviewFinanceStage;
     return false;
   }, [capabilities, canReviewAccountsStage, target]);
 
@@ -300,7 +349,8 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   }, [capabilities, canReviewAccountsStage, isSuperAdmin]);
 
   const submitMutation = useMutation({
-    mutationFn: (id: string) => hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
+    mutationFn: (id: string) =>
+      hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
     onSuccess: () => {
       toast({ title: "GRN submitted to Branch Head" });
       void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
@@ -308,7 +358,11 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       void queryClient.invalidateQueries({ queryKey: ["grn-summary"] });
     },
     onError: (error: Error) =>
-      toast({ title: "Submission failed", description: error.message, variant: "destructive" }),
+      toast({
+        title: "Submission failed",
+        description: error.message,
+        variant: "destructive",
+      }),
   });
 
   /*
@@ -332,14 +386,20 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     () =>
       Object.entries(budgetLinks)
         .filter(([, budgetLineId]) => Boolean(budgetLineId))
-        .map(([allocationId, budgetLineId]) => ({ allocationId, budgetLineId })),
-    [budgetLinks]
+        .map(([allocationId, budgetLineId]) => ({
+          allocationId,
+          budgetLineId,
+        })),
+    [budgetLinks],
   );
 
   const isUnbudgetedTarget = Number(parent?.is_unbudgeted ?? 0) === 1;
   const unlinkedAllocations = useMemo(
-    () => (workspace?.allocations ?? []).filter((allocation) => !allocation.budget_line_id),
-    [workspace]
+    () =>
+      (workspace?.allocations ?? []).filter(
+        (allocation) => !allocation.budget_line_id,
+      ),
+    [workspace],
   );
   const allocationTotals = useMemo(
     () =>
@@ -349,9 +409,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
           withTax: sum.withTax + Number(alloc.amount_with_tax ?? 0),
           percentage: sum.percentage + Number(alloc.allocation_percentage ?? 0),
         }),
-        { withoutTax: 0, withTax: 0, percentage: 0 }
+        { withoutTax: 0, withTax: 0, percentage: 0 },
       ),
-    [workspace]
+    [workspace],
   );
   const gstRows = useMemo(() => {
     const num = (value: unknown) => Number(value ?? 0) || 0;
@@ -359,7 +419,8 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     if (components.length) {
       return components.map((component, index) => {
         const gst = num(component.tax_amount);
-        const effectiveGstType = recordedGstType !== "none" ? recordedGstType : expectedGstType;
+        const effectiveGstType =
+          recordedGstType !== "none" ? recordedGstType : expectedGstType;
         const isIgst = effectiveGstType === "igst";
         return {
           key: String(component.id ?? index),
@@ -375,10 +436,27 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
         };
       });
     }
-    const byRate = new Map<number, { taxable: number; cgst: number; sgst: number; igst: number; gst: number; gross: number }>();
+    const byRate = new Map<
+      number,
+      {
+        taxable: number;
+        cgst: number;
+        sgst: number;
+        igst: number;
+        gst: number;
+        gross: number;
+      }
+    >();
     for (const alloc of workspace?.allocations ?? []) {
       const rate = num(alloc.gst_rate);
-      const row = byRate.get(rate) ?? { taxable: 0, cgst: 0, sgst: 0, igst: 0, gst: 0, gross: 0 };
+      const row = byRate.get(rate) ?? {
+        taxable: 0,
+        cgst: 0,
+        sgst: 0,
+        igst: 0,
+        gst: 0,
+        gross: 0,
+      };
       row.taxable += num(alloc.amount_without_tax);
       row.cgst += num(alloc.cgst_amount);
       row.sgst += num(alloc.sgst_amount);
@@ -388,7 +466,11 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       byRate.set(rate, row);
     }
     return [...byRate.entries()].map(([rate, row], index) => ({
-      key: `rate-${rate}`, label: String(index + 1), hsn: "—", rate, ...row,
+      key: `rate-${rate}`,
+      label: String(index + 1),
+      hsn: "—",
+      rate,
+      ...row,
     }));
   }, [workspace, recordedGstType, expectedGstType]);
   const gstTotals = useMemo(
@@ -402,33 +484,47 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
           gst: sum.gst + row.gst,
           gross: sum.gross + row.gross,
         }),
-        { taxable: 0, cgst: 0, sgst: 0, igst: 0, gst: 0, gross: 0 }
+        { taxable: 0, cgst: 0, sgst: 0, igst: 0, gst: 0, gross: 0 },
       ),
-    [gstRows]
+    [gstRows],
   );
   // The month the GRN books into — the same value consumptionPeriodOf() derives server-side, and
   // the only period whose budget lines the server will accept for this GRN.
   const targetPeriod = String(
-    parent?.accounting_period || String(parent?.bill_date ?? "").slice(0, 7) || ""
+    parent?.accounting_period ||
+      String(parent?.bill_date ?? "").slice(0, 7) ||
+      "",
   );
 
   const linkCandidatesQuery = useQuery({
     queryKey: ["grn-link-budget-lines", parent?.branch_id, targetPeriod],
-    enabled: Boolean(isUnbudgetedTarget && unlinkedAllocations.length && parent?.branch_id && targetPeriod),
+    enabled: Boolean(
+      isUnbudgetedTarget &&
+      unlinkedAllocations.length &&
+      parent?.branch_id &&
+      targetPeriod,
+    ),
     queryFn: async () => {
       const response = await hrmsApi.get<any>(
         `/api/finance/pnl/budget-lines/available?branchId=${encodeURIComponent(
-          String(parent!.branch_id)
-        )}&period=${encodeURIComponent(targetPeriod)}`
+          String(parent!.branch_id),
+        )}&period=${encodeURIComponent(targetPeriod)}`,
       );
-      return (response?.data ?? response?.rows ?? response ?? []) as Array<Record<string, any>>;
+      return (response?.data ?? response?.rows ?? response ?? []) as Array<
+        Record<string, any>
+      >;
     },
   });
   const linkCandidates = linkCandidatesQuery.data ?? [];
 
   const linkBudgetMutation = useMutation({
-    mutationFn: (input: { id: string; links: Array<{ allocationId: string; budgetLineId: string }> }) =>
-      hrmsApi.post(`/api/finance/grns/${input.id}/link-budget`, { links: input.links }),
+    mutationFn: (input: {
+      id: string;
+      links: Array<{ allocationId: string; budgetLineId: string }>;
+    }) =>
+      hrmsApi.post(`/api/finance/grns/${input.id}/link-budget`, {
+        links: input.links,
+      }),
     onSuccess: () => {
       toast({ title: "Budget lines linked" });
       setBudgetLinks({});
@@ -436,11 +532,19 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
     },
     onError: (error: Error) =>
-      toast({ title: "Could not link the budget", description: error.message, variant: "destructive" }),
+      toast({
+        title: "Could not link the budget",
+        description: error.message,
+        variant: "destructive",
+      }),
   });
 
   const reviewMutation = useMutation({
-    mutationFn: (input: { id: string; decision: "approved" | "rejected"; note: string }) =>
+    mutationFn: (input: {
+      id: string;
+      decision: "approved" | "rejected";
+      note: string;
+    }) =>
       hrmsApi.post(`/api/finance/grns/${input.id}/review`, {
         decision: input.decision,
         reviewNote: input.note || undefined,
@@ -454,11 +558,16 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       void queryClient.invalidateQueries({ queryKey: ["grn-summary"] });
     },
     onError: (error: Error) =>
-      toast({ title: "Review failed", description: error.message, variant: "destructive" }),
+      toast({
+        title: "Review failed",
+        description: error.message,
+        variant: "destructive",
+      }),
   });
 
   const cancelMutation = useMutation({
-    mutationFn: (id: string) => hrmsApi.post(`/api/finance/grns/${id}/cancel`, {}),
+    mutationFn: (id: string) =>
+      hrmsApi.post(`/api/finance/grns/${id}/cancel`, {}),
     onSuccess: () => {
       toast({ title: "GRN cancelled" });
       void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
@@ -466,59 +575,95 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       void queryClient.invalidateQueries({ queryKey: ["grn-summary"] });
     },
     onError: (error: Error) =>
-      toast({ title: "Cancellation failed", description: error.message, variant: "destructive" }),
+      toast({
+        title: "Cancellation failed",
+        description: error.message,
+        variant: "destructive",
+      }),
   });
 
   // Debit Notes — state and queries
   const DN_ELIGIBLE_STATUSES = new Set([
-    "pending_accounts_payment", "payment_scheduled", "partially_paid", "paid", "approved",
+    "pending_accounts_payment",
+    "payment_scheduled",
+    "partially_paid",
+    "paid",
+    "approved",
   ]);
   const canRaiseDn = Boolean(
-    target?.grn_type === "vendor"
-    && target?.status
-    && DN_ELIGIBLE_STATUSES.has(target.status)
-    && capabilities?.canReviewFinanceStage
+    target?.grn_type === "vendor" &&
+    target?.status &&
+    DN_ELIGIBLE_STATUSES.has(target.status) &&
+    capabilities?.canReviewFinanceStage,
   );
 
-  const [dnForm, setDnForm] = useState({ date: "", reason: "other", amount: "", gstAmount: "", remarks: "" });
+  const [dnForm, setDnForm] = useState({
+    date: "",
+    reason: "other",
+    amount: "",
+    gstAmount: "",
+    remarks: "",
+  });
   const [showDnCreate, setShowDnCreate] = useState(false);
   const DN_REASONS = [
     { value: "quality_deficiency", label: "Quality deficiency" },
-    { value: "short_supply",       label: "Short supply" },
-    { value: "price_difference",   label: "Price difference" },
-    { value: "returns",            label: "Returns" },
-    { value: "other",              label: "Other" },
+    { value: "short_supply", label: "Short supply" },
+    { value: "price_difference", label: "Price difference" },
+    { value: "returns", label: "Returns" },
+    { value: "other", label: "Other" },
   ];
 
   const debitNotesQuery = useQuery({
     queryKey: ["grn-debit-notes", target?.id],
-    queryFn: () => hrmsApi.get<any>(`/api/finance/grns/${target!.id}/debit-notes`),
+    queryFn: () =>
+      hrmsApi.get<any>(`/api/finance/grns/${target!.id}/debit-notes`),
     enabled: Boolean(target?.id) && canRaiseDn,
     staleTime: 30_000,
   });
   const debitNotes: any[] = (debitNotesQuery.data as any)?.data ?? [];
 
   const createDnMutation = useMutation({
-    mutationFn: () => hrmsApi.post(`/api/finance/grns/${target!.id}/debit-note`, {
-      dnDate: dnForm.date,
-      reason: dnForm.reason,
-      amount: Number(dnForm.amount),
-      gstAmount: Number(dnForm.gstAmount || 0),
-      remarks: dnForm.remarks.trim() || undefined,
-    }),
+    mutationFn: () =>
+      hrmsApi.post(`/api/finance/grns/${target!.id}/debit-note`, {
+        dnDate: dnForm.date,
+        reason: dnForm.reason,
+        amount: Number(dnForm.amount),
+        gstAmount: Number(dnForm.gstAmount || 0),
+        remarks: dnForm.remarks.trim() || undefined,
+      }),
     onSuccess: () => {
       toast({ title: "Debit note raised" });
       setShowDnCreate(false);
-      setDnForm({ date: "", reason: "other", amount: "", gstAmount: "", remarks: "" });
+      setDnForm({
+        date: "",
+        reason: "other",
+        amount: "",
+        gstAmount: "",
+        remarks: "",
+      });
       void debitNotesQuery.refetch();
     },
-    onError: (e: Error) => toast({ title: "Failed to raise debit note", description: e.message, variant: "destructive" }),
+    onError: (e: Error) =>
+      toast({
+        title: "Failed to raise debit note",
+        description: e.message,
+        variant: "destructive",
+      }),
   });
 
   const approveDnMutation = useMutation({
-    mutationFn: (dnId: string) => hrmsApi.post(`/api/finance/debit-notes/${dnId}/approve`, {}),
-    onSuccess: () => { toast({ title: "Debit note approved" }); void debitNotesQuery.refetch(); },
-    onError: (e: Error) => toast({ title: "Approve failed", description: e.message, variant: "destructive" }),
+    mutationFn: (dnId: string) =>
+      hrmsApi.post(`/api/finance/debit-notes/${dnId}/approve`, {}),
+    onSuccess: () => {
+      toast({ title: "Debit note approved" });
+      void debitNotesQuery.refetch();
+    },
+    onError: (e: Error) =>
+      toast({
+        title: "Approve failed",
+        description: e.message,
+        variant: "destructive",
+      }),
   });
 
   const [cancelDnId, setCancelDnId] = useState<string | null>(null);
@@ -532,11 +677,17 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       setCancelDnReason("");
       void debitNotesQuery.refetch();
     },
-    onError: (e: Error) => toast({ title: "Cancel failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) =>
+      toast({
+        title: "Cancel failed",
+        description: e.message,
+        variant: "destructive",
+      }),
   });
 
   const reopenMutation = useMutation({
-    mutationFn: (id: string) => hrmsApi.post(`/api/finance/grns/${id}/reopen`, {}),
+    mutationFn: (id: string) =>
+      hrmsApi.post(`/api/finance/grns/${id}/reopen`, {}),
     onSuccess: (_, id) => {
       toast({ title: "GRN reopened — redirecting to edit form" });
       setTarget(null);
@@ -545,16 +696,22 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       onReopenForEdit?.(id);
     },
     onError: (error: Error) =>
-      toast({ title: "Reopen failed", description: error.message, variant: "destructive" }),
+      toast({
+        title: "Reopen failed",
+        description: error.message,
+        variant: "destructive",
+      }),
   });
 
   const overrideMutation = useMutation({
     mutationFn: async () => {
-      if (!target || !overrideCode) throw new Error("Select a failed validation");
-      if (overrideReason.trim().length < 10) throw new Error("Enter a detailed reason of at least 10 characters");
+      if (!target || !overrideCode)
+        throw new Error("Select a failed validation");
+      if (overrideReason.trim().length < 10)
+        throw new Error("Enter a detailed reason of at least 10 characters");
       return hrmsApi.post(
         `/api/finance/grns/${target.id}/validations/${encodeURIComponent(overrideCode)}/override`,
-        { reason: overrideReason.trim() }
+        { reason: overrideReason.trim() },
       );
     },
     onSuccess: () => {
@@ -564,7 +721,11 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       void workspaceQuery.refetch();
     },
     onError: (error: Error) =>
-      toast({ title: "Override failed", description: error.message, variant: "destructive" }),
+      toast({
+        title: "Override failed",
+        description: error.message,
+        variant: "destructive",
+      }),
   });
 
   async function openDocument(documentId?: string) {
@@ -577,7 +738,8 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     } catch (error) {
       toast({
         title: "Document could not be opened",
-        description: error instanceof Error ? error.message : "Unknown file error",
+        description:
+          error instanceof Error ? error.message : "Unknown file error",
         variant: "destructive",
       });
     }
@@ -603,7 +765,8 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     if (decision === "approved" && blockers.length) {
       toast({
         title: "Approval is blocked",
-        description: "Resolve or obtain Finance override for every blocking validation.",
+        description:
+          "Resolve or obtain Finance override for every blocking validation.",
         variant: "destructive",
       });
       return;
@@ -641,15 +804,27 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             // Branch is not a searchable column, so promising it would be a lie.
             placeholder="Search GRN, vendor, head or description"
           />
-          <GrnSelect small value={grnType} onChange={(e) => setGrnType(e.target.value)} aria-label="GRN type">
+          <GrnSelect
+            small
+            value={grnType}
+            onChange={(e) => setGrnType(e.target.value)}
+            aria-label="GRN type"
+          >
             <option value="_all">All types</option>
             <option value="vendor">Vendor</option>
             <option value="imprest">Imprest</option>
           </GrnSelect>
-          <GrnSelect small value={filterBranch} onChange={(e) => setFilterBranch(e.target.value)} aria-label="Filter by branch">
+          <GrnSelect
+            small
+            value={filterBranch}
+            onChange={(e) => setFilterBranch(e.target.value)}
+            aria-label="Filter by branch"
+          >
             <option value="">All branches</option>
             {branchOptions.map((b) => (
-              <option key={b.id} value={b.id}>{b.branch_name ?? b.name ?? b.id}</option>
+              <option key={b.id} value={b.id}>
+                {b.branch_name ?? b.name ?? b.id}
+              </option>
             ))}
           </GrnSelect>
           {/* Safari never implemented input[type=month] — it degrades to a bare text box with no
@@ -692,7 +867,11 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             onChange={setFilterVendor}
             placeholder="Any vendor"
             searchPlaceholder="Type a vendor name…"
-            emptyText={vendorSearch.trim() ? "No vendor matches." : "Start typing to search."}
+            emptyText={
+              vendorSearch.trim()
+                ? "No vendor matches."
+                : "Start typing to search."
+            }
             search={vendorSearch}
             onSearchChange={setVendorSearch}
           />
@@ -700,12 +879,21 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             Back-dated
           </GrnChip>
           {capabilities?.canCreate && (
-            <GrnChip active={myGrnsOnly} onClick={() => setMyGrnsOnly((v) => !v)}>
+            <GrnChip
+              active={myGrnsOnly}
+              onClick={() => setMyGrnsOnly((v) => !v)}
+            >
               My GRNs
             </GrnChip>
           )}
-          <GrnIconButton onClick={() => void listQuery.refetch()} title="Refresh" aria-label="Refresh">
-            <RefreshCw className={`h-3.5 w-3.5 ${listQuery.isFetching ? "animate-spin" : ""}`} />
+          <GrnIconButton
+            onClick={() => void listQuery.refetch()}
+            title="Refresh"
+            aria-label="Refresh"
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${listQuery.isFetching ? "animate-spin" : ""}`}
+            />
           </GrnIconButton>
         </div>
 
@@ -717,7 +905,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
               onClick={() => setStatus(value)}
               // Counts come from the summary aggregate, so they reflect every matching GRN
               // rather than whatever fitted in the 100-row list response.
-              count={value === "_all" ? undefined : summary?.byStatus[value]?.count}
+              count={
+                value === "_all" ? undefined : summary?.byStatus[value]?.count
+              }
             >
               {label}
             </GrnChip>
@@ -729,16 +919,23 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             <Loader2 className="h-7 w-7 animate-spin text-grn-ink-soft" />
           </div>
         ) : !displayRows.length ? (
-          <GrnEmptyState icon={<FileText className="h-9 w-9" />} title="No GRNs match the filters" />
+          <GrnEmptyState
+            icon={<FileText className="h-9 w-9" />}
+            title="No GRNs match the filters"
+          />
         ) : (
           <GrnTable minWidth={1080}>
             <thead>
               <tr>
-                <GrnTh sticky={false} className="w-[120px]">GRN</GrnTh>
+                <GrnTh sticky={false} className="w-[120px]">
+                  GRN
+                </GrnTh>
                 <GrnTh sticky={false}>Type</GrnTh>
                 <GrnTh sticky={false}>Branch</GrnTh>
                 <GrnTh sticky={false}>Vendor</GrnTh>
-                <GrnTh sticky={false} align="right">Amount</GrnTh>
+                <GrnTh sticky={false} align="right">
+                  Amount
+                </GrnTh>
                 {/* When the GRN was actually raised. Only Due and Bill dates were shown, and
                     neither answers "when did this arrive for approval" — a GRN raised today can
                     carry a bill date weeks old, so the two are routinely far apart. */}
@@ -747,7 +944,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                 {/* Always visible — an approver needs to know which month a GRN books into
                     (P&L close, budget headroom) whether or not it happens to be back-dated. */}
                 <GrnTh sticky={false}>Accounting Month</GrnTh>
-                <GrnTh sticky={false} align="right">Waiting</GrnTh>
+                <GrnTh sticky={false} align="right">
+                  Waiting
+                </GrnTh>
                 <GrnTh sticky={false}>Status</GrnTh>
                 <GrnTh sticky={false} />
               </tr>
@@ -757,12 +956,20 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                 <tr
                   key={row.id}
                   className={`${GRN_TR} cursor-pointer`}
-                  onClick={() => { setTarget(row); setDecision("approved"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
+                  onClick={() => {
+                    setTarget(row);
+                    setDecision("approved");
+                    setReviewNote("");
+                    setOverrideCode(null);
+                    setOverrideReason("");
+                  }}
                 >
                   <GrnTd className="font-grn-mono font-bold text-grn-brand">
                     <span className="block">{grnDisplayNumber(row)}</span>
-                    {row.accounting_period && row.bill_date &&
-                      row.accounting_period.slice(0, 7) !== row.bill_date.slice(0, 7) && (
+                    {row.accounting_period &&
+                      row.bill_date &&
+                      row.accounting_period.slice(0, 7) !==
+                        row.bill_date.slice(0, 7) && (
                         <span className="mt-0.5 block font-grn-mono text-[10px] font-normal text-amber-600">
                           ≠ {row.accounting_period.slice(0, 7)}
                         </span>
@@ -778,61 +985,99 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     </span>
                   </GrnTd>
                   <GrnTd className="max-w-[160px] truncate">
-                    {row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : "—")}
+                    {row.vendor_name ??
+                      (row.grn_type === "imprest" ? "Imprest" : "—")}
                   </GrnTd>
-                  <GrnTd align="right" className="font-semibold">{money(row.amount_with_tax ?? row.amount)}</GrnTd>
+                  <GrnTd align="right" className="font-semibold">
+                    {money(row.amount_with_tax ?? row.amount)}
+                  </GrnTd>
                   <GrnTd>
                     {row.created_at ? dateLabel(row.created_at) : "—"}
-                    {row.bill_date && <GrnCellSub>bill {dateLabel(row.bill_date)}</GrnCellSub>}
+                    {row.bill_date && (
+                      <GrnCellSub>bill {dateLabel(row.bill_date)}</GrnCellSub>
+                    )}
                   </GrnTd>
                   <GrnTd>{row.due_date ? dateLabel(row.due_date) : "—"}</GrnTd>
                   <GrnTd>
-                    <span className={`font-grn-mono ${
-                      row.accounting_period && row.bill_date
-                        && row.accounting_period.slice(0, 7) !== row.bill_date.slice(0, 7)
-                        ? "text-amber-700" : "text-grn-ink-soft"
-                    }`}>
+                    <span
+                      className={`font-grn-mono ${
+                        row.accounting_period &&
+                        row.bill_date &&
+                        row.accounting_period.slice(0, 7) !==
+                          row.bill_date.slice(0, 7)
+                          ? "text-amber-700"
+                          : "text-grn-ink-soft"
+                      }`}
+                    >
                       {row.accounting_period ?? "—"}
                     </span>
                   </GrnTd>
                   <GrnTd align="right">
                     {(() => {
                       // Use server-computed ageing_days which handles legacy data correctly
-                      const d = (row as any).ageing_days ?? (row.created_at ? daysSince(row.created_at) : null);
+                      const d =
+                        (row as any).ageing_days ??
+                        (row.created_at ? daysSince(row.created_at) : null);
                       // Legacy data with -1 or "legacy" bucket shows "Legacy" instead of misleading day count
                       if (d === -1 || (row as any).age_bucket === "legacy") {
-                        return <span className="font-grn-mono text-[10px] font-medium text-grn-ink-soft">Legacy</span>;
+                        return (
+                          <span className="font-grn-mono text-[10px] font-medium text-grn-ink-soft">
+                            Legacy
+                          </span>
+                        );
                       }
-                      if (d === null) return <span className="text-grn-ink-soft">—</span>;
+                      if (d === null)
+                        return <span className="text-grn-ink-soft">—</span>;
                       return (
-                        <span className={`font-grn-mono text-[11px] font-semibold ${d > 3 ? "text-rose-600" : d > 1 ? "text-amber-600" : "text-grn-ink-soft"}`}>
+                        <span
+                          className={`font-grn-mono text-[11px] font-semibold ${d > 3 ? "text-rose-600" : d > 1 ? "text-amber-600" : "text-grn-ink-soft"}`}
+                        >
                           {d}d
                         </span>
                       );
                     })()}
                   </GrnTd>
                   <GrnTd>
-                    <StatusStamp tone={grnStatusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>
+                    <StatusStamp tone={grnStatusTone(row.status)}>
+                      {labelStatus(row.status)}
+                    </StatusStamp>
                   </GrnTd>
                   <GrnTd>
                     <div className="flex justify-end gap-1.5">
                       <GrnButton
                         variant="primary"
                         size="sm"
-                        onClick={(e) => { e.stopPropagation(); setTarget(row); setDecision("approved"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTarget(row);
+                          setDecision("approved");
+                          setReviewNote("");
+                          setOverrideCode(null);
+                          setOverrideReason("");
+                        }}
                       >
                         Review
                       </GrnButton>
                       {/* Inline quick-approve / quick-reject — mirrors the imprest queue pattern */}
-                      {((row.status === "submitted" && capabilities?.canReviewBranchStage) ||
-                        (row.status === "branch_head_approved" && canReviewAccountsStage) ||
-                        (row.status === "accounts_head_approved" && capabilities?.canReviewFinanceStage)) && (
+                      {((row.status === "submitted" &&
+                        capabilities?.canReviewBranchStage) ||
+                        (row.status === "branch_head_approved" &&
+                          canReviewAccountsStage) ||
+                        (row.status === "accounts_head_approved" &&
+                          capabilities?.canReviewFinanceStage)) && (
                         <>
                           <GrnIconButton
                             title="Approve"
                             aria-label={`Approve ${grnDisplayNumber(row)}`}
                             disabled={reviewMutation.isPending}
-                            onClick={(e) => { e.stopPropagation(); reviewMutation.mutate({ id: row.id, decision: "approved", note: "" }); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              reviewMutation.mutate({
+                                id: row.id,
+                                decision: "approved",
+                                note: "",
+                              });
+                            }}
                           >
                             <CheckCircle2 className="h-3.5 w-3.5" />
                           </GrnIconButton>
@@ -840,7 +1085,14 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                             title="Reject (opens review)"
                             aria-label={`Reject ${grnDisplayNumber(row)}`}
                             className="hover:border-grn-crit hover:text-grn-crit"
-                            onClick={(e) => { e.stopPropagation(); setTarget(row); setDecision("rejected"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTarget(row);
+                              setDecision("rejected");
+                              setReviewNote("");
+                              setOverrideCode(null);
+                              setOverrideReason("");
+                            }}
                           >
                             <XCircle className="h-3.5 w-3.5" />
                           </GrnIconButton>
@@ -853,29 +1105,39 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                           <GrnIconButton
                             title="Edit this GRN"
                             aria-label="Edit this GRN"
-                            onClick={(e) => { e.stopPropagation(); onReopenForEdit?.(row.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onReopenForEdit?.(row.id);
+                            }}
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </GrnIconButton>
                           <GrnIconButton
                             title="Submit to Branch Head"
                             aria-label="Submit to Branch Head"
-                            onClick={(e) => { e.stopPropagation(); submitMutation.mutate(row.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              submitMutation.mutate(row.id);
+                            }}
                           >
                             <Send className="h-3.5 w-3.5" />
                           </GrnIconButton>
                         </>
                       )}
-                      {["draft", "submitted"].includes(row.status) && capabilities?.canCreate && (
-                        <GrnIconButton
-                          title="Cancel this GRN"
-                          aria-label="Cancel this GRN"
-                          className="hover:border-grn-crit hover:text-grn-crit"
-                          onClick={(e) => { e.stopPropagation(); cancelMutation.mutate(row.id); }}
-                        >
-                          <XCircle className="h-3.5 w-3.5" />
-                        </GrnIconButton>
-                      )}
+                      {["draft", "submitted"].includes(row.status) &&
+                        capabilities?.canCreate && (
+                          <GrnIconButton
+                            title="Cancel this GRN"
+                            aria-label="Cancel this GRN"
+                            className="hover:border-grn-crit hover:text-grn-crit"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              cancelMutation.mutate(row.id);
+                            }}
+                          >
+                            <XCircle className="h-3.5 w-3.5" />
+                          </GrnIconButton>
+                        )}
                     </div>
                   </GrnTd>
                 </tr>
@@ -885,9 +1147,16 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
         )}
         {displayRows.length > 0 && (
           <div className="flex items-center justify-between px-4 py-3 text-xs text-grn-ink-soft">
-            <span>Showing {displayRows.length} result{displayRows.length !== 1 ? "s" : ""}</span>
+            <span>
+              Showing {displayRows.length} result
+              {displayRows.length !== 1 ? "s" : ""}
+            </span>
             {rows.length === PAGE_SIZE && (
-              <GrnButton variant="default" size="sm" onClick={() => setPage((p) => p + 1)}>
+              <GrnButton
+                variant="default"
+                size="sm"
+                onClick={() => setPage((p) => p + 1)}
+              >
                 Load more
               </GrnButton>
             )}
@@ -896,24 +1165,41 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       </GrnCard>
 
       {/* Tabbed Sheet — replaces the 1180px Dialog */}
-      <Sheet open={Boolean(target)} onOpenChange={(open) => !open && setTarget(null)}>
+      <Sheet
+        open={Boolean(target)}
+        onOpenChange={(open) => !open && setTarget(null)}
+      >
         {/* Full width below 560px — a fixed 560 overflowed the viewport on a phone. */}
-        <SheetContent side="right" className="grn-scope flex w-full flex-col gap-0 p-0 sm:w-[920px] sm:max-w-[92vw]">
+        <SheetContent
+          side="right"
+          className="grn-scope flex w-full flex-col gap-0 p-0 sm:w-[920px] sm:max-w-[92vw]"
+        >
           <SheetHeader className="border-b border-grn-line bg-grn-line-soft px-[16px] py-[12px]">
             <SheetTitle className="font-grn-mono text-[13px] font-bold text-grn-brand">
               {target ? grnDisplayNumber(target) : "…"} — Review
             </SheetTitle>
             <div className="flex flex-wrap items-center gap-2 pt-0.5">
               <span className="text-[11px] text-grn-ink-soft">
-                {[target?.vendor_name, target?.branch_name].filter(Boolean).join(" · ") || "—"}
+                {[target?.vendor_name, target?.branch_name]
+                  .filter(Boolean)
+                  .join(" · ") || "—"}
               </span>
-              {target && <StatusStamp tone={grnStatusTone(target.status)}>{labelStatus(target.status)}</StatusStamp>}
+              {target && (
+                <StatusStamp tone={grnStatusTone(target.status)}>
+                  {labelStatus(target.status)}
+                </StatusStamp>
+              )}
             </div>
           </SheetHeader>
 
-          <Tabs defaultValue="details" className="flex flex-1 flex-col overflow-hidden">
+          <Tabs
+            defaultValue="details"
+            className="flex flex-1 flex-col overflow-hidden"
+          >
             <TabsList className={`${GRN_SHEET_TABS_LIST} shrink-0`}>
-              <TabsTrigger value="details" className={GRN_SHEET_TAB_TRIGGER}>Details</TabsTrigger>
+              <TabsTrigger value="details" className={GRN_SHEET_TAB_TRIGGER}>
+                Details
+              </TabsTrigger>
               <TabsTrigger value="validation" className={GRN_SHEET_TAB_TRIGGER}>
                 Validation
                 {blockers.length > 0 && (
@@ -922,14 +1208,23 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                   </span>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="decision" className={GRN_SHEET_TAB_TRIGGER}>Decision</TabsTrigger>
+              <TabsTrigger value="decision" className={GRN_SHEET_TAB_TRIGGER}>
+                Decision
+              </TabsTrigger>
               {canRaiseDn && (
-                <TabsTrigger value="debit-notes" className={GRN_SHEET_TAB_TRIGGER}>
+                <TabsTrigger
+                  value="debit-notes"
+                  className={GRN_SHEET_TAB_TRIGGER}
+                >
                   <FileMinus2 className="mr-1 h-3 w-3" />
                   Debit Notes
-                  {debitNotes.filter((d) => String(d.status) === "draft").length > 0 && (
+                  {debitNotes.filter((d) => String(d.status) === "draft")
+                    .length > 0 && (
                     <span className="ml-1 rounded-full bg-amber-100 px-1.5 font-grn-mono text-[9.5px] font-bold text-amber-700">
-                      {debitNotes.filter((d) => String(d.status) === "draft").length}
+                      {
+                        debitNotes.filter((d) => String(d.status) === "draft")
+                          .length
+                      }
                     </span>
                   )}
                 </TabsTrigger>
@@ -939,12 +1234,20 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             {/* Details tab */}
             <TabsContent value="details" className="m-0 flex-1 overflow-y-auto">
               {workspaceQuery.isLoading ? (
-                <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-grn-ink-soft" /></div>
+                <div className="flex justify-center py-10">
+                  <Loader2 className="h-6 w-6 animate-spin text-grn-ink-soft" />
+                </div>
               ) : (
                 <>
                   <GrnMetricStrip className="border-b border-grn-line-soft">
-                    <GrnMetric label="Without tax" value={money(parent?.amount_without_tax)} />
-                    <GrnMetric label="With tax" value={money(parent?.amount_with_tax ?? parent?.amount)} />
+                    <GrnMetric
+                      label="Without tax"
+                      value={money(parent?.amount_without_tax)}
+                    />
+                    <GrnMetric
+                      label="With tax"
+                      value={money(parent?.amount_with_tax ?? parent?.amount)}
+                    />
                     <GrnMetric
                       label="Validation"
                       value={`${Number(parent?.validation_score ?? 0).toFixed(0)}%`}
@@ -954,43 +1257,67 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
 
                   {target && (
                     <GrnKvList>
-                      {([
-                        ["GRN Number", grnDisplayNumber(target)],
-                        ["Type", target.grn_type],
-                        ["Branch", target.branch_name],
-                        ["Vendor", target.vendor_name],
-                        ["Head", target.head],
-                        ["Sub-head", target.sub_head],
-                        ["Amount", money(target.amount)],
-                        ["With tax", money(target.amount_with_tax)],
-                        ["Bill date", dateLabel(target.bill_date)],
-                        ["Due date", dateLabel(target.due_date)],
-                        ["Allocation", target.allocation_mode ?? "single"],
-                        ["Acctg period", parent?.accounting_period ?? "—"],
-                        ["Remarks", parent?.remarks ?? null],
-                        ["Rejection reason", parent?.rejection_reason ?? null],
-                        ["Validation score", target.validation_score != null ? `${target.validation_score}%` : "—"],
-                        ["Invoice", parent?.invoice_number ?? "—"],
-                        ["Financial year", parent?.financial_year ?? "—"],
-                        ["PO / Contract", parent?.purchase_reference ?? "—"],
-                        ["GSTIN", parent?.vendor_gstin ?? "—"],
-                        // Vendor State / Billing State — an approver needs both to sanity-check the
-                        // GST split on the invoice (CGST+SGST for same state, IGST for different
-                        // states; deriveGstType is the same rule the raise form itself applies). Not
-                        // shown before this: only the GSTIN was visible, which does not by itself say
-                        // whether the recorded gst_type on THIS GRN actually matches.
-                        ["Vendor State", gstStateLabel(parent?.vendor_state_code)],
-                        ["Billing State", gstStateLabel(parent?.billing_state_code)],
-                      ] as [string, string | null | undefined][]).map(([label, val]) => (
+                      {(
+                        [
+                          ["GRN Number", grnDisplayNumber(target)],
+                          ["Type", target.grn_type],
+                          ["Branch", target.branch_name],
+                          ["Vendor", target.vendor_name],
+                          ["Head", target.head],
+                          ["Sub-head", target.sub_head],
+                          ["Amount", money(target.amount)],
+                          ["With tax", money(target.amount_with_tax)],
+                          ["Bill date", dateLabel(target.bill_date)],
+                          ["Due date", dateLabel(target.due_date)],
+                          ["Allocation", target.allocation_mode ?? "single"],
+                          ["Acctg period", parent?.accounting_period ?? "—"],
+                          ["Remarks", parent?.remarks ?? null],
+                          [
+                            "Rejection reason",
+                            parent?.rejection_reason ?? null,
+                          ],
+                          [
+                            "Validation score",
+                            target.validation_score != null
+                              ? `${target.validation_score}%`
+                              : "—",
+                          ],
+                          ["Invoice", parent?.invoice_number ?? "—"],
+                          ["Financial year", parent?.financial_year ?? "—"],
+                          ["PO / Contract", parent?.purchase_reference ?? "—"],
+                          ["GSTIN", parent?.vendor_gstin ?? "—"],
+                          // Vendor State / Billing State — an approver needs both to sanity-check the
+                          // GST split on the invoice (CGST+SGST for same state, IGST for different
+                          // states; deriveGstType is the same rule the raise form itself applies). Not
+                          // shown before this: only the GSTIN was visible, which does not by itself say
+                          // whether the recorded gst_type on THIS GRN actually matches.
+                          [
+                            "Vendor State",
+                            gstStateLabel(parent?.vendor_state_code),
+                          ],
+                          [
+                            "Billing State",
+                            gstStateLabel(parent?.billing_state_code),
+                          ],
+                        ] as [string, string | null | undefined][]
+                      ).map(([label, val]) => (
                         <GrnKv key={label} label={label}>
                           {/* Remarks/Rejection reason are free text and can run long — truncate+title
                               relied on hover to reveal the rest, which doesn't exist on touch/mobile,
                               so those two wrap in full instead. Everything else (short, bounded fields)
                               still truncates with a hover title as before. */}
-                          {label === "Remarks" || label === "Rejection reason" ? (
-                            <span className="block whitespace-pre-wrap break-words">{val ?? "—"}</span>
+                          {label === "Remarks" ||
+                          label === "Rejection reason" ? (
+                            <span className="block whitespace-pre-wrap break-words">
+                              {val ?? "—"}
+                            </span>
                           ) : (
-                            <span className="block truncate" title={val ?? undefined}>{val ?? "—"}</span>
+                            <span
+                              className="block truncate"
+                              title={val ?? undefined}
+                            >
+                              {val ?? "—"}
+                            </span>
                           )}
                         </GrnKv>
                       ))}
@@ -1003,11 +1330,19 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         <div className="flex items-start gap-2">
                           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                           <span>
-                            Vendor State ({gstStateLabel(parent?.vendor_state_code)}) and Billing
-                            State ({gstStateLabel(parent?.billing_state_code)}) say this should be{" "}
-                            {expectedGstType === "igst" ? "IGST" : "CGST + SGST"}, but the invoice
-                            was saved as {recordedGstType === "igst" ? "IGST" : "CGST + SGST"}.
-                            Check with the raiser before approving.
+                            Vendor State (
+                            {gstStateLabel(parent?.vendor_state_code)}) and
+                            Billing State (
+                            {gstStateLabel(parent?.billing_state_code)}) say
+                            this should be{" "}
+                            {expectedGstType === "igst"
+                              ? "IGST"
+                              : "CGST + SGST"}
+                            , but the invoice was saved as{" "}
+                            {recordedGstType === "igst"
+                              ? "IGST"
+                              : "CGST + SGST"}
+                            . Check with the raiser before approving.
                           </span>
                         </div>
                       </GrnAlert>
@@ -1039,13 +1374,23 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                         >
                           <FileText className="h-4 w-4 shrink-0 text-grn-brand" />
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-[12px] font-semibold text-grn-ink">{doc.original_name}</p>
+                            <p className="truncate text-[12px] font-semibold text-grn-ink">
+                              {doc.original_name}
+                            </p>
                             <p className="text-[10.5px] text-grn-ink-soft">
-                              {String(doc.extraction_status ?? "pending").replace(/_/g, " ")}
+                              {String(
+                                doc.extraction_status ?? "pending",
+                              ).replace(/_/g, " ")}
                             </p>
                           </div>
-                          <StatusStamp tone={checkTone(String(doc.extraction_status ?? "pending"))}>
-                            {Number(doc.is_primary) === 1 ? "Primary" : "Support"}
+                          <StatusStamp
+                            tone={checkTone(
+                              String(doc.extraction_status ?? "pending"),
+                            )}
+                          >
+                            {Number(doc.is_primary) === 1
+                              ? "Primary"
+                              : "Support"}
                           </StatusStamp>
                         </button>
                       ))}
@@ -1056,10 +1401,15 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                           new-flow single-attachment uploads) keeps the real Open button; a legacy
                           row with only a known filename gets an honest label instead of a button
                           that can only ever 404. */}
-                      {!workspace?.documents?.length && (
-                        (parent?.attachment_path || parent?.attachment_file_path) ? (
-                          <GrnButton className="w-full" onClick={() => void openDocument()}>
-                            <FileText className="h-3.5 w-3.5" />Open legacy attachment
+                      {!workspace?.documents?.length &&
+                        (parent?.attachment_path ||
+                        parent?.attachment_file_path ? (
+                          <GrnButton
+                            className="w-full"
+                            onClick={() => void openDocument()}
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                            Open legacy attachment
                           </GrnButton>
                         ) : parent?.attachment_original_name ? (
                           <div className="flex items-center gap-2 rounded-lg border border-dashed border-grn-line bg-grn-card p-2 text-left">
@@ -1069,12 +1419,12 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                                 {parent.attachment_original_name}
                               </p>
                               <p className="text-[10.5px] text-grn-ink-soft">
-                                On file in the legacy system — not migrated to HRMS storage
+                                On file in the legacy system — not migrated to
+                                HRMS storage
                               </p>
                             </div>
                           </div>
-                        ) : null
-                      )}
+                        ) : null)}
                     </div>
                   </div>
 
@@ -1083,151 +1433,236 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       Allocations
                     </p>
                     {workspace?.allocations?.length ? (
-                <>
-                {isUnbudgetedTarget && (
-                  <div className="p-4 pb-0">
-                    <GrnAlert tone={unlinkedAllocations.length ? "warn" : "ok"}>
-                      {unlinkedAllocations.length ? (
-                        <>
-                          <p className="font-semibold">
-                            Unbudgeted GRN — {unlinkedAllocations.length} of {workspace.allocations.length} splits have no budget line.
-                          </p>
-                          <p className="mt-1">
-                            Raised against <span className="font-semibold">{parent?.head} / {parent?.sub_head}</span>, which had
-                            no approved budget in {targetPeriod}. <span className="font-semibold">You can approve this as it
-                            stands</span> — the cost books to the P&amp;L and the payable is created either way. Approving
-                            unlinked simply means no budget line is decremented, and the GRN stays marked unbudgeted.
-                            {canLinkBudget
-                              ? " Linking a line below is optional: do it if this spend should draw down a real budget."
-                              : " Only a Finance Head or Super Admin can attach a budget line."}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="font-semibold">
-                          Raised as unbudgeted — every split has since been linked to an approved budget line.
-                        </p>
-                      )}
-                    </GrnAlert>
-                    {canLinkBudget && unlinkedAllocations.length > 0 && (
-                      <div className="mt-2 flex items-center gap-2">
-                        <GrnButton
-                          variant="primary"
-                          disabled={linkBudgetMutation.isPending || !pendingBudgetLinks.length}
-                          onClick={() =>
-                            linkBudgetMutation.mutate({ id: target!.id, links: pendingBudgetLinks })
-                          }
-                        >
-                          {linkBudgetMutation.isPending
-                            ? "Linking…"
-                            : `Link ${pendingBudgetLinks.length || ""} budget line${pendingBudgetLinks.length === 1 ? "" : "s"}`.trim()}
-                        </GrnButton>
-                        <span className="text-[12px] text-grn-ink-soft">
-                          Optional. Linking a split reserves its amount against the chosen line straight away when the GRN has
-                          already passed Branch Head.
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <GrnTable minWidth={620}>
-                  <thead>
-                    <tr>
-                      <GrnTh sticky={false}>#</GrnTh>
-                      <GrnTh sticky={false}>Budget / item</GrnTh>
-                      <GrnTh sticky={false}>Cost centre</GrnTh>
-                      <GrnTh sticky={false} align="right">Without tax</GrnTh>
-                      <GrnTh sticky={false} align="right">With tax</GrnTh>
-                      <GrnTh sticky={false} align="right">%</GrnTh>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {workspace.allocations.map((alloc, index) => (
-                      <tr key={alloc.id} className={GRN_TR}>
-                        <GrnTd className="font-grn-mono text-grn-ink-soft">{index + 1}</GrnTd>
-                        <GrnTd className="max-w-[220px]">
-                          {alloc.budget_line_id ? (
-                            <>
-                              <p className="truncate font-semibold">{alloc.budget_number}</p>
-                              <GrnCellSub className="truncate">{alloc.budget_head} / {alloc.budget_sub_head}</GrnCellSub>
-                            </>
-                          ) : canLinkBudget ? (
-                            /* Only lines for THIS split's own cost centre are offered. The server
+                      <>
+                        {isUnbudgetedTarget && (
+                          <div className="p-4 pb-0">
+                            <GrnAlert
+                              tone={unlinkedAllocations.length ? "warn" : "ok"}
+                            >
+                              {unlinkedAllocations.length ? (
+                                <>
+                                  <p className="font-semibold">
+                                    Unbudgeted GRN —{" "}
+                                    {unlinkedAllocations.length} of{" "}
+                                    {workspace.allocations.length} splits have
+                                    no budget line.
+                                  </p>
+                                  <p className="mt-1">
+                                    Raised against{" "}
+                                    <span className="font-semibold">
+                                      {parent?.head} / {parent?.sub_head}
+                                    </span>
+                                    , which had no approved budget in{" "}
+                                    {targetPeriod}.{" "}
+                                    <span className="font-semibold">
+                                      You can approve this as it stands
+                                    </span>{" "}
+                                    — the cost books to the P&amp;L and the
+                                    payable is created either way. Approving
+                                    unlinked simply means no budget line is
+                                    decremented, and the GRN stays marked
+                                    unbudgeted.
+                                    {canLinkBudget
+                                      ? " Linking a line below is optional: do it if this spend should draw down a real budget."
+                                      : " Only a Finance Head or Super Admin can attach a budget line."}
+                                  </p>
+                                </>
+                              ) : (
+                                <p className="font-semibold">
+                                  Raised as unbudgeted — every split has since
+                                  been linked to an approved budget line.
+                                </p>
+                              )}
+                            </GrnAlert>
+                            {canLinkBudget &&
+                              unlinkedAllocations.length > 0 && (
+                                <div className="mt-2 flex items-center gap-2">
+                                  <GrnButton
+                                    variant="primary"
+                                    disabled={
+                                      linkBudgetMutation.isPending ||
+                                      !pendingBudgetLinks.length
+                                    }
+                                    onClick={() =>
+                                      linkBudgetMutation.mutate({
+                                        id: target!.id,
+                                        links: pendingBudgetLinks,
+                                      })
+                                    }
+                                  >
+                                    {linkBudgetMutation.isPending
+                                      ? "Linking…"
+                                      : `Link ${pendingBudgetLinks.length || ""} budget line${pendingBudgetLinks.length === 1 ? "" : "s"}`.trim()}
+                                  </GrnButton>
+                                  <span className="text-[12px] text-grn-ink-soft">
+                                    Optional. Linking a split reserves its
+                                    amount against the chosen line straight away
+                                    when the GRN has already passed Branch Head.
+                                  </span>
+                                </div>
+                              )}
+                          </div>
+                        )}
+                        <GrnTable minWidth={620}>
+                          <thead>
+                            <tr>
+                              <GrnTh sticky={false}>#</GrnTh>
+                              <GrnTh sticky={false}>Budget / item</GrnTh>
+                              <GrnTh sticky={false}>Cost centre</GrnTh>
+                              <GrnTh sticky={false} align="right">
+                                Without tax
+                              </GrnTh>
+                              <GrnTh sticky={false} align="right">
+                                With tax
+                              </GrnTh>
+                              <GrnTh sticky={false} align="right">
+                                %
+                              </GrnTh>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {workspace.allocations.map((alloc, index) => (
+                              <tr key={alloc.id} className={GRN_TR}>
+                                <GrnTd className="font-grn-mono text-grn-ink-soft">
+                                  {index + 1}
+                                </GrnTd>
+                                <GrnTd className="max-w-[220px]">
+                                  {alloc.budget_line_id ? (
+                                    <>
+                                      <p className="truncate font-semibold">
+                                        {alloc.budget_number}
+                                      </p>
+                                      <GrnCellSub className="truncate">
+                                        {alloc.budget_head} /{" "}
+                                        {alloc.budget_sub_head}
+                                      </GrnCellSub>
+                                    </>
+                                  ) : canLinkBudget ? (
+                                    /* Only lines for THIS split's own cost centre are offered. The server
                                enforces the same rule, so a mismatch is refused rather than
                                silently moving spend onto another cost centre's budget. */
-                            <GrnSelect
-                              value={budgetLinks[String(alloc.id)] ?? ""}
-                              onChange={(event) =>
-                                setBudgetLinks((current) => ({
-                                  ...current,
-                                  [String(alloc.id)]: event.target.value,
-                                }))
-                              }
-                            >
-                              <option value="">
-                                {linkCandidatesQuery.isLoading ? "Loading budget lines…" : "Link a budget line…"}
-                              </option>
-                              {linkCandidates
-                                .filter(
-                                  (line) =>
-                                    String(line.cost_centre_id ?? "") === String(alloc.cost_centre_id ?? "")
-                                )
-                                .map((line) => (
-                                  <option key={String(line.id)} value={String(line.id)}>
-                                    {line.head} / {line.sub_head} — {line.item_name} ({money(line.available_gross_amount)} left)
-                                  </option>
-                                ))}
-                            </GrnSelect>
-                          ) : (
-                            <>
-                              <p className="truncate font-semibold text-grn-warn">Unbudgeted</p>
-                              <GrnCellSub className="truncate">{parent?.head} / {parent?.sub_head}</GrnCellSub>
-                            </>
-                          )}
-                        </GrnTd>
-                        <GrnTd>
-                          {alloc.cost_centre_name ?? "Branch common"}
-                          {/* funding_cost_centre_id (migration 1630) — the branch-wide headroom
+                                    <GrnSelect
+                                      value={
+                                        budgetLinks[String(alloc.id)] ?? ""
+                                      }
+                                      onChange={(event) =>
+                                        setBudgetLinks((current) => ({
+                                          ...current,
+                                          [String(alloc.id)]:
+                                            event.target.value,
+                                        }))
+                                      }
+                                    >
+                                      <option value="">
+                                        {linkCandidatesQuery.isLoading
+                                          ? "Loading budget lines…"
+                                          : "Link a budget line…"}
+                                      </option>
+                                      {linkCandidates
+                                        .filter(
+                                          (line) =>
+                                            String(
+                                              line.cost_centre_id ?? "",
+                                            ) ===
+                                            String(alloc.cost_centre_id ?? ""),
+                                        )
+                                        .map((line) => (
+                                          <option
+                                            key={String(line.id)}
+                                            value={String(line.id)}
+                                          >
+                                            {line.head} / {line.sub_head} —{" "}
+                                            {line.item_name} (
+                                            {money(line.available_gross_amount)}{" "}
+                                            left)
+                                          </option>
+                                        ))}
+                                    </GrnSelect>
+                                  ) : (
+                                    <>
+                                      <p className="truncate font-semibold text-grn-warn">
+                                        Unbudgeted
+                                      </p>
+                                      <GrnCellSub className="truncate">
+                                        {parent?.head} / {parent?.sub_head}
+                                      </GrnCellSub>
+                                    </>
+                                  )}
+                                </GrnTd>
+                                <GrnTd>
+                                  {alloc.cost_centre_name ?? "Branch common"}
+                                  {/* funding_cost_centre_id (migration 1630) — the branch-wide headroom
                               gate can fund this split from a SIBLING cost centre's line, or the
                               branch-common pool, while this row still belongs to the cost centre
                               above. Shown only when the two actually differ, so a reviewer isn't
                               left assuming this row's own budget paid for it when it did not. */}
-                          {alloc.budget_line_id
-                            && (alloc.funding_cost_centre_id == null
-                              || String(alloc.funding_cost_centre_id) !== String(alloc.cost_centre_id ?? "")) && (
-                            <GrnCellSub className="truncate">
-                              funded from {alloc.funding_cost_centre_name ?? "branch pool"}
-                            </GrnCellSub>
-                          )}
-                        </GrnTd>
-                        <GrnTd align="right">{money(alloc.amount_without_tax)}</GrnTd>
-                        <GrnTd align="right" className="font-semibold">{money(alloc.amount_with_tax)}</GrnTd>
-                        <GrnTd align="right">{Number(alloc.allocation_percentage).toFixed(2)}%</GrnTd>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-grn-line bg-grn-line-soft font-bold">
-                      <GrnTd className="text-grn-ink-soft" />
-                      <GrnTd colSpan={2}>Total</GrnTd>
-                      <GrnTd align="right">{money(allocationTotals.withoutTax)}</GrnTd>
-                      <GrnTd align="right">{money(allocationTotals.withTax)}</GrnTd>
-                      <GrnTd align="right">{allocationTotals.percentage.toFixed(2)}%</GrnTd>
-                    </tr>
-                  </tfoot>
-                </GrnTable>
-                </>
+                                  {alloc.budget_line_id &&
+                                    (alloc.funding_cost_centre_id == null ||
+                                      String(alloc.funding_cost_centre_id) !==
+                                        String(alloc.cost_centre_id ?? "")) && (
+                                      <GrnCellSub className="truncate">
+                                        funded from{" "}
+                                        {alloc.funding_cost_centre_name ??
+                                          "branch pool"}
+                                      </GrnCellSub>
+                                    )}
+                                </GrnTd>
+                                <GrnTd align="right">
+                                  {money(alloc.amount_without_tax)}
+                                </GrnTd>
+                                <GrnTd align="right" className="font-semibold">
+                                  {money(alloc.amount_with_tax)}
+                                </GrnTd>
+                                <GrnTd align="right">
+                                  {Number(alloc.allocation_percentage).toFixed(
+                                    2,
+                                  )}
+                                  %
+                                </GrnTd>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t-2 border-grn-line bg-grn-line-soft font-bold">
+                              <GrnTd className="text-grn-ink-soft" />
+                              <GrnTd colSpan={2}>Total</GrnTd>
+                              <GrnTd align="right">
+                                {money(allocationTotals.withoutTax)}
+                              </GrnTd>
+                              <GrnTd align="right">
+                                {money(allocationTotals.withTax)}
+                              </GrnTd>
+                              <GrnTd align="right">
+                                {allocationTotals.percentage.toFixed(2)}%
+                              </GrnTd>
+                            </tr>
+                          </tfoot>
+                        </GrnTable>
+                      </>
                     ) : (
-                <p className="px-4 py-6 text-[12px] text-grn-ink-soft">
-                  Legacy single-attribution GRN — no split allocations.
-                </p>
+                      <p className="px-4 py-6 text-[12px] text-grn-ink-soft">
+                        Legacy single-attribution GRN — no split allocations.
+                      </p>
                     )}
                   </div>
                   <div className="border-t border-grn-line-soft">
                     <p className="px-4 pb-1 pt-4 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
                       GST breakdown
                       <span className="ml-2 font-normal normal-case tracking-normal">
-                        {(() => { const eg = recordedGstType !== "none" ? recordedGstType : expectedGstType; return eg === "igst" ? "IGST (inter-state)" : eg === "cgst_sgst" ? "CGST + SGST (intra-state)" : "No GST"; })()}
-                        {parent?.vendor_gstin ? ` · GSTIN ${parent.vendor_gstin}` : ""}
+                        {(() => {
+                          const eg =
+                            recordedGstType !== "none"
+                              ? recordedGstType
+                              : expectedGstType;
+                          return eg === "igst"
+                            ? "IGST (inter-state)"
+                            : eg === "cgst_sgst"
+                              ? "CGST + SGST (intra-state)"
+                              : "No GST";
+                        })()}
+                        {parent?.vendor_gstin
+                          ? ` · GSTIN ${parent.vendor_gstin}`
+                          : ""}
                       </span>
                     </p>
                     {gstRows.length ? (
@@ -1236,44 +1671,70 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                           <tr>
                             <GrnTh sticky={false}>#</GrnTh>
                             <GrnTh sticky={false}>HSN / SAC</GrnTh>
-                            <GrnTh sticky={false} align="right">GST slab</GrnTh>
-                            <GrnTh sticky={false} align="right">Taxable value</GrnTh>
-                            <GrnTh sticky={false} align="right">CGST</GrnTh>
-                            <GrnTh sticky={false} align="right">SGST</GrnTh>
-                            <GrnTh sticky={false} align="right">IGST</GrnTh>
-                            <GrnTh sticky={false} align="right">Total GST</GrnTh>
-                            <GrnTh sticky={false} align="right">Invoice total</GrnTh>
+                            <GrnTh sticky={false} align="right">
+                              GST slab
+                            </GrnTh>
+                            <GrnTh sticky={false} align="right">
+                              Taxable value
+                            </GrnTh>
+                            <GrnTh sticky={false} align="right">
+                              CGST
+                            </GrnTh>
+                            <GrnTh sticky={false} align="right">
+                              SGST
+                            </GrnTh>
+                            <GrnTh sticky={false} align="right">
+                              IGST
+                            </GrnTh>
+                            <GrnTh sticky={false} align="right">
+                              Total GST
+                            </GrnTh>
+                            <GrnTh sticky={false} align="right">
+                              Invoice total
+                            </GrnTh>
                           </tr>
                         </thead>
                         <tbody>
                           {gstRows.map((row) => (
                             <tr key={row.key} className={GRN_TR}>
-                              <GrnTd className="font-grn-mono text-grn-ink-soft">{row.label}</GrnTd>
+                              <GrnTd className="font-grn-mono text-grn-ink-soft">
+                                {row.label}
+                              </GrnTd>
                               <GrnTd className="font-grn-mono">{row.hsn}</GrnTd>
-                              <GrnTd align="right" className="font-semibold">{row.rate}%</GrnTd>
+                              <GrnTd align="right" className="font-semibold">
+                                {row.rate}%
+                              </GrnTd>
                               <GrnTd align="right">{money(row.taxable)}</GrnTd>
                               <GrnTd align="right">{money(row.cgst)}</GrnTd>
                               <GrnTd align="right">{money(row.sgst)}</GrnTd>
                               <GrnTd align="right">{money(row.igst)}</GrnTd>
                               <GrnTd align="right">{money(row.gst)}</GrnTd>
-                              <GrnTd align="right" className="font-semibold">{money(row.gross)}</GrnTd>
+                              <GrnTd align="right" className="font-semibold">
+                                {money(row.gross)}
+                              </GrnTd>
                             </tr>
                           ))}
                         </tbody>
                         <tfoot>
                           <tr className="border-t-2 border-grn-line bg-grn-line-soft font-bold">
                             <GrnTd colSpan={3}>Total</GrnTd>
-                            <GrnTd align="right">{money(gstTotals.taxable)}</GrnTd>
+                            <GrnTd align="right">
+                              {money(gstTotals.taxable)}
+                            </GrnTd>
                             <GrnTd align="right">{money(gstTotals.cgst)}</GrnTd>
                             <GrnTd align="right">{money(gstTotals.sgst)}</GrnTd>
                             <GrnTd align="right">{money(gstTotals.igst)}</GrnTd>
                             <GrnTd align="right">{money(gstTotals.gst)}</GrnTd>
-                            <GrnTd align="right">{money(gstTotals.gross)}</GrnTd>
+                            <GrnTd align="right">
+                              {money(gstTotals.gross)}
+                            </GrnTd>
                           </tr>
                         </tfoot>
                       </GrnTable>
                     ) : (
-                      <p className="px-4 pb-4 text-[12px] text-grn-ink-soft">No GST component recorded on this GRN.</p>
+                      <p className="px-4 pb-4 text-[12px] text-grn-ink-soft">
+                        No GST component recorded on this GRN.
+                      </p>
                     )}
                   </div>
 
@@ -1296,45 +1757,69 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             </TabsContent>
 
             {/* Validation tab */}
-            <TabsContent value="validation" className="m-0 flex-1 overflow-y-auto">
+            <TabsContent
+              value="validation"
+              className="m-0 flex-1 overflow-y-auto"
+            >
               {workspaceQuery.isLoading ? (
-                <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-grn-ink-soft" /></div>
+                <div className="flex justify-center py-10">
+                  <Loader2 className="h-6 w-6 animate-spin text-grn-ink-soft" />
+                </div>
               ) : (
                 <div className="space-y-2.5 p-4">
                   {(workspace?.validations ?? []).map((v) => {
-                    const resolved = v.validation_status === "passed" || v.validation_status === "overridden";
+                    const resolved =
+                      v.validation_status === "passed" ||
+                      v.validation_status === "overridden";
                     return (
-                      <GrnAlert key={v.id} tone={checkTone(String(v.validation_status))}>
+                      <GrnAlert
+                        key={v.id}
+                        tone={checkTone(String(v.validation_status))}
+                      >
                         <div className="flex items-start gap-2">
-                          {resolved
-                            ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            : <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                          {resolved ? (
+                            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          ) : (
+                            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          )}
                           <div className="min-w-0 flex-1">
-                            <StatusStamp tone={checkTone(String(v.validation_status))}>
+                            <StatusStamp
+                              tone={checkTone(String(v.validation_status))}
+                            >
                               {String(v.validation_code)}
                             </StatusStamp>
-                            <p className="mt-1.5 text-[12px] leading-5">{v.message}</p>
+                            <p className="mt-1.5 text-[12px] leading-5">
+                              {v.message}
+                            </p>
                             {v.override_reason && (
                               <p className="mt-1.5 rounded-lg bg-grn-card/70 p-1.5 text-[11px]">
                                 Override: {v.override_reason}
                               </p>
                             )}
-                            {Number(v.is_blocking) === 1 && v.validation_status === "failed" && capabilities?.canReviewFinanceStage && (
-                              <GrnButton
-                                size="sm"
-                                className="mt-2"
-                                onClick={() => { setOverrideCode(String(v.validation_code)); setOverrideReason(""); }}
-                              >
-                                <BadgeCheck className="h-3 w-3" />Finance override
-                              </GrnButton>
-                            )}
+                            {Number(v.is_blocking) === 1 &&
+                              v.validation_status === "failed" &&
+                              capabilities?.canReviewFinanceStage && (
+                                <GrnButton
+                                  size="sm"
+                                  className="mt-2"
+                                  onClick={() => {
+                                    setOverrideCode(String(v.validation_code));
+                                    setOverrideReason("");
+                                  }}
+                                >
+                                  <BadgeCheck className="h-3 w-3" />
+                                  Finance override
+                                </GrnButton>
+                              )}
                           </div>
                         </div>
                         {overrideCode === v.validation_code && (
                           <div className="mt-2.5 space-y-2">
                             <GrnTextarea
                               value={overrideReason}
-                              onChange={(e) => setOverrideReason(e.target.value)}
+                              onChange={(e) =>
+                                setOverrideReason(e.target.value)
+                              }
                               placeholder="Mandatory detailed exception reason (at least 10 characters)"
                               className="min-h-[60px] bg-grn-card"
                             />
@@ -1345,15 +1830,20 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                                 onClick={() => overrideMutation.mutate()}
                                 disabled={overrideMutation.isPending}
                               >
-                                {overrideMutation.isPending
-                                  ? <Loader2 className="h-3 w-3 animate-spin" />
-                                  : <BadgeCheck className="h-3 w-3" />}
+                                {overrideMutation.isPending ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <BadgeCheck className="h-3 w-3" />
+                                )}
                                 Approve exception
                               </GrnButton>
                               <GrnButton
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => { setOverrideCode(null); setOverrideReason(""); }}
+                                onClick={() => {
+                                  setOverrideCode(null);
+                                  setOverrideReason("");
+                                }}
                               >
                                 Cancel
                               </GrnButton>
@@ -1364,7 +1854,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     );
                   })}
                   {!(workspace?.validations ?? []).length && (
-                    <p className="text-[12px] text-grn-ink-soft">No validation records found.</p>
+                    <p className="text-[12px] text-grn-ink-soft">
+                      No validation records found.
+                    </p>
                   )}
 
                   {/* Not in the redesign mock, and not droppable: a duplicate invoice is the one
@@ -1377,20 +1869,25 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       {(workspace?.duplicates ?? []).map((dup) => (
                         <GrnAlert key={dup.id} tone="crit">
                           <div className="flex items-center justify-between gap-2">
-                            <p className="font-semibold">{labelStatus(String(dup.match_type))}</p>
+                            <p className="font-semibold">
+                              {labelStatus(String(dup.match_type))}
+                            </p>
                             <span className="font-grn-mono text-[11px]">
                               {Number(dup.confidence_score).toFixed(0)}%
                             </span>
                           </div>
                           <p className="mt-0.5 text-[11px] text-grn-ink-soft">
-                            Matched GRN: {dup.matched_grn_number ?? "Document hash"}
+                            Matched GRN:{" "}
+                            {dup.matched_grn_number ?? "Document hash"}
                           </p>
                         </GrnAlert>
                       ))}
                       {!workspace?.duplicates?.length && (
                         <GrnAlert tone="ok">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold text-grn-ok">Duplicate check — no match found</span>
+                            <span className="font-semibold text-grn-ok">
+                              Duplicate check — no match found
+                            </span>
                             <StatusStamp tone="ok">Clear</StatusStamp>
                           </div>
                         </GrnAlert>
@@ -1402,7 +1899,10 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             </TabsContent>
 
             {/* Decision tab */}
-            <TabsContent value="decision" className="m-0 flex-1 overflow-y-auto">
+            <TabsContent
+              value="decision"
+              className="m-0 flex-1 overflow-y-auto"
+            >
               {canReview ? (
                 <div className="space-y-3 p-4">
                   {decision === "approved" && blockers.length > 0 && (
@@ -1410,8 +1910,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       <div className="flex items-start gap-2">
                         <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                         <span>
-                          {blockers.length} unresolved blocking validation(s) — resolve them on the
-                          Validation tab, or obtain a Finance override, before this can be approved.
+                          {blockers.length} unresolved blocking validation(s) —
+                          resolve them on the Validation tab, or obtain a
+                          Finance override, before this can be approved.
                         </span>
                       </div>
                     </GrnAlert>
@@ -1426,7 +1927,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     <GrnSelect
                       className="mt-1 w-full"
                       value={decision}
-                      onChange={(e) => setDecision(e.target.value as "approved" | "rejected")}
+                      onChange={(e) =>
+                        setDecision(e.target.value as "approved" | "rejected")
+                      }
                     >
                       <option value="approved">Approve GRN</option>
                       <option value="rejected">Reject GRN</option>
@@ -1435,7 +1938,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                   <div>
                     <Label className="text-[11.5px] font-semibold text-grn-ink">
                       Review note{" "}
-                      <span className="font-normal text-grn-ink-soft">(required on reject)</span>
+                      <span className="font-normal text-grn-ink-soft">
+                        (required on reject)
+                      </span>
                     </Label>
                     <GrnTextarea
                       value={reviewNote}
@@ -1458,9 +1963,11 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       disabled={reopenMutation.isPending}
                       onClick={() => target && reopenMutation.mutate(target.id)}
                     >
-                      {reopenMutation.isPending
-                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        : <RotateCcw className="h-3.5 w-3.5" />}
+                      {reopenMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      )}
                       Reopen for Correction
                     </GrnButton>
                   )}
@@ -1469,50 +1976,88 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             </TabsContent>
             {/* Debit Notes tab */}
             {canRaiseDn && (
-              <TabsContent value="debit-notes" className="m-0 flex-1 overflow-y-auto">
+              <TabsContent
+                value="debit-notes"
+                className="m-0 flex-1 overflow-y-auto"
+              >
                 <div className="space-y-3 p-4">
                   {debitNotesQuery.isLoading ? (
-                    <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-grn-ink-soft" /></div>
+                    <div className="flex justify-center py-6">
+                      <Loader2 className="h-5 w-5 animate-spin text-grn-ink-soft" />
+                    </div>
                   ) : debitNotes.length === 0 && !showDnCreate ? (
-                    <GrnAlert tone="info">No debit notes raised against this GRN yet.</GrnAlert>
+                    <GrnAlert tone="info">
+                      No debit notes raised against this GRN yet.
+                    </GrnAlert>
                   ) : (
                     <div className="space-y-2">
                       {debitNotes.map((dn: any) => (
-                        <div key={dn.id} className="rounded-xl border bg-white p-3 text-sm">
+                        <div
+                          key={dn.id}
+                          className="rounded-xl border bg-white p-3 text-sm"
+                        >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="font-semibold text-grn-ink">{dn.dn_number}</p>
-                              <p className="text-[11px] text-grn-ink-soft mt-0.5">
-                                {dn.reason?.replace(/_/g, " ")} · ₹{Number(dn.amount).toLocaleString("en-IN")}
-                                {Number(dn.gst_amount ?? 0) > 0 && ` + ₹${Number(dn.gst_amount).toLocaleString("en-IN")} GST`}
-                                {" · "}{String(dn.dn_date).slice(0, 10)}
+                              <p className="font-semibold text-grn-ink">
+                                {dn.dn_number}
                               </p>
-                              {dn.remarks && <p className="text-[11px] text-grn-ink-soft mt-0.5 italic">{dn.remarks}</p>}
+                              <p className="text-[11px] text-grn-ink-soft mt-0.5">
+                                {dn.reason?.replace(/_/g, " ")} · ₹
+                                {Number(dn.amount).toLocaleString("en-IN")}
+                                {Number(dn.gst_amount ?? 0) > 0 &&
+                                  ` + ₹${Number(dn.gst_amount).toLocaleString("en-IN")} GST`}
+                                {" · "}
+                                {String(dn.dn_date).slice(0, 10)}
+                              </p>
+                              {dn.remarks && (
+                                <p className="text-[11px] text-grn-ink-soft mt-0.5 italic">
+                                  {dn.remarks}
+                                </p>
+                              )}
                             </div>
                             <div className="shrink-0 flex items-center gap-1.5">
                               {String(dn.status) === "draft" && (
                                 <>
-                                  <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-700">Draft</span>
-                                  <GrnButton variant="primary" className="h-6 px-2 text-[10px]"
+                                  <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                                    Draft
+                                  </span>
+                                  <GrnButton
+                                    variant="primary"
+                                    className="h-6 px-2 text-[10px]"
                                     disabled={approveDnMutation.isPending}
-                                    onClick={() => approveDnMutation.mutate(dn.id)}>
+                                    onClick={() =>
+                                      approveDnMutation.mutate(dn.id)
+                                    }
+                                  >
                                     Approve
                                   </GrnButton>
-                                  <GrnButton variant="destructive" className="h-6 px-2 text-[10px]"
+                                  <GrnButton
+                                    variant="destructive"
+                                    className="h-6 px-2 text-[10px]"
                                     disabled={cancelDnMutation.isPending}
-                                    onClick={() => { setCancelDnId(dn.id); setCancelDnReason(""); }}>
+                                    onClick={() => {
+                                      setCancelDnId(dn.id);
+                                      setCancelDnReason("");
+                                    }}
+                                  >
                                     Cancel
                                   </GrnButton>
                                 </>
                               )}
                               {String(dn.status) === "approved" && (
-                                <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Approved</span>
+                                <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                  Approved
+                                </span>
                               )}
                               {String(dn.status) === "cancelled" && (
-                                <span className="rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-500">Cancelled</span>
+                                <span className="rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                                  Cancelled
+                                </span>
                               )}
                               {String(dn.status) === "settled" && (
-                                <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-bold text-blue-700">Settled</span>
+                                <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                                  Settled
+                                </span>
                               )}
                             </div>
                           </div>
@@ -1523,15 +2068,37 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                                 placeholder="Cancellation reason (required)"
                                 autoFocus
                                 value={cancelDnReason}
-                                onChange={(e) => setCancelDnReason(e.target.value)}
+                                onChange={(e) =>
+                                  setCancelDnReason(e.target.value)
+                                }
                               />
                               <div className="flex gap-1.5">
-                                <GrnButton variant="destructive" className="h-6 px-2 text-[10px]"
-                                  disabled={!cancelDnReason.trim() || cancelDnMutation.isPending}
-                                  onClick={() => cancelDnMutation.mutate({ id: dn.id, reason: cancelDnReason.trim() })}>
-                                  {cancelDnMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm"}
+                                <GrnButton
+                                  variant="destructive"
+                                  className="h-6 px-2 text-[10px]"
+                                  disabled={
+                                    !cancelDnReason.trim() ||
+                                    cancelDnMutation.isPending
+                                  }
+                                  onClick={() =>
+                                    cancelDnMutation.mutate({
+                                      id: dn.id,
+                                      reason: cancelDnReason.trim(),
+                                    })
+                                  }
+                                >
+                                  {cancelDnMutation.isPending ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    "Confirm"
+                                  )}
                                 </GrnButton>
-                                <GrnButton className="h-6 px-2 text-[10px]" onClick={() => setCancelDnId(null)}>Back</GrnButton>
+                                <GrnButton
+                                  className="h-6 px-2 text-[10px]"
+                                  onClick={() => setCancelDnId(null)}
+                                >
+                                  Back
+                                </GrnButton>
                               </div>
                             </div>
                           )}
@@ -1542,60 +2109,139 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
 
                   {/* Create new debit note form */}
                   {!showDnCreate ? (
-                    <GrnButton variant="primary" onClick={() => setShowDnCreate(true)}>
+                    <GrnButton
+                      variant="primary"
+                      onClick={() => setShowDnCreate(true)}
+                    >
                       <Plus className="h-3.5 w-3.5" /> Raise Debit Note
                     </GrnButton>
                   ) : (
                     <div className="rounded-xl border bg-slate-50 p-3 space-y-2 text-sm">
-                      <p className="text-[11px] font-bold uppercase tracking-wider text-grn-ink-soft">New Debit Note</p>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-grn-ink-soft">
+                        New Debit Note
+                      </p>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">Date *</label>
-                          <input type="date" className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
-                            value={dnForm.date} onChange={(e) => setDnForm((f) => ({ ...f, date: e.target.value }))} />
+                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">
+                            Date *
+                          </label>
+                          <input
+                            type="date"
+                            className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                            value={dnForm.date}
+                            onChange={(e) =>
+                              setDnForm((f) => ({ ...f, date: e.target.value }))
+                            }
+                          />
                         </div>
                         <div>
-                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">Reason *</label>
-                          <select className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
-                            value={dnForm.reason} onChange={(e) => setDnForm((f) => ({ ...f, reason: e.target.value }))}>
-                            {DN_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">
+                            Reason *
+                          </label>
+                          <select
+                            className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                            value={dnForm.reason}
+                            onChange={(e) =>
+                              setDnForm((f) => ({
+                                ...f,
+                                reason: e.target.value,
+                              }))
+                            }
+                          >
+                            {DN_REASONS.map((r) => (
+                              <option key={r.value} value={r.value}>
+                                {r.label}
+                              </option>
+                            ))}
                           </select>
                         </div>
                         <div>
-                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">Amount (₹) *</label>
-                          <input type="number" min="0.01" className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
-                            placeholder="0.00" value={dnForm.amount}
-                            onChange={(e) => setDnForm((f) => ({ ...f, amount: e.target.value }))} />
+                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">
+                            Amount (₹) *
+                          </label>
+                          <input
+                            type="number"
+                            min="0.01"
+                            className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                            placeholder="0.00"
+                            value={dnForm.amount}
+                            onChange={(e) =>
+                              setDnForm((f) => ({
+                                ...f,
+                                amount: e.target.value,
+                              }))
+                            }
+                          />
                         </div>
                         <div>
-                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">GST (₹)</label>
-                          <input type="number" min="0" className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
-                            placeholder="0.00" value={dnForm.gstAmount}
-                            onChange={(e) => setDnForm((f) => ({ ...f, gstAmount: e.target.value }))} />
+                          <label className="text-[11px] font-semibold text-grn-ink mb-1 block">
+                            GST (₹)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                            placeholder="0.00"
+                            value={dnForm.gstAmount}
+                            onChange={(e) =>
+                              setDnForm((f) => ({
+                                ...f,
+                                gstAmount: e.target.value,
+                              }))
+                            }
+                          />
                         </div>
                       </div>
                       <div>
-                        <label className="text-[11px] font-semibold text-grn-ink mb-1 block">Remarks</label>
-                        <input className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
-                          placeholder="Optional details" value={dnForm.remarks}
-                          onChange={(e) => setDnForm((f) => ({ ...f, remarks: e.target.value }))} />
+                        <label className="text-[11px] font-semibold text-grn-ink mb-1 block">
+                          Remarks
+                        </label>
+                        <input
+                          className="h-8 w-full rounded-md border border-grn-line-soft bg-white px-2.5 text-xs"
+                          placeholder="Optional details"
+                          value={dnForm.remarks}
+                          onChange={(e) =>
+                            setDnForm((f) => ({
+                              ...f,
+                              remarks: e.target.value,
+                            }))
+                          }
+                        />
                       </div>
                       <div className="flex gap-2 pt-1">
-                        <GrnButton variant="primary"
-                          disabled={!dnForm.date || !dnForm.amount || Number(dnForm.amount) <= 0 || createDnMutation.isPending}
+                        <GrnButton
+                          variant="primary"
+                          disabled={
+                            !dnForm.date ||
+                            !dnForm.amount ||
+                            Number(dnForm.amount) <= 0 ||
+                            createDnMutation.isPending
+                          }
                           onClick={() => {
-                            const grnTotal = Number(target?.amount_with_tax ?? target?.amount ?? 0);
+                            const grnTotal = Number(
+                              target?.amount_with_tax ?? target?.amount ?? 0,
+                            );
                             const dnAmount = Number(dnForm.amount);
                             if (grnTotal > 0 && dnAmount > grnTotal) {
-                              toast({ title: `Debit note (${money(dnAmount)}) exceeds GRN total (${money(grnTotal)})`, variant: "destructive" });
+                              toast({
+                                title: `Debit note (${money(dnAmount)}) exceeds GRN total (${money(grnTotal)})`,
+                                variant: "destructive",
+                              });
                               return;
                             }
                             createDnMutation.mutate();
-                          }}>
-                          {createDnMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                          }}
+                        >
+                          {createDnMutation.isPending ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Plus className="h-3.5 w-3.5" />
+                          )}
                           Raise Note
                         </GrnButton>
-                        <GrnButton onClick={() => setShowDnCreate(false)}>Cancel</GrnButton>
+                        <GrnButton onClick={() => setShowDnCreate(false)}>
+                          Cancel
+                        </GrnButton>
                       </div>
                     </div>
                   )}
@@ -1610,20 +2256,33 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
               <div className="flex shrink-0 gap-2">
                 <GrnButton
                   variant="destructive"
-                  disabled={reviewMutation.isPending || workspaceQuery.isLoading}
+                  disabled={
+                    reviewMutation.isPending || workspaceQuery.isLoading
+                  }
                   onClick={() => submitDecision("rejected")}
                 >
-                  <XCircle className="h-3.5 w-3.5" />Reject
+                  <XCircle className="h-3.5 w-3.5" />
+                  Reject
                 </GrnButton>
                 <GrnButton
                   variant="ok"
-                  disabled={reviewMutation.isPending || workspaceQuery.isLoading || blockers.length > 0}
-                  title={blockers.length ? `Blocked by ${blockers.length} unresolved validation(s)` : undefined}
+                  disabled={
+                    reviewMutation.isPending ||
+                    workspaceQuery.isLoading ||
+                    blockers.length > 0
+                  }
+                  title={
+                    blockers.length
+                      ? `Blocked by ${blockers.length} unresolved validation(s)`
+                      : undefined
+                  }
                   onClick={() => submitDecision("approved")}
                 >
-                  {reviewMutation.isPending
-                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    : <CheckCircle2 className="h-3.5 w-3.5" />}
+                  {reviewMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
                   Approve
                 </GrnButton>
               </div>

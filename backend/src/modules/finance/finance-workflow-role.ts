@@ -2,11 +2,14 @@ const STAGED_ROLES = ["branch_head", "finance_head", "accounts_head"] as const;
 
 export type FinanceStageRole = (typeof STAGED_ROLES)[number];
 
-function normalizedRoles(primaryRole?: string | null, userRoles: string[] = []) {
+function normalizedRoles(
+  primaryRole?: string | null,
+  userRoles: string[] = [],
+) {
   return new Set(
     [primaryRole, ...userRoles]
       .filter((value): value is string => Boolean(value))
-      .map((value) => value.toLowerCase())
+      .map((value) => value.toLowerCase()),
   );
 }
 
@@ -30,29 +33,20 @@ export function resolveFinanceStageRole(input: {
   // (owner decision, 2026-08-21) — REVIEW_STAGES in branch-budget.service.ts no longer has a
   // 'finance_head_approved' resting stage, Finance Head approval goes straight to 'active'.
   //
-  // GRN is 3-stage (owner ruling, 2026-09-12): Branch/Dept Head -> Accounts Head/Team ->
-  // Finance Head/CFO. Accounts Head previously owned only the downstream PAYMENT step
-  // (pending_accounts_payment, gated in vendor-payment.routes.ts) — see 1758_grn_accounts_head_
-  // approval_stage.sql for why that changed to a genuine mid-chain approval gate instead. That
-  // payment authority is untouched; this is an additional stage in front of it, not a
-  // replacement for it.
-  //
-  // IMPREST is the one GRN type carved back out to 2-stage (owner confirmation, 2026-09-28):
-  // an imprest voucher is a branch spending its own float, already Branch-Head-approved, and a
-  // genuine imprest top-up/allocation was never 3-stage to begin with (imprest.routes.ts's
-  // /allocations/:id/review is finance_head-only) — so an imprest voucher raised as a GRN
-  // shouldn't be either. Every other grn_type (vendor, and future types) stays 3-stage.
-  const isImprestGrn = input.workflow === "grn" && String(input.grnType ?? "").toLowerCase() === "imprest";
-  // A row already at accounts_head_approved reached that status BEFORE the imprest carve-out
-  // deployed (this ruling only stops NEW imprest vouchers entering Accounts Head; it does not
-  // rewrite history), so it still resolves to finance_head regardless of grn_type.
-  const expectedRole = input.currentStatus === "submitted"
-    ? "branch_head"
-    : input.currentStatus === "branch_head_approved"
-      ? (input.workflow === "grn" && !isImprestGrn ? "accounts_head" : "finance_head")
-      : (input.workflow === "grn" && input.currentStatus === "accounts_head_approved")
-        ? "finance_head"
-        : null;
+  // GRN is 3-stage for ALL grn_types (owner ruling, 2026-09-29):
+  // Branch/Dept Head -> Accounts Head -> Finance Head/CFO.
+  // Imprest GRNs use the same flow as vendor GRNs.
+  const expectedRole =
+    input.currentStatus === "submitted"
+      ? "branch_head"
+      : input.currentStatus === "branch_head_approved"
+        ? input.workflow === "grn"
+          ? "accounts_head"
+          : "finance_head"
+        : input.workflow === "grn" &&
+            input.currentStatus === "accounts_head_approved"
+          ? "finance_head"
+          : null;
 
   /*
    * Both refusals carry a status. Without one, errorHandler.ts treats them as unexpected 500s
@@ -70,14 +64,18 @@ export function resolveFinanceStageRole(input: {
    */
   if (!expectedRole) {
     throw Object.assign(
-      new Error(`No approval role is valid for ${input.workflow} status ${input.currentStatus}`),
-      { statusCode: 409, code: "WORKFLOW_NO_STAGE_FOR_STATUS" }
+      new Error(
+        `No approval role is valid for ${input.workflow} status ${input.currentStatus}`,
+      ),
+      { statusCode: 409, code: "WORKFLOW_NO_STAGE_FOR_STATUS" },
     );
   }
   if (!roles.has(expectedRole) && !roles.has("super_admin")) {
     throw Object.assign(
-      new Error(`The current ${input.workflow} stage requires the ${expectedRole} role`),
-      { statusCode: 403, code: "WORKFLOW_WRONG_STAGE_ROLE" }
+      new Error(
+        `The current ${input.workflow} stage requires the ${expectedRole} role`,
+      ),
+      { statusCode: 403, code: "WORKFLOW_WRONG_STAGE_ROLE" },
     );
   }
   return expectedRole;
@@ -118,34 +116,47 @@ export function resolvePendingWith(
   // 3-stage chain (owner ruling, 2026-09-12) reads 'branch_head_approved' differently from the
   // other two workflows — see the branch below — so this now genuinely disambiguates.
   _workflow: "budget" | "grn" | "topup" = "topup",
-  // grn_request.grn_type — mirrors resolveFinanceStageRole's imprest carve-out (owner
-  // confirmation, 2026-09-28) so a pendency list never shows "Accounts Head" for a stage that
-  // resolveFinanceStageRole would let Finance Head clear directly.
   grnType?: string | null,
 ): PendingWith {
   const status = String(currentStatus ?? "").toLowerCase();
-  const isImprestGrn = _workflow === "grn" && String(grnType ?? "").toLowerCase() === "imprest";
 
   // Terminal states first: these are answers, not gaps.
-  if (status === "applied") return { role: null, label: "Completed", isPending: false };
-  if (status === "rejected") return { role: null, label: "Rejected", isPending: false };
-  if (status === "cancelled") return { role: null, label: "Cancelled", isPending: false };
-  if (status === "draft") return { role: null, label: "Not submitted", isPending: false };
+  if (status === "applied")
+    return { role: null, label: "Completed", isPending: false };
+  if (status === "rejected")
+    return { role: null, label: "Rejected", isPending: false };
+  if (status === "cancelled")
+    return { role: null, label: "Cancelled", isPending: false };
+  if (status === "draft")
+    return { role: null, label: "Not submitted", isPending: false };
 
   if (status === "submitted") {
-    return { role: "branch_head", label: STAGE_LABELS.branch_head, isPending: true };
+    return {
+      role: "branch_head",
+      label: STAGE_LABELS.branch_head,
+      isPending: true,
+    };
   }
   if (status === "branch_head_approved") {
-    // GRN inserted a real Accounts Head gate here (owner ruling, 2026-09-12); budget/top-up
-    // never reach this branch with accounts_head owed, since neither workflow has that status
-    // as a resting stage after Branch Head any more (budget) or ever (top-up) — see
-    // resolveFinanceStageRole's per-workflow split just above this function's twin.
-    return _workflow === "grn" && !isImprestGrn
-      ? { role: "accounts_head", label: STAGE_LABELS.accounts_head, isPending: true }
-      : { role: "finance_head", label: STAGE_LABELS.finance_head, isPending: true };
+    // GRN: all types (vendor + imprest) go through Accounts Head (owner ruling, 2026-09-29).
+    return _workflow === "grn"
+      ? {
+          role: "accounts_head",
+          label: STAGE_LABELS.accounts_head,
+          isPending: true,
+        }
+      : {
+          role: "finance_head",
+          label: STAGE_LABELS.finance_head,
+          isPending: true,
+        };
   }
   if (status === "accounts_head_approved") {
-    return { role: "finance_head", label: STAGE_LABELS.finance_head, isPending: true };
+    return {
+      role: "finance_head",
+      label: STAGE_LABELS.finance_head,
+      isPending: true,
+    };
   }
   // Declared on both the budget status enum and the top-up status enum, though neither service
   // ever writes it any more — Finance Head approval goes straight to 'active' (budget) or
@@ -185,22 +196,39 @@ export function resolvePendingWith(
    * one of the three approval stages; the label carries the meaning and `isPending` keeps it in
    * the "still outstanding" counts, which is what the ageing columns need.
    */
-  if (status === "approved") return { role: null, label: "Approved", isPending: false };
+  if (status === "approved")
+    return { role: null, label: "Approved", isPending: false };
   if (status === "paid") return { role: null, label: "Paid", isPending: false };
   if (status === "consumption_reversed") {
     return { role: null, label: "Consumption reversed", isPending: false };
   }
   if (status === "pending_accounts_payment") {
-    return { role: "accounts_head", label: STAGE_LABELS.accounts_head, isPending: true };
+    return {
+      role: "accounts_head",
+      label: STAGE_LABELS.accounts_head,
+      isPending: true,
+    };
   }
   if (status === "payment_scheduled") {
-    return { role: "accounts_head", label: "Accounts Head · payment scheduled", isPending: true };
+    return {
+      role: "accounts_head",
+      label: "Accounts Head · payment scheduled",
+      isPending: true,
+    };
   }
   if (status === "partially_paid") {
-    return { role: "accounts_head", label: "Accounts Head · part paid", isPending: true };
+    return {
+      role: "accounts_head",
+      label: "Accounts Head · part paid",
+      isPending: true,
+    };
   }
   if (status === "returned_to_branch_head") {
-    return { role: "branch_head", label: "Returned to Branch Head", isPending: true };
+    return {
+      role: "branch_head",
+      label: "Returned to Branch Head",
+      isPending: true,
+    };
   }
   if (status === "returned_to_raiser") {
     return { role: null, label: "Returned to raiser", isPending: true };
