@@ -1078,6 +1078,34 @@ export async function commitImportBatch(
   // assignments); this is a separate, unconditional notify pass over whatever actually landed.
   const employeesNotified = await notifyEmployeesForImportBatch(batchId);
 
+  // Fire async attendance recompute for every (employee, date) pair that was written.
+  // Non-blocking: the API response is not delayed. Locked records are skipped by upsertDailyRecord
+  // itself (via ON DUPLICATE KEY UPDATE ... IF(is_locked = 0, ...)). Each employee gets one serial
+  // pass rather than all at once to avoid thundering-herd on a large file.
+  if (assignmentsCreated + assignmentsUpdated > 0) {
+    const pairs: Array<{ employeeId: string; date: string }> = [];
+    for (const [code, employeeRows] of rowsByCode) {
+      const employeeId = codeToId.get(code);
+      if (!employeeId) continue;
+      for (const row of employeeRows) {
+        const date = String(row.roster_date).slice(0, 10);
+        if (date) pairs.push({ employeeId, date });
+      }
+    }
+    import('./attendance-engine.service.js').then(({ attendanceEngineService }) => {
+      (async () => {
+        for (const { employeeId, date } of pairs) {
+          try {
+            const result = await attendanceEngineService.processEmployee(employeeId, date, null);
+            await attendanceEngineService.upsertDailyRecord(result, 'roster_import');
+          } catch {
+            // Non-critical: nightly sweep will recompute any that fail here
+          }
+        }
+      })().catch(() => {});
+    }).catch(() => {});
+  }
+
   return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees, blockedByLeave, blockedByRest, blockedByLock, employeesNotified };
 }
 
