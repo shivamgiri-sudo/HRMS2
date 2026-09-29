@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { AuthedImage } from "@/components/ui/AuthedImage";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
@@ -283,7 +284,7 @@ function ImageUploadBox({
 
       {currentUrl && (
         <div className="relative">
-          <img
+          <AuthedImage
             src={currentUrl}
             alt={label}
             className="w-full max-h-40 object-contain rounded-lg border border-slate-100 bg-slate-50"

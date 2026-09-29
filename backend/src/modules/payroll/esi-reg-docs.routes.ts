@@ -12,6 +12,7 @@ import path from "path";
 import fs from "fs";
 import { randomUUID } from "crypto";
 import multer from "multer";
+import { registerUpload } from "../document-vault/documentVault.service.js";
 import PDFDocument from "pdfkit";
 import { ZipArchive } from "archiver";
 import type { Archiver as ArchiverInstance } from "archiver";
@@ -271,10 +272,18 @@ esiRegDocsRouter.get(
           WHERE ebd.employee_id = e.id
             AND ebd.ifsc_code IS NOT NULL AND ebd.ifsc_code != '') > 0
                                                           AS bank_ready,
-         (SELECT file_url FROM employee_documents ed
-          WHERE ed.employee_id = e.id
-            AND ed.doc_category = 'bank' AND ed.doc_type = 'bank_passbook'
-          ORDER BY ed.created_at DESC LIMIT 1)            AS bank_passbook_url
+         COALESCE(
+           (SELECT file_url FROM employee_documents ed
+            WHERE ed.employee_id = e.id
+              AND ed.doc_category = 'bank' AND ed.doc_type = 'bank_passbook'
+            ORDER BY ed.created_at DESC LIMIT 1),
+           (SELECT CONCAT('/api/files/candidate/', d.id)
+            FROM candidate_onboarding_document d
+            JOIN ats_onboarding_bridge ab ON ab.candidate_id = d.candidate_id
+            WHERE ab.employee_id = e.id AND d.deleted_at IS NULL
+              AND LOWER(d.doc_type) IN ('bank passbook','cancelled cheque','cancelled_cheque')
+            ORDER BY d.uploaded_at DESC LIMIT 1)
+         )                                                AS bank_passbook_url
        FROM employees e
        LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
        LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -397,6 +406,21 @@ esiRegDocsRouter.post(
        VALUES (?, ?, 'bank_passbook', 'bank', 'Bank Passbook', ?, ?, NOW())`,
       [randomUUID(), employeeId, fileUrl, actorId],
     );
+
+    // Register in vault so GET /api/files/esi-docs/:filename passes auth
+    await registerUpload({
+      uploadedByUser: actorId ?? "system",
+      category: "esi-docs",
+      storedFilename: file.filename,
+      originalFilename: file.originalname,
+      mimeType: file.mimetype,
+      fileSizeBytes: file.size,
+      accessLevel: "internal",
+      ownerEmployeeId: employeeId,
+    }).catch((err) =>
+      console.error("[esi-reg-docs] vault registration failed:", err),
+    );
+
     return res.json({ success: true, bank_passbook_url: fileUrl });
   }),
 );
