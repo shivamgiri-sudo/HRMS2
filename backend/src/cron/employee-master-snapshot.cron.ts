@@ -6,16 +6,16 @@
  * pattern as cron/business-action-sync.cron.ts — see that file for the convention this
  * follows.
  *
- * Interval: every 30 minutes. db_bill (the slower of the two sources this pulls from) only
- * changes on manual HR edits, not in real time, so half-hourly is comfortably fresh without
- * adding meaningful load — the underlying query already runs in well under a minute for the
- * full ~59k-employee population.
+ * Interval: every 4 hours. Measured in production on 2026-09-29 each refresh took 13-39 minutes
+ * (not the sub-minute originally assumed), so a 30-minute gap kept it running roughly a third
+ * of the day and it was the largest steady load on the shared MySQL server. The snapshot only
+ * feeds the Employee Master report.
  */
 import { db } from "../db/mysql.js";
 import { refreshEmployeeMasterSnapshot } from "../modules/reporting/employee-master-snapshot.service.js";
 import type { RowDataPacket } from "mysql2";
 
-const REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 let scheduler: NodeJS.Timeout | undefined;
 let refreshInFlight = false;
@@ -51,7 +51,7 @@ function scheduleNext(delayMs: number): void {
 }
 
 async function runRefresh(): Promise<void> {
-  // Guards against a slow run overlapping its own next tick — shouldn't happen at 30-minute
+  // Guards against a slow run overlapping its own next tick — shouldn't happen at this
   // spacing given the job normally finishes in well under a minute, but a stalled db_bill
   // connection could in principle make one run long enough to collide with the next.
   if (refreshInFlight) {
@@ -86,7 +86,7 @@ async function runRefresh(): Promise<void> {
 
 export async function startEmployeeMasterSnapshotScheduler(): Promise<void> {
   if (scheduler) return;
-  console.log("[CRON] Employee-master-snapshot scheduler starting (every 30 minutes)");
+  console.log("[CRON] Employee-master-snapshot scheduler starting (every 4 hours)");
 
   // Every deploy restarts hrms2-workers (ensure_backend_pm2_processes in deploy.yml does a
   // fresh pm2 delete+start), and this scheduler's in-memory refreshInFlight guard resets to
@@ -104,7 +104,7 @@ export async function startEmployeeMasterSnapshotScheduler(): Promise<void> {
   //
   // Fix: read the snapshot's own last-refreshed timestamp from the database itself (not
   // in-memory state, which a restart just destroyed) and schedule the first run for
-  // whatever's left of the normal 30-minute window, not immediately. Only fires early when
+  // whatever's left of the normal refresh window, not immediately. Only fires early when
   // the snapshot is genuinely missing, empty, or older than the interval already allows for.
   let firstRunDelayMs = 60_000;
   try {

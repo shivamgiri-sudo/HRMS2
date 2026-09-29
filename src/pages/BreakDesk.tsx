@@ -233,13 +233,8 @@ function mergeDeskEmployee(current: DeskEmployeesResponse | null, employee: Desk
   };
 }
 
-// Adaptive polling interval based on activity
-function getPollingInterval(employees: DeskEmployee[]) {
-  const onBreakCount = employees.filter((e) => e.current_status === 'On Break').length;
-  if (onBreakCount > 10) return 10_000; // High activity: 10s
-  if (onBreakCount > 0) return 20_000; // Some activity: 20s
-  return 30_000; // Low activity: 30s
-}
+// live-status takes several seconds on the shared DB; faster polling only stacked concurrent copies.
+const LIVE_POLL_MS = 30_000;
 
 function Modal({
   open,
@@ -306,6 +301,7 @@ export default function BreakDesk() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [filteredEmployees, setFilteredEmployees] = useState<DeskEmployee[]>([]);
   const requestSequenceRef = useRef(0);
+  const livePollInFlightRef = useRef(false);
 
   const deferredSearch = useDeferredValue(filters.search);
 
@@ -464,16 +460,18 @@ export default function BreakDesk() {
     if (bootstrap) void fetchEmployees(false);
   }, [bootstrap, fetchEmployees]);
 
-  // Adaptive polling based on activity
   useEffect(() => {
     if (!bootstrap) return;
 
-    const allEmployees = deskData?.employees ?? [];
-    const interval = getPollingInterval(allEmployees);
-
-    const timer = window.setInterval(() => void fetchEmployees(true), interval);
+    const timer = window.setInterval(() => {
+      if (livePollInFlightRef.current) return;
+      livePollInFlightRef.current = true;
+      void fetchEmployees(true).finally(() => {
+        livePollInFlightRef.current = false;
+      });
+    }, LIVE_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [bootstrap, deskData?.employees, fetchEmployees]);
+  }, [bootstrap, fetchEmployees]);
 
   useEffect(() => {
     if (!bootstrap) return;
