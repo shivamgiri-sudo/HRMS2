@@ -21,7 +21,7 @@ interface MappingSaveInput { headCode: string; subHeadCode: string; }
 
 export function VendorHeadMappingTab() {
   const qc = useQueryClient();
-  const canWrite = useHasRole("finance_head", "super_admin");
+  const canWrite = useHasRole("finance_head", "super_admin", "branch_admin");
 
   const [search, setSearch] = useState("");
   const [selectedVendorId, setSelectedVendorId] = useState<string | null>(null);
