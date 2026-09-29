@@ -23,12 +23,20 @@ import { computePerformance, type PerfSource } from "./ops-command.performance.j
 import { computeCohorts, computeForecast, computeFreshness, computeInsights } from "./ops-command.insights.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { computeAgentDays } from "./ops-command.agent.js";
+import { getOperationsAnalyticsSummary } from "./operations-analytics.service.js";
 import { HEAT_METRICS, computeHeatmap, type HeatMetric } from "./ops-command.heatmap.js";
 import { computeEmployeeDetail, computeRecords, employeeInScope } from "./ops-command.records.js";
 import { computeFilterOptions, computeGroups, computeRows, computeTrend, computeTotals } from "./ops-command.service.js";
 import { previousPeriod } from "./ops-command.context.js";
 
 const router = Router();
+
+// Operations Analytics (Dashboard)
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+router.get("/analytics", requireAuth, requireRole("super_admin", "admin", "operations", "ceo", "coo"), h(async (req, res) => {
+  const summary = await getOperationsAnalyticsSummary();
+  res.json({ success: true, data: summary });
+}));
 
 /** Everyone the Operations dashboard is registered for, plus the roles the legacy v2 page already served. */
 const ALLOWED_ROLES = [

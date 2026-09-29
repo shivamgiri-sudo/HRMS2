@@ -13,6 +13,7 @@ import { assertCanViewMember, getTeamMemberDeepDive, getTeamHygiene } from "./te
 import { getManagerAttrition, getManagerShrinkage } from "./manager-attribution.service.js";
 import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 import { TtlCache } from "../../shared/ttlCache.js";
+import { getManagerAnalyticsSummary } from "./manager-analytics.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -568,6 +569,15 @@ router.get("/team-retention", h(async (req: AuthenticatedRequest, res: Response)
   ]);
 
   return res.json({ success: true, data: { attrition, shrinkage } });
+}));
+
+// Manager Analytics (Dashboard)
+router.get("/manager-analytics", h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+
+  const summary = await getManagerAnalyticsSummary(Number(emp.id));
+  res.json({ success: true, data: summary });
 }));
 
 export { router as managementRouter };

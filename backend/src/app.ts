@@ -211,6 +211,7 @@ import { authRouter } from "./modules/auth/auth.routes.js";
 import { authLaunchRouter } from "./modules/auth/auth-launch.routes.js";
 import passwordResetRouter from "./modules/auth/password-reset.routes.js";
 import { roleAssignmentRouter } from "./modules/admin/role-assignment.routes.js";
+import { superAdminRouter as adminSuperAdminRouter } from "./modules/admin/super-admin.routes.js";
 import { clientRouter } from "./modules/portal/client.routes.js";
 import portalAdminRouter from "./modules/portal/portal-admin.routes.js";
 import { presentationRouter } from "./modules/presentation/presentation.routes.js";
@@ -1030,6 +1031,7 @@ app.use("/api/ats/interview", interviewRouter);
 // bgv-enhanced route removed — duplicate UI, functions migrated to canonical bgv-verification service
 app.use("/api/ats/candidate-portal", candidatePortalRouter);
 app.use("/api/ats/super-admin", superAdminRouter);
+app.use("/api/super-admin", adminSuperAdminRouter);
 
 // Reconciliation — data anomaly detection for BGV, salary, lifecycle, provisioning
 import { reconciliationRouter } from "./modules/ats/reconciliation.routes.js";

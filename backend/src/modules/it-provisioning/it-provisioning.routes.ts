@@ -23,6 +23,7 @@ import {
   OFFICIAL_EMAIL_REGEX,
 } from './it-provisioning.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { getItAnalyticsSummary } from './it-analytics.service.js';
 import { parseAdEventLog } from './ad-log-parser.js';
 import { dispatchTaskCompletion } from './task-completion-handlers.service.js';
 import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
@@ -56,6 +57,16 @@ const evidenceUpload = multer({
 });
 
 router.use(requireAuth);
+
+// IT Manager Analytics (Dashboard)
+router.get(
+  "/analytics",
+  requireRole("super_admin", "admin", ...dashboardConsumerRoles("IT_MANAGER_DASHBOARD")),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const summary = await getItAnalyticsSummary();
+    res.json({ success: true, data: summary });
+  })
+);
 
 type AppointmentRow = RowDataPacket & {
   id: string;

@@ -22,6 +22,7 @@ import { persistCandidateFile } from "./candidate-file.service.js";
 import { joiningDocumentsTrackerRouter } from "./ats.joiningDocumentsTracker.routes.js";
 import { getIstDateString } from '../../utils/dateUtils.js';
 import { bulkImportRouter } from "./bulk-import.routes.js";
+import { getRecruiterAnalyticsSummary } from "./recruiter-analytics.service.js";
 
 export const atsRouter = Router();
 export const atsPublicRouter = Router(); // Public routes (no auth)
@@ -178,6 +179,12 @@ atsPublicRouter.post(
 
 // â”€â”€ PROTECTED â€” all remaining routes require a logged-in HR/recruiter â”€â”€â”€â”€â”€â”€â”€â”€
 atsRouter.use(requireAuth);
+
+// Recruiter Analytics (Dashboard)
+atsRouter.get("/recruiter-analytics", requireRole("super_admin", "admin", "recruiter", "hr", "ceo"), h(async (req, res) => {
+  const summary = await getRecruiterAnalyticsSummary();
+  res.json({ success: true, data: summary });
+}));
 
 // Candidates (HR/recruiter facing) - Scoped
 // ats_candidate stores applied_for_branch as a text name (not a UUID), so we can't use

@@ -21,12 +21,19 @@ import {
 import { getInboundSummary } from "./inbound-ops.service.js";
 import { getTniAnalysis, getTniAgentCalls } from "./tni.service.js";
 import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
+import { getQualityAnalyticsSummary } from "./quality-analytics.service.js";
 
 const router = Router();
 router.use(requireAuth);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+// Quality Analytics (Dashboard)
+router.get("/analytics", requireRole("super_admin", "admin", "quality", "operations", "ceo", "coo"), h(async (req, res) => {
+  const summary = await getQualityAnalyticsSummary();
+  res.json({ success: true, data: summary });
+}));
 
 // Derived from the registry. `hr` stays as a literal (HR reads quality outside the
 // Quality dashboard); the rest come from QUALITY_DASHBOARD itself, which admits

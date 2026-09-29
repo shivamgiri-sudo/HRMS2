@@ -28,6 +28,7 @@ import { weekoffDayRuleService } from "./weekoffDayRule.service.js";
 import { calculate } from "./hcCalculation.service.js";
 import { attendanceAprBulkRouter } from "./attendance-apr-bulk.routes.js";
 import { scopedAttendanceDailyHandler } from "./attendance-daily-scoped.routes.js";
+import { getWfmAnalyticsSummary } from "./wfm-analytics.service.js";
 
 export const wfmRouter = Router();
 wfmRouter.use(requireAuth);
@@ -35,6 +36,16 @@ wfmRouter.use("/attendance", attendanceAprBulkRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+// WFM Analytics (Dashboard)
+wfmRouter.get(
+  "/analytics",
+  requireRole("super_admin", "admin", "wfm", "ceo", "coo", "manager"),
+  h(async (req, res) => {
+    const summary = await getWfmAnalyticsSummary();
+    res.json({ success: true, data: summary });
+  })
+);
 
 // Attendance policy (customizable)
 wfmRouter.get("/attendance-policy/:employeeId", requireRole("admin", "wfm", "manager"), async (req, res, next) => {

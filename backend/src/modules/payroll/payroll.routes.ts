@@ -28,6 +28,7 @@ import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { getPartAAvailability } from "./tds-certificate-part-a.service.js";
 import { computeForm16Data } from "./form16-data.service.js";
 import { generateForm16CertificatePdf } from "./form16-certificate.service.js";
+import { getPayrollAnalyticsSummary } from "./payroll-analytics.service.js";
 import { resolvePii } from "../../shared/piiCiphertext.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
@@ -140,6 +141,16 @@ const h =
     fn(req, res).catch(next);
 
 router.use(requireAuth);
+
+// ─── Payroll Analytics (Dashboard) ────────────────────────────────────────────
+router.get(
+  "/analytics",
+  requireRole("super_admin", "admin", "payroll", "payroll_head", "finance", "ceo", "coo"),
+  h(async (req, res) => {
+    const summary = await getPayrollAnalyticsSummary();
+    res.json({ success: true, data: summary });
+  })
+);
 
 // ─── Structures ───────────────────────────────────────────────────────────────
 

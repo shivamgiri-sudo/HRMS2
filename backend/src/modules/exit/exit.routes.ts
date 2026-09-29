@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { exitController } from "./exit.controller.js";
 import { ffService } from "./ff.service.js";
 import { computeFfPreview } from "./ff-compute.service.js";
+import { getExitAnalyticsSummary } from "./exit-analytics.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
 import { isInReportingSpan } from "../../shared/reportingSpan.js";
@@ -755,6 +756,16 @@ exitRouter.patch(
     const actor = { userId: req.authUser!.id, userRole: callerRoles[0] ?? 'employee' };
     await transitionExitStatus(id, 'revoked', actor, { reason: req.body.reason });
     return res.json({ success: true });
+  })
+);
+
+// ── Exit Analytics (HR Dashboard) ─────────────────────────────────────────────
+exitRouter.get(
+  "/analytics",
+  requireRole("super_admin", "admin", "hr", "ceo", "coo"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const summary = await getExitAnalyticsSummary();
+    res.json({ success: true, data: summary });
   })
 );
 
