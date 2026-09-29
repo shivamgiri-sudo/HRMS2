@@ -15,6 +15,8 @@ import BlaBliBluSalesDashboard from "./BlaBliBluSalesDashboard";
 import { KpiCommandDeck } from "@/components/process-operations/KpiCommandDeck";
 import { ProcessPortfolio } from "@/components/process-operations/ProcessPortfolio";
 import { MetricDrillOverview } from "@/components/process-operations/MetricDrillOverview";
+import { BusinessDatapoints } from "@/components/process-operations/BusinessDatapoints";
+import { MetricDayGrid } from "@/components/process-operations/MetricDayGrid";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { MasmisUploaderGrid } from "@/components/process-operations/MasmisUploader";
 
@@ -4483,6 +4485,8 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
               </p>
             </section>
 
+            {metricKey && <MetricDayGrid key={`${processId}-${metricKey}`} processId={processId} metricKey={metricKey} />}
+
             {metricKey && <AnalystBreakdownPanel processId={processId} metricKey={metricKey} period={period} />}
 
             {metricKey && <InsightsPanel d={d} processId={processId} metricKey={metricKey} period={period} />}
@@ -5511,6 +5515,10 @@ export default function ProcessOperationsPage() {
                     processName={currentProcess?.processName ?? ops.processName}
                     onDrill={setDrill}
                   />
+
+                  {current && (
+                    <BusinessDatapoints processId={current} processCode={currentProcess?.processCode ?? null} period={period} />
+                  )}
 
                   <div className="flex items-center gap-3 py-1">
                     <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
