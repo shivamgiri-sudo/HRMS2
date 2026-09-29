@@ -575,21 +575,35 @@ export async function fetchLateStats(
   branchId: string,
   today: string,
 ): Promise<LateStats> {
+  // Compute lateness directly from the roster shift start time — no grace,
+  // no fallback to employees.working_hours_start.
+  //
+  // adr.late_mark is unreliable here because the attendance engine sometimes
+  // runs before the day's roster is finalised and falls back to
+  // employees.working_hours_start (which may be earlier than the actual shift),
+  // causing employees who arrived before their roster shift start to be counted
+  // as late.  Joining from wfm_roster_assignment and comparing clock_in_time
+  // against the roster's own shift_start_time avoids that false-positive.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(pm.process_name, 'Unassigned')               AS process,
             COALESCE(NULLIF(TRIM(m.full_name), ''), 'Not mapped') AS manager,
             COUNT(*)                                               AS cnt
-       FROM attendance_daily_record adr
-       JOIN employees e ON e.id = adr.employee_id
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON e.id = ra.employee_id AND e.branch_id = ? AND e.active_status = 1
        LEFT JOIN process_master pm ON pm.id = e.process_id
        LEFT JOIN employees m ON m.id = e.reporting_manager_id
-      WHERE adr.record_date = ?
-        AND e.branch_id = ?
-        AND adr.late_mark = 1
-        AND e.active_status = 1
+       LEFT JOIN wfm_shift_master wsm ON wsm.id = ra.shift_id
+       JOIN attendance_daily_record adr
+              ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
+      WHERE ra.roster_date = ?
+        AND UPPER(COALESCE(ra.assignment_type, '')) NOT IN ('WEEK_OFF','LEAVE','HOLIDAY')
+        AND ra.is_week_off = 0
+        AND adr.clock_in_time IS NOT NULL
+        AND COALESCE(ra.shift_start_time, wsm.start_time) IS NOT NULL
+        AND TIME(adr.clock_in_time) > COALESCE(ra.shift_start_time, wsm.start_time)
       GROUP BY process, manager
       ORDER BY process, cnt DESC`,
-    [today, branchId],
+    [branchId, today],
   );
   const byManager = (rows as any[]).map((r) => ({
     process: String(r.process),
