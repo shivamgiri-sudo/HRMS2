@@ -292,3 +292,10 @@ export function MatrixTable({ matrix, granularity, format, formats, labelHeader 
 export function matrixIsEmpty(m: Matrix | null | undefined): boolean {
   return !m || m.buckets.length === 0 || m.rows.every((r) => r.values.every((v) => v === null));
 }
+
+/** Quality error-% fill: green <= 0.75, amber > 0.75 to 1, red > 1 (client rule, all quality parameters). */
+export function qualityPctStyle(pct: number | null | undefined): CSSProperties | undefined {
+  if (pct === null || pct === undefined) return undefined;
+  const bg = pct > 1 ? "var(--red)" : pct > 0.75 ? "var(--orange)" : "var(--green)";
+  return { background: bg, color: "#fff", fontWeight: 700 };
+}

@@ -4,6 +4,21 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-09-29 (later) — Analyst Performance quality-% colouring
+
+**Method:** Vite dev + temporary harness with mocked `/analyst-report` (3 analysts at 0.5%, 0.9%, 2.0% error), headless Playwright Chromium; harness removed afterwards.
+
+| Area | Result |
+|---|---|
+| Analyst Performance → Overall Error %, Internal and External quality columns | Fill green (rgb 22,163,74) at 0.5%, amber (245,158,11) at 0.9%, red (232,35,26) at 2.0%; screenshot reviewed |
+| Console / page errors | None |
+
+**Why:** the page had no quality colouring at all (an earlier commit message wrongly said it was already correct). Also applied to the analyst drill-down QualityTable and weekly table.
+
+**Not verified:** real data on the live site (login required); analyst drill-down sheet and weekly table were not opened in the browser.
+
+---
+
 ## 2026-09-29 — Onfido dashboard fixes (commit `4cf4c93`, deployed run 36607763350)
 
 **Method:** Vite dev server + temporary harness page rendering `OnfidoProcessDashboard` with mocked `/api` responses; driven by headless Playwright Chromium (Playwright/Chrome DevTools MCP browsers were locked by another session). Backend SQL run against a throwaway `mysql:8` container with the Onfido tables created from `onfido-report-configs.ts` and seeded with sample rows. Harness and container removed afterwards.
