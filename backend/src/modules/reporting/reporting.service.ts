@@ -1,26 +1,31 @@
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
-import { resolveBranchScope, type BranchScope } from './reporting.scope.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { resolveBranchScope, type BranchScope } from "./reporting.scope.js";
 
 // ── Scope SQL helper ──────────────────────────────────────────────────────────
-function scopeClause(scope: BranchScope, branchCol: string): { sql: string; params: string[] } {
+function scopeClause(
+  scope: BranchScope,
+  branchCol: string,
+): { sql: string; params: string[] } {
   if (scope.isSuperAdmin || scope.branchIds.length === 0) {
-    return { sql: '1=1', params: [] };
+    return { sql: "1=1", params: [] };
   }
-  const placeholders = scope.branchIds.map(() => '?').join(',');
+  const placeholders = scope.branchIds.map(() => "?").join(",");
   return { sql: `${branchCol} IN (${placeholders})`, params: scope.branchIds };
 }
 
-type Builder = (f: Record<string, string>, scope: BranchScope) => { sql: string; params: unknown[] };
+type Builder = (
+  f: Record<string, string>,
+  scope: BranchScope,
+) => { sql: string; params: unknown[] };
 
 const QUERIES: Record<string, Builder> = {
-
   // ══════════════════════════════════════════════════════════════════════════
   //  EXISTING (scope-enhanced)
   // ══════════════════════════════════════════════════════════════════════════
 
   branch_master: (f, scope) => {
-    const sc = scopeClause(scope, 'b.id');
+    const sc = scopeClause(scope, "b.id");
     return {
       sql: `SELECT b.id, b.branch_code, b.branch_name, b.call_centre_code, b.city, b.state,
                    COUNT(DISTINCT e.id) AS employee_count,
@@ -29,14 +34,14 @@ const QUERIES: Record<string, Builder> = {
               FROM branch_master b
               LEFT JOIN employees e ON e.branch_id = b.id AND e.active_status = 1
               LEFT JOIN process_master p ON p.branch_id = b.id AND p.active_status = 1
-             WHERE ${sc.sql} ${f.branch ? 'AND b.id = ?' : ''}
+             WHERE ${sc.sql} ${f.branch ? "AND b.id = ?" : ""}
              GROUP BY b.id ORDER BY b.branch_name`,
       params: [...sc.params, ...(f.branch ? [f.branch] : [])],
     };
   },
 
   user_master: (_f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT ur.user_id, ur.role_key, ur.active_status,
                    e.first_name, e.last_name, e.email, e.employee_code,
@@ -51,7 +56,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   process_master: (f, scope) => {
-    const sc = scopeClause(scope, 'p.branch_id');
+    const sc = scopeClause(scope, "p.branch_id");
     return {
       // The LOB comes off process_master itself. There is no process_master.lob_id — the table
       // records the line of business as text in business_lob ("BACK OFFICE", "CUSTOMER SERVICES",
@@ -87,7 +92,7 @@ const QUERIES: Record<string, Builder> = {
               LEFT JOIN branch_master b ON b.id = p.branch_id
               LEFT JOIN process_lob_master pl ON pl.process_id = p.id AND pl.active_status = 1
               LEFT JOIN employees e ON e.process_id = p.id AND e.active_status = 1
-             WHERE ${sc.sql} ${f.branch ? 'AND p.branch_id = ?' : ''}
+             WHERE ${sc.sql} ${f.branch ? "AND p.branch_id = ?" : ""}
              GROUP BY p.id ORDER BY b.branch_name, p.process_name`,
       params: [...sc.params, ...(f.branch ? [f.branch] : [])],
     };
@@ -117,20 +122,20 @@ const QUERIES: Record<string, Builder> = {
    * backfill must keep working.
    */
   cc_headcount: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT COALESCE(e.call_centre_code, b.call_centre_code) AS call_centre_code,
                    b.branch_name, COUNT(e.id) AS headcount
               FROM employees e
               LEFT JOIN branch_master b ON b.id = e.branch_id
-             WHERE ${sc.sql} AND e.active_status = 1 ${f.ccCode ? 'AND COALESCE(e.call_centre_code, b.call_centre_code) = ?' : ''}
+             WHERE ${sc.sql} AND e.active_status = 1 ${f.ccCode ? "AND COALESCE(e.call_centre_code, b.call_centre_code) = ?" : ""}
              GROUP BY call_centre_code, b.branch_name ORDER BY call_centre_code`,
       params: [...sc.params, ...(f.ccCode ? [f.ccCode] : [])],
     };
   },
 
   employee_dir: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT e.employee_code, CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
                    e.email, d.designation_name, b.branch_name, p.process_name,
@@ -141,10 +146,14 @@ const QUERIES: Record<string, Builder> = {
               LEFT JOIN branch_master b ON b.id = e.branch_id
               LEFT JOIN process_master p ON p.id = e.process_id
              WHERE e.active_status = 1 AND ${sc.sql}
-               ${f.branch ? 'AND e.branch_id = ?' : ''}
-               ${f.status ? 'AND e.employment_status = ?' : ''}
+               ${f.branch ? "AND e.branch_id = ?" : ""}
+               ${f.status ? "AND e.employment_status = ?" : ""}
              ORDER BY b.branch_name, e.last_name`,
-      params: [...sc.params, ...(f.branch ? [f.branch] : []), ...(f.status ? [f.status] : [])],
+      params: [
+        ...sc.params,
+        ...(f.branch ? [f.branch] : []),
+        ...(f.status ? [f.status] : []),
+      ],
     };
   },
 
@@ -153,7 +162,7 @@ const QUERIES: Record<string, Builder> = {
   // ══════════════════════════════════════════════════════════════════════════
 
   payroll_register: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                spr.run_month,
@@ -192,9 +201,9 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN designation_master d ON d.id = e.designation_id
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
-              ${f.month ? 'AND spr.run_month = ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.process ? 'AND e.process_id = ?' : ''}
+              ${f.month ? "AND spr.run_month = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.process ? "AND e.process_id = ?" : ""}
             ORDER BY b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
@@ -206,7 +215,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   payroll_component_detail: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                spr.run_month,
@@ -227,9 +236,9 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
-              ${f.month ? 'AND spr.run_month = ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.componentType ? 'AND splc.component_type = ?' : ''}
+              ${f.month ? "AND spr.run_month = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.componentType ? "AND splc.component_type = ?" : ""}
             ORDER BY b.branch_name, e.employee_code, splc.component_type, splc.component_code`,
       params: [
         ...sc.params,
@@ -241,7 +250,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   payroll_statutory: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                spr.run_month,
@@ -268,8 +277,8 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
-              ${f.month ? 'AND spr.run_month = ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.month ? "AND spr.run_month = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
@@ -280,7 +289,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   payroll_bank_statement: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                spr.run_month,
@@ -302,8 +311,8 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
-              ${f.month ? 'AND spr.run_month = ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.month ? "AND spr.run_month = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
@@ -314,7 +323,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   payroll_full_final: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -345,9 +354,9 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN designation_master d ON d.id = e.designation_id
             WHERE ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.dateFrom ? 'AND (ffc.calculation_date >= ? OR ffc.id IS NULL)' : ''}
-              ${f.dateTo ? 'AND (ffc.calculation_date <= ? OR ffc.id IS NULL)' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.dateFrom ? "AND (ffc.calculation_date >= ? OR ffc.id IS NULL)" : ""}
+              ${f.dateTo ? "AND (ffc.calculation_date <= ? OR ffc.id IS NULL)" : ""}
             ORDER BY COALESCE(ffc.calculation_date, er.submitted_at) DESC`,
       params: [
         ...sc.params,
@@ -359,7 +368,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   payroll_ytd: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -388,8 +397,8 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND ${sc.sql}
-              ${f.financialYear ? 'AND spr.financial_year = ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.financialYear ? "AND spr.financial_year = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY e.id, spr.financial_year
             ORDER BY b.branch_name, e.employee_code`,
       params: [
@@ -405,7 +414,7 @@ const QUERIES: Record<string, Builder> = {
   // ══════════════════════════════════════════════════════════════════════════
 
   emp_master: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -481,9 +490,9 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
             WHERE e.active_status = 1
               AND ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.process ? 'AND e.process_id = ?' : ''}
-              ${f.status ? 'AND e.employment_status = ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.process ? "AND e.process_id = ?" : ""}
+              ${f.status ? "AND e.employment_status = ?" : ""}
             ORDER BY b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
@@ -495,7 +504,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   emp_statutory: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -526,14 +535,14 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
             WHERE e.active_status = 1
               AND ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY b.branch_name, e.employee_code`,
       params: [...sc.params, ...(f.branch ? [f.branch] : [])],
     };
   },
 
   emp_bank_details: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -550,17 +559,20 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE e.active_status = 1
               AND ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY b.branch_name, e.employee_code`,
       params: [...sc.params, ...(f.branch ? [f.branch] : [])],
     };
   },
 
   emp_joining_exit: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     const typeFilter =
-      f.type === 'joiners' ? 'AND e.date_of_joining IS NOT NULL' :
-      f.type === 'leavers' ? 'AND e.date_of_exit IS NOT NULL' : '';
+      f.type === "joiners"
+        ? "AND e.date_of_joining IS NOT NULL"
+        : f.type === "leavers"
+          ? "AND e.date_of_exit IS NOT NULL"
+          : "";
     return {
       sql: `SELECT
                e.employee_code,
@@ -579,9 +591,9 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN process_master p ON p.id = e.process_id
              LEFT JOIN designation_master d ON d.id = e.designation_id
             WHERE ${sc.sql} ${typeFilter}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.dateFrom ? 'AND COALESCE(e.date_of_exit, e.date_of_joining) >= ?' : ''}
-              ${f.dateTo ? 'AND COALESCE(e.date_of_exit, e.date_of_joining) <= ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.dateFrom ? "AND COALESCE(e.date_of_exit, e.date_of_joining) >= ?" : ""}
+              ${f.dateTo ? "AND COALESCE(e.date_of_exit, e.date_of_joining) <= ?" : ""}
             ORDER BY b.branch_name, e.date_of_joining DESC`,
       params: [
         ...sc.params,
@@ -593,7 +605,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   emp_documents: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -612,13 +624,13 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE e.active_status = 1
               AND ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.verified !== undefined && f.verified !== '' ? 'AND ed.verified = ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.verified !== undefined && f.verified !== "" ? "AND ed.verified = ?" : ""}
             ORDER BY b.branch_name, e.employee_code, ed.doc_category`,
       params: [
         ...sc.params,
         ...(f.branch ? [f.branch] : []),
-        ...(f.verified !== undefined && f.verified !== '' ? [f.verified] : []),
+        ...(f.verified !== undefined && f.verified !== "" ? [f.verified] : []),
       ],
     };
   },
@@ -628,7 +640,7 @@ const QUERIES: Record<string, Builder> = {
   // ══════════════════════════════════════════════════════════════════════════
 
   att_monthly: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                adr.record_date,
@@ -651,11 +663,11 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.process ? 'AND e.process_id = ?' : ''}
-              ${f.dateFrom ? 'AND adr.record_date >= ?' : ''}
-              ${f.dateTo ? 'AND adr.record_date <= ?' : ''}
+              ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.process ? "AND e.process_id = ?" : ""}
+              ${f.dateFrom ? "AND adr.record_date >= ?" : ""}
+              ${f.dateTo ? "AND adr.record_date <= ?" : ""}
             ORDER BY adr.record_date, b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
@@ -669,7 +681,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   att_late_mark: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                DATE_FORMAT(adr.record_date,'%Y-%m') AS month,
@@ -684,10 +696,17 @@ const QUERIES: Record<string, Builder> = {
              JOIN employees e ON e.id = adr.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
-            WHERE adr.late_mark = 1
+             LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id AND wra.roster_date = adr.record_date
+             LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+             LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
+            WHERE UPPER(COALESCE(wra.assignment_type,'')) NOT IN ('WEEK_OFF','LEAVE','HOLIDAY')
+              AND COALESCE(wra.is_week_off, 0) = 0
+              AND adr.clock_in_time IS NOT NULL
+              AND COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) IS NOT NULL
+              AND TIME(adr.clock_in_time) > COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME))
               AND ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id
             ORDER BY month, b.branch_name, total_late_marks DESC`,
       params: [
@@ -699,7 +718,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   att_biometric: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                was.session_date,
@@ -720,10 +739,10 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(was.session_date,'%Y-%m') = ?" : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.dateFrom ? 'AND was.session_date >= ?' : ''}
-              ${f.dateTo ? 'AND was.session_date <= ?' : ''}
+              ${f.month ? "AND DATE_FORMAT(was.session_date,'%Y-%m') = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.dateFrom ? "AND was.session_date >= ?" : ""}
+              ${f.dateTo ? "AND was.session_date <= ?" : ""}
             ORDER BY was.session_date, b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
@@ -736,7 +755,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   att_regularization: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                ar.session_date,
@@ -752,10 +771,10 @@ const QUERIES: Record<string, Builder> = {
              JOIN employees e ON e.id = ar.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.status ? 'AND ar.status = ?' : ''}
-              ${f.dateFrom ? 'AND ar.session_date >= ?' : ''}
-              ${f.dateTo ? 'AND ar.session_date <= ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.status ? "AND ar.status = ?" : ""}
+              ${f.dateFrom ? "AND ar.session_date >= ?" : ""}
+              ${f.dateTo ? "AND ar.session_date <= ?" : ""}
             ORDER BY ar.session_date DESC`,
       params: [
         ...sc.params,
@@ -768,7 +787,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   att_reconciliation: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                adr.record_date,
@@ -786,9 +805,9 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE adr.attendance_status = 'unreconciled'
               AND ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.dateFrom ? 'AND adr.record_date >= ?' : ''}
-              ${f.dateTo ? 'AND adr.record_date <= ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.dateFrom ? "AND adr.record_date >= ?" : ""}
+              ${f.dateTo ? "AND adr.record_date <= ?" : ""}
             ORDER BY adr.record_date DESC, b.branch_name`,
       params: [
         ...sc.params,
@@ -804,7 +823,7 @@ const QUERIES: Record<string, Builder> = {
   // ══════════════════════════════════════════════════════════════════════════
 
   apr_daily: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                a.ReportDate,
@@ -832,10 +851,10 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE ${sc.sql}
-              ${f.dateFrom ? 'AND a.ReportDate >= ?' : ''}
-              ${f.dateTo ? 'AND a.ReportDate <= ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.campaign ? 'AND a.campaign_id = ?' : ''}
+              ${f.dateFrom ? "AND a.ReportDate >= ?" : ""}
+              ${f.dateTo ? "AND a.ReportDate <= ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.campaign ? "AND a.campaign_id = ?" : ""}
             ORDER BY a.ReportDate DESC, b.branch_name, a.UserID`,
       params: [
         ...sc.params,
@@ -848,7 +867,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   apr_monthly: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                DATE_FORMAT(a.ReportDate,'%Y-%m') AS month,
@@ -868,8 +887,8 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(a.ReportDate,'%Y-%m') = ?" : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.month ? "AND DATE_FORMAT(a.ReportDate,'%Y-%m') = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(a.ReportDate,'%Y-%m'), a.UserID, a.campaign_id
             ORDER BY month, b.branch_name, a.UserID`,
       params: [
@@ -881,7 +900,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   apr_campaign: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                a.campaign_id,
@@ -897,9 +916,9 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN employees e ON e.biometric_code = a.UserID AND e.active_status = 1
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(a.ReportDate,'%Y-%m') = ?" : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.campaign ? 'AND a.campaign_id = ?' : ''}
+              ${f.month ? "AND DATE_FORMAT(a.ReportDate,'%Y-%m') = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.campaign ? "AND a.campaign_id = ?" : ""}
             GROUP BY a.campaign_id, DATE_FORMAT(a.ReportDate,'%Y-%m'), b.branch_name
             ORDER BY month, b.branch_name, a.campaign_id`,
       params: [
@@ -916,7 +935,7 @@ const QUERIES: Record<string, Builder> = {
   // ══════════════════════════════════════════════════════════════════════════
 
   leave_balance: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     const year = parseInt(f.year || String(new Date().getFullYear()));
     return {
       sql: `SELECT
@@ -942,14 +961,14 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE lbl.balance_year = ?
               AND ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY b.branch_name, e.employee_code, ltm.leave_code`,
       params: [year, ...sc.params, ...(f.branch ? [f.branch] : [])],
     };
   },
 
   leave_transactions: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                lr.applied_at,
@@ -973,10 +992,10 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.status ? 'AND lr.status = ?' : ''}
-              ${f.dateFrom ? 'AND lr.from_date >= ?' : ''}
-              ${f.dateTo ? 'AND lr.to_date <= ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.status ? "AND lr.status = ?" : ""}
+              ${f.dateFrom ? "AND lr.from_date >= ?" : ""}
+              ${f.dateTo ? "AND lr.to_date <= ?" : ""}
             ORDER BY lr.applied_at DESC`,
       params: [
         ...sc.params,
@@ -989,7 +1008,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   leave_lwp: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                DATE_FORMAT(adr.record_date,'%Y-%m') AS month,
@@ -1005,8 +1024,8 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE adr.lwp_value > 0
               AND ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id
             ORDER BY month, b.branch_name, total_lwp_days DESC`,
       params: [
@@ -1022,7 +1041,7 @@ const QUERIES: Record<string, Builder> = {
   // ══════════════════════════════════════════════════════════════════════════
 
   kpi_scores: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                ks.period,
@@ -1041,8 +1060,8 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE ${sc.sql}
-              ${f.period ? 'AND ks.period = ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.period ? "AND ks.period = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY ks.period, b.branch_name, e.employee_code, kmm.metric_code`,
       params: [
         ...sc.params,
@@ -1053,7 +1072,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   kpi_summary: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                kss.period_id,
@@ -1073,8 +1092,8 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = kss.process_id
             WHERE ${sc.sql}
-              ${f.period ? 'AND kss.period_id = ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.period ? "AND kss.period_id = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY b.branch_name, kss.rank_in_branch`,
       params: [
         ...sc.params,
@@ -1089,7 +1108,7 @@ const QUERIES: Record<string, Builder> = {
   // ══════════════════════════════════════════════════════════════════════════
 
   attrition_monthly: (f, scope) => {
-    const sc = scopeClause(scope, 'ar.branch_id');
+    const sc = scopeClause(scope, "ar.branch_id");
     return {
       sql: `SELECT
                DATE_FORMAT(ar.exit_date,'%Y-%m') AS month,
@@ -1103,8 +1122,8 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = ar.branch_id
              LEFT JOIN process_master p ON p.id = ar.process_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(ar.exit_date,'%Y-%m') = ?" : ''}
-              ${f.branch ? 'AND ar.branch_id = ?' : ''}
+              ${f.month ? "AND DATE_FORMAT(ar.exit_date,'%Y-%m') = ?" : ""}
+              ${f.branch ? "AND ar.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(ar.exit_date,'%Y-%m'), ar.branch_id, ar.process_id, ar.exit_type
             ORDER BY month DESC, b.branch_name`,
       params: [
@@ -1116,7 +1135,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   emp_lifecycle: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                ele.effective_date,
@@ -1132,10 +1151,10 @@ const QUERIES: Record<string, Builder> = {
              JOIN employees e ON e.id = ele.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.eventType ? 'AND ele.event_type = ?' : ''}
-              ${f.dateFrom ? 'AND ele.effective_date >= ?' : ''}
-              ${f.dateTo ? 'AND ele.effective_date <= ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.eventType ? "AND ele.event_type = ?" : ""}
+              ${f.dateFrom ? "AND ele.effective_date >= ?" : ""}
+              ${f.dateTo ? "AND ele.effective_date <= ?" : ""}
             ORDER BY ele.effective_date DESC`,
       params: [
         ...sc.params,
@@ -1152,7 +1171,7 @@ const QUERIES: Record<string, Builder> = {
   // ══════════════════════════════════════════════════════════════════════════
 
   pf_challan: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                spr.run_month,
@@ -1173,8 +1192,8 @@ const QUERIES: Record<string, Builder> = {
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND spl.pf_employee > 0
               AND ${sc.sql}
-              ${f.month ? 'AND spr.run_month = ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.month ? "AND spr.run_month = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
@@ -1185,7 +1204,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   esic_challan: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                spr.run_month,
@@ -1205,8 +1224,8 @@ const QUERIES: Record<string, Builder> = {
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND spl.esic_employee > 0
               AND ${sc.sql}
-              ${f.month ? 'AND spr.run_month = ?' : ''}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.month ? "AND spr.run_month = ?" : ""}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
@@ -1221,7 +1240,7 @@ const QUERIES: Record<string, Builder> = {
   // ══════════════════════════════════════════════════════════════════════════
 
   emp_emergency_contact: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -1239,8 +1258,8 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE e.active_status = 1
               AND ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.status ? 'AND e.employment_status = ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.status ? "AND e.employment_status = ?" : ""}
             ORDER BY e.employee_code, ec.is_primary DESC, ec.contact_seq`,
       params: [
         ...sc.params,
@@ -1251,7 +1270,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   emp_nominee: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -1272,17 +1291,14 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE e.active_status = 1
               AND ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
             ORDER BY e.employee_code, n.nominee_for`,
-      params: [
-        ...sc.params,
-        ...(f.branch ? [f.branch] : []),
-      ],
+      params: [...sc.params, ...(f.branch ? [f.branch] : [])],
     };
   },
 
   emp_probation: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     // employee_probation table has no rows; derive from employees.date_of_joining
     // using 90-day standard BPO probation period
     const statusExpr = `CASE
@@ -1315,8 +1331,8 @@ const QUERIES: Record<string, Builder> = {
             WHERE e.active_status = 1
               AND e.date_of_joining IS NOT NULL
               AND ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.status ? `AND (${statusExpr}) = ?` : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.status ? `AND (${statusExpr}) = ?` : ""}
             ORDER BY DATE_ADD(e.date_of_joining, INTERVAL 90 DAY), b.branch_name`,
       params: [
         ...sc.params,
@@ -1327,7 +1343,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   emp_job_history: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -1358,10 +1374,10 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN process_master fp ON fp.id = jh.from_process_id
              LEFT JOIN process_master tp ON tp.id = jh.to_process_id
             WHERE ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.dateFrom ? 'AND jh.effective_date >= ?' : ''}
-              ${f.dateTo ? 'AND jh.effective_date <= ?' : ''}
-              ${f.changeType ? 'AND jh.change_type = ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.dateFrom ? "AND jh.effective_date >= ?" : ""}
+              ${f.dateTo ? "AND jh.effective_date <= ?" : ""}
+              ${f.changeType ? "AND jh.change_type = ?" : ""}
             ORDER BY e.employee_code, jh.effective_date`,
       params: [
         ...sc.params,
@@ -1374,7 +1390,7 @@ const QUERIES: Record<string, Builder> = {
   },
 
   emp_salary_history: (f, scope) => {
-    const sc = scopeClause(scope, 'e.branch_id');
+    const sc = scopeClause(scope, "e.branch_id");
     return {
       sql: `SELECT
                e.employee_code,
@@ -1391,9 +1407,9 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN salary_structure_master ss ON ss.id = sa.structure_id
             WHERE ${sc.sql}
-              ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.dateFrom ? 'AND sa.effective_from >= ?' : ''}
-              ${f.dateTo ? 'AND sa.effective_from <= ?' : ''}
+              ${f.branch ? "AND e.branch_id = ?" : ""}
+              ${f.dateFrom ? "AND sa.effective_from >= ?" : ""}
+              ${f.dateTo ? "AND sa.effective_from <= ?" : ""}
             ORDER BY e.employee_code, sa.effective_from DESC`,
       params: [
         ...sc.params,
@@ -1408,16 +1424,28 @@ const QUERIES: Record<string, Builder> = {
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export const reportingService = {
-  async leaveBalanceOverview(year: number, userId: string, filters?: { branchId?: string; processId?: string }) {
+  async leaveBalanceOverview(
+    year: number,
+    userId: string,
+    filters?: { branchId?: string; processId?: string },
+  ) {
     if (!Number.isInteger(year) || year < 2000 || year > 2100) {
-      throw Object.assign(new Error("year must be between 2000 and 2100"), { statusCode: 400 });
+      throw Object.assign(new Error("year must be between 2000 and 2100"), {
+        statusCode: 400,
+      });
     }
     const scope = await resolveBranchScope(userId);
     const sc = scopeClause(scope, "e.branch_id");
     const extraConds: string[] = [];
     const extraParams: unknown[] = [];
-    if (filters?.branchId)  { extraConds.push("e.branch_id = ?");  extraParams.push(filters.branchId); }
-    if (filters?.processId) { extraConds.push("e.process_id = ?"); extraParams.push(filters.processId); }
+    if (filters?.branchId) {
+      extraConds.push("e.branch_id = ?");
+      extraParams.push(filters.branchId);
+    }
+    if (filters?.processId) {
+      extraConds.push("e.process_id = ?");
+      extraParams.push(filters.processId);
+    }
     const extraSql = extraConds.length ? "AND " + extraConds.join(" AND ") : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id,
@@ -1440,17 +1468,27 @@ export const reportingService = {
           AND ${sc.sql}
           ${extraSql}
         ORDER BY e.employee_code, lt.leave_name`,
-      [year, ...sc.params, ...extraParams]
+      [year, ...sc.params, ...extraParams],
     );
 
-    const leaveTypes = Array.from(new Set(rows.map((row) => String(row.leave_name))));
-    const records = new Map<string, {
-      employeeId: string;
-      employeeCode: string;
-      employeeName: string;
-      department: string;
-      balances: Array<{ leaveType: string; total: number; used: number; remaining: number }>;
-    }>();
+    const leaveTypes = Array.from(
+      new Set(rows.map((row) => String(row.leave_name))),
+    );
+    const records = new Map<
+      string,
+      {
+        employeeId: string;
+        employeeCode: string;
+        employeeName: string;
+        department: string;
+        balances: Array<{
+          leaveType: string;
+          total: number;
+          used: number;
+          remaining: number;
+        }>;
+      }
+    >();
     for (const row of rows) {
       const employeeId = String(row.employee_id);
       if (!records.has(employeeId)) {
@@ -1476,11 +1514,21 @@ export const reportingService = {
 
   async analyticsOverview(
     year: number,
-    userId: string
+    userId: string,
   ): Promise<{
     employeeGrowth: Array<{ month: string; employees: number }>;
     departmentDistribution: Array<{ name: string; value: number }>;
-    leaveStatistics: { monthlyData: Array<Record<string, string | number>>; leaveTypeKeys: string[]; leaveTypeLabels: Record<string, string>; leaveSummary: Array<{ leave_name: string; total_days: number; employee_count: number; request_count: number }> };
+    leaveStatistics: {
+      monthlyData: Array<Record<string, string | number>>;
+      leaveTypeKeys: string[];
+      leaveTypeLabels: Record<string, string>;
+      leaveSummary: Array<{
+        leave_name: string;
+        total_days: number;
+        employee_count: number;
+        request_count: number;
+      }>;
+    };
     payrollTrend: Array<{ month: string; amount: number }>;
     headcount: {
       newHires: number;
@@ -1488,11 +1536,18 @@ export const reportingService = {
       netChange: number;
       currentHeadcount: number;
       startOfYearHeadcount: number;
-      monthlyBreakdown: Array<{ month: string; hires: number; terminations: number; net: number }>;
+      monthlyBreakdown: Array<{
+        month: string;
+        hires: number;
+        terminations: number;
+        net: number;
+      }>;
     };
   }> {
     if (!Number.isInteger(year) || year < 2000 || year > 2100) {
-      throw Object.assign(new Error("year must be between 2000 and 2100"), { statusCode: 400 });
+      throw Object.assign(new Error("year must be between 2000 and 2100"), {
+        statusCode: 400,
+      });
     }
 
     const scope = await resolveBranchScope(userId);
@@ -1506,10 +1561,23 @@ export const reportingService = {
          FROM employees e
          LEFT JOIN department_master dm ON dm.id = e.department_id
         WHERE ${employeeScope.sql}`,
-      employeeScope.params
+      employeeScope.params,
     );
 
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const monthNames = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
     const toDate = (value: unknown): Date | null => {
       if (!value) return null;
       const date = value instanceof Date ? value : new Date(String(value));
@@ -1521,18 +1589,26 @@ export const reportingService = {
       joined: toDate(row.date_of_joining),
       exited: toDate(row.exit_date),
       active: Number(row.active_status) === 1,
-      terminated: ['resigned', 'inactive', 'terminated'].includes(String(row.employment_status ?? '').toLowerCase()),
+      terminated: ["resigned", "inactive", "terminated"].includes(
+        String(row.employment_status ?? "").toLowerCase(),
+      ),
       department: String(row.department_name ?? "Unassigned"),
     }));
 
     const monthlyBreakdown = monthNames.map((month, index) => {
       const start = new Date(year, index, 1);
       const end = new Date(year, index + 1, 0, 23, 59, 59, 999);
-      const hires = employees.filter((employee) =>
-        employee.joined && employee.joined >= start && employee.joined <= end
+      const hires = employees.filter(
+        (employee) =>
+          employee.joined && employee.joined >= start && employee.joined <= end,
       ).length;
       const terminations = employees.filter((employee) => {
-        if (employee.exited && employee.exited >= start && employee.exited <= end) return true;
+        if (
+          employee.exited &&
+          employee.exited >= start &&
+          employee.exited <= end
+        )
+          return true;
         // Also catch employees without exit_date but with terminated status who joined before this month
         return false;
       }).length;
@@ -1554,10 +1630,15 @@ export const reportingService = {
     const departmentMap = new Map<string, number>();
     for (const employee of employees) {
       if (!employee.active) continue;
-      departmentMap.set(employee.department, (departmentMap.get(employee.department) ?? 0) + 1);
+      departmentMap.set(
+        employee.department,
+        (departmentMap.get(employee.department) ?? 0) + 1,
+      );
     }
-    const departmentDistribution = Array.from(departmentMap, ([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
+    const departmentDistribution = Array.from(
+      departmentMap,
+      ([name, value]) => ({ name, value }),
+    ).sort((a, b) => b.value - a.value);
 
     const leaveScope = scopeClause(scope, "e.branch_id");
     const [leaveRows] = await db.execute<RowDataPacket[]>(
@@ -1574,10 +1655,16 @@ export const reportingService = {
           AND ${leaveScope.sql}
         GROUP BY MONTH(lr.from_date), lt.leave_name
         ORDER BY month_no, lt.leave_name`,
-      [year, ...leaveScope.params]
+      [year, ...leaveScope.params],
     );
-    const leaveNames = Array.from(new Set(leaveRows.map((row) => String(row.leave_name))));
-    const leaveKey = (name: string) => name.trim().toLocaleLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const leaveNames = Array.from(
+      new Set(leaveRows.map((row) => String(row.leave_name))),
+    );
+    const leaveKey = (name: string) =>
+      name
+        .trim()
+        .toLocaleLowerCase()
+        .replace(/[^a-z0-9]+/g, "_");
     const leaveCountKey = (name: string) => leaveKey(name) + "_count";
     const leaveTypeKeys = leaveNames.map(leaveKey);
     const leaveTypeLabels: Record<string, string> = {};
@@ -1591,7 +1678,9 @@ export const reportingService = {
       for (const row of leaveRows) {
         if (Number(row.month_no) === index + 1) {
           item[leaveKey(String(row.leave_name))] = Number(row.total_days ?? 0);
-          item[leaveCountKey(String(row.leave_name))] = Number(row.employee_count ?? 0);
+          item[leaveCountKey(String(row.leave_name))] = Number(
+            row.employee_count ?? 0,
+          );
         }
       }
       return item;
@@ -1611,9 +1700,9 @@ export const reportingService = {
           AND ${leaveScope.sql}
         GROUP BY lt.leave_name
         ORDER BY total_days DESC`,
-      [year, ...leaveScope.params]
+      [year, ...leaveScope.params],
     );
-    const leaveSummary = (leaveSummaryRows as any[]).map(row => ({
+    const leaveSummary = (leaveSummaryRows as any[]).map((row) => ({
       leave_name: String(row.leave_name),
       total_days: Number(row.total_days ?? 0),
       employee_count: Number(row.employee_count ?? 0),
@@ -1631,39 +1720,60 @@ export const reportingService = {
           AND ${payrollScope.sql}
         GROUP BY spr.run_month
         ORDER BY spr.run_month`,
-      [String(year), ...payrollScope.params]
+      [String(year), ...payrollScope.params],
     );
-    const payrollByMonth = new Map(payrollRows.map((row) => [
-      Number(String(row.run_month).slice(5, 7)),
-      Number(row.total_net ?? 0),
-    ]));
-    const payrollTrend = monthNames
-      .map((month, index) => ({ month, amount: payrollByMonth.get(index + 1) ?? 0 }));
+    const payrollByMonth = new Map(
+      payrollRows.map((row) => [
+        Number(String(row.run_month).slice(5, 7)),
+        Number(row.total_net ?? 0),
+      ]),
+    );
+    const payrollTrend = monthNames.map((month, index) => ({
+      month,
+      amount: payrollByMonth.get(index + 1) ?? 0,
+    }));
 
-    const newHires = employees.filter((employee) =>
-      employee.joined && employee.joined >= yearStart && employee.joined <= yearEnd
+    const newHires = employees.filter(
+      (employee) =>
+        employee.joined &&
+        employee.joined >= yearStart &&
+        employee.joined <= yearEnd,
     ).length;
-    const terminations = employees.filter((employee) =>
-      (employee.exited && employee.exited >= yearStart && employee.exited <= yearEnd) ||
-      (employee.terminated && !employee.exited && employee.joined && employee.joined >= yearStart && employee.joined <= yearEnd)
+    const terminations = employees.filter(
+      (employee) =>
+        (employee.exited &&
+          employee.exited >= yearStart &&
+          employee.exited <= yearEnd) ||
+        (employee.terminated &&
+          !employee.exited &&
+          employee.joined &&
+          employee.joined >= yearStart &&
+          employee.joined <= yearEnd),
     ).length;
     // Employees active on Jan 1: joined before Jan 1 AND (no exit date OR exit on/after Jan 1)
     const startOfYearHeadcount = employees.filter((employee) => {
       const joinedBeforeYear = !employee.joined || employee.joined < yearStart;
-      const notExitedBeforeYear = !employee.exited || employee.exited >= yearStart;
+      const notExitedBeforeYear =
+        !employee.exited || employee.exited >= yearStart;
       return joinedBeforeYear && notExitedBeforeYear;
     }).length;
 
     return {
       employeeGrowth,
       departmentDistribution,
-      leaveStatistics: { monthlyData, leaveTypeKeys, leaveTypeLabels, leaveSummary },
+      leaveStatistics: {
+        monthlyData,
+        leaveTypeKeys,
+        leaveTypeLabels,
+        leaveSummary,
+      },
       payrollTrend,
       headcount: {
         newHires,
         terminations,
         netChange: newHires - terminations,
-        currentHeadcount: employees.filter((employee) => employee.active).length,
+        currentHeadcount: employees.filter((employee) => employee.active)
+          .length,
         startOfYearHeadcount,
         monthlyBreakdown,
       },
@@ -1674,16 +1784,17 @@ export const reportingService = {
     const scope = await resolveBranchScope(userId);
     const [roleRows] = await db.execute<RowDataPacket[]>(
       `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
-      [userId]
+      [userId],
     );
-    const roles = (roleRows as { role_key: string }[]).map(r => r.role_key);
-    const canSeeAdminOnly = scope.isSuperAdmin ||
-      roles.some(r => ['hr', 'finance', 'payroll', 'ceo'].includes(r));
+    const roles = (roleRows as { role_key: string }[]).map((r) => r.role_key);
+    const canSeeAdminOnly =
+      scope.isSuperAdmin ||
+      roles.some((r) => ["hr", "finance", "payroll", "ceo"].includes(r));
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM report_master
-        WHERE active_status = 1 ${canSeeAdminOnly ? '' : 'AND admin_only = 0'}
-        ORDER BY report_category, report_name`
+        WHERE active_status = 1 ${canSeeAdminOnly ? "" : "AND admin_only = 0"}
+        ORDER BY report_category, report_name`,
     );
     return rows;
   },
@@ -1691,24 +1802,33 @@ export const reportingService = {
   async runReport(
     reportCode: string,
     filters: Record<string, string>,
-    userId: string
+    userId: string,
   ): Promise<{ columns: string[]; rows: unknown[]; count: number }> {
     const [meta] = await db.execute<RowDataPacket[]>(
-      'SELECT * FROM report_master WHERE report_code = ? AND active_status = 1 LIMIT 1',
-      [reportCode]
+      "SELECT * FROM report_master WHERE report_code = ? AND active_status = 1 LIMIT 1",
+      [reportCode],
     );
-    if (!meta[0]) throw Object.assign(new Error(`Report ${reportCode} not found`), { statusCode: 404 });
+    if (!meta[0])
+      throw Object.assign(new Error(`Report ${reportCode} not found`), {
+        statusCode: 404,
+      });
 
     const queryKey = meta[0].query_key as string;
     const builder = QUERIES[queryKey];
-    if (!builder) throw Object.assign(new Error(`No query builder for ${queryKey}`), { statusCode: 501 });
+    if (!builder)
+      throw Object.assign(new Error(`No query builder for ${queryKey}`), {
+        statusCode: 501,
+      });
 
     const scope = await resolveBranchScope(userId);
 
     // If user requests a specific branch but it's outside their scope, reject
     if (!scope.isSuperAdmin && scope.branchIds.length > 0 && filters.branch) {
       if (!scope.branchIds.includes(filters.branch)) {
-        throw Object.assign(new Error('Access denied: branch not in your scope'), { statusCode: 403 });
+        throw Object.assign(
+          new Error("Access denied: branch not in your scope"),
+          { statusCode: 403 },
+        );
       }
     }
 

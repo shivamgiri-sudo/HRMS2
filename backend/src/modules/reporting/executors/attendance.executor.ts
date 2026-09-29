@@ -89,6 +89,33 @@ const ROSTER_IMPORT_MINUTES_SQL = `(
            ) - TIME_TO_SEC(CAST(wra.shift_start_time AS TIME))
          ) / 60`;
 
+/**
+ * Roster-based lateness expression — evaluates to 1 when the employee punched in
+ * after their roster shift start; 0 otherwise.
+ *
+ * Mirrors the branch-health fix of 2026-09-29 (commit 62caaa39):
+ *   - WEEK_OFF/LEAVE/HOLIDAY rows are excluded (no shift to be late for).
+ *   - If there is no clock_in_time or no resolvable shift start, the row is excluded
+ *     rather than falling back to employees.working_hours_start (which predates the
+ *     roster and causes the false-positive inflation the branch-health fix corrected).
+ *
+ * Shift start resolution order (three sources, same as ROSTER_SHIFT_NAME_SQL):
+ *   wst.start_time          — cycle-based generator (shift_template_id)
+ *   ws.start_time           — legacy/manual path (shift_id)
+ *   wra.shift_start_time    — spreadsheet import path (no shift master row)
+ *
+ * Use as: SUM(${ROSTER_LATE_EXPR_SQL}) for counts, or in a WHERE clause directly.
+ * The query MUST have LEFT JOINs to wfm_roster_assignment wra, wfm_shift_master ws,
+ * and wfm_shift_template wst for the expression to resolve correctly.
+ */
+const ROSTER_LATE_EXPR_SQL = `CASE
+             WHEN UPPER(COALESCE(wra.assignment_type,'')) NOT IN ('WEEK_OFF','LEAVE','HOLIDAY')
+              AND COALESCE(wra.is_week_off, 0) = 0
+              AND adr.clock_in_time IS NOT NULL
+              AND COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) IS NOT NULL
+              AND TIME(adr.clock_in_time) > COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME))
+             THEN 1 ELSE 0 END`;
+
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
@@ -706,7 +733,7 @@ export async function dailyHcShift(
            SUM(adr.attendance_status = 'holiday') AS holiday_count,
            SUM(CASE WHEN adr.attendance_status = 'unreconciled' THEN 1 ELSE 0 END) AS missing_punch_count,
            SUM(CASE WHEN wra.id IS NULL THEN 1 ELSE 0 END) AS unassigned_roster_count,
-           SUM(adr.late_mark = 1) AS late_count,
+           SUM(${ROSTER_LATE_EXPR_SQL}) AS late_count,
            ROUND(SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) / NULLIF(COUNT(*), 0) * 100, 1) AS attendance_pct
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
@@ -900,13 +927,16 @@ export async function attendanceSummary(
            SUM(adr.attendance_status='absent') AS absent_days,
            SUM(adr.attendance_status='leave_approved') AS leave_days,
            SUM(adr.lwp_value) AS lwp_days,
-           SUM(adr.late_mark=1) AS late_days,
+           SUM(${ROSTER_LATE_EXPR_SQL}) AS late_days,
            ROUND(SUM(COALESCE(adr.raw_minutes,adr.biometric_minutes,adr.dialler_minutes,0))/60,2) AS total_hours
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master pm ON pm.id = e.process_id
       LEFT JOIN cost_centre_master acc ON acc.id = e.cost_centre_id
+      LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id AND wra.roster_date = adr.record_date
+      LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+      LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY e.id, e.employee_code, e.first_name, e.last_name, e.full_name,
               e.active_status, b.branch_name, pm.process_name, acc.cost_centre_code, acc.cost_centre_name
@@ -975,7 +1005,16 @@ export async function lateArrivalSummary(
   appendFilterConditions(filters, clauses, params);
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
-  clauses.push("adr.late_mark = 1");
+  // Roster-based lateness filter — same logic as ROSTER_LATE_EXPR_SQL.
+  // Using late_mark = 1 here caused false positives when the attendance engine ran
+  // before the day's roster was finalised and fell back to employees.working_hours_start.
+  clauses.push(
+    `(UPPER(COALESCE(wra.assignment_type,'')) NOT IN ('WEEK_OFF','LEAVE','HOLIDAY')` +
+    ` AND COALESCE(wra.is_week_off, 0) = 0` +
+    ` AND adr.clock_in_time IS NOT NULL` +
+    ` AND COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) IS NOT NULL` +
+    ` AND TIME(adr.clock_in_time) > COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)))`,
+  );
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("adr.id > ?");

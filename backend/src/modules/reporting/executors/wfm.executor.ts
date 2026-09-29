@@ -10,7 +10,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import {
   appendScopeConditions,
   appendFilterConditions,
@@ -29,7 +34,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -40,17 +45,20 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 export async function rosterPublished(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("wra.roster_date BETWEEN ? AND ?", "wra.publish_status = 'published'");
+  clauses.push(
+    "wra.roster_date BETWEEN ? AND ?",
+    "wra.publish_status = 'published'",
+  );
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -86,11 +94,18 @@ export async function rosterPublished(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -99,14 +114,14 @@ export async function rosterPublished(
 export async function rosterVariance(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("wra.roster_date BETWEEN ? AND ?");
@@ -150,11 +165,18 @@ export async function rosterVariance(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -164,24 +186,36 @@ export async function rosterVariance(
 export async function shiftSwapRegister(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e_req.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
 
   // Manual scope via requester employee — standard alias "e" not available here
-  if (scope.branchScope.mode === "none") throw new ReportScopeAccessDeniedError("branchScope");
-  if (scope.branchScope.mode === "restricted" && scope.branchScope.ids.length > 0) {
-    clauses.push(`e_req.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`);
+  if (scope.branchScope.mode === "none")
+    throw new ReportScopeAccessDeniedError("branchScope");
+  if (
+    scope.branchScope.mode === "restricted" &&
+    scope.branchScope.ids.length > 0
+  ) {
+    clauses.push(
+      `e_req.branch_id IN (${scope.branchScope.ids.map(() => "?").join(",")})`,
+    );
     params.push(...scope.branchScope.ids);
   }
-  if (scope.processScope.mode === "none") throw new ReportScopeAccessDeniedError("processScope");
-  if (scope.processScope.mode === "restricted" && scope.processScope.ids.length > 0) {
-    clauses.push(`e_req.process_id IN (${scope.processScope.ids.map(() => "?").join(",")})`);
+  if (scope.processScope.mode === "none")
+    throw new ReportScopeAccessDeniedError("processScope");
+  if (
+    scope.processScope.mode === "restricted" &&
+    scope.processScope.ids.length > 0
+  ) {
+    clauses.push(
+      `e_req.process_id IN (${scope.processScope.ids.map(() => "?").join(",")})`,
+    );
     params.push(...scope.processScope.ids);
   }
 
@@ -234,11 +268,18 @@ export async function shiftSwapRegister(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -253,16 +294,16 @@ export async function shiftSwapRegister(
 export async function weekOffCalendar(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
-  const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   // businessToday(), not a UTC substring of toISOString(): in IST the latter names yesterday
   // for the last 5.5 hours of every day, so a default range ending "today" dropped the
   // current day's roster.
-  const to    = dateParam(filters.to, businessToday());
+  const to = dateParam(filters.to, businessToday());
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("wra.roster_date BETWEEN ? AND ?");
@@ -353,11 +394,18 @@ export async function weekOffCalendar(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -376,11 +424,11 @@ export async function weekOffCalendar(
 export async function rosterAdherence(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, from);
+  const from = dateParam(filters.from, today);
+  const to = dateParam(filters.to, from);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -401,8 +449,12 @@ export async function rosterAdherence(
            adr.attendance_status,
            adr.late_mark,
            CASE
-             WHEN adr.attendance_status IN ('present','half_day') AND adr.late_mark = 0 THEN 'Y'
-             WHEN adr.attendance_status IN ('present','half_day') AND adr.late_mark = 1 THEN 'LATE'
+             WHEN adr.attendance_status IN ('present','half_day')
+                  AND adr.clock_in_time IS NOT NULL
+                  AND COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) IS NOT NULL
+                  AND TIME(adr.clock_in_time) > COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME))
+                  THEN 'LATE'
+             WHEN adr.attendance_status IN ('present','half_day') THEN 'Y'
              ELSE 'N'
            END AS adherent
       FROM attendance_daily_record adr
@@ -410,6 +462,7 @@ export async function rosterAdherence(
       LEFT JOIN wfm_roster_assignment wra
              ON wra.employee_id = adr.employee_id AND wra.roster_date = adr.record_date
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+      LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
@@ -421,6 +474,10 @@ export async function rosterAdherence(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }
