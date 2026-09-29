@@ -55,3 +55,20 @@ Every UI-affecting change is opened in a real browser after building, and record
 - Capacity Builder figures (reads LOB assignments from the main HRMS DB, not available locally).
 - Whether the requester's role passes the Utilization bulk-upload permission (admin, coo, wfm, process_manager, super_admin).
 - Utilization "no formula" request — derived columns are still calculated on screen; bulk upload reads typed-in values only. Awaiting owner decision.
+
+---
+
+## 2026-09-29 — BLA / BLI / BLU Sales Dashboard (Process Operations → Bella Vita → Sales Dashboard → "BLA / BLI / BLU")
+
+**Method:** Real HRMS frontend (Vite dev) + real backend (`tsx src/server.ts`) against a throwaway `mysql:8` container built from the migration chain (57 migrations failed on the empty DB and were skipped with `MIGRATION_STOP_ON_FAILURE=false`; 2FA disabled and a `BELLA_VITA` process row added in that throwaway DB only). Logged in through `/auth` as a seeded demo admin using Chrome DevTools MCP. Test data was generated, not real: `bla_dash_received` uploaded through the page's own uploader (725 rows), `bla_bli_blu_overall_sales_raw` seeded by SQL (85 rows). Container and env file removed afterwards.
+
+| Area | Result |
+|---|---|
+| Toggle "BLA / BLI / BLU" beside Bellavita (Fresh) / BVO | Present, switches views |
+| KPI cards, Sales vs Target chart, Target vs Achievement, Sales MBR daily/weekly + MTD, Product Wise | Render; MTD 61 sales vs target 56 = 108.4%, matching the hand formula and the unit test |
+| LOB switch (All / Cart ABC / Upgrade) | Filters correctly |
+| Received Data upload via the page | Stores rows; re-upload of the same dates replaces, not doubles |
+| Duplicate uploader | Found: the generic "Upload Bellavita Data" panel also rendered under the BLA view. Fixed; it now shows only on the Fresh/BVO views. Overall Sales is read from the existing `bla_bli_blu_overall_sales_raw` (Bulk Upload Hub) and is not uploadable a second time here |
+| Console errors | None |
+
+**Not verified:** real production data; role checks for non-admin roles; whether production's `campaign` / `business_type` values on `bla_bli_blu_overall_sales_raw` exactly equal "Cart ABC" / "Upgrade" / "Real Time Sales" (matched to the template workbook, not to live rows); Inbound (BLI) has no target definition in the workbook so shows counts only.

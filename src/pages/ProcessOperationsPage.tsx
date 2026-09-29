@@ -11,6 +11,7 @@ import {
   BvoDashboard, LpDashboard, ProcessDataPanel, DalmiaDashboard, UploadPanel,
 } from "./NativeSalesDashboard";
 import { HousingDashboardEmbed } from "./NativeHousingDashboards";
+import BlaBliBluSalesDashboard from "./BlaBliBluSalesDashboard";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { MasmisUploaderGrid } from "@/components/process-operations/MasmisUploader";
 
@@ -117,7 +118,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
       )}
 
       {/* Render the process-specific dashboard */}
-      {mapping.type === "bellavita" && <BellavitaBvoToggle month={month} />}
+      {mapping.type === "bellavita" && <BellavitaBvoToggle month={month} canUpload={canUpload} />}
       {mapping.type === "neemans"   && <NeemansDashboard month={month} />}
       {mapping.type === "gnc"       && <GncDashboard month={month} />}
       {mapping.type === "aw"        && <AwDashboard month={month} />}
@@ -130,7 +131,8 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
 
       {/* This brand's sales uploads — the Brand Sales Analytics "Upload Data"
           tab, narrowed to the selected process. */}
-      {canUpload && UPLOAD_BRAND[mapping.type] && <UploadPanel brand={UPLOAD_BRAND[mapping.type]} />}
+      {/* Bellavita renders its own (view-aware) uploader inside BellavitaBvoToggle. */}
+      {canUpload && mapping.type !== "bellavita" && UPLOAD_BRAND[mapping.type] && <UploadPanel brand={UPLOAD_BRAND[mapping.type]} />}
 
       {/* Real inline upload for processes whose only prior upload path was
           either "go to the Bulk Upload Hub" (ProcessDataPanel's banner) or
@@ -150,8 +152,8 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
 const UPLOAD_BRAND: Record<string, string> = { bellavita: "Bellavita", gnc: "GNC", aw: "AW" };
 
 // Bellavita has both fresh + repeat (BVO) tabs
-function BellavitaBvoToggle({ month }: { month: string }) {
-  const [sub, setSub] = useState<"bellavita" | "bvo">("bellavita");
+function BellavitaBvoToggle({ month, canUpload }: { month: string; canUpload: boolean }) {
+  const [sub, setSub] = useState<"bellavita" | "bvo" | "blabliblu">("bellavita");
   return (
     <div className="space-y-4">
       {/* Label beside the toggle only — wrapping the whole dashboard in a flex
@@ -159,7 +161,7 @@ function BellavitaBvoToggle({ month }: { month: string }) {
       <div className="flex items-center gap-2">
         <span className="text-xs font-bold uppercase tracking-widest text-slate-400">View:</span>
         <div className="flex gap-1 p-1 rounded-xl bg-slate-100 w-fit">
-          {([["bellavita", "Bellavita (Fresh)"], ["bvo", "BVO / Repeat"]] as const).map(([k, lbl]) => (
+          {([["bellavita", "Bellavita (Fresh)"], ["bvo", "BVO / Repeat"], ["blabliblu", "BLA / BLI / BLU"]] as const).map(([k, lbl]) => (
             <button key={k} onClick={() => setSub(k)}
               className="px-4 py-1.5 rounded-lg text-xs font-semibold transition-all"
               style={sub === k ? { background: "#1A1A1A", color: "#D4AF37" } : { color: "#64748B" }}>
@@ -170,6 +172,9 @@ function BellavitaBvoToggle({ month }: { month: string }) {
       </div>
       {sub === "bellavita" && <BellavitaDashboard month={month} />}
       {sub === "bvo"       && <BvoDashboard month={month} />}
+      {sub === "blabliblu" && <BlaBliBluSalesDashboard month={month} canUpload={canUpload} />}
+      {/* BLA/BLI/BLU has its own Received Data uploader; the generic Bellavita panel serves the other views. */}
+      {canUpload && sub !== "blabliblu" && <UploadPanel brand={UPLOAD_BRAND.bellavita} />}
     </div>
   );
 }
