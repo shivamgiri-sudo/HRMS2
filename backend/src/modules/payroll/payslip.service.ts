@@ -204,7 +204,10 @@ export const payslipService = {
               e.ctc,
               e.pan_number, e.pan_number_encrypted,
               COALESCE(eu.uan, eu.member_id, e.epf_number) AS epf_number,
-              eu.uan AS uan_number,
+              -- employee_uan is nearly empty (1 active row system-wide) — falling back to
+              -- employees.uan_number, which 14,120 of 59,167 employees actually have, is what
+              -- let the UAN show up on a payslip at all instead of always reading N/A.
+              COALESCE(eu.uan, e.uan_number) AS uan_number,
               e.esic_number      AS esi_number,
               -- The account the employee is actually PAID to, masked.
               --

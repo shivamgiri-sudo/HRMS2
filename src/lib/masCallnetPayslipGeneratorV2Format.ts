@@ -415,39 +415,22 @@ export async function generateMasCallnetPayslipV2Format(data: MasCallnetPayslipV
   doc.setFont("helvetica", "italic");
   doc.setTextColor(90, 90, 90);
   doc.text("This is system generated document, hence no signature required.", MARGIN_X, currentY);
-  currentY += 8;
+  currentY += 4;
 
-  // ── PRIOR MONTH ADJUSTED LEAVE DATA ─────────────────────────────────────────
-  doc.setFontSize(8.5);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(...MCN_NAVY);
-  doc.text("Prior Month Adjusted Leave Data:", MARGIN_X, currentY);
-  currentY += 2;
-
-  autoTable(doc, {
-    startY: currentY,
-    head: [["PL", "CL", "Absent", "W.off", "GL", "SPL", "CO"]],
-    body: [["0.00", "0.00", "0.00", "0.00", "0.00", "0.00", "0.00"]],
-    theme: "grid",
-    margin: TABLE_MARGIN,
-    styles: {
-      fontSize: 8,
-      cellPadding: 1.6,
-      lineColor: [180, 200, 230] as [number, number, number],
-      lineWidth: 0.1,
-      textColor: BLACK,
-      halign: "center",
-    },
-    headStyles: { fillColor: MCN_LIGHT_BLUE, textColor: MCN_NAVY as [number, number, number], fontStyle: "bold" as const },
-  });
+  // No "Prior Month Adjusted Leave Data" section — that's an Astral-specific
+  // concept (leave encashment/adjustment against pay). MCN does not adjust
+  // leave for money, so this reference slip's bottom table does not apply here.
 
   // ── OUTER BORDER ─────────────────────────────────────────────────────────────
   // The reference Astral slip encloses the whole document in one continuous box.
   // Only drawn when everything fit on one page — spanning a box across a page
   // break would need per-page bottom/top edges this generator doesn't track.
-  if (doc.internal.getNumberOfPages() === 1) {
+  // getNumberOfPages() exists at runtime but is missing from jsPDF's type
+  // declarations for `internal` — same gap masCallnetPayslipGeneratorV2.ts
+  // already works around for setLineDash.
+  if ((doc.internal as any).getNumberOfPages() === 1) {
     const boxTop = headerTop - 4;
-    const boxBottom = (doc as any).lastAutoTable.finalY + 4;
+    const boxBottom = currentY + 2;
     doc.setDrawColor(...MCN_NAVY);
     doc.setLineWidth(0.4);
     doc.rect(MARGIN_X - 2, boxTop, CONTENT_W + 4, boxBottom - boxTop);
