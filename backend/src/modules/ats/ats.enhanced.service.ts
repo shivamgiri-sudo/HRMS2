@@ -374,30 +374,34 @@ export async function generateTokenNumber(branchName: string): Promise<string> {
   const branchPrefix = branchName.substring(0, 3).toUpperCase();
   const dateStr = today.replace(/-/g, "");
 
-  // Use INSERT into a sequence table under a lock so concurrent registrations
-  // cannot read the same COUNT and produce duplicate token numbers.
-  // Falls back to MAX(token_number) + 1 if INSERT is unavailable.
+  // Atomic sequence via ats_queue_token_sequence (migration 451).
+  // INSERT ... ON DUPLICATE KEY UPDATE increments atomically, then we read
+  // the new value — same pattern as employee_code_sequence.
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    const [result] = await conn.execute<RowDataPacket[]>(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(token_number, '-', -1) AS UNSIGNED)), 0) + 1 AS next_seq
-       FROM ats_queue_token
-       WHERE branch_name = ? AND DATE(created_at) = ?
-       FOR UPDATE`,
+    await conn.execute(
+      `INSERT INTO ats_queue_token_sequence (branch_name, seq_date, current_seq)
+       VALUES (?, ?, 1)
+       ON DUPLICATE KEY UPDATE current_seq = current_seq + 1`,
       [branchName, today],
     );
-    const seq = Number(result[0]?.next_seq ?? 1);
+    const [rows] = await conn.execute<RowDataPacket[]>(
+      `SELECT current_seq FROM ats_queue_token_sequence
+       WHERE branch_name = ? AND seq_date = ?`,
+      [branchName, today],
+    );
+    const seq = Number(rows[0]?.current_seq ?? 1);
     await conn.commit();
     return `${branchPrefix}-${dateStr}-${String(seq).padStart(3, "0")}`;
   } catch {
     await conn.rollback();
     // Non-fatal fallback: COUNT-based (may duplicate under extreme concurrency)
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [fallback] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM ats_queue_token WHERE branch_name = ? AND DATE(created_at) = ?`,
       [branchName, today],
     );
-    const todayCount = (rows[0]?.count ?? 0) + 1;
+    const todayCount = (fallback[0]?.count ?? 0) + 1;
     return `${branchPrefix}-${dateStr}-${String(todayCount).padStart(3, "0")}`;
   } finally {
     conn.release();
