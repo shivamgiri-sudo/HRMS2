@@ -19,6 +19,7 @@ import OnfidoNameMapping from "./OnfidoNameMapping";
 import OnfidoHero from "./OnfidoHero";
 import OnfidoUtilizationReport from "./OnfidoUtilizationReport";
 import { fmtDdMmmYy, formatBucketTick, shiftDays } from "./onfidoReportShared";
+import { downloadCsv } from "@/lib/safeCsv";
 import "./onfido-central-theme.css";
 
 /**
@@ -4573,17 +4574,32 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
   const errC = (v: number | null) =>
     v === null ? undefined : v > 1 ? ({ background: "var(--red)", color: "#fff" } as React.CSSProperties) : v > 0.75 ? ({ background: "var(--orange)", color: "#fff" } as React.CSSProperties) : ({ background: "var(--green)", color: "#fff" } as React.CSSProperties);
 
+  const exportCsv = () => {
+    downloadCsv(
+      [
+        ["Client", "Document Type", "Task Type", "Audited", "Errors", "Error %", "Avg AHT (s)"],
+        ...filtered.map((r) => [r.client, r.documentType, r.taskType, r.totalAudited, r.errors, r.errPct ?? "", r.avgAht ?? ""]),
+      ],
+      `audit-sampling_${range.from}_${range.to}.csv`,
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 style={{ marginBottom: 0 }}>Audit Sampling — DOC Check &amp; POA</h3>
-          <div className="oc-pillbar">
-            {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
-              <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
-                {g[0].toUpperCase() + g.slice(1)}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <button className="oc-pill-btn" onClick={exportCsv} disabled={filtered.length === 0}>
+              Export
+            </button>
+            <div className="oc-pillbar">
+              {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
+                <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
+                  {g[0].toUpperCase() + g.slice(1)}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -4697,17 +4713,39 @@ function StackRankingView({ range, tlFilter, amFilter }: { range: DateRange; tlF
   ];
   const weights = tier === "Analyst" ? WEIGHTS_ANALYST : WEIGHTS_AM_TL;
 
+  const exportCsv = () => {
+    downloadCsv(
+      [
+        [tier === "Analyst" ? "Analyst" : tier, ...weights.map((w) => w.label), "Score"],
+        ...rows.map((r) => [
+          r.name,
+          ...weights.map((w) => {
+            const v = r[w.key as keyof StackRankingRow] as number | null;
+            return v !== null ? v : "";
+          }),
+          r.score,
+        ]),
+      ],
+      `stack-ranking-${tier.toLowerCase()}_${range.from}_${range.to}.csv`,
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 style={{ marginBottom: 0 }}>Stack Ranking</h3>
-          <div className="oc-pillbar">
-            {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
-              <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
-                {g[0].toUpperCase() + g.slice(1)}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <button className="oc-pill-btn" onClick={exportCsv} disabled={rows.length === 0}>
+              Export
+            </button>
+            <div className="oc-pillbar">
+              {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
+                <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
+                  {g[0].toUpperCase() + g.slice(1)}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
