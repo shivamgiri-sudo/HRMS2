@@ -93,6 +93,12 @@
   color: var(--muted);
 }
 
+/* A title whose bottom margin was zeroed inline (title + pills header rows) would let the
+   sub-line's -8px pull it up over the title; give it a small positive gap instead. */
+.onfido-central-theme .oc-card h3[style*="margin-bottom"] + .oc-card-sub {
+  margin-top: 4px;
+}
+
 /* ── KPI tile ─────────────────────────────────────────────────────── */
 
 .onfido-central-theme .kr {

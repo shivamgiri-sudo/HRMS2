@@ -4,6 +4,20 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-09-30 (later) — Quality tab: title / subtitle overlap
+
+**Method:** temporary Vite harness with mocked API, headless Playwright Chromium, measured the rendered gap between each card title and its sub-line; harness removed.
+
+| Card | Gap after fix |
+|---|---|
+| Analyst Quality Score | +4 px (was overlapping: `h3` bottom margin zeroed inline while `.oc-card-sub` pulls up by 8 px) |
+| Top 20 Performers | +4 px |
+| Top 20 Defaulters | +4 px |
+
+Console / page errors: none. Fix is one CSS rule in `onfido-central-theme.css`. **Not re-checked live** after deploy in this entry.
+
+---
+
 ## 2026-09-30 — LIVE: Utilization bulk upload with calculated columns (deploy `f5b1e50`)
 
 **Method:** headless Playwright Chromium, logged in as a Manager user; real CSV file through the "Bulk upload (CSV)" control on https://mcnhrms.teammas.in. Used 30-Sep-2026, a day with no manual inputs, then reverted.
@@ -230,3 +244,11 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - Joiner-retention cohorts (real: only 25–36% of Apr–Jun joiners were still employed at 90 days).
 - Agent retention-risk score (thresholds recalibrated on the real score distribution: high >=65, medium >=45), 14-day roster-vs-mandate forecast, data-freshness chips (Process feeds stale since 11/09 flagged red), Agent KPI matrix from kpi_daily_actual (274 agents), tiny-group attrition guard (avg HC < 10 → not shown).
 - Not exercised: `/export` CSV download (auth-only route; needs JWT), scoped roles, production deploy, migration 1915.
+
+### 2026-09-30 (follow-up 3) — scope, export, tests, bundle
+
+- **Scoped roles on production data** (service functions with real scope objects): BRANCH_ALL NOIDA totals HC 441 = branch row 441; PROCESS_ALL Onfido 252 = 252; TEAM_ONLY (a manager's 159 reports) 152 = 152; branch-A scope asking for branch B → HC 0; empty CUSTOM_SCOPE → 0; records/heatmap/insights/cohorts honour scope; `employeeInScope` true for own branch, false for another branch's employee.
+- **Export CSV** route tested with the real router (auth stubbed): formula-injection neutralised, negative numbers stay numeric, unknown columns dropped, `operations_command_export` audit written, 400 without a valid column.
+- **Unit tests** `backend/tests/ops-command.test.ts` (13) + `ops-command.export.test.ts` (2): all pass. One test caught a real bug (`backfill_need` ignored the mandate gap) — fixed.
+- **Frontend bundle** `vite build` succeeds (OperationsDashboard chunk emitted).
+- **Still not done:** deploy to production and applying migration 1915 (server access blocked by the permission system); a login-gated run with a real JWT.
