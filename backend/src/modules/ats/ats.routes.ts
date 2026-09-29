@@ -22,6 +22,11 @@ import { persistCandidateFile } from "./candidate-file.service.js";
 import { joiningDocumentsTrackerRouter } from "./ats.joiningDocumentsTracker.routes.js";
 import { getIstDateString } from '../../utils/dateUtils.js';
 import { bulkImportRouter } from "./bulk-import.routes.js";
+import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
+import { getAtsOverview, type OverviewPeriod } from "./dashboard.overview.service.js";
+import { getAtsInsights, getSourcingInsights, getSourcingLeads } from "./dashboard.insights.service.js";
+import { getOperations } from "./dashboard.operations.service.js";
+import { getCandidateJourney, getDrill, listPipeline } from "./dashboard.pipeline.service.js";
 
 export const atsRouter = Router();
 export const atsPublicRouter = Router(); // Public routes (no auth)
@@ -240,6 +245,61 @@ atsRouter.get("/sourcing-channels",              requireRole("admin", "hr", "rec
 atsRouter.get("/stats",                          requireRole("admin", ...dashboardConsumerRoles(
   "HR_DASHBOARD", "CEO_DASHBOARD", "MANAGEMENT_DASHBOARD", "SUPER_ADMIN_DASHBOARD", "RECRUITER_DASHBOARD",
 )), h(c.getDashboardStats.bind(c)));
+
+// ── ATS dashboards: server-side aggregates + drill-down ─────────────────────────────────────────
+// Aggregates are computed once and cached org-wide, so they cannot be row-scoped per user: they are limited to the
+// roles that already see every candidate (candidate-access.ts WIDE_ROLES). Candidate-level endpoints (list, drill,
+// journey) apply resolveCandidateScope / canAccessCandidate, the repo's single row-scope rule.
+const DASH_AGG_ROLES = ["admin", "hr", "manager", "ceo"] as const;
+const DASH_CANDIDATE_ROLES = ["admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"] as const;
+const dashPeriod = (v: unknown, dflt: OverviewPeriod): OverviewPeriod => (["today", "7d", "30d", "90d", "all"].includes(String(v)) ? (v as OverviewPeriod) : dflt);
+const dashText = (v: unknown, max = 120) => (typeof v === "string" && v.length <= max ? v : undefined);
+const dashInt = (v: unknown) => (v !== undefined && v !== "" && Number.isInteger(Number(v)) ? Number(v) : undefined);
+
+atsRouter.get("/dashboard/overview", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  const q = req.query;
+  return res.json({ success: true, data: await getAtsOverview(dashPeriod(q.period, "30d"), dashText(q.branch)) });
+}));
+atsRouter.get("/dashboard/insights", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  const q = req.query;
+  return res.json({ success: true, data: await getAtsInsights(dashPeriod(q.period, "90d"), dashText(q.branch) ?? "") });
+}));
+atsRouter.get("/dashboard/sourcing", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getSourcingInsights(dashPeriod(req.query.period, "all")) });
+}));
+atsRouter.get("/dashboard/sourcing/leads", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  const q = req.query;
+  return res.json({
+    success: true,
+    data: await getSourcingLeads({ notSource: dashText(q.notSource), source: dashText(q.source), recruiter: dashText(q.recruiter), stage: dashText(q.stage, 20), month: dashText(q.month, 7), reason: dashText(q.reason, 200), page: Number(q.page) || 1, limit: Number(q.limit) || 25 }),
+  });
+}));
+atsRouter.get("/dashboard/operations", requireRole(...DASH_AGG_ROLES), h(async (_req, res) => {
+  return res.json({ success: true, data: await getOperations() });
+}));
+
+const dashFilters = async (req: AuthenticatedRequest) => {
+  const q = req.query;
+  return {
+    from: dashText(q.from, 10), to: dashText(q.to, 10), branch: dashText(q.branch), process: dashText(q.process), status: dashText(q.status), stage: dashText(q.stage),
+    search: dashText(q.search, 60), includeLeads: q.includeLeads === "1", page: Number(q.page) || 1, limit: Number(q.limit) || 50,
+    source: dashText(q.source), recruiter: dashText(q.recruiter), outcome: dashText(q.outcome, 20), gender: dashText(q.gender, 20), idle: dashText(q.idle, 10),
+    hour: dashInt(q.hour), dow: dashInt(q.dow), experience: dashText(q.experience), education: dashText(q.education), shift: dashText(q.shift, 20), age: dashText(q.age, 10),
+    voc: dashText(q.voc, 200), interviewer: dashText(q.interviewer, 200),
+    scope: await resolveCandidateScope(req.authUser!.id),
+  };
+};
+atsRouter.get("/dashboard/candidates", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await listPipeline(await dashFilters(req)) });
+}));
+atsRouter.get("/dashboard/drill", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getDrill(await dashFilters(req)) });
+}));
+atsRouter.get("/dashboard/candidates/:id/journey", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  // 404 (not 403) when out of scope, matching assertCandidateInScope: a 403 would confirm the id exists.
+  if (!(await canAccessCandidate(req.authUser!.id, req.params.id))) return res.status(404).json({ success: false, message: "Candidate not found" });
+  return res.json({ success: true, data: await getCandidateJourney(req.params.id) });
+}));
 
 // Walk-in queue â€” candidates who arrived via Walk-In channel, sorted by walk_in_date desc
 atsRouter.get("/walkin-queue",                   requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
