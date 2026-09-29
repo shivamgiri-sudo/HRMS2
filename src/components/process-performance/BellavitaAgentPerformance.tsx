@@ -6,7 +6,7 @@ import { BellavitaAgentDetailDrawer } from "./BellavitaAgentDetailDrawer";
 import { useSortableRows } from "./useSortableRows";
 import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
-interface AgentRow {
+export interface AgentRow {
   empId: string;
   empName: string;
   teamLeader: string;
@@ -32,7 +32,7 @@ interface AgentRow {
 }
 
 /** Hours (2 dp, as the API sends them) -> average per attendance day as H:MM:SS ("—" with no attendance). */
-const avgHms = (hours: number, days: number): string => {
+export const avgHms = (hours: number, days: number): string => {
   if (!(days > 0)) return "—";
   const t = Math.round((hours / days) * 3600);
   return `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;

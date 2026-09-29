@@ -259,16 +259,6 @@ const CLOVIA_UPLOADERS = [
   { code: "CL_RECHURN_CALL_MASMIS",  label: "Rechurn Call",  description: "Upload Clovia rechurn call data",    icon: Repeat },
 ];
 
-/** Dalmia Cement's 4 uploaders. Labels are the names the business asked for; the codes are the existing/new
- * upload_template_master rows (DALMIA_DD_RAW = the dial-desk "DD Raw" sheet, sql/1731; DALMIA_OUTBOUND_RAW, sql/1732;
- * DALMIA_AFTER_HOUR, sql/1734; DALMIA_APR, sql/1781 -- that migration must be applied before the APR tab can import). */
-const DALMIA_UPLOADERS = [
-  { code: "DALMIA_DD_RAW",       label: "dalmia_daildesk", description: "Upload Dalmia dial-desk call log (DD Raw)",   icon: ClipboardList },
-  { code: "DALMIA_OUTBOUND_RAW", label: "Outbound",        description: "Upload Dalmia outbound enquiry follow-up",    icon: PhoneOutgoing },
-  { code: "DALMIA_APR",          label: "dalmia_apr",      description: "Upload Dalmia agent productivity (APR)",      icon: Activity },
-  { code: "DALMIA_AFTER_HOUR",   label: "after_hour",      description: "Upload Dalmia after-hour call log",           icon: PhoneIncoming },
-];
-
 /** Birlanu's 2 uploaders, writing into brand-new db_masmis tables
  * (birlanu_sale/birlanu_apr, sql/1770). Same status as Clovia before its
  * tables existed -- CREATE TABLE SQL is ready, user runs it themselves. */
@@ -314,7 +304,6 @@ const DALMIA_UPLOADERS = [
 ];
 
 const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
-  dalmia: DALMIA_UPLOADERS,
   bellavita: BELLAVITA_UPLOADERS,
   gnc: GNC_UPLOADERS,
   neemans: NEEMANS_UPLOADERS,
