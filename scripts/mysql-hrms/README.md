@@ -8,7 +8,7 @@ taking 12-38 s. This moves the HRMS databases onto the app server (10 cores, /va
 
 | Schema | Size | Treatment |
 |---|---|---|
-| `mas_hrms` | 26.5 GB (18.6 GB is `upload_batch_row`) | copy; archive `upload_batch_row` older than 60 days first |
+| `mas_hrms` | 26.5 GB (18.6 GB is `upload_batch_row`) | copy everything **except the data of `upload_batch_row`** (owner decision 2026-09-30): the table is created empty, ~8 GB is copied |
 | `db_masmis` | 2.1 GB | copy (written by the uploaders, used in ~100 files) |
 | `db_audit`, `db_external`, `Shivamgiri` | 1.5 / 1.1 / 0.2 GB | live replicas; the app reads them through the main pool. The app writes 1 table in each of `db_audit` and `Shivamgiri` (see Risks) |
 | `dialer_db` | 7.8 GB | stays remote (has its own `DIALER_DB_HOST` setting) |
@@ -17,9 +17,9 @@ taking 12-38 s. This moves the HRMS databases onto the app server (10 cores, /va
 
 | # | Step | Script | Downtime |
 |---|---|---|---|
-| 0 | Discovery: outside clients, root/REPLICATION privileges, `upload_batch_row` policy | (manual, DBA) | none |
+| 0 | Discovery: outside clients, dump/replication privileges | `DBA-REQUEST.md` (send to the DBA) | none |
 | 1 | Build the empty instance on port 3307 | `01-create-instance.sh` | none |
-| 2 | Archive old `upload_batch_row`, consistent dump and restore | not written yet | none |
+| 2 | Consistent dump and restore (no `upload_batch_row` rows), table-list and row-count comparison | `04-dump-restore.sh` | none |
 | 3 | Replication from the source, checksum verification, enable backup cron | not written yet | none |
 | 4 | Rehearsal: second app copy on :5056 against the new DB, benchmark the dashboard endpoints | not written yet | none |
 | 5 | Cutover at night: stop app, wait for lag 0, switch `.env`, start | not written yet | ~10-15 min |
@@ -60,6 +60,15 @@ Checked on the real server on 2026-09-30 (read-only): all 44 options validate un
     sudo systemctl daemon-reload && sudo sysctl vm.swappiness=60
     # remove the "mysql-hrms dedicated instance" block from /etc/apparmor.d/local/usr.sbin.mysqld
     # and run: sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.mysqld
+
+## What "no `upload_batch_row` data" changes for users
+
+Checked in the code (117 files mention the table). New uploads are unaffected: each file's rows are
+written to the table when uploaded and read back when imported. Only past batches lose their detail:
+`GET /batches/:id/rows`, `/reconcile` and `/import-status` on a batch uploaded before cutover return
+no rows. The batch headers (`upload_batch`) are copied, so the upload history list still shows.
+**No batch may be mid-import at cutover**: check for `upload_batch.status IN ('importing','approving')`
+first. The old rows stay on the source server as the archive.
 
 ## Risks and open items
 
