@@ -137,6 +137,19 @@ function formatDateKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Calendar date (YYYY-MM-DD) in IST. Period boundaries are business days in India, not UTC days. */
+function istDateKey(d: Date): string {
+  return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
+/** IST Monday of the week containing `d`, as YYYY-MM-DD (the daily branch report also weeks Monday-first). */
+function istWeekStartKey(d: Date): string {
+  const [y, m, day] = istDateKey(d).split("-").map(Number);
+  const utc = new Date(Date.UTC(y, m - 1, day));
+  utc.setUTCDate(utc.getUTCDate() - ((utc.getUTCDay() + 6) % 7));
+  return utc.toISOString().slice(0, 10);
+}
+
 function monthKey(d: Date): string {
   return d.toISOString().slice(0, 7);
 }
@@ -582,9 +595,10 @@ function inPeriod(row: CandidateRow, period: Period, now = new Date()): boolean 
   if (period === "ALL") return true;
   const d = rowDate(row._createdAt) ?? parseCandidateDate(row);
   if (!d) return false;
-  if (period === "FTD") return formatDateKey(d) === formatDateKey(now);
-  if (period === "WTD") return d >= startOfWeek(now) && d <= now;
-  if (period === "MTD") return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  const key = istDateKey(d), today = istDateKey(now);
+  if (period === "FTD") return key === today;
+  if (period === "WTD") return key >= istWeekStartKey(now) && key <= today;
+  if (period === "MTD") return key.slice(0, 7) === today.slice(0, 7);
   return true;
 }
 
@@ -1043,27 +1057,20 @@ async function buildCandidateFilters(filters: CandidateFilters): Promise<{ where
   const params: unknown[] = [];
   if (filters.fromDate) { conds.push("COALESCE(c.created_date, DATE(c.created_at)) >= ?"); params.push(filters.fromDate); }
   if (filters.toDate) { conds.push("COALESCE(c.created_date, DATE(c.created_at)) <= ?"); params.push(filters.toDate); }
-  // Push date bounds into SQL when no explicit date range provided
-  // This prevents full-table scans for bounded periods (FTD/WTD/MTD)
+  // Push a date bound into SQL when no explicit range was given, to avoid a full-table scan for FTD/WTD/MTD.
+  // The bound must cover ALL THREE windows, not just the selected one: dashboardRows always reports FTD, WTD and MTD
+  // side by side, and narrowing to "today" emptied the WTD/MTD rows. The selected period is applied afterwards by
+  // inPeriod(). Dates are IST and the week starts on Monday, matching inPeriod().
   if (!filters.fromDate && !filters.toDate) {
-    const now = new Date();
-    const todayStr = now.toISOString().slice(0, 10);
     const period = filters.period || "ALL";
-    if (period === "FTD") {
-      conds.push("(c.created_date = ? OR (c.created_date IS NULL AND DATE(c.created_at) = ?))");
-      params.push(todayStr, todayStr);
-    } else if (period === "WTD") {
-      const dow = new Date(now);
-      dow.setDate(now.getDate() - now.getDay());
-      const weekStart = dow.toISOString().slice(0, 10);
+    if (period === "FTD" || period === "WTD" || period === "MTD") {
+      const now = new Date();
+      const monthStart = `${istDateKey(now).slice(0, 7)}-01`;
+      const bound = istWeekStartKey(now) < monthStart ? istWeekStartKey(now) : monthStart;
       conds.push("(c.created_date >= ? OR (c.created_date IS NULL AND DATE(c.created_at) >= ?))");
-      params.push(weekStart, weekStart);
-    } else if (period === "MTD") {
-      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-      conds.push("(c.created_date >= ? OR (c.created_date IS NULL AND DATE(c.created_at) >= ?))");
-      params.push(monthStart, monthStart);
+      params.push(bound, bound);
     }
-    // period === "ALL": no date filter added — 5000-row cap in candidateSelect still applies
+    // period === "ALL": no date filter added — the row cap in candidateSelect still applies
   }
   if (filters.branch) { conds.push("COALESCE(c.branch_text, c.applied_for_branch) = ?"); params.push(filters.branch); }
   if (filters.process) { conds.push("COALESCE(c.process_text, c.applied_for_process) = ?"); params.push(filters.process); }
