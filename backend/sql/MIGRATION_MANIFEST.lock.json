@@ -1372,6 +1372,7 @@
     "1782_tpz_access.sql",
     "1870_gnc_lob_target.sql",
     "1871_bb_chat_template_new_table_columns.sql",
-    "1874_process_details_page_access.sql"
+    "1874_process_details_page_access.sql",
+    "migrations/449_pre_cdr_daily_summary.sql"
   ]
 }
