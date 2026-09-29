@@ -16,8 +16,12 @@
 -- Row-level UPDATEs only — no DDL. Uses extended lock timeout so concurrent
 -- backend transactions (attendance import, payroll) don't block this.
 
-SET SESSION innodb_lock_wait_timeout = 300;
-SET SESSION lock_wait_timeout        = 300;
+-- Use a short lock timeout — this UPDATE touches at most 6 rows by primary-key
+-- lookup (employee_code has a unique index), so it completes in milliseconds when
+-- unlocked. A 10-second wait is generous; 300 was the original value and caused a
+-- 5-minute block under heavy traffic that failed the migration.
+SET SESSION innodb_lock_wait_timeout = 10;
+SET SESSION lock_wait_timeout        = 10;
 
 SET @db = DATABASE();
 
@@ -25,6 +29,7 @@ SET @db = DATABASE();
 -- Update process_id for each affected employee from their own cost_centre_master.
 -- Uses employee_code to avoid hardcoding UUIDs; skips if cost_centre_id is NULL
 -- or the cost_centre has no process_id (leaves it unchanged).
+-- Touches at most 6 specific rows — fast index lookup, no table scan.
 
 UPDATE employees e
   JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
