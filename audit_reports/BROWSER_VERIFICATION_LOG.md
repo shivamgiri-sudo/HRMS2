@@ -4,6 +4,21 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-09-30 — LIVE: Utilization bulk upload with calculated columns (deploy `f5b1e50`)
+
+**Method:** headless Playwright Chromium, logged in as a Manager user; real CSV file through the "Bulk upload (CSV)" control on https://mcnhrms.teammas.in. Used 30-Sep-2026, a day with no manual inputs, then reverted.
+
+| Step | Result |
+|---|---|
+| Upload `Utilization Forecaste=12345, Utilization with Adhoc %=77.7%, Escalated %=1.23%` | "Saved 1 day(s)." |
+| Read `/utilization-report` for that day | derived forecast **12345**, with-adhoc % **77.7**, escalated % **1.23** (uploaded values shown as-is, `%` stripped) |
+| Revert: upload the same date with blank values | "Saved 1 day(s)."; derived values back to null (i.e. the calculation applies again) |
+| Page errors | None |
+
+**Left in production:** one empty `onfido_utilization_daily_input` row for 2026-09-30 (all values NULL, so it changes nothing on screen) and two audit-log entries.
+
+---
+
 ## 2026-09-30 — LIVE: Approved HC 181 + Audit Sampling paging (deploy `f5b1e50`)
 
 **Deploy note:** the first deploy of these changes (`3ccaa50`, run 36618309461) failed its health check and the deploy script restored the previous build automatically (site stayed up). Cause: migration 449, added by another developer's merge, failed at boot because the app DB user cannot CREATE in `db_masmis`; it was unregistered in `f5b1e50`, and the re-deploy of `f5b1e50` (which contains these changes) succeeded.
@@ -207,3 +222,11 @@ Every UI-affecting change is opened in a real browser after building, and record
 **Browser:** overview, tabs, drill by branch, analyst drill, Agent 360 drawer for a real employee: zero console/page errors, zero non-200 API responses.
 
 **Still NOT verified:** login-gated real page with a JWT and role scope (preview used ORG_ALL); BRANCH/PROCESS/TEAM scoped roles against production; migration 1915 (incl. covering attendance index `idx_ops_adr_cover`) not applied to production — cold-load time will drop once it is; nothing deployed.
+
+### 2026-09-30 (follow-up 2) — insights, risk, cohorts, forecast, freshness, agent KPIs, export
+
+Verified on production data via the localhost preview API + Playwright (zero console errors, zero non-200):
+- Insights (14 real items, e.g. 21.4% of scheduled days have no usable punch; Onfido attrition 30.6% with 61 of 74 exits inside 90 days; NOIDA-2 49 absconding exits).
+- Joiner-retention cohorts (real: only 25–36% of Apr–Jun joiners were still employed at 90 days).
+- Agent retention-risk score (thresholds recalibrated on the real score distribution: high >=65, medium >=45), 14-day roster-vs-mandate forecast, data-freshness chips (Process feeds stale since 11/09 flagged red), Agent KPI matrix from kpi_daily_actual (274 agents), tiny-group attrition guard (avg HC < 10 → not shown).
+- Not exercised: `/export` CSV download (auth-only route; needs JWT), scoped roles, production deploy, migration 1915.
