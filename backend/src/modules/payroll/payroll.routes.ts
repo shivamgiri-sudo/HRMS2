@@ -1864,6 +1864,22 @@ router.get(
     // ORDER BY the per-line query used, applied within each line_id.
     const myLineIds = (rows as any[]).map((r) => r.id);
     const componentsByLine = new Map<string, any[]>();
+    const componentsPromise = myLineIds.length
+      ? db.execute<RowDataPacket[]>(
+          `SELECT line_id, component_code, component_name, component_type, amount, taxable
+       FROM salary_prep_line_component
+       WHERE line_id IN (${myLineIds.map(() => "?").join(",")})
+       ORDER BY
+         line_id,
+         CASE component_type
+           WHEN 'earning' THEN 1
+           WHEN 'deduction' THEN 2
+           ELSE 3
+         END,
+         component_code`,
+          myLineIds,
+        )
+      : Promise.resolve([[] as RowDataPacket[]] as unknown as [RowDataPacket[]]);
     const legacyPromise = db.execute<RowDataPacket[]>(
       `SELECT lps.id AS legacy_id, lps.employee_code, lps.pay_month AS run_month,
             lps.sal_date, lps.gross_salary, lps.gross_earned, lps.total_deductions,
@@ -1886,24 +1902,8 @@ router.get(
      ORDER BY lps.pay_month DESC`,
       [callerEmp.id, `${year}-%`],
     );
-    // Both promises are created before either is awaited, so a rejection in one can never go
+    // Components are issued first, then the legacy read (the original call order). Both promises are created before either is awaited, so a rejection in one can never go
     // unhandled while the other is being awaited.
-    const componentsPromise = myLineIds.length
-      ? db.execute<RowDataPacket[]>(
-          `SELECT line_id, component_code, component_name, component_type, amount, taxable
-       FROM salary_prep_line_component
-       WHERE line_id IN (${myLineIds.map(() => "?").join(",")})
-       ORDER BY
-         line_id,
-         CASE component_type
-           WHEN 'earning' THEN 1
-           WHEN 'deduction' THEN 2
-           ELSE 3
-         END,
-         component_code`,
-          myLineIds,
-        )
-      : Promise.resolve([[] as RowDataPacket[]] as unknown as [RowDataPacket[]]);
     const [[allComponents], [legacyRows]] = await Promise.all([
       componentsPromise,
       legacyPromise,
