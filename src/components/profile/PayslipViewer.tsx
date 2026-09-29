@@ -42,6 +42,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
+import { downloadMasCallnetPayslipV2Format } from "@/lib/masCallnetPayslipGeneratorV2Format";
 import { numberToWords } from "@/lib/numberToWords";
 import { RunningMonthCard, getIstRunMonth } from "@/components/payroll/RunningMonthCard";
 import { TaxCertificateCard } from "@/components/profile/TaxCertificateCard";
@@ -488,6 +489,83 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     }, `Payslip_${employeeCode}_${monthName}_${recYear}.pdf`);
   };
 
+  /** Downloads the "V2" payslip format — same layout as the reference Astral
+   *  Form-IV-B slip, re-skinned with MCN branding. Kept alongside
+   *  handleDownloadPayslip() (the existing format) rather than replacing it. */
+  const handleDownloadPayslipV2 = async (record: PayslipRecord) => {
+    const [recYear, recMonthNum] = (record.run_month || "").split("-");
+    const monthName = MONTHS.find((m) => m.value === String(Number(recMonthNum)))?.label || record.run_month || "";
+
+    const getEarning = (code: string) => {
+      const comp = (record.earnings || []).find((e) => e.component_code.toUpperCase() === code.toUpperCase());
+      return Number(comp?.amount ?? 0);
+    };
+    const getDeduction = (code: string) => {
+      const comp = (record.deductions || []).find((d) => d.component_code.toUpperCase() === code.toUpperCase());
+      return Number(comp?.amount ?? 0);
+    };
+
+    const basic = getEarning('BASIC') || Number(record.basic ?? record.basic_salary ?? 0);
+    const hra = getEarning('HRA') || Number(record.hra ?? 0);
+    const bonus = getEarning('BONUS') || Number(record.bonus ?? 0);
+    const conv = getEarning('CONVEYANCE') || getEarning('CONV') || Number(record.conveyance ?? 0);
+    const pa = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE') || getEarning('PORTFOLIO') || Number(record.portfolio ?? 0);
+    const ma = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE') || getEarning('MEDICAL') || Number(record.medical_allowance ?? 0);
+    const sa = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE') || Number(record.special_allowance ?? 0);
+    const arrear = getEarning('ARREAR') || Number(record.arrear ?? 0);
+    const incentive = getEarning('INCENTIVE') || Number(record.incentive ?? 0);
+
+    const SLOTTED_EARNINGS = new Set([
+      "BASIC", "HRA", "BONUS", "CONV", "CONVEYANCE", "PA", "PERSONAL_ALLOWANCE",
+      "PORTFOLIO", "MA", "MEDICAL_ALLOWANCE", "MEDICAL", "SPECIAL",
+      "SPECIAL_ALLOWANCE", "ARREAR", "INCENTIVE", "LTA", "OA", "OTHER_ALLOWANCE",
+    ]);
+    const unslottedEarnings = (record.earnings || [])
+      .filter((e) => !SLOTTED_EARNINGS.has(e.component_code.toUpperCase()))
+      .reduce((t, e) => t + Number(e.amount || 0), 0);
+    const oa = getEarning('OA') || getEarning('OTHER_ALLOWANCE') || Number(record.other_allowance ?? 0);
+    const otherEarnings = oa + unslottedEarnings;
+
+    const pf = getDeduction('PF_EMPLOYEE') || getDeduction('PF_EMP') || Number(record.pf_employee ?? 0);
+    const esic = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(record.esic_employee ?? 0);
+    const tds = getDeduction('TDS') || Number(record.tds ?? record.income_tax ?? 0);
+    const lwpDed = getDeduction('LWP_DEDUCTION') || getDeduction('LWP') || Number(record.lwp_deduction ?? record.leave_deduction ?? 0);
+    const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || getDeduction('LOAN_EMI') || Number(record.loan_deduction ?? 0);
+    const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || getDeduction('ADV') || Number(record.advance_recovery ?? record.advance_paid ?? 0);
+
+    const SLOTTED_DEDUCTIONS = new Set([
+      "PF_EMPLOYEE", "PF_EMP", "ESIC_EMPLOYEE", "ESIC_EMP",
+      "TDS", "LWP_DEDUCTION", "LWP", "LOAN", "LOAN_RECOVERY", "LOAN_EMI",
+      "ADVANCE", "ADVANCE_RECOVERY", "ADV",
+    ]);
+    const unslottedDeductions = (record.deductions || [])
+      .filter((d) => !SLOTTED_DEDUCTIONS.has(d.component_code.toUpperCase()))
+      .reduce((t, d) => t + Number(d.amount || 0), 0);
+    const knownDeductions = pf + esic + tds + lwpDed + loan + adDed;
+    const otherDed = Math.max(unslottedDeductions, effectiveDeductions(record) - knownDeductions, 0);
+
+    await downloadMasCallnetPayslipV2Format({
+      companyName: "MAS CALLNET INDIA PVT. LTD.",
+      monthYear: `${monthName} - ${recYear}`,
+      empName: employeeName,
+      empCode: employeeCode,
+      designation: record.designation_name || "N/A",
+      department: record.dept_name || "N/A",
+      location: record.branch_name || record.location_name || "N/A",
+      epfNo: record.epf_number || "",
+      uanNo: record.uan_number || "",
+      esiNo: record.esi_number || "",
+      bankAccount: record.bank_account_masked || "",
+      paymentDate: record.payment_date || "",
+      wDays: Number(record.working_days ?? 30),
+      earnedDays: Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
+      basic, hra, conv, pa, ma, sa, oa: otherEarnings, arrear, bonus, incentive,
+      pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
+      netSalary: Number(record.net_salary ?? 0),
+      netSalaryWords: numberToWords(Math.floor(Number(record.net_salary ?? 0))),
+    }, `Payslip_V2_${employeeCode}_${monthName}_${recYear}.pdf`);
+  };
+
   const allowanceBreakdown = getAllowanceBreakdown();
   const deductionBreakdown = getDeductionBreakdown();
   const latestRecord = payrollRecords?.[0];
@@ -928,19 +1006,34 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                               : getStatusBadge(record.run_status || record.status || "processed")}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDownloadPayslip(record);
-                              }}
-                              disabled={!record.net_salary || Number(record.net_salary) === 0}
-                              title={!record.net_salary || Number(record.net_salary) === 0 ? "Payslip not yet processed" : "Download PDF"}
-                            >
-                              <Download className="h-4 w-4 mr-1" />
-                              PDF
-                            </Button>
+                            <div className="flex justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDownloadPayslip(record);
+                                }}
+                                disabled={!record.net_salary || Number(record.net_salary) === 0}
+                                title={!record.net_salary || Number(record.net_salary) === 0 ? "Payslip not yet processed" : "Download PDF"}
+                              >
+                                <Download className="h-4 w-4 mr-1" />
+                                PDF
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDownloadPayslipV2(record);
+                                }}
+                                disabled={!record.net_salary || Number(record.net_salary) === 0}
+                                title={!record.net_salary || Number(record.net_salary) === 0 ? "Payslip not yet processed" : "Download PDF (V2)"}
+                              >
+                                <Download className="h-4 w-4 mr-1" />
+                                V2
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                         {isExpanded && (
