@@ -61,11 +61,19 @@ async function getActiveEmployees(
   lobCodes: readonly string[],
 ): Promise<ActiveEmployee[]> {
   const placeholders = lobCodes.map(() => "?").join(",");
+  // Two paths handle both data states:
+  // 1. employees.lob_id set (post-migration): canonical JOIN
+  // 2. employees.lob_id NULL (pre-migration): per-employee lob_master entries keyed by employee_code
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code FROM employees e
        JOIN lob_master lm ON lm.id = e.lob_id
-       WHERE e.active_status = 1 AND e.cost_center_code = ? AND lm.lob_code IN (${placeholders})`,
-    [costCenterCode, ...lobCodes],
+       WHERE e.active_status = 1 AND e.cost_center_code = ? AND lm.lob_code IN (${placeholders})
+     UNION
+     SELECT e.id, e.employee_code FROM employees e
+       JOIN lob_master per_lob ON per_lob.lob_code = e.employee_code AND per_lob.active_status = 1
+       WHERE e.active_status = 1 AND e.cost_center_code = ? AND e.lob_id IS NULL
+         AND per_lob.lob_name IN (SELECT canon.lob_name FROM lob_master canon WHERE canon.lob_code IN (${placeholders}))`,
+    [costCenterCode, ...lobCodes, costCenterCode, ...lobCodes],
   );
   return rows.map((r) => ({
     id: String(r.id),
@@ -129,23 +137,42 @@ export interface CapacityBuilderRow {
 export async function getOnfidoCapacityBuilder(
   costCenterCode: string = ONFIDO_MANDATE_COST_CENTRE,
 ): Promise<CapacityBuilderRow[]> {
+  const canonCodes = ONFIDO_MANDATE_LOB_CODES;
+  const canonPh = canonCodes.map(() => "?").join(",");
   const [lobRows, inTrainingCodes] = await Promise.all([
     db.execute<RowDataPacket[]>(
-      `SELECT lm.lob_code, lm.lob_name, COUNT(e.id) AS active_hc,
-              GROUP_CONCAT(e.employee_code) AS emp_codes
+      // Same two-path pattern as getActiveEmployees: canonical lob_id (post-migration)
+      // and per-employee lob_master entries keyed by employee_code (pre-migration).
+      `SELECT lob_code, lob_name, SUM(active_hc) AS active_hc,
+              GROUP_CONCAT(emp_codes) AS emp_codes
+       FROM (
+         SELECT lm.lob_code, lm.lob_name, COUNT(e.id) AS active_hc,
+                GROUP_CONCAT(e.employee_code) AS emp_codes
          FROM employees e
          JOIN lob_master lm ON lm.id = e.lob_id
-        WHERE e.active_status = 1 AND e.cost_center_code = ?
-        GROUP BY lm.lob_code, lm.lob_name
-        ORDER BY lm.lob_name`,
-      [costCenterCode],
+         WHERE e.active_status = 1 AND e.cost_center_code = ?
+         GROUP BY lm.lob_code, lm.lob_name
+         UNION ALL
+         SELECT canon.lob_code, canon.lob_name, COUNT(e.id) AS active_hc,
+                GROUP_CONCAT(e.employee_code) AS emp_codes
+         FROM employees e
+         JOIN lob_master per_lob ON per_lob.lob_code = e.employee_code AND per_lob.active_status = 1
+         JOIN lob_master canon ON canon.lob_name = per_lob.lob_name AND canon.lob_code IN (${canonPh})
+         WHERE e.active_status = 1 AND e.cost_center_code = ? AND e.lob_id IS NULL
+         GROUP BY canon.lob_code, canon.lob_name
+       ) combined
+       GROUP BY lob_code, lob_name
+       ORDER BY lob_name`,
+      [costCenterCode, ...canonCodes, costCenterCode],
     ),
     getInTrainingEmployeeCodes(),
   ]);
 
   const rows: CapacityBuilderRow[] = [];
   for (const r of lobRows[0]) {
-    const codes: string[] = r.emp_codes ? String(r.emp_codes).split(",").filter(Boolean) : [];
+    const codes: string[] = r.emp_codes
+      ? String(r.emp_codes).split(",").filter(Boolean)
+      : [];
     const inTraining = codes.filter((c) => inTrainingCodes.has(c)).length;
     const activeHc = Number(r.active_hc) - inTraining;
     rows.push({
