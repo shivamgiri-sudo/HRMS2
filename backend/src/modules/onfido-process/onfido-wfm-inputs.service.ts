@@ -96,6 +96,8 @@ export async function listUtilizationInputs(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(input_date, '%Y-%m-%d') AS input_date, forecast_task, forecast_task_poa, manual_far_cases,
             adhoc_time, analyst_qc, facial_checks, cross_training_task_poa, poa_live_audits_pq, remarks,
+            fixed_utilization_forecast, fixed_utilization_with_adhoc, fixed_utilization_without_adhoc,
+            fixed_utilization_with_adhoc_pct, fixed_utilization_without_adhoc_pct, fixed_poa_answering_pct, fixed_escalated_pct,
             created_by, DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
             updated_by, DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
        FROM onfido_utilization_daily_input WHERE input_date BETWEEN ? AND ? ORDER BY input_date`,
@@ -111,6 +113,13 @@ export async function listUtilizationInputs(
     facialChecks: numOrNull(r.facial_checks),
     crossTrainingTaskPoa: numOrNull(r.cross_training_task_poa),
     poaLiveAuditsPq: numOrNull(r.poa_live_audits_pq),
+    fixedUtilizationForecast: numOrNull(r.fixed_utilization_forecast),
+    fixedUtilizationWithAdhoc: numOrNull(r.fixed_utilization_with_adhoc),
+    fixedUtilizationWithoutAdhoc: numOrNull(r.fixed_utilization_without_adhoc),
+    fixedUtilizationWithAdhocPct: numOrNull(r.fixed_utilization_with_adhoc_pct),
+    fixedUtilizationWithoutAdhocPct: numOrNull(r.fixed_utilization_without_adhoc_pct),
+    fixedPoaAnsweringPct: numOrNull(r.fixed_poa_answering_pct),
+    fixedEscalatedPct: numOrNull(r.fixed_escalated_pct),
     remarks: r.remarks ?? null,
     createdBy: r.created_by ?? null,
     createdAt: r.created_at ?? null,
@@ -128,12 +137,22 @@ export async function upsertUtilizationInputs(
     await db.execute(
       `INSERT INTO onfido_utilization_daily_input
          (input_date, forecast_task, forecast_task_poa, manual_far_cases, adhoc_time, analyst_qc, facial_checks,
-          cross_training_task_poa, poa_live_audits_pq, remarks, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          cross_training_task_poa, poa_live_audits_pq, remarks,
+          fixed_utilization_forecast, fixed_utilization_with_adhoc, fixed_utilization_without_adhoc,
+          fixed_utilization_with_adhoc_pct, fixed_utilization_without_adhoc_pct, fixed_poa_answering_pct,
+          fixed_escalated_pct, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE forecast_task = VALUES(forecast_task), forecast_task_poa = VALUES(forecast_task_poa),
          manual_far_cases = VALUES(manual_far_cases), adhoc_time = VALUES(adhoc_time), analyst_qc = VALUES(analyst_qc),
          facial_checks = VALUES(facial_checks), cross_training_task_poa = VALUES(cross_training_task_poa),
-         poa_live_audits_pq = VALUES(poa_live_audits_pq), remarks = VALUES(remarks), updated_by = ?`,
+         poa_live_audits_pq = VALUES(poa_live_audits_pq), remarks = VALUES(remarks),
+         fixed_utilization_forecast = VALUES(fixed_utilization_forecast),
+         fixed_utilization_with_adhoc = VALUES(fixed_utilization_with_adhoc),
+         fixed_utilization_without_adhoc = VALUES(fixed_utilization_without_adhoc),
+         fixed_utilization_with_adhoc_pct = VALUES(fixed_utilization_with_adhoc_pct),
+         fixed_utilization_without_adhoc_pct = VALUES(fixed_utilization_without_adhoc_pct),
+         fixed_poa_answering_pct = VALUES(fixed_poa_answering_pct),
+         fixed_escalated_pct = VALUES(fixed_escalated_pct), updated_by = ?`,
       [
         r.inputDate,
         r.forecastTask,
@@ -145,6 +164,13 @@ export async function upsertUtilizationInputs(
         r.crossTrainingTaskPoa,
         r.poaLiveAuditsPq,
         r.remarks,
+        r.fixedUtilizationForecast,
+        r.fixedUtilizationWithAdhoc,
+        r.fixedUtilizationWithoutAdhoc,
+        r.fixedUtilizationWithAdhocPct,
+        r.fixedUtilizationWithoutAdhocPct,
+        r.fixedPoaAnsweringPct,
+        r.fixedEscalatedPct,
         actorUserId,
         actorUserId,
       ],

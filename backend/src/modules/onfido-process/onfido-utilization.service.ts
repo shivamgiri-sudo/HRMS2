@@ -116,6 +116,23 @@ const emptyInputs = (): UtilizationInputs => ({
   escalatedTask: null,
 });
 
+/** An uploaded (static) value wins over the calculation; a missing one falls back to it. */
+export function applyUploadedValues(
+  calculated: UtilizationDerived,
+  manual: UtilizationInputRecord | undefined,
+): UtilizationDerived {
+  if (!manual) return calculated;
+  return {
+    utilizationForecast: manual.fixedUtilizationForecast ?? calculated.utilizationForecast,
+    utilizationWithAdhoc: manual.fixedUtilizationWithAdhoc ?? calculated.utilizationWithAdhoc,
+    utilizationWithoutAdhoc: manual.fixedUtilizationWithoutAdhoc ?? calculated.utilizationWithoutAdhoc,
+    utilizationWithAdhocPct: manual.fixedUtilizationWithAdhocPct ?? calculated.utilizationWithAdhocPct,
+    utilizationWithoutAdhocPct: manual.fixedUtilizationWithoutAdhocPct ?? calculated.utilizationWithoutAdhocPct,
+    poaAnsweringPct: manual.fixedPoaAnsweringPct ?? calculated.poaAnsweringPct,
+    escalatedPct: manual.fixedEscalatedPct ?? calculated.escalatedPct,
+  };
+}
+
 /** Assembles one day. Pure: the SQL results and the manual row are passed in. */
 export function buildUtilizationDay(
   date: string,
@@ -150,7 +167,7 @@ export function buildUtilizationDay(
     month: monthLabel(date),
     wc: weekCommencing(date),
     inputs,
-    derived: computeUtilization(inputs),
+    derived: applyUploadedValues(computeUtilization(inputs), manual),
     aht: doc?.aht ?? null,
     poaAht: poa?.aht ?? null,
     gdRatio: gd?.gd ?? null,
