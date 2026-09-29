@@ -1,10 +1,14 @@
-import { db } from '../../db/mysql.js';
-import { resolveBranchHeadScope, buildCandidateBranchPredicate } from './branch-head-scope.js';
-import { getUserAssignmentScopes } from '../../shared/scopeAccess.js';
-import { RowDataPacket } from 'mysql2/promise';
-import { sendSelectedEmail, sendRejectedEmail } from './ats.email.service.js';
-import { approveOffer, rejectOffer } from './ats.onboarding.service.js';
-import { inboxService } from '../inbox/inbox.service.js';
+import { db } from "../../db/mysql.js";
+import {
+  resolveBranchHeadScope,
+  buildCandidateBranchPredicate,
+} from "./branch-head-scope.js";
+import { getUserAssignmentScopes } from "../../shared/scopeAccess.js";
+import { RowDataPacket } from "mysql2/promise";
+import { sendSelectedEmail, sendRejectedEmail } from "./ats.email.service.js";
+import { approveOffer, rejectOffer } from "./ats.onboarding.service.js";
+import { inboxService } from "../inbox/inbox.service.js";
+import { initiateAddressBgvForCandidate } from "./bgv-address-verification.routes.js";
 
 /**
  * Branch Head Approval Service
@@ -21,7 +25,7 @@ export interface PendingApproval {
   applied_for_role: string;
   applied_for_branch: string;
   branch_display_name: string;
-  employment_type: 'onroll' | 'offrole';
+  employment_type: "onroll" | "offrole";
   gross_salary: number;
   joining_date: string;
   salary_start_date: string;
@@ -33,19 +37,19 @@ export interface PendingApproval {
   esic_amount: number;
   submitted_by: string;
   submitted_at: string;
-  approval_status: 'pending' | 'approved' | 'rejected';
+  approval_status: "pending" | "approved" | "rejected";
 }
 
 export interface ApprovalInput {
   approval_id: string;
   branch_head_id: string;
   branch_head_user_id?: string;
-  approval_status: 'approved' | 'rejected';
+  approval_status: "approved" | "rejected";
   remarks?: string;
 }
 
 export interface EmployeeCodeGeneration {
-  company_prefix: 'MAS' | 'IDC';
+  company_prefix: "MAS" | "IDC";
   is_offrole: boolean;
 }
 
@@ -55,7 +59,7 @@ interface BranchRow extends RowDataPacket {
 
 interface ApprovalHistoryRow extends RowDataPacket {
   id: string;
-  approval_status: 'pending' | 'approved' | 'rejected';
+  approval_status: "pending" | "approved" | "rejected";
   employee_code_generated?: number | null;
   remarks?: string | null;
   approved_at?: string | null;
@@ -76,18 +80,22 @@ async function resolveBranchScope(
   branchHeadId: string,
   authUserId?: string,
 ): Promise<{ branchNames: string[]; branchIds: string[] }> {
-  const [legacyRows] = await db.execute<BranchRow[]>(
-    `SELECT DISTINCT branch_name FROM branch_head_assignments
+  const [legacyRows] = await db
+    .execute<BranchRow[]>(
+      `SELECT DISTINCT branch_name FROM branch_head_assignments
       WHERE branch_head_id = ? AND is_active = TRUE`,
-    [branchHeadId],
-  ).catch(() => [[]] as unknown as [BranchRow[]]);
+      [branchHeadId],
+    )
+    .catch(() => [[]] as unknown as [BranchRow[]]);
 
   const branchNames = legacyRows.map((r) => r.branch_name).filter(Boolean);
 
   let branchIds: string[] = [];
   if (authUserId) {
-    const scopes = await getUserAssignmentScopes(authUserId, ['branch_head']).catch(() => []);
-    branchIds = scopes.map((s) => String(s.branch_id ?? '')).filter(Boolean);
+    const scopes = await getUserAssignmentScopes(authUserId, [
+      "branch_head",
+    ]).catch(() => []);
+    branchIds = scopes.map((s) => String(s.branch_id ?? "")).filter(Boolean);
   }
 
   return { branchNames, branchIds };
@@ -96,8 +104,14 @@ async function resolveBranchScope(
 /**
  * Get pending approvals for branch head
  */
-export async function getPendingApprovals(branchHeadId: string, authUserId?: string): Promise<PendingApproval[]> {
-  const { branchNames, branchIds } = await resolveBranchScope(branchHeadId, authUserId);
+export async function getPendingApprovals(
+  branchHeadId: string,
+  authUserId?: string,
+): Promise<PendingApproval[]> {
+  const { branchNames, branchIds } = await resolveBranchScope(
+    branchHeadId,
+    authUserId,
+  );
 
   if (branchNames.length === 0 && branchIds.length === 0) {
     return [];
@@ -108,18 +122,23 @@ export async function getPendingApprovals(branchHeadId: string, authUserId?: str
   const branchMatchParams: unknown[] = [];
 
   if (branchNames.length > 0) {
-    const ph = branchNames.map(() => '?').join(',');
+    const ph = branchNames.map(() => "?").join(",");
     whereClauses.push(
       `c.applied_for_branch IN (${ph})`,
       `c.branch_display_name IN (${ph})`,
       `cb.branch_name IN (${ph})`,
       `cb.branch_code IN (${ph})`,
     );
-    branchMatchParams.push(...branchNames, ...branchNames, ...branchNames, ...branchNames);
+    branchMatchParams.push(
+      ...branchNames,
+      ...branchNames,
+      ...branchNames,
+      ...branchNames,
+    );
   }
 
   if (branchIds.length > 0) {
-    const ph = branchIds.map(() => '?').join(',');
+    const ph = branchIds.map(() => "?").join(",");
     whereClauses.push(`c.applied_for_branch IN (${ph})`, `cb.id IN (${ph})`);
     branchMatchParams.push(...branchIds, ...branchIds);
   }
@@ -159,10 +178,10 @@ export async function getPendingApprovals(branchHeadId: string, authUserId?: str
       OR cb.branch_code = c.applied_for_branch
     WHERE phv.validation_status = 'validated'
       AND bha.approval_status = 'pending'
-      AND (${whereClauses.join(' OR ')})
+      AND (${whereClauses.join(" OR ")})
       AND c.current_stage = 'payroll_validated'
     ORDER BY phv.validated_at DESC`,
-    branchMatchParams
+    branchMatchParams,
   );
 
   return approvals as PendingApproval[];
@@ -196,13 +215,13 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
     WHERE phv.id = ?
     ORDER BY o.submitted_at DESC
     LIMIT 1`,
-    [approval_id]
+    [approval_id],
   );
 
   if (approvals.length === 0) {
     return {
       success: false,
-      message: 'Approval record not found',
+      message: "Approval record not found",
     };
   }
 
@@ -213,19 +232,19 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
   await connection.beginTransaction();
 
   try {
-    if (approval_status === 'approved') {
+    if (approval_status === "approved") {
       await connection.execute(
         `UPDATE salary_exception_proposal
             SET status = 'approved', approved_by = ?, approved_at = NOW(), updated_at = NOW()
           WHERE candidate_id = ? AND status = 'pending'`,
-        [branch_head_id, approval.candidate_id]
+        [branch_head_id, approval.candidate_id],
       );
 
       await connection.execute(
         `UPDATE ats_branch_head_approval
             SET branch_head_id = ?, approval_status = 'approved', remarks = ?, approved_at = NOW(), updated_at = NOW()
           WHERE payroll_validation_id = ? AND approval_status = 'pending'`,
-        [branch_head_id, remarks || null, approval_id]
+        [branch_head_id, remarks || null, approval_id],
       );
 
       await connection.execute(
@@ -233,14 +252,18 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         SET current_stage = 'offer_approved',
             updated_at = NOW()
         WHERE id = ?`,
-        [approval.candidate_id]
+        [approval.candidate_id],
       );
 
       await connection.execute(
         `INSERT INTO ats_candidate_stage_log
            (id, candidate_id, from_stage, to_stage, remarks, updated_by)
          VALUES (UUID(), ?, 'payroll_validated', 'offer_approved', ?, ?)`,
-        [approval.candidate_id, remarks || 'Branch Head approved final offer', branch_head_id]
+        [
+          approval.candidate_id,
+          remarks || "Branch Head approved final offer",
+          branch_head_id,
+        ],
       );
 
       await connection.commit();
@@ -249,6 +272,9 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         ? await approveOffer(String(approval.offer_id), actorUserId, remarks)
         : null;
 
+      // Auto-send BGV address verification link to candidate
+      void initiateAddressBgvForCandidate(approval.candidate_id as string).catch(() => {});
+
       // Fire-and-forget: send approval email after transaction commits
       if (!approval.offer_id && approval.email) {
         sendSelectedEmail({
@@ -256,9 +282,11 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
           to: approval.email,
           candidateName: approval.full_name,
           branchName: approval.applied_for_branch,
-          hrName: 'MAS Callnet HR',
-          hrPhone: '',
-        }).catch((err: unknown) => console.error('[branch-head] approval email failed:', err));
+          hrName: "MAS Callnet HR",
+          hrPhone: "",
+        }).catch((err: unknown) =>
+          console.error("[branch-head] approval email failed:", err),
+        );
       }
 
       // Notify the submitting HR/recruiter that the offer was approved
@@ -269,31 +297,34 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
              FROM ats_payroll_hr_validation phv
              LEFT JOIN employees e ON e.id = phv.payroll_hr_id
              WHERE phv.id = ? LIMIT 1`,
-            [approval_id]
+            [approval_id],
           );
           const userId = submitterRows[0]?.user_id as string | null;
           if (userId) {
             await inboxService.createItem({
               user_id: userId,
-              type: 'offer_approved',
-              title: `Offer Approved: ${approval.full_name ?? 'Candidate'}`,
-              description: `${approval.full_name ?? 'Candidate'}'s offer has been approved by Branch Head${remarks ? `: "${remarks}"` : ''}. Proceed to employee conversion.`,
-              entity_type: 'ats_candidate',
+              type: "offer_approved",
+              title: `Offer Approved: ${approval.full_name ?? "Candidate"}`,
+              description: `${approval.full_name ?? "Candidate"}'s offer has been approved by Branch Head${remarks ? `: "${remarks}"` : ""}. Proceed to employee conversion.`,
+              entity_type: "ats_candidate",
               entity_id: approval.candidate_id as string,
-              action_url: '/ats/onboarding-requests',
-              priority: 'high',
+              action_url: "/ats/onboarding-requests",
+              priority: "high",
             });
           }
         } catch (e) {
-          console.warn('[branch-head] offer approval inbox notification failed:', e);
+          console.warn(
+            "[branch-head] offer approval inbox notification failed:",
+            e,
+          );
         }
       })();
 
       return {
         success: true,
         message: approval.offer_id
-          ? 'Approval successful. Employee conversion completed through canonical offer approval.'
-          : 'Approval recorded. Submit an employment offer to complete canonical employee conversion.',
+          ? "Approval successful. Employee conversion completed through canonical offer approval."
+          : "Approval recorded. Submit an employment offer to complete canonical employee conversion.",
         employee_code: conversion?.employeeCode ?? undefined,
       };
     } else {
@@ -301,7 +332,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         `UPDATE ats_branch_head_approval
             SET branch_head_id = ?, approval_status = 'rejected', remarks = ?, approved_at = NOW(), updated_at = NOW()
           WHERE payroll_validation_id = ? AND approval_status = 'pending'`,
-        [branch_head_id, remarks || null, approval_id]
+        [branch_head_id, remarks || null, approval_id],
       );
 
       // Update candidate stage
@@ -309,28 +340,36 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         `UPDATE ats_candidate
         SET current_stage = 'payroll_validated', updated_at = NOW()
         WHERE id = ?`,
-        [approval.candidate_id]
+        [approval.candidate_id],
       );
 
       await connection.execute(
         `UPDATE ats_payroll_hr_validation
             SET validation_status = 'correction_requested', remarks = ?, updated_at = NOW()
           WHERE id = ?`,
-        [remarks || 'Rejected by Branch Head', approval_id]
+        [remarks || "Rejected by Branch Head", approval_id],
       );
 
       await connection.execute(
         `UPDATE salary_exception_proposal
             SET status = 'rejected', rejection_reason = ?, approved_by = ?, approved_at = NOW(), updated_at = NOW()
           WHERE candidate_id = ? AND status = 'pending'`,
-        [remarks || 'Rejected by Branch Head', branch_head_id, approval.candidate_id]
+        [
+          remarks || "Rejected by Branch Head",
+          branch_head_id,
+          approval.candidate_id,
+        ],
       );
 
       await connection.execute(
         `INSERT INTO ats_candidate_stage_log
            (id, candidate_id, from_stage, to_stage, remarks, updated_by)
          VALUES (UUID(), ?, 'payroll_validated', 'payroll_correction_requested', ?, ?)`,
-        [approval.candidate_id, remarks || 'Branch Head rejected offer; returned to Payroll HR', branch_head_id]
+        [
+          approval.candidate_id,
+          remarks || "Branch Head rejected offer; returned to Payroll HR",
+          branch_head_id,
+        ],
       );
 
       await connection.commit();
@@ -346,12 +385,14 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
           to: approval.email,
           candidateName: approval.full_name,
           branchName: approval.applied_for_branch,
-        }).catch((err: unknown) => console.error('[branch-head] rejection email failed:', err));
+        }).catch((err: unknown) =>
+          console.error("[branch-head] rejection email failed:", err),
+        );
       }
 
       return {
         success: true,
-        message: 'Rejection recorded and candidate notified.',
+        message: "Rejection recorded and candidate notified.",
       };
     }
   } catch (error) {
@@ -365,7 +406,9 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
 /**
  * Get approval history for a candidate
  */
-export async function getApprovalHistory(candidateId: string): Promise<ApprovalHistoryRow[]> {
+export async function getApprovalHistory(
+  candidateId: string,
+): Promise<ApprovalHistoryRow[]> {
   const [history] = await db.execute<ApprovalHistoryRow[]>(
     `SELECT
       bha.id,
@@ -385,7 +428,7 @@ export async function getApprovalHistory(candidateId: string): Promise<ApprovalH
     -- freshly raised request stops claiming an approval time), so ordering on it
     -- alone sorted pending rows arbitrarily.
     ORDER BY COALESCE(bha.approved_at, bha.updated_at, bha.created_at) DESC`,
-    [candidateId]
+    [candidateId],
   );
 
   return history;
@@ -394,30 +437,41 @@ export async function getApprovalHistory(candidateId: string): Promise<ApprovalH
 /**
  * Get branch head statistics
  */
-export async function getBranchHeadStats(branchHeadId: string, authUserId?: string): Promise<{
+export async function getBranchHeadStats(
+  branchHeadId: string,
+  authUserId?: string,
+): Promise<{
   total_pending: number;
   total_approved: number;
   total_rejected: number;
   this_month_approved: number;
 }> {
-  const { branchNames, branchIds } = await resolveBranchScope(branchHeadId, authUserId);
+  const { branchNames, branchIds } = await resolveBranchScope(
+    branchHeadId,
+    authUserId,
+  );
 
   let pendingCount = 0;
   if (branchNames.length > 0 || branchIds.length > 0) {
     const whereClauses: string[] = [];
     const params: unknown[] = [];
     if (branchNames.length > 0) {
-      const ph = branchNames.map(() => '?').join(',');
+      const ph = branchNames.map(() => "?").join(",");
       whereClauses.push(
         `c.applied_for_branch IN (${ph})`,
         `c.branch_display_name IN (${ph})`,
         `cb.branch_name IN (${ph})`,
         `cb.branch_code IN (${ph})`,
       );
-      params.push(...branchNames, ...branchNames, ...branchNames, ...branchNames);
+      params.push(
+        ...branchNames,
+        ...branchNames,
+        ...branchNames,
+        ...branchNames,
+      );
     }
     if (branchIds.length > 0) {
-      const ph = branchIds.map(() => '?').join(',');
+      const ph = branchIds.map(() => "?").join(",");
       whereClauses.push(`c.applied_for_branch IN (${ph})`, `cb.id IN (${ph})`);
       params.push(...branchIds, ...branchIds);
     }
@@ -434,13 +488,13 @@ export async function getBranchHeadStats(branchHeadId: string, authUserId?: stri
        WHERE phv.validation_status = 'validated'
          AND approval.approval_status = 'pending'
          AND c.current_stage = 'payroll_validated'
-         AND (${whereClauses.join(' OR ')})`,
+         AND (${whereClauses.join(" OR ")})`,
       params,
     );
     pendingCount = Number(stats[0]?.total_pending ?? 0);
   }
 
-  const [stats] = [[ { total_pending: pendingCount } ]];
+  const [stats] = [[{ total_pending: pendingCount }]];
 
   // Merge three serial COUNT queries into one conditional aggregation —
   // three round-trips to the DB become one.
@@ -458,13 +512,12 @@ export async function getBranchHeadStats(branchHeadId: string, authUserId?: stri
   const combined = (combinedRows as any[])[0] ?? {};
 
   return {
-    total_pending:       stats[0]?.total_pending || 0,
-    total_approved:      Number(combined.total_approved      ?? 0),
-    total_rejected:      Number(combined.total_rejected      ?? 0),
+    total_pending: stats[0]?.total_pending || 0,
+    total_approved: Number(combined.total_approved ?? 0),
+    total_rejected: Number(combined.total_rejected ?? 0),
     this_month_approved: Number(combined.this_month_approved ?? 0),
   };
 }
-
 
 export type BranchHeadDecisionRow = {
   offer_id: string | null;
@@ -499,24 +552,40 @@ export type BranchHeadDecisionRow = {
  */
 export async function listBranchHeadDecisions(
   authUserId: string,
-  opts: { status: 'approved' | 'rejected' | 'all'; search?: string | null; limit: number; offset: number },
-): Promise<{ data: BranchHeadDecisionRow[]; total: number; scopeEmpty: boolean }> {
+  opts: {
+    status: "approved" | "rejected" | "all";
+    search?: string | null;
+    limit: number;
+    offset: number;
+  },
+): Promise<{
+  data: BranchHeadDecisionRow[];
+  total: number;
+  scopeEmpty: boolean;
+}> {
   const scope = await resolveBranchHeadScope(authUserId);
-  const pred = buildCandidateBranchPredicate(scope, { candidate: 'c', branch: 'b' });
+  const pred = buildCandidateBranchPredicate(scope, {
+    candidate: "c",
+    branch: "b",
+  });
 
   // Distinguish "nothing decided yet" from "you have no branches assigned" —
   // the caller renders a different empty state for each.
-  const scopeEmpty = !scope.unrestricted
-    && scope.branchNames.length === 0 && scope.branchIds.length === 0;
+  const scopeEmpty =
+    !scope.unrestricted &&
+    scope.branchNames.length === 0 &&
+    scope.branchIds.length === 0;
   if (scopeEmpty) return { data: [], total: 0, scopeEmpty: true };
 
   const statusSql =
-    opts.status === 'approved' ? `o.status = 'bh_approved'`
-    : opts.status === 'rejected' ? `o.status = 'bh_rejected'`
-    : `o.status IN ('bh_approved','bh_rejected')`;
+    opts.status === "approved"
+      ? `o.status = 'bh_approved'`
+      : opts.status === "rejected"
+        ? `o.status = 'bh_rejected'`
+        : `o.status IN ('bh_approved','bh_rejected')`;
 
   const params: unknown[] = [];
-  let searchSql = '';
+  let searchSql = "";
   if (opts.search && opts.search.trim()) {
     searchSql = ` AND (c.full_name LIKE ? OR c.candidate_code LIKE ?)`;
     const like = `%${opts.search.trim()}%`;

@@ -1,4 +1,9 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import {
+  Router,
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs";
@@ -12,8 +17,10 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
 const router = Router();
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: Request, res: Response, next: NextFunction) =>
+    fn(req, res).catch(next);
 
 const MAX_ATTEMPTS = 3;
 const GPS_PASS_THRESHOLD_M = 50;
@@ -37,7 +44,12 @@ const upload = multer({
   },
 });
 
-function haversineMetres(lat1: number, lng1: number, lat2: number, lng2: number): number {
+function haversineMetres(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
   const R = 6_371_000;
   const toRad = (d: number) => (d * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
@@ -48,7 +60,9 @@ function haversineMetres(lat1: number, lng1: number, lat2: number, lng2: number)
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function nominatimQuery(query: string): Promise<{ lat: number; lng: number } | null> {
+function nominatimQuery(
+  query: string,
+): Promise<{ lat: number; lng: number } | null> {
   return new Promise((resolve) => {
     const q = encodeURIComponent(query);
     const options = {
@@ -59,24 +73,35 @@ function nominatimQuery(query: string): Promise<{ lat: number; lng: number } | n
     };
     const req = https.get(options, (res) => {
       let data = "";
-      res.on("data", (chunk: string) => { data += chunk; });
+      res.on("data", (chunk: string) => {
+        data += chunk;
+      });
       res.on("end", () => {
         try {
           const arr = JSON.parse(data) as Array<{ lat: string; lon: string }>;
-          if (arr.length) resolve({ lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon) });
+          if (arr.length)
+            resolve({
+              lat: parseFloat(arr[0].lat),
+              lng: parseFloat(arr[0].lon),
+            });
           else resolve(null);
-        } catch { resolve(null); }
+        } catch {
+          resolve(null);
+        }
       });
     });
     req.on("error", () => resolve(null));
-    req.on("timeout", () => { req.destroy(); resolve(null); });
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
   });
 }
 
 // Tries pincode → city+state → full address in order. Stops at first hit.
 async function geocodeAddress(
   fullAddress: string,
-  hints?: { pincode?: string; city?: string; state?: string }
+  hints?: { pincode?: string; city?: string; state?: string },
 ): Promise<{ lat: number; lng: number } | null> {
   // 1. Pincode is the most precise and least ambiguous query for Indian addresses
   if (hints?.pincode && /^\d{6}$/.test(hints.pincode)) {
@@ -102,29 +127,44 @@ function buildPresentAddress(profile: RowDataPacket | null): string {
     profile.present_city,
     profile.present_state,
     profile.present_pincode,
-  ].map((v) => (v ? String(v).trim() : "")).filter(Boolean).join(", ");
+  ]
+    .map((v) => (v ? String(v).trim() : ""))
+    .filter(Boolean)
+    .join(", ");
 }
 
 function extractAddressHints(profile: RowDataPacket | null) {
   if (!profile) return {};
   return {
-    pincode: profile.present_pincode ? String(profile.present_pincode).trim() : undefined,
-    city:    profile.present_city    ? String(profile.present_city).trim()    : undefined,
-    state:   profile.present_state   ? String(profile.present_state).trim()   : undefined,
+    pincode: profile.present_pincode
+      ? String(profile.present_pincode).trim()
+      : undefined,
+    city: profile.present_city
+      ? String(profile.present_city).trim()
+      : undefined,
+    state: profile.present_state
+      ? String(profile.present_state).trim()
+      : undefined,
   };
 }
 
-async function syncAddressBgvCheck(candidateId: string, status: "verified" | "failed" | "not_run") {
+async function syncAddressBgvCheck(
+  candidateId: string,
+  status: "verified" | "failed" | "not_run",
+) {
   const now = status === "verified" ? new Date() : null;
   const summary =
-    status === "verified" ? "Address verified via geo-tagged selfie" :
-    status === "failed"   ? "Address verification failed after max attempts" : null;
+    status === "verified"
+      ? "Address verified via geo-tagged selfie"
+      : status === "failed"
+        ? "Address verification failed after max attempts"
+        : null;
   await db.execute(
     `INSERT INTO candidate_bgv_check (candidate_id, check_type, status, verified_at, result_summary, updated_at)
        VALUES (?, 'address', ?, ?, ?, NOW())
        ON DUPLICATE KEY UPDATE status = VALUES(status), verified_at = VALUES(verified_at),
          result_summary = VALUES(result_summary), updated_at = NOW()`,
-    [candidateId, status, now, summary]
+    [candidateId, status, now, summary],
   );
 
   // Propagate into candidate_bgv_report.address_status, which is what actually
@@ -143,150 +183,264 @@ async function syncAddressBgvCheck(candidateId: string, status: "verified" | "fa
   // "passed"/"waived"/"verified"); there is no 'verified' enum member here.
   if (status === "verified" || status === "failed") {
     const addressStatus = status === "verified" ? "passed" : "failed";
-    const addressRemarks = status === "verified"
-      ? "Auto-verified via geo-tagged selfie (GPS within threshold) — no manual review required."
-      : "Address verification failed after max attempts on the geo-tagged selfie link.";
+    const addressRemarks =
+      status === "verified"
+        ? "Auto-verified via geo-tagged selfie (GPS within threshold) — no manual review required."
+        : "Address verification failed after max attempts on the geo-tagged selfie link.";
     await db.execute(
       `UPDATE candidate_bgv_report
           SET address_status = ?, address_remarks = ?, updated_at = NOW()
         WHERE candidate_id = ? AND (locked = 0 OR locked IS NULL)`,
-      [addressStatus, addressRemarks, candidateId]
+      [addressStatus, addressRemarks, candidateId],
     );
   }
+}
+
+// ── Core initiation logic (used by HR route and auto-send) ───────────────────
+export interface AddressBgvInitResult {
+  sent: boolean;
+  skippedReason?: "max_attempts" | "no_address" | "no_email";
+  token?: string;
+  link?: string;
+  expiresAt?: Date;
+  declaredAddress?: string;
+  attemptNumber?: number;
+  geoResolved?: boolean;
+}
+
+export async function initiateAddressBgvForCandidate(
+  candidateId: string,
+  opts: { forceUnblock?: boolean; unblockerId?: string | null } = {},
+): Promise<AddressBgvInitResult> {
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM candidate_bgv_address_verification WHERE candidate_id = ?`,
+    [candidateId],
+  );
+  const attemptCount = Number((countRows[0] as RowDataPacket).cnt);
+
+  if (attemptCount >= MAX_ATTEMPTS && !opts.forceUnblock) {
+    return { sent: false, skippedReason: "max_attempts" };
+  }
+
+  const [[candRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT full_name, email FROM ats_candidate WHERE id = ? LIMIT 1`,
+    [candidateId],
+  );
+
+  const [profiles] = await db.execute<RowDataPacket[]>(
+    `SELECT present_address_line1, present_address_line2, present_address,
+            present_city, present_state, present_pincode,
+            permanent_address_line1, permanent_address_line2, permanent_address,
+            permanent_city, permanent_state, permanent_pincode
+       FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const profile = profiles[0] ?? null;
+  const declaredAddress = buildPresentAddress(profile);
+  if (!declaredAddress) {
+    return { sent: false, skippedReason: "no_address" };
+  }
+
+  if (!candRow?.email) {
+    return { sent: false, skippedReason: "no_email" };
+  }
+
+  const hints = extractAddressHints(profile);
+  const geo = await geocodeAddress(declaredAddress, hints).catch(() => null);
+
+  const token = uuidv4();
+  const expiresAt = new Date(Date.now() + EXPIRY_HOURS * 3600 * 1000);
+  const nextAttempt = attemptCount + 1;
+
+  await db.execute(
+    `INSERT INTO candidate_bgv_address_verification
+       (candidate_id, token, declared_address, ref_latitude, ref_longitude,
+        attempt_number, sent_via, expires_at, unblocked_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'link', ?, ?)`,
+    [
+      candidateId,
+      token,
+      declaredAddress,
+      geo?.lat ?? null,
+      geo?.lng ?? null,
+      nextAttempt,
+      expiresAt,
+      opts.forceUnblock ? (opts.unblockerId ?? null) : null,
+    ],
+  );
+
+  const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
+  const link = `${appUrl}/bgv-address-verify/${token}`;
+
+  void sendAddressBgvLinkEmail({
+    candidateId,
+    to: candRow.email as string,
+    candidateName: (candRow.full_name as string) ?? "Candidate",
+    declaredAddress,
+    verificationLink: link,
+    attemptNumber: nextAttempt,
+    maxAttempts: MAX_ATTEMPTS,
+    expiresAt,
+  }).catch(() => {});
+
+  return {
+    sent: true,
+    token,
+    link,
+    expiresAt,
+    declaredAddress,
+    attemptNumber: nextAttempt,
+    geoResolved: geo !== null,
+  };
 }
 
 // ── HR: initiate ──────────────────────────────────────────────────────────────
 router.post(
   "/initiate",
   requireAuth,
-  requireRole("admin", "hr", "hr_admin", "ho_hr", "branch_hr", "process_hr", "recruitment_hr"),
+  requireRole(
+    "admin",
+    "hr",
+    "hr_admin",
+    "ho_hr",
+    "branch_hr",
+    "process_hr",
+    "recruitment_hr",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const { candidateId, forceUnblock } = req.body as { candidateId?: string; forceUnblock?: boolean };
-    if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
+    const { candidateId, forceUnblock } = req.body as {
+      candidateId?: string;
+      forceUnblock?: boolean;
+    };
+    if (!candidateId)
+      return res
+        .status(400)
+        .json({ success: false, message: "candidateId required" });
 
-    const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM candidate_bgv_address_verification WHERE candidate_id = ?`,
-      [candidateId]
-    );
-    const attemptCount = Number((countRows[0] as RowDataPacket).cnt);
-
-    if (attemptCount >= MAX_ATTEMPTS && !forceUnblock) {
-      return res.status(422).json({
-        success: false,
-        message: `Max ${MAX_ATTEMPTS} attempts reached. Use forceUnblock=true (HR override) to allow another attempt.`,
-        maxReached: true,
-      });
+    let unblockerId: string | null = null;
+    if (forceUnblock) {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM employees WHERE user_id = ? LIMIT 1`,
+        [req.authUser?.id],
+      );
+      unblockerId = empRows[0]?.id ?? null;
     }
 
-    const [[candRow]] = await db.execute<RowDataPacket[]>(
-      `SELECT full_name, email FROM ats_candidate WHERE id = ? LIMIT 1`,
-      [candidateId]
-    );
-
-    const [profiles] = await db.execute<RowDataPacket[]>(
-      `SELECT present_address_line1, present_address_line2, present_address,
-              present_city, present_state, present_pincode,
-              permanent_address_line1, permanent_address_line2, permanent_address,
-              permanent_city, permanent_state, permanent_pincode
-         FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
-      [candidateId]
-    );
-    const profile = profiles[0] ?? null;
-    const declaredAddress = buildPresentAddress(profile);
-    if (!declaredAddress) {
-      return res.status(422).json({
-        success: false,
-        message: "No present address on record. Ask the candidate to fill in their current address in the onboarding profile first.",
-      });
-    }
-
-    const hints = extractAddressHints(profile);
-    const geo = await geocodeAddress(declaredAddress, hints).catch(() => null);
-
-    const token = uuidv4();
-    const expiresAt = new Date(Date.now() + EXPIRY_HOURS * 3600 * 1000);
-    const nextAttempt = attemptCount + 1;
-
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM employees WHERE user_id = ? LIMIT 1`,
-      [req.authUser?.id]
-    );
-    const unblockerId = forceUnblock ? (empRows[0]?.id ?? null) : null;
-
-    await db.execute(
-      `INSERT INTO candidate_bgv_address_verification
-         (candidate_id, token, declared_address, ref_latitude, ref_longitude,
-          attempt_number, sent_via, expires_at, unblocked_by)
-       VALUES (?, ?, ?, ?, ?, ?, 'link', ?, ?)`,
-      [candidateId, token, declaredAddress, geo?.lat ?? null, geo?.lng ?? null, nextAttempt, expiresAt, unblockerId]
-    );
-
-    const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
-    const link = `${appUrl}/bgv-address-verify/${token}`;
-
-    // Fire email to candidate — non-blocking, failure doesn't stop the response
-    if (candRow?.email) {
-      void sendAddressBgvLinkEmail({
-        candidateId,
-        to: candRow.email as string,
-        candidateName: (candRow.full_name as string) ?? "Candidate",
-        declaredAddress,
-        verificationLink: link,
-        attemptNumber: nextAttempt,
-        maxAttempts: MAX_ATTEMPTS,
-        expiresAt,
-      }).catch(() => {});
-    }
-
-    return res.json({
-      success: true,
-      data: { token, link, expiresAt, declaredAddress, attemptNumber: nextAttempt, geoResolved: geo !== null },
+    const result = await initiateAddressBgvForCandidate(candidateId, {
+      forceUnblock,
+      unblockerId,
     });
-  })
+
+    if (!result.sent) {
+      if (result.skippedReason === "max_attempts") {
+        return res.status(422).json({
+          success: false,
+          message: `Max ${MAX_ATTEMPTS} attempts reached. Use forceUnblock=true (HR override) to allow another attempt.`,
+          maxReached: true,
+        });
+      }
+      if (result.skippedReason === "no_address") {
+        return res.status(422).json({
+          success: false,
+          message:
+            "No present address on record. Ask the candidate to fill in their current address in the onboarding profile first.",
+        });
+      }
+      return res.status(422).json({ success: false, message: "Could not send verification link." });
+    }
+
+    return res.json({ success: true, data: result });
+  }),
+);
+
+// ── HR: backfill — send to all offer_approved candidates who haven't received a link ──
+router.post(
+  "/backfill-offer-approved",
+  requireAuth,
+  requireRole("admin", "hr_admin", "ho_hr"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const [candidates] = await db.execute<RowDataPacket[]>(
+      `SELECT c.id
+         FROM ats_candidate c
+        WHERE c.current_stage = 'offer_approved'
+          AND NOT EXISTS (
+            SELECT 1 FROM candidate_bgv_address_verification v WHERE v.candidate_id = c.id
+          )`,
+    );
+
+    let sent = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const row of candidates) {
+      try {
+        const result = await initiateAddressBgvForCandidate(row.id as string);
+        if (result.sent) sent++;
+        else skipped++;
+      } catch (err: unknown) {
+        errors.push(`${row.id as string}: ${err instanceof Error ? err.message : String(err)}`);
+        skipped++;
+      }
+    }
+
+    return res.json({ success: true, data: { total: candidates.length, sent, skipped, errors } });
+  }),
 );
 
 // ── Public: fetch info by token (no auth) ─────────────────────────────────────
-router.get("/public/:token", h(async (req: Request, res: Response) => {
-  const { token } = req.params;
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, candidate_id, declared_address, expires_at, status, attempt_number
+router.get(
+  "/public/:token",
+  h(async (req: Request, res: Response) => {
+    const { token } = req.params;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, candidate_id, declared_address, expires_at, status, attempt_number
        FROM candidate_bgv_address_verification WHERE token = ? LIMIT 1`,
-    [token]
-  );
-  const row = rows[0];
-  if (!row) return res.status(404).json({ success: false, message: "Link not found or already used." });
-  if (new Date(row.expires_at as string) < new Date()) {
-    await db.execute(
-      `UPDATE candidate_bgv_address_verification SET status='expired' WHERE token=? AND status='pending'`,
-      [token]
+      [token],
     );
-    return res.status(410).json({ success: false, message: "This link has expired. Please contact HR for a new one." });
-  }
-  if (row.status !== "pending") {
-    return res.status(409).json({
-      success: false,
-      message: row.status === "submitted"
-        ? "This verification has already been submitted."
-        : "This link is no longer active.",
+    const row = rows[0];
+    if (!row)
+      return res
+        .status(404)
+        .json({ success: false, message: "Link not found or already used." });
+    if (new Date(row.expires_at as string) < new Date()) {
+      await db.execute(
+        `UPDATE candidate_bgv_address_verification SET status='expired' WHERE token=? AND status='pending'`,
+        [token],
+      );
+      return res
+        .status(410)
+        .json({
+          success: false,
+          message: "This link has expired. Please contact HR for a new one.",
+        });
+    }
+    if (row.status !== "pending") {
+      return res.status(409).json({
+        success: false,
+        message:
+          row.status === "submitted"
+            ? "This verification has already been submitted."
+            : "This link is no longer active.",
+      });
+    }
+    const [cands] = await db.execute<RowDataPacket[]>(
+      `SELECT full_name, candidate_code FROM ats_candidate WHERE id = ? LIMIT 1`,
+      [row.candidate_id as string],
+    );
+    return res.json({
+      success: true,
+      data: {
+        id: row.id,
+        declaredAddress: row.declared_address,
+        candidateName: (cands[0] as RowDataPacket)?.full_name ?? null,
+        candidateCode: (cands[0] as RowDataPacket)?.candidate_code ?? null,
+        expiresAt: row.expires_at,
+        attemptNumber: row.attempt_number,
+        maxAttempts: MAX_ATTEMPTS,
+      },
     });
-  }
-  const [cands] = await db.execute<RowDataPacket[]>(
-    `SELECT full_name, candidate_code FROM ats_candidate WHERE id = ? LIMIT 1`,
-    [row.candidate_id as string]
-  );
-  return res.json({
-    success: true,
-    data: {
-      id: row.id,
-      declaredAddress: row.declared_address,
-      candidateName: (cands[0] as RowDataPacket)?.full_name ?? null,
-      candidateCode: (cands[0] as RowDataPacket)?.candidate_code ?? null,
-      expiresAt: row.expires_at,
-      attemptNumber: row.attempt_number,
-      maxAttempts: MAX_ATTEMPTS,
-    },
-  });
-}));
+  }),
+);
 
 // ── Public: submit selfie + GPS (no auth) ─────────────────────────────────────
 router.post(
@@ -295,26 +449,43 @@ router.post(
   h(async (req: Request, res: Response) => {
     const { token } = req.params;
     const { latitude, longitude, accuracy } = req.body as {
-      latitude?: string; longitude?: string; accuracy?: string;
+      latitude?: string;
+      longitude?: string;
+      accuracy?: string;
     };
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, candidate_id, status, expires_at, ref_latitude, ref_longitude, attempt_number
          FROM candidate_bgv_address_verification WHERE token = ? LIMIT 1`,
-      [token]
+      [token],
     );
     const row = rows[0];
-    if (!row) return res.status(404).json({ success: false, message: "Link not found." });
+    if (!row)
+      return res
+        .status(404)
+        .json({ success: false, message: "Link not found." });
     if (new Date(row.expires_at as string) < new Date()) {
-      return res.status(410).json({ success: false, message: "Link has expired." });
+      return res
+        .status(410)
+        .json({ success: false, message: "Link has expired." });
     }
     if (row.status !== "pending") {
-      return res.status(409).json({ success: false, message: "Already submitted." });
+      return res
+        .status(409)
+        .json({ success: false, message: "Already submitted." });
     }
-    if (!req.file) return res.status(400).json({ success: false, message: "Selfie photo is required." });
+    if (!req.file)
+      return res
+        .status(400)
+        .json({ success: false, message: "Selfie photo is required." });
 
     const selfiePath = `bgv-selfies/${req.file.filename}`;
-    const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? null;
+    const ip =
+      (req.headers["x-forwarded-for"] as string | undefined)
+        ?.split(",")[0]
+        ?.trim() ??
+      req.socket.remoteAddress ??
+      null;
     const device = (req.headers["user-agent"] ?? "").slice(0, 500);
 
     const lat = latitude ? parseFloat(latitude) : null;
@@ -325,10 +496,21 @@ router.post(
     let autoVerified = false;
     let newStatus: "submitted" | "verified" = "submitted";
 
-    if (lat !== null && lng !== null && row.ref_latitude !== null && row.ref_longitude !== null) {
-      distanceM = Math.round(haversineMetres(
-        Number(row.ref_latitude), Number(row.ref_longitude), lat, lng
-      ) * 100) / 100;
+    if (
+      lat !== null &&
+      lng !== null &&
+      row.ref_latitude !== null &&
+      row.ref_longitude !== null
+    ) {
+      distanceM =
+        Math.round(
+          haversineMetres(
+            Number(row.ref_latitude),
+            Number(row.ref_longitude),
+            lat,
+            lng,
+          ) * 100,
+        ) / 100;
       if (distanceM <= GPS_PASS_THRESHOLD_M) {
         autoVerified = true;
         newStatus = "verified";
@@ -348,7 +530,18 @@ router.post(
               status = ?,
               auto_verified = ?
         WHERE token = ?`,
-      [selfiePath, lat, lng, acc, distanceM, ip, device, newStatus, autoVerified ? 1 : 0, token]
+      [
+        selfiePath,
+        lat,
+        lng,
+        acc,
+        distanceM,
+        ip,
+        device,
+        newStatus,
+        autoVerified ? 1 : 0,
+        token,
+      ],
     );
 
     const candidateId = row.candidate_id as string;
@@ -359,7 +552,7 @@ router.post(
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN status IN ('failed','expired') THEN 1 ELSE 0 END) AS failed_cnt
            FROM candidate_bgv_address_verification WHERE candidate_id = ?`,
-        [candidateId]
+        [candidateId],
       );
       const totalAtt = Number((allRows[0] as RowDataPacket).total);
       const failedCnt = Number((allRows[0] as RowDataPacket).failed_cnt);
@@ -375,14 +568,22 @@ router.post(
         : "Submitted for HR review.";
 
     return res.json({ success: true, autoVerified, message });
-  })
+  }),
 );
 
 // ── HR: get all verifications for a candidate ─────────────────────────────────
 router.get(
   "/result/:candidateId",
   requireAuth,
-  requireRole("admin", "hr", "hr_admin", "ho_hr", "branch_hr", "process_hr", "recruitment_hr"),
+  requireRole(
+    "admin",
+    "hr",
+    "hr_admin",
+    "ho_hr",
+    "branch_hr",
+    "process_hr",
+    "recruitment_hr",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { candidateId } = req.params;
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -391,45 +592,71 @@ router.get(
          LEFT JOIN employees e ON e.id = v.hr_decided_by
         WHERE v.candidate_id = ?
         ORDER BY v.created_at DESC`,
-      [candidateId]
+      [candidateId],
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM candidate_bgv_address_verification WHERE candidate_id = ?`,
-      [candidateId]
+      [candidateId],
     );
     const totalAttempts = Number((countRows[0] as RowDataPacket).cnt);
     return res.json({
       success: true,
       data: rows,
-      meta: { totalAttempts, maxAttempts: MAX_ATTEMPTS, attemptsLeft: Math.max(0, MAX_ATTEMPTS - totalAttempts) },
+      meta: {
+        totalAttempts,
+        maxAttempts: MAX_ATTEMPTS,
+        attemptsLeft: Math.max(0, MAX_ATTEMPTS - totalAttempts),
+      },
     });
-  })
+  }),
 );
 
 // ── HR: decide pass / fail / review ──────────────────────────────────────────
 router.patch(
   "/decide/:id",
   requireAuth,
-  requireRole("admin", "hr", "hr_admin", "ho_hr", "branch_hr", "process_hr", "recruitment_hr"),
+  requireRole(
+    "admin",
+    "hr",
+    "hr_admin",
+    "ho_hr",
+    "branch_hr",
+    "process_hr",
+    "recruitment_hr",
+  ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
-    const { decision, notes } = req.body as { decision: "pass" | "fail" | "review"; notes?: string };
+    const { decision, notes } = req.body as {
+      decision: "pass" | "fail" | "review";
+      notes?: string;
+    };
     if (!["pass", "fail", "review"].includes(decision)) {
-      return res.status(400).json({ success: false, message: "decision must be pass, fail, or review" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "decision must be pass, fail, or review",
+        });
     }
 
     const [verRows] = await db.execute<RowDataPacket[]>(
       `SELECT candidate_id, status FROM candidate_bgv_address_verification WHERE id = ? LIMIT 1`,
-      [id]
+      [id],
     );
-    if (!verRows[0]) return res.status(404).json({ success: false, message: "Not found" });
+    if (!verRows[0])
+      return res.status(404).json({ success: false, message: "Not found" });
     const candidateId = verRows[0].candidate_id as string;
 
-    const newStatus = decision === "pass" ? "verified" : decision === "fail" ? "failed" : "submitted";
+    const newStatus =
+      decision === "pass"
+        ? "verified"
+        : decision === "fail"
+          ? "failed"
+          : "submitted";
 
     const [empRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM employees WHERE user_id = ? LIMIT 1`,
-      [req.authUser?.id]
+      [req.authUser?.id],
     );
     const empId = empRows[0]?.id ?? null;
 
@@ -437,7 +664,7 @@ router.patch(
       `UPDATE candidate_bgv_address_verification
           SET hr_decision = ?, hr_notes = ?, hr_decided_by = ?, hr_decided_at = NOW(), status = ?
         WHERE id = ?`,
-      [decision, notes ?? null, empId, newStatus, id]
+      [decision, notes ?? null, empId, newStatus, id],
     );
 
     if (decision === "pass") {
@@ -447,7 +674,7 @@ router.patch(
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN status IN ('failed','expired') THEN 1 ELSE 0 END) AS failed_cnt
            FROM candidate_bgv_address_verification WHERE candidate_id = ?`,
-        [candidateId]
+        [candidateId],
       );
       const totalAtt = Number((allRows[0] as RowDataPacket).total);
       const failedCnt = Number((allRows[0] as RowDataPacket).failed_cnt) + 1;
@@ -457,7 +684,7 @@ router.patch(
     }
 
     return res.json({ success: true });
-  })
+  }),
 );
 
 export default router;
