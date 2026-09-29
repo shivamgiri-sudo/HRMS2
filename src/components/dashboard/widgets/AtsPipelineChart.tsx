@@ -9,7 +9,7 @@ const BLUE_SHADES = ["#1B6AB5", "#2D86D4", "#40A3F5", "#7CC2FF", "#B3DAFF", "#D6
 
 export function AtsPipelineChart() {
   const { data, isLoading } = useQuery<any>({
-    queryKey: ["dashboard-ats-pipeline"],
+    queryKey: ["reference-dashboard-workforce", "shared"],
     queryFn: () => hrmsApi.get("/api/management/workforce-dashboard"),
     staleTime: 1000 * 60 * 5,
   });

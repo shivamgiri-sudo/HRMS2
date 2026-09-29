@@ -153,3 +153,15 @@ privacy-inventory-findings.json
 # Re-screen / reconcile runners write rollback snapshots and shortlist CSVs (candidate names + phones)
 # here. PII: never commit.
 /backend/.deploy-backups/
+
+# Root-level env files — never commit
+.env.production
+.env.local
+.env.staging
+
+# ATS candidate uploaded files (PII: resumes, ID docs) — never commit
+backend/private/
+
+# Build failure snapshots and deploy backups
+backend/dist.failed-*/
+nginx.conf.bak.*

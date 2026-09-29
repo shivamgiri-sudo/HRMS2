@@ -15,7 +15,7 @@ const COLORS = {
 
 export function AttendanceDonutChart() {
   const { data, isLoading } = useQuery<any>({
-    queryKey: ["dashboard-attendance"],
+    queryKey: ["reference-dashboard-workforce", "shared"],
     queryFn: () => hrmsApi.get("/api/management/workforce-dashboard"),
     staleTime: 1000 * 60 * 5,
   });

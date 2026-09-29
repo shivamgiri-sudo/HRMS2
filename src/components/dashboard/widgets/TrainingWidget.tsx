@@ -7,7 +7,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 
 export function TrainingWidget() {
   const { data: wfData, isLoading } = useQuery<any>({
-    queryKey: ["dashboard-workforce-training"],
+    queryKey: ["reference-dashboard-workforce", "shared"],
     queryFn: () => hrmsApi.get("/api/management/workforce-dashboard"),
     staleTime: 1000 * 60 * 5,
   });

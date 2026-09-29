@@ -9,7 +9,7 @@ type MovementPoint = { period: string; joins: number; exits: number };
 
 export function MovementChart() {
   const { data, isLoading } = useQuery<any>({
-    queryKey: ["dashboard-workforce-movement"],
+    queryKey: ["reference-dashboard-workforce", "shared"],
     queryFn: () => hrmsApi.get("/api/management/workforce-dashboard"),
     staleTime: 1000 * 60 * 5,
   });
