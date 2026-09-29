@@ -143,6 +143,11 @@ interface PayslipRecord {
    *  via GET /api/payroll/payslip/:runId/:employeeId — the list endpoint this
    *  component normally reads from does not compute it for every row. */
   ytd?: Record<string, number>;
+  /** Reliable only via GET /api/payroll/payslip/:runId/:employeeId, which
+   *  applies payslip.service.ts's zero-fallback derivation. The /payslip/my
+   *  list this component normally reads from returns the raw, always-0 column. */
+  eligible_weekoff_days?: number;
+  eligible_holiday_days?: number | null;
 }
 
 const MONTHS = [
@@ -558,6 +563,8 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     // than fabricating either.
     let bankName = "";
     let ytdMap: Record<string, number> | undefined;
+    let weekOffDays = 0;
+    let paidHolidays = 0;
     if (record.run_id) {
       try {
         const res = await hrmsApi.get<{ success: boolean; data: PayslipRecord }>(
@@ -565,8 +572,10 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
         );
         bankName = res.data?.bank_name || "";
         ytdMap = res.data?.ytd;
+        weekOffDays = Number(res.data?.eligible_weekoff_days ?? 0);
+        paidHolidays = Number(res.data?.eligible_holiday_days ?? 0);
       } catch {
-        // Non-fatal — download proceeds without YTD/bank name.
+        // Non-fatal — download proceeds without YTD/bank name/leave breakdown.
       }
     }
     const ytdFor = (...codes: string[]) => codes.reduce((t, c) => t + Number(ytdMap?.[c.toUpperCase()] ?? 0), 0);
@@ -599,10 +608,17 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       epfNo: record.epf_number || "",
       uanNo: record.uan_number || "",
       esiNo: record.esi_number || "",
+      panNo: record.pan_number || "",
       bankAccount: record.bank_account_masked || "",
       paymentDate: record.payment_date || "",
+      chequeNo: record.cheque_no || "",
+      paymentMode: record.payment_mode || "",
+      lwpDays: Number(record.lwp_days ?? 0),
+      employerPf: Number(record.pf_employer ?? 0),
+      employerEsic: Number(record.esic_employer ?? 0),
       wDays: Number(record.working_days ?? 30),
       earnedDays: Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
+      weekOffDays, paidHolidays,
       basic, hra, conv, pa, ma, sa, oa: otherEarnings, arrear, bonus, incentive,
       pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
       netSalary: Number(record.net_salary ?? 0),
