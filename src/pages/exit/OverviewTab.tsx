@@ -257,6 +257,16 @@ export function OverviewTab({
                       </div>
                     </td>
                     <td className="p-4">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${exitTypeBadgeClass(r.exit_type)}`}
+                      >
+                        {r.exit_type ?? "—"}
+                      </span>
+                      <div className="mt-1 text-xs text-slate-600">
+                        {reasonLabel(r.exit_reason_category)}
+                      </div>
+                    </td>
+                    <td className="p-4">
                       <div className="font-bold">
                         {Math.round(Number(r.engagement_score ?? 0))}%
                       </div>
