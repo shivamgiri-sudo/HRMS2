@@ -13,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { DASH, EmptyNote, SectionCard, fmtDate } from "./onfidoReportShared";
+import { DASH, EmptyNote, SectionCard, fmtDate, qualityPctStyle } from "./onfidoReportShared";
 
 interface DateRange {
   from: string;
@@ -548,7 +548,7 @@ export default function OnfidoOutliersView({
                   <td>{o.amName ?? DASH}</td>
                   <td title="Tenure (AON) bucket from the latest roster row">{o.tenureBucket ?? DASH}</td>
                   <td>{o.metric}</td>
-                  <td className="oc-right">{o.value}%</td>
+                  <td className="oc-right" style={qualityPctStyle(o.value)}>{o.value}%</td>
                   <td className="oc-right" style={{ color: "var(--muted)" }}>
                     {o.target}%
                   </td>

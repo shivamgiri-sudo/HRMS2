@@ -21,33 +21,42 @@ describe("payslip display service", () => {
 
   it("expands calculated prep lines even when no generated payslip row exists", async () => {
     execute
-      .mockResolvedValueOnce([[
-        {
-          id: "line-1",
-          prep_line_id: "line-1",
-          run_id: "run-1",
-          employee_id: "employee-1",
-          run_month: "2026-06",
-          gross_salary: 30000,
-          net_salary: 27000,
-        },
-      ], []])
-      .mockResolvedValueOnce([[
-        {
-          component_code: "BASIC",
-          component_name: "Basic",
-          component_type: "earning",
-          amount: "18000",
-          taxable: 1,
-        },
-        {
-          component_code: "PF",
-          component_name: "Provident Fund",
-          component_type: "deduction",
-          amount: "1800",
-          taxable: 0,
-        },
-      ], []]);
+      .mockResolvedValueOnce([
+        [
+          {
+            id: "line-1",
+            prep_line_id: "line-1",
+            run_id: "run-1",
+            employee_id: "employee-1",
+            run_month: "2026-06",
+            gross_salary: 30000,
+            net_salary: 27000,
+          },
+        ],
+        [],
+      ])
+      .mockResolvedValueOnce([
+        [
+          {
+            component_code: "BASIC",
+            component_name: "Basic",
+            component_type: "earning",
+            amount: "18000",
+            taxable: 1,
+          },
+          {
+            component_code: "PF",
+            component_name: "Provident Fund",
+            component_type: "deduction",
+            amount: "1800",
+            taxable: 0,
+          },
+        ],
+        [],
+      ])
+      // getPayslip() also fetches financial-year-to-date component totals
+      // (getYtdComponents) once run_month is known — a third db.execute call.
+      .mockResolvedValueOnce([[], []]);
 
     const { payslipService } = await import("../payslip.service.js");
     const result = await payslipService.getPayslip("employee-1", "run-1");
@@ -58,16 +67,16 @@ describe("payslip display service", () => {
     expect(detailQuery).toContain("LEFT JOIN salary_payslip sp");
     expect(detailQuery).toContain("spl.employee_id = ?");
     expect(normalizedDetailQuery).toContain(
-      "JOIN salary_prep_run spr ON spr.id = spl.run_id"
+      "JOIN salary_prep_run spr ON spr.id = spl.run_id",
     );
     expect(normalizedDetailQuery).toContain(
-      "LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id"
+      "LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id",
     );
     expect(normalizedDetailQuery).toContain(
-      "LEFT JOIN employees e ON e.id = spl.employee_id"
+      "LEFT JOIN employees e ON e.id = spl.employee_id",
     );
     expect(normalizedDetailQuery).toContain(
-      "LEFT JOIN location_master loc ON loc.id = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_0900_ai_ci"
+      "LEFT JOIN location_master loc ON loc.id = CONVERT(e.location_id USING utf8mb4) COLLATE utf8mb4_0900_ai_ci",
     );
     expect(detailQuery).not.toContain("CONVERT(e.id USING");
     expect(result.earnings).toHaveLength(1);

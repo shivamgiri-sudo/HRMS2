@@ -15,6 +15,32 @@ const n = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+/**
+ * Runs `fn` over `items` with at most `limit` in flight at once. getTrend below fans out one
+ * getCachedAllocationSummary per month, and each of those runs ~10 of its own parallel queries
+ * (process-pnl.service.ts buildComputationContext) — 6 cold months at once was 60 near-simultaneous
+ * queries queuing behind the connection pool (DB_POOL_MAX, ~10), serializing what should overlap
+ * and multiplying the already-slow single-period cost across the whole trend chart.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return results;
+}
+
 const pct = (numerator: number, denominator: number): number | null =>
   denominator > 0 ? (numerator / denominator) * 100 : null;
 
@@ -39,9 +65,9 @@ export function resolveRevenueAtRisk(
     return {
       revenueAtRisk: null,
       revenueAtRiskUnavailable:
-        "Revenue at risk has not been generated for this period — process_revenue_daily "
-        + "holds no rows. The feed is produced on demand by "
-        + "POST /api/business-command/revenue-risk/generate-daily, not on a schedule.",
+        "Revenue at risk has not been generated for this period — process_revenue_daily " +
+        "holds no rows. The feed is produced on demand by " +
+        "POST /api/business-command/revenue-risk/generate-daily, not on a schedule.",
     };
   }
   return { revenueAtRisk: n(total), revenueAtRiskUnavailable: null };
@@ -115,7 +141,9 @@ async function countRevenueRiskRows(period: string): Promise<number> {
       WHERE revenue_date BETWEEN ? AND ?`,
     [`${period}-01`, `${period}-${String(lastDay).padStart(2, "0")}`],
   );
-  return Number((rows[0] as { source_rows?: unknown } | undefined)?.source_rows ?? 0);
+  return Number(
+    (rows[0] as { source_rows?: unknown } | undefined)?.source_rows ?? 0,
+  );
 }
 
 /**
@@ -125,7 +153,10 @@ async function countRevenueRiskRows(period: string): Promise<number> {
  * small (a handful of periods × branches), so this never grows large enough to matter, unlike
  * the 200-entry quality-cache it sits beside.
  */
-const staleAllocationSummary = new Map<string, { value: Record<string, unknown>; computedAt: number }>();
+const staleAllocationSummary = new Map<
+  string,
+  { value: Record<string, unknown>; computedAt: number }
+>();
 /** One in-flight background refresh per key at a time -- a burst of requests for the same stale
  *  key must not each kick off their own duplicate multi-second recompute. */
 const refreshInFlight = new Map<string, Promise<void>>();
@@ -149,12 +180,20 @@ const refreshInFlight = new Map<string, Promise<void>>();
  * this treats the cause). Serve the last good value immediately, refresh it in the background,
  * and let only the very first call after a process restart pay the real cost.
  */
-export async function getCachedAllocationSummary(filters: Partial<PnlQueryFilters>) {
+export async function getCachedAllocationSummary(
+  filters: Partial<PnlQueryFilters>,
+) {
   const key = `pnl-allocation-summary:v1:${filters.period ?? ""}:${filters.branchId ?? ""}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
-  const fetcher = () => bpoPnlAllocationOverlayService.getSummary(filters) as Promise<Record<string, unknown>>;
+  const fetcher = () =>
+    bpoPnlAllocationOverlayService.getSummary(filters) as Promise<
+      Record<string, unknown>
+    >;
 
   const fresh = await pnlSummaryCache.get<Record<string, unknown>>(key);
-  if (fresh) return fresh as Awaited<ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>>;
+  if (fresh)
+    return fresh as Awaited<
+      ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>
+    >;
 
   const stale = staleAllocationSummary.get(key);
   if (stale) {
@@ -173,7 +212,9 @@ export async function getCachedAllocationSummary(filters: Partial<PnlQueryFilter
       })();
       refreshInFlight.set(key, refresh);
     }
-    return stale.value as Awaited<ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>>;
+    return stale.value as Awaited<
+      ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>
+    >;
   }
 
   // First-ever call for this key this process lifetime: nothing to serve yet, so this one
@@ -181,7 +222,9 @@ export async function getCachedAllocationSummary(filters: Partial<PnlQueryFilter
   const value = await fetcher();
   await pnlSummaryCache.set(key, value, 60);
   staleAllocationSummary.set(key, { value, computedAt: Date.now() });
-  return value as Awaited<ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>>;
+  return value as Awaited<
+    ReturnType<typeof bpoPnlAllocationOverlayService.getSummary>
+  >;
 }
 
 export function shiftPeriod(period: string, delta: number) {
@@ -206,13 +249,16 @@ function sum(rows: BpoPnlRow[], field: keyof BpoPnlRow) {
 }
 
 function branchAllocationDrivers(rows: BpoPnlRow[]) {
-  const grouped = new Map<string, {
-    branchId: string | null;
-    branchName: string;
-    revenue: number;
-    bmc: number;
-    activeHc: number;
-  }>();
+  const grouped = new Map<
+    string,
+    {
+      branchId: string | null;
+      branchName: string;
+      revenue: number;
+      bmc: number;
+      activeHc: number;
+    }
+  >();
   for (const row of rows) {
     const key = row.branchId ?? "unassigned";
     const current = grouped.get(key) ?? {
@@ -227,7 +273,10 @@ function branchAllocationDrivers(rows: BpoPnlRow[]) {
     current.activeHc += row.activeHc;
     grouped.set(key, current);
   }
-  const totalBmc = [...grouped.values()].reduce((total, row) => total + row.bmc, 0);
+  const totalBmc = [...grouped.values()].reduce(
+    (total, row) => total + row.bmc,
+    0,
+  );
   return [...grouped.values()]
     .map((row) => ({
       ...row,
@@ -250,7 +299,7 @@ async function lobEnabledProcessIds(period: string) {
       GROUP BY process_id
      HAVING SUM(CASE WHEN lob_code <> 'DEFAULT' THEN 1 ELSE 0 END) > 0
          OR COUNT(*) > 1`,
-    [end, `${period}-01`]
+    [end, `${period}-01`],
   );
   return rows.map((row) => String(row.process_id));
 }
@@ -258,38 +307,54 @@ async function lobEnabledProcessIds(period: string) {
 async function lobCloseChecks(period: string) {
   const processIds = await lobEnabledProcessIds(period);
   const diagnostics = await Promise.all(
-    processIds.map((processId) => processLobService.getDiagnostics(processId, period))
+    processIds.map((processId) =>
+      processLobService.getDiagnostics(processId, period),
+    ),
   );
   return {
     processIds,
     diagnostics,
     blockers: diagnostics.flatMap((item) =>
-      item.blockers.map((blocker) => ({ ...blocker, processId: item.processId }))
+      item.blockers.map((blocker) => ({
+        ...blocker,
+        processId: item.processId,
+      })),
     ),
   };
 }
 
-function canonicalCloseView(base: any, summary: any, lobChecks: Awaited<ReturnType<typeof lobCloseChecks>>, snapshot?: any) {
+function canonicalCloseView(
+  base: any,
+  summary: any,
+  lobChecks: Awaited<ReturnType<typeof lobCloseChecks>>,
+  snapshot?: any,
+) {
   const rows = summary.rows as BpoPnlRow[];
   const strictClose = process.env.PNL_CLOSE_STRICT !== "false";
-  const qualityBlockers: Array<{ code: string; message: string; processId?: string }> = [
-    ...lobChecks.blockers,
-  ];
+  const qualityBlockers: Array<{
+    code: string;
+    message: string;
+    processId?: string;
+  }> = [...lobChecks.blockers];
   if (strictClose && n(summary.kpis.revenueModelCoveragePct) < 100) {
     qualityBlockers.push({
       code: "REVENUE_MODEL_COVERAGE_INCOMPLETE",
       message: `Approved revenue-rule coverage is ${n(summary.kpis.revenueModelCoveragePct).toFixed(1)}%, not 100%`,
     });
   }
-  const criticalAlerts = (summary.alerts ?? []).filter((alert: any) => alert.type === "critical");
+  const criticalAlerts = (summary.alerts ?? []).filter(
+    (alert: any) => alert.type === "critical",
+  );
   if (strictClose && criticalAlerts.length) {
     qualityBlockers.push({
       code: "CRITICAL_PNL_ALERTS",
       message: `${criticalAlerts.length} critical P&L alert(s) remain unresolved`,
     });
   }
-  const pendingAdjustments = (base.adjustments ?? []).filter(
-    (item: any) => ["draft", "pending"].includes(String(item.approval_status ?? item.status ?? ""))
+  const pendingAdjustments = (base.adjustments ?? []).filter((item: any) =>
+    ["draft", "pending"].includes(
+      String(item.approval_status ?? item.status ?? ""),
+    ),
   );
   if (pendingAdjustments.length) {
     qualityBlockers.push({
@@ -300,7 +365,9 @@ function canonicalCloseView(base: any, summary: any, lobChecks: Awaited<ReturnTy
 
   const availableActions = {
     ...base.availableActions,
-    canLock: Boolean(base.availableActions?.canLock && qualityBlockers.length === 0),
+    canLock: Boolean(
+      base.availableActions?.canLock && qualityBlockers.length === 0,
+    ),
   };
   return {
     ...base,
@@ -318,17 +385,26 @@ function canonicalCloseView(base: any, summary: any, lobChecks: Awaited<ReturnTy
     revenueMix: summary.revenueMix,
     costMix: summary.costMix,
     alertCounts: {
-      critical: (summary.alerts ?? []).filter((item: any) => item.type === "critical").length,
-      warning: (summary.alerts ?? []).filter((item: any) => item.type === "warning").length,
-      info: (summary.alerts ?? []).filter((item: any) => item.type === "info").length,
+      critical: (summary.alerts ?? []).filter(
+        (item: any) => item.type === "critical",
+      ).length,
+      warning: (summary.alerts ?? []).filter(
+        (item: any) => item.type === "warning",
+      ).length,
+      info: (summary.alerts ?? []).filter((item: any) => item.type === "info")
+        .length,
     },
     topAlerts: (summary.alerts ?? []).slice(0, 8),
     processCounts: {
       total: rows.length,
-      profitable: rows.filter((row) => row.processStatus === "profitable").length,
+      profitable: rows.filter((row) => row.processStatus === "profitable")
+        .length,
       atRisk: rows.filter((row) => row.processStatus === "at-risk").length,
-      lossMaking: rows.filter((row) => row.processStatus === "loss-making").length,
-      pendingReconciliation: rows.filter((row) => row.revenueDataStatus !== "configured").length,
+      lossMaking: rows.filter((row) => row.processStatus === "loss-making")
+        .length,
+      pendingReconciliation: rows.filter(
+        (row) => row.revenueDataStatus !== "configured",
+      ).length,
     },
     lossMakingProcesses: rows
       .filter((row) => row.processStatus === "loss-making")
@@ -357,7 +433,7 @@ async function latestSnapshot(periodCode: string) {
       WHERE s.period_code = ? AND s.status = 'locked'
       ORDER BY s.snapshot_version DESC
       LIMIT 1`,
-    [periodCode]
+    [periodCode],
   );
   return rows[0] ?? null;
 }
@@ -368,21 +444,51 @@ async function snapshotRows(snapshotId: string) {
        FROM pnl_period_snapshot_row
       WHERE snapshot_id = ? AND row_type = 'process'
       ORDER BY process_id`,
-    [snapshotId]
+    [snapshotId],
   );
   return rows.map((row) => parseJson<BpoPnlRow>(row.row_json));
+}
+
+// Each period below is a distinct cache key (see getCachedAllocationSummary), so a cold cache
+// (server restart, or any month never viewed) fans every period out into
+// buildComputationContext's own 10-query Promise.all. Running all `months` periods at once
+// multiplies that into 10*months near-simultaneous requests against a pool sized for far fewer,
+// so the excess queues behind the pool instead of running — serializing what should be
+// parallel work and multiplying the already-measured single-period cost. Two periods at a time
+// keeps within the pool's headroom while still overlapping two periods' worth of I/O wait.
+const TREND_PERIOD_CONCURRENCY = 2;
+
+async function withConcurrencyLimit<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function runNext(): Promise<void> {
+    const index = next++;
+    if (index >= items.length) return;
+    results[index] = await worker(items[index]);
+    await runNext();
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => runNext()),
+  );
+  return results;
 }
 
 export const canonicalPnlService = {
   async getTrend(filters: Partial<PnlQueryFilters>, months = 6) {
     const period = normalizePeriod(filters.period);
-    const periodCodes = Array.from({ length: Math.max(1, Math.min(12, months)) }, (_, index) =>
-      shiftPeriod(period, index - (Math.max(1, Math.min(12, months)) - 1))
+    const periodCodes = Array.from(
+      { length: Math.max(1, Math.min(12, months)) },
+      (_, index) =>
+        shiftPeriod(period, index - (Math.max(1, Math.min(12, months)) - 1)),
     );
-    const summaries = await Promise.all(
-      periodCodes.map((item) =>
-        getCachedAllocationSummary({ ...filters, period: item })
-      )
+    const summaries = await withConcurrencyLimit(
+      periodCodes,
+      TREND_PERIOD_CONCURRENCY,
+      (item) => getCachedAllocationSummary({ ...filters, period: item }),
     );
     return summaries.map((summary) => ({
       month: summary.period,
@@ -404,7 +510,9 @@ export const canonicalPnlService = {
       countRevenueRiskRows(period),
     ]);
     const rows = summary.rows as BpoPnlRow[];
-    const mostProfitable = [...rows].sort((left, right) => right.ebitda - left.ebitda)[0];
+    const mostProfitable = [...rows].sort(
+      (left, right) => right.ebitda - left.ebitda,
+    )[0];
     return {
       ...summary,
       calculationEngine: "bpo_allocation_v2",
@@ -458,9 +566,17 @@ export const canonicalPnlService = {
     });
   },
 
-  async getPeriodClose(periodCode?: string, userRoles?: string[], fallbackRole?: string) {
+  async getPeriodClose(
+    periodCode?: string,
+    userRoles?: string[],
+    fallbackRole?: string,
+  ) {
     const period = normalizePeriod(periodCode);
-    const base = await processPnlGovernanceService.getPeriodClose(period, userRoles, fallbackRole);
+    const base = await processPnlGovernanceService.getPeriodClose(
+      period,
+      userRoles,
+      fallbackRole,
+    );
     const snapshot = await latestSnapshot(period);
     if (snapshot && String(base.period?.status ?? "") === "locked") {
       const storedSummary = parseJson<any>(snapshot.summary_json);
@@ -469,7 +585,7 @@ export const canonicalPnlService = {
         base,
         { ...storedSummary, rows },
         { processIds: [], diagnostics: [], blockers: [] },
-        snapshot
+        snapshot,
       );
     }
     const [summary, lobChecks] = await Promise.all([
@@ -483,10 +599,12 @@ export const canonicalPnlService = {
     const period = normalizePeriod(periodCode);
     const rows = await queryRows<RowDataPacket>(
       "SELECT status FROM finance_period WHERE period_code = ? LIMIT 1",
-      [period]
+      [period],
     );
     if (String(rows[0]?.status ?? "") === "locked") {
-      throw Object.assign(new Error("Locked period cannot be recalculated"), { statusCode: 400 });
+      throw Object.assign(new Error("Locked period cannot be recalculated"), {
+        statusCode: 400,
+      });
     }
     processPnlService.invalidateCaches();
     bpoPnlService.invalidateCaches();
@@ -504,22 +622,39 @@ export const canonicalPnlService = {
   },
 
   async lockPeriod(periodId: string, actorUserId: string) {
-    if (!(await tableExists("pnl_period_snapshot")) || !(await tableExists("pnl_period_snapshot_row"))) {
-      throw Object.assign(new Error("P&L snapshot tables are missing. Run migration 421 first."), { statusCode: 503 });
+    if (
+      !(await tableExists("pnl_period_snapshot")) ||
+      !(await tableExists("pnl_period_snapshot_row"))
+    ) {
+      throw Object.assign(
+        new Error("P&L snapshot tables are missing. Run migration 421 first."),
+        { statusCode: 503 },
+      );
     }
     const periodRows = await queryRows<RowDataPacket>(
       "SELECT id, period_code, status FROM finance_period WHERE id = ? LIMIT 1",
-      [periodId]
+      [periodId],
     );
     const periodRow = periodRows[0];
-    if (!periodRow) throw Object.assign(new Error("Finance period not found"), { statusCode: 404 });
+    if (!periodRow)
+      throw Object.assign(new Error("Finance period not found"), {
+        statusCode: 404,
+      });
     const period = String(periodRow.period_code);
     if (String(periodRow.status) === "locked") {
       const snapshot = await latestSnapshot(period);
-      return { success: true, alreadyLocked: true, snapshotId: snapshot?.id ?? null };
+      return {
+        success: true,
+        alreadyLocked: true,
+        snapshotId: snapshot?.id ?? null,
+      };
     }
 
-    const base = await processPnlGovernanceService.getPeriodClose(period, [], "super_admin");
+    const base = await processPnlGovernanceService.getPeriodClose(
+      period,
+      [],
+      "super_admin",
+    );
     const [summary, lobChecks] = await Promise.all([
       bpoPnlAllocationOverlayService.getSummary({ period }),
       lobCloseChecks(period),
@@ -527,19 +662,27 @@ export const canonicalPnlService = {
     const closeView = canonicalCloseView(base, summary, lobChecks);
     if (!closeView.availableActions.canLock || !closeView.qualityGates.passed) {
       throw Object.assign(
-        new Error(`Period cannot be locked: ${closeView.qualityGates.blockers.map((item: any) => item.message).join(" | ") || "required signoffs are incomplete"}`),
-        { statusCode: 400, blockers: closeView.qualityGates.blockers }
+        new Error(
+          `Period cannot be locked: ${closeView.qualityGates.blockers.map((item: any) => item.message).join(" | ") || "required signoffs are incomplete"}`,
+        ),
+        { statusCode: 400, blockers: closeView.qualityGates.blockers },
       );
     }
 
     const lobRows: any[] = [];
     for (const processId of lobChecks.processIds) {
-      const lobSummary = await processLobService.getProcessSummary(processId, period);
+      const lobSummary = await processLobService.getProcessSummary(
+        processId,
+        period,
+      );
       if (!lobSummary.reconciliation.isReconciled) {
-        throw Object.assign(new Error(`LOB P&L does not reconcile for process ${processId}`), {
-          statusCode: 400,
-          reconciliation: lobSummary.reconciliation,
-        });
+        throw Object.assign(
+          new Error(`LOB P&L does not reconcile for process ${processId}`),
+          {
+            statusCode: 400,
+            reconciliation: lobSummary.reconciliation,
+          },
+        );
       }
       lobRows.push(...lobSummary.rows);
     }
@@ -554,45 +697,61 @@ export const canonicalPnlService = {
       generatedAt: summary.generatedAt,
       calculationEngine: "bpo_allocation_v2",
     };
-    const sourceHash = snapshotHash(summaryForSnapshot, [...summary.rows, ...lobRows]);
+    const sourceHash = snapshotHash(summaryForSnapshot, [
+      ...summary.rows,
+      ...lobRows,
+    ]);
     const connection = await db.getConnection();
     let snapshotId = "";
     try {
       await connection.beginTransaction();
       const [lockedPeriods] = await connection.execute<RowDataPacket[]>(
         "SELECT id, status FROM finance_period WHERE id = ? FOR UPDATE",
-        [periodId]
+        [periodId],
       );
       if (!lockedPeriods[0]) throw new Error("Finance period not found");
       if (String(lockedPeriods[0].status) === "locked") {
         await connection.rollback();
         const snapshot = await latestSnapshot(period);
-        return { success: true, alreadyLocked: true, snapshotId: snapshot?.id ?? null };
+        return {
+          success: true,
+          alreadyLocked: true,
+          snapshotId: snapshot?.id ?? null,
+        };
       }
       const [signedRows] = await connection.execute<RowDataPacket[]>(
         `SELECT signoff_role
            FROM pnl_period_signoff
           WHERE finance_period_id = ? AND status = 'signed'
           FOR UPDATE`,
-        [periodId]
+        [periodId],
       );
       const signed = new Set(signedRows.map((row) => String(row.signoff_role)));
-      const required = ["finance_preparer", "finance_head", "accounts_head", "ceo"];
+      const required = [
+        "finance_preparer",
+        "finance_head",
+        "accounts_head",
+        "ceo",
+      ];
       if (!required.every((role) => signed.has(role))) {
-        throw new Error("Finance Preparer, Finance Head, Accounts Head and CEO signoffs are required before locking");
+        throw new Error(
+          "Finance Preparer, Finance Head, Accounts Head and CEO signoffs are required before locking",
+        );
       }
       const [pendingAdjustments] = await connection.execute<RowDataPacket[]>(
         `SELECT COUNT(*) count
            FROM pnl_adjustment_journal
           WHERE period_code = ? AND approval_status IN ('draft','pending')`,
-        [period]
+        [period],
       );
       if (n(pendingAdjustments[0]?.count) > 0) {
-        throw new Error("Pending P&L adjustments must be approved or rejected before locking");
+        throw new Error(
+          "Pending P&L adjustments must be approved or rejected before locking",
+        );
       }
       const [versionRows] = await connection.execute<RowDataPacket[]>(
         "SELECT COALESCE(MAX(snapshot_version),0) + 1 next_version FROM pnl_period_snapshot WHERE finance_period_id = ? FOR UPDATE",
-        [periodId]
+        [periodId],
       );
       const version = n(versionRows[0]?.next_version) || 1;
       snapshotId = randomUUID();
@@ -601,14 +760,29 @@ export const canonicalPnlService = {
           (id, finance_period_id, period_code, snapshot_version, calculation_engine,
            source_hash, summary_json, status, locked_by, locked_at)
          VALUES (?, ?, ?, ?, 'bpo_allocation_v2', ?, ?, 'locked', ?, NOW())`,
-        [snapshotId, periodId, period, version, sourceHash, JSON.stringify(summaryForSnapshot), actorUserId]
+        [
+          snapshotId,
+          periodId,
+          period,
+          version,
+          sourceHash,
+          JSON.stringify(summaryForSnapshot),
+          actorUserId,
+        ],
       );
       for (const row of summary.rows as BpoPnlRow[]) {
         await connection.execute(
           `INSERT INTO pnl_period_snapshot_row
             (id, snapshot_id, branch_id, client_id, process_id, process_lob_id, row_type, row_json)
            VALUES (?, ?, ?, ?, ?, NULL, 'process', ?)`,
-          [randomUUID(), snapshotId, row.branchId, row.clientId, row.processId, JSON.stringify(row)]
+          [
+            randomUUID(),
+            snapshotId,
+            row.branchId,
+            row.clientId,
+            row.processId,
+            JSON.stringify(row),
+          ],
         );
       }
       for (const row of lobRows) {
@@ -625,17 +799,22 @@ export const canonicalPnlService = {
             row.processLobId ?? null,
             row.rowType === "unallocated" ? "unallocated" : "lob",
             JSON.stringify(row),
-          ]
+          ],
         );
       }
       await connection.execute(
         `UPDATE finance_period
             SET status = 'locked', locked_at = NOW(), locked_by = ?
           WHERE id = ? AND status <> 'locked'`,
-        [actorUserId, periodId]
+        [actorUserId, periodId],
       );
       await connection.commit();
-      return { success: true, snapshotId, sourceHash, calculationEngine: "bpo_allocation_v2" };
+      return {
+        success: true,
+        snapshotId,
+        sourceHash,
+        calculationEngine: "bpo_allocation_v2",
+      };
     } catch (error) {
       await connection.rollback();
       throw error;

@@ -5,7 +5,7 @@ import { useHierarchyFilters } from "./useHierarchyFilters";
 import { CoachingDetail } from "@/components/coaching/CoachingDetail";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
-  DASH, EmptyNote, GranularityPills, SectionCard, describePeriod, fmtInt, fmtNum, fmtPct, presetRange, type DateRange, type Granularity,
+  DASH, EmptyNote, GranularityPills, SectionCard, describePeriod, fmtInt, fmtNum, fmtPct, presetRange, qualityPctStyle, type DateRange, type Granularity,
 } from "./onfidoReportShared";
 import { OcDataTable, type OcColumn } from "./OcDataTable";
 
@@ -145,9 +145,9 @@ export default function OnfidoAnalystReport({ initialRange }: { initialRange: Da
                   <td className="oc-right">{fmtInt(r.cre)}</td><td className="oc-right">{fmtInt(r.crq)}</td>
                   <td className="oc-right">{fmtInt(r.etm)}</td><td className="oc-right">{fmtInt(r.taskSkip)}</td>
                   <td className="oc-right">{r.unplannedLeaveDays === null ? DASH : fmtNum(r.unplannedLeaveDays, 1)}</td>
-                  <td className="oc-right">{overallErrorPct(r)}</td>
-                  {INTERNAL_COLUMNS.map((c) => <td key={`i-${c.key}`} className="oc-right">{cellPct(r.internal[c.key])}</td>)}
-                  {EXTERNAL_COLUMNS.map((c) => <td key={`e-${c.key}`} className="oc-right">{cellPct(r.external[c.key])}</td>)}
+                  <td className="oc-right" style={qualityPctStyle(overallErrorValue(r))}>{overallErrorPct(r)}</td>
+                  {INTERNAL_COLUMNS.map((c) => <td key={`i-${c.key}`} className="oc-right" style={qualityPctStyle(r.internal[c.key].audits > 0 ? r.internal[c.key].errorPct : null)}>{cellPct(r.internal[c.key])}</td>)}
+                  {EXTERNAL_COLUMNS.map((c) => <td key={`e-${c.key}`} className="oc-right" style={qualityPctStyle(r.external[c.key].audits > 0 ? r.external[c.key].errorPct : null)}>{cellPct(r.external[c.key])}</td>)}
                 </tr>
               ))}
             </tbody>
@@ -208,10 +208,15 @@ function CoachingSection({ email }: { email: string }) {
   );
 }
 
-function overallErrorPct(r: AnalystRow): string {
+function overallErrorValue(r: AnalystRow): number | null {
   const errors = (r.internal.overall?.errors ?? 0) + (r.external.overall?.errors ?? 0);
   const audits = (r.internal.overall?.audits ?? 0) + (r.external.overall?.audits ?? 0);
-  return audits > 0 ? fmtPct((errors / audits) * 100) : DASH;
+  return audits > 0 ? (errors / audits) * 100 : null;
+}
+
+function overallErrorPct(r: AnalystRow): string {
+  const v = overallErrorValue(r);
+  return v === null ? DASH : fmtPct(v);
 }
 
 interface WeekRow {
@@ -229,7 +234,7 @@ const WEEK_COLUMNS: OcColumn<WeekRow>[] = [
   { key: "poaAht", header: "POA AHT", headerText: "POA AHT (s)", align: "right", accessor: (w) => w.poaAht, render: (w) => (w.poaAht === null ? DASH : `${fmtInt(w.poaAht)}s`) },
   { key: "etm", header: "ETM", headerText: "ETM", align: "right", accessor: (w) => w.etm, render: (w) => fmtInt(w.etm) },
   { key: "skips", header: "Skips", headerText: "Task skips", align: "right", accessor: (w) => w.taskSkip, render: (w) => fmtInt(w.taskSkip) },
-  { key: "err", header: "Overall Error %", headerText: "Overall error %", align: "right", accessor: (w) => w.overallErrorPct, render: (w) => (w.overallErrorPct === null ? DASH : fmtPct(w.overallErrorPct)) },
+  { key: "err", header: "Overall Error %", headerText: "Overall error %", align: "right", accessor: (w) => w.overallErrorPct, render: (w) => (w.overallErrorPct === null ? DASH : <span style={{ ...qualityPctStyle(w.overallErrorPct), padding: "2px 8px", borderRadius: 4, display: "inline-block" }}>{fmtPct(w.overallErrorPct)}</span>) },
 ];
 
 /** Week-by-week (WC dd Mon) performance for the selected analyst. */
@@ -271,10 +276,10 @@ function QualityTable({ title, cols, cells }: { title: string; cols: { key: Stag
         <tbody>
           {cols.map((c) => {
             const cell = cells[c.key];
-            return <tr key={c.key}><td>{c.label}</td><td className="oc-right">{fmtInt(cell?.errors ?? 0)}</td><td className="oc-right">{fmtInt(cell?.audits ?? 0)}</td><td className="oc-right">{cell ? cellPct(cell) : DASH}</td></tr>;
+            return <tr key={c.key}><td>{c.label}</td><td className="oc-right">{fmtInt(cell?.errors ?? 0)}</td><td className="oc-right">{fmtInt(cell?.audits ?? 0)}</td><td className="oc-right" style={cell && cell.audits > 0 ? qualityPctStyle(cell.errorPct) : undefined}>{cell ? cellPct(cell) : DASH}</td></tr>;
           })}
           {cells.overall && (
-            <tr><td><strong>Overall</strong></td><td className="oc-right">{fmtInt(cells.overall.errors)}</td><td className="oc-right">{fmtInt(cells.overall.audits)}</td><td className="oc-right">{cellPct(cells.overall)}</td></tr>
+            <tr><td><strong>Overall</strong></td><td className="oc-right">{fmtInt(cells.overall.errors)}</td><td className="oc-right">{fmtInt(cells.overall.audits)}</td><td className="oc-right" style={cells.overall.audits > 0 ? qualityPctStyle(cells.overall.errorPct) : undefined}>{cellPct(cells.overall)}</td></tr>
           )}
         </tbody>
       </table>

@@ -1189,7 +1189,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1907_skill_roadmap_fk_fix.sql", // Registered 2026-09-29. Aligns skill roadmap table collations to utf8mb4_unicode_ci and adds missing FK constraints. Additive.
   "migrations/1908_backfill_esi_docs_vault.sql", // Registered 2026-09-29. Backfills existing esi-docs bank passbooks into document_vault_inventory so the files.routes vault auth layer can serve them. Additive INSERT IGNORE.
   "migrations/1909_performance_indexes.sql", // Registered 2026-09-29. Adds missing composite indexes on work_inbox_item (entity resolution, dedup, user-action list), employee_biometric_enrollment (active filter), and exit_request (status+lwd). Fixes full-table-scan on 120k-row work_inbox_item for every resolveItems() call.
-  "migrations/1910_bla_bli_blu_sales_dashboard.sql", // Registered 2026-09-29. BLA/BLI/BLU (Bellavita Cart ABC / Inbound / Upgrade) Sales Dashboard: bla_dash_received upload and bla_dash_target config. Additive: new tables only.
+  "migrations/1910_bla_bli_blu_sales_dashboard.sql", // Registered 2026-09-29. BLA/BLI/BLU (Bellavita Cart ABC / Inbound / Upgrade) Sales Dashboard: bla_dash_received upload and bla_dash_target config (Overall Sales is read from the existing bla_bli_blu_overall_sales_raw). Additive: new tables only.
 ];
 
 export type MigrationHealth = {

@@ -12,7 +12,7 @@ type PayrollRun = { id: string; run_month: string; status: string; total_employe
 function runMonth(r: PayrollRun): number { return r.run_month ? parseInt(r.run_month.split("-")[1] ?? "1", 10) : 0; }
 function runYear(r: PayrollRun): number { return r.run_month ? parseInt(r.run_month.split("-")[0] ?? "0", 10) : 0; }
 type PayrollLine = { employee_id: string; employee_name: string; employee_code?: string; gross_pay: number; net_pay: number; pf_employee: number; esic_employee: number; total_deductions: number; payslip_id?: string; payslip_status?: string; };
-type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; lwp_deduction?: number; lwp_days?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; epf_number?: string; uan_number?: string; pan_number?: string; bank_account_masked?: string; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; cheque_no?: string | null; payment_mode?: string | null; payment_date?: string | null; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; employer_costs?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; };
+type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; lwp_deduction?: number; lwp_days?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; eligible_weekoff_days?: number; eligible_holiday_days?: number | null; epf_number?: string; uan_number?: string; pan_number?: string; bank_account_masked?: string; bank_name?: string | null; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; cheque_no?: string | null; payment_mode?: string | null; payment_date?: string | null; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; employer_costs?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; ytd?: Record<string, number>; };
 type PayslipComponent = { component_code: string; component_name: string; component_type: string; amount: number | string; reason?: string; };
 type NeftSummary = { total: number; with_bank: number; missing_bank: number; total_net: number; };
 /**
@@ -154,6 +154,32 @@ async function downloadPayslipPdfV2(payslip: Payslip): Promise<void> {
   const knownDed = pf + esic + tds + lwpDed + loan + adDed;
   const otherDed = Math.max(unslottedDeductions, Number(payslip.total_deductions ?? 0) - knownDed, 0);
 
+  // YTD: same code-alias slotting as the current-month amounts above, applied
+  // to the financial-year-to-date component totals the backend now returns.
+  // Left undefined (not zero) when the backend has no ytd map at all, so the
+  // PDF prints "-" rather than a fabricated 0.00.
+  const ytdMap = payslip.ytd;
+  const ytdFor = (...codes: string[]) => codes.reduce((t, c) => t + Number(ytdMap?.[c.toUpperCase()] ?? 0), 0);
+  const ytdUnslottedEarnings = ytdMap
+    ? Object.entries(ytdMap).filter(([code]) => !SLOTTED.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
+    : 0;
+  const ytdUnslottedDeductions = ytdMap
+    ? Object.entries(ytdMap).filter(([code]) => !SLOTTED_DED.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
+    : 0;
+  const ytd = ytdMap ? {
+    basic: ytdFor("BASIC"), hra: ytdFor("HRA"), bonus: ytdFor("BONUS"),
+    conv: ytdFor("CONVEYANCE", "CONV"), pa: ytdFor("PA", "PERSONAL_ALLOWANCE", "PORTFOLIO"),
+    ma: ytdFor("MA", "MEDICAL_ALLOWANCE"), sa: ytdFor("SPECIAL", "SPECIAL_ALLOWANCE"),
+    arrear: ytdFor("ARREAR"), incentive: ytdFor("INCENTIVE"), oa: ytdUnslottedEarnings,
+    pf: ytdFor("PF_EMPLOYEE", "PF_EMP"), esic: ytdFor("ESIC_EMPLOYEE", "ESIC_EMP"), tds: ytdFor("TDS"),
+    lwpDeduction: ytdFor("LWP_DEDUCTION", "LWP"), loan: ytdFor("LOAN", "LOAN_RECOVERY"),
+    adDed: ytdFor("ADVANCE", "ADVANCE_RECOVERY", "ADV"), otherDed: ytdUnslottedDeductions,
+  } : undefined;
+
+  const employerCostV2 = (code: string) => Number(payslip.employer_costs?.find((c) => c.component_code.toUpperCase() === code)?.amount ?? 0);
+  const employerPfV2 = employerCostV2("PF_EMP_CO") || employerCostV2("PF_EMPLOYER");
+  const employerEsicV2 = employerCostV2("ESIC_EMP_CO") || employerCostV2("ESIC_EMPLOYER");
+
   await downloadMasCallnetPayslipV2Format({
     companyName: "MAS CALLNET INDIA PVT. LTD.",
     monthYear: `${MONTH_NAMES[payslip.month]} - ${payslip.year}`,
@@ -162,13 +188,23 @@ async function downloadPayslipPdfV2(payslip: Payslip): Promise<void> {
     designation: payslip.designation || "N/A",
     department: payslip.department || "N/A",
     location: payslip.branch_name || payslip.location_name || "N/A",
+    bankName: payslip.bank_name || "",
+    ytd,
     epfNo: payslip.epf_number || "",
     uanNo: payslip.uan_number || "",
     esiNo: payslip.esi_number || "",
+    panNo: payslip.pan_number || "",
     bankAccount: payslip.bank_account_masked || "",
     paymentDate: payslip.payment_date || "",
+    chequeNo: payslip.cheque_no || "",
+    paymentMode: payslip.payment_mode || "",
+    lwpDays: Number(payslip.lwp_days ?? 0),
+    employerPf: employerPfV2,
+    employerEsic: employerEsicV2,
     wDays: Number(payslip.working_days ?? 0),
     earnedDays: Number(payslip.present_days ?? 0),
+    weekOffDays: Number(payslip.eligible_weekoff_days ?? 0),
+    paidHolidays: Number(payslip.eligible_holiday_days ?? 0),
     basic, hra, conv, pa, ma, sa, oa, arrear, bonus, incentive,
     pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
     netSalary: Number(payslip.net_pay ?? 0),

@@ -2,10 +2,16 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
+import {
+  notDialDeskProcessSql,
+  ownCompanyBranchSql,
+} from "../../shared/ownCompanyCostCentre.js";
 import { processPnlService } from "./process-pnl.service.js";
 
-type SignoffRole = "finance_preparer" | "finance_head" | "accounts_head" | "ceo";
-type AdjustmentStatus = "draft" | "pending" | "approved" | "rejected" | "reversed";
+type SignoffRole =
+  "finance_preparer" | "finance_head" | "accounts_head" | "ceo";
+type AdjustmentStatus =
+  "draft" | "pending" | "approved" | "rejected" | "reversed";
 
 const SIGNOFF_SEQUENCE: SignoffRole[] = [
   "finance_preparer",
@@ -15,7 +21,10 @@ const SIGNOFF_SEQUENCE: SignoffRole[] = [
 ];
 
 const ROLE_TO_SIGNOFF: Array<{ roles: string[]; signoffRole: SignoffRole }> = [
-  { roles: ["finance", "finance_preparer", "finance_analyst"], signoffRole: "finance_preparer" },
+  {
+    roles: ["finance", "finance_preparer", "finance_analyst"],
+    signoffRole: "finance_preparer",
+  },
   { roles: ["finance_head"], signoffRole: "finance_head" },
   { roles: ["accounts_head"], signoffRole: "accounts_head" },
   { roles: ["ceo"], signoffRole: "ceo" },
@@ -117,39 +126,59 @@ function nullableId(value: unknown): string | null {
   return text ? text : null;
 }
 
-function normalizeRoleKeys(userRoles: string[] | undefined, fallbackRole?: string) {
-  const set = new Set<string>((userRoles ?? []).map((role) => String(role).trim()).filter(Boolean));
+function normalizeRoleKeys(
+  userRoles: string[] | undefined,
+  fallbackRole?: string,
+) {
+  const set = new Set<string>(
+    (userRoles ?? []).map((role) => String(role).trim()).filter(Boolean),
+  );
   if (fallbackRole) set.add(String(fallbackRole).trim());
   return set;
 }
 
-function allowedSignoffRolesForUser(userRoles: string[] | undefined, fallbackRole?: string): SignoffRole[] {
+function allowedSignoffRolesForUser(
+  userRoles: string[] | undefined,
+  fallbackRole?: string,
+): SignoffRole[] {
   const roles = normalizeRoleKeys(userRoles, fallbackRole);
-  return ROLE_TO_SIGNOFF
-    .filter((item) => item.roles.some((role) => roles.has(role)) || roles.has("super_admin"))
-    .map((item) => item.signoffRole);
+  return ROLE_TO_SIGNOFF.filter(
+    (item) =>
+      item.roles.some((role) => roles.has(role)) || roles.has("super_admin"),
+  ).map((item) => item.signoffRole);
 }
 
-function nextRequiredSignoffRole(signoffs: Array<{ signoff_role: string; status: string }>): SignoffRole | null {
-  const signed = new Set(signoffs.filter((item) => item.status === "signed").map((item) => item.signoff_role));
+function nextRequiredSignoffRole(
+  signoffs: Array<{ signoff_role: string; status: string }>,
+): SignoffRole | null {
+  const signed = new Set(
+    signoffs
+      .filter((item) => item.status === "signed")
+      .map((item) => item.signoff_role),
+  );
   return SIGNOFF_SEQUENCE.find((role) => !signed.has(role)) ?? null;
 }
 
 async function ensureRequiredTable(tableName: string, help: string) {
   if (!(await tableExists(tableName))) {
-    throw Object.assign(new Error(`${tableName} table missing. ${help}`), { statusCode: 500 });
+    throw Object.assign(new Error(`${tableName} table missing. ${help}`), {
+      statusCode: 500,
+    });
   }
 }
 
 async function ensureFinancePeriod(periodCode: string) {
-  await ensureRequiredTable("finance_period", "Run the Process P&L governance migration first.");
+  await ensureRequiredTable(
+    "finance_period",
+    "Run the Process P&L governance migration first.",
+  );
 
   const existing = await queryRows<RowDataPacket>(
     `SELECT *
        FROM finance_period
       WHERE period_code = ?
       LIMIT 1`,
-    [periodCode]
+    [periodCode],
   );
 
   if (existing[0]) return existing[0];
@@ -161,7 +190,7 @@ async function ensureFinancePeriod(periodCode: string) {
     `INSERT INTO finance_period
       (id, period_code, period_year, period_month, start_date, end_date, status, actual_cutoff_date)
      VALUES (?, ?, ?, ?, ?, ?, 'open', ?)`,
-    [id, periodCode, year, month, start, end, end]
+    [id, periodCode, year, month, start, end, end],
   );
 
   const created = await queryRows<RowDataPacket>(
@@ -169,7 +198,7 @@ async function ensureFinancePeriod(periodCode: string) {
        FROM finance_period
       WHERE id = ?
       LIMIT 1`,
-    [id]
+    [id],
   );
   return created[0];
 }
@@ -182,23 +211,37 @@ async function refreshFinancePeriodStatus(periodId: string) {
        FROM pnl_period_signoff
       WHERE finance_period_id = ?
         AND status = 'signed'`,
-    [periodId]
+    [periodId],
   );
 
   const signed = new Set(signoffs.map((row) => String(row.signoff_role)));
   let status = "open";
   if (signed.size > 0) status = "in_review";
-  if (["finance_preparer", "finance_head", "accounts_head"].every((role) => signed.has(role))) {
+  if (
+    ["finance_preparer", "finance_head", "accounts_head"].every((role) =>
+      signed.has(role),
+    )
+  ) {
     status = signed.has("ceo") ? "signed_off" : "in_review";
   }
-  if (["finance_preparer", "finance_head", "accounts_head", "ceo"].every((role) => signed.has(role))) {
+  if (
+    ["finance_preparer", "finance_head", "accounts_head", "ceo"].every((role) =>
+      signed.has(role),
+    )
+  ) {
     status = "signed_off";
   }
 
-  await db.execute(`UPDATE finance_period SET status = ? WHERE id = ?`, [status, periodId]);
+  await db.execute(`UPDATE finance_period SET status = ? WHERE id = ?`, [
+    status,
+    periodId,
+  ]);
 }
 
 async function getReferenceData() {
+  // DialDesk/I-Spark are IDC entities, not MAS Callnet (owner rule 2026-09-24) — excluded here
+  // the same way process-pnl.service.ts getBaseProcesses() excludes them from the report rows,
+  // so the filter/picker dropdowns never offer a process, client or branch the report itself hides.
   const [processes, clients, branches] = await Promise.all([
     queryRows<RowDataPacket>(
       `SELECT
@@ -212,19 +255,21 @@ async function getReferenceData() {
         LEFT JOIN client_master cm ON cm.id = p.client_id
         LEFT JOIN branch_master bm ON bm.id = p.branch_id
        WHERE COALESCE(p.active_status, 1) = 1
-       ORDER BY cm.client_name, p.process_name`
+         AND ${notDialDeskProcessSql("p", "bm")}
+       ORDER BY cm.client_name, p.process_name`,
     ),
     queryRows<RowDataPacket>(
       `SELECT id, client_name
          FROM client_master
         WHERE COALESCE(active_status, 1) = 1
-        ORDER BY client_name`
+        ORDER BY client_name`,
     ).catch(() => []),
     queryRows<RowDataPacket>(
       `SELECT id, branch_name AS branch_name
          FROM branch_master
         WHERE COALESCE(active_status, 1) = 1
-        ORDER BY branch_name`
+          AND ${ownCompanyBranchSql("")}
+        ORDER BY branch_name`,
     ).catch(() => []),
   ]);
 
@@ -266,17 +311,22 @@ export const processPnlGovernanceService = {
         LEFT JOIN client_master cm ON cm.id = ccm.client_id
         LEFT JOIN process_master pm ON pm.id = ccm.process_id
         LEFT JOIN branch_master bm ON bm.id = pm.branch_id
-       ORDER BY ccm.status = 'active' DESC, ccm.effective_from DESC, pm.process_name`
+       ORDER BY ccm.status = 'active' DESC, ccm.effective_from DESC, pm.process_name`,
     );
 
     return rows;
   },
 
   async saveContract(input: SaveContractInput, actorUserId: string) {
-    await ensureRequiredTable("client_contract_master", "Run the revenue at risk foundation migration first.");
+    await ensureRequiredTable(
+      "client_contract_master",
+      "Run the revenue at risk foundation migration first.",
+    );
 
     if (!input.contract_name?.trim()) {
-      throw Object.assign(new Error("contract_name is required"), { statusCode: 400 });
+      throw Object.assign(new Error("contract_name is required"), {
+        statusCode: 400,
+      });
     }
 
     const id = input.id?.trim() || randomUUID();
@@ -297,7 +347,7 @@ export const processPnlGovernanceService = {
 
     const existing = await queryRows<RowDataPacket>(
       `SELECT id FROM client_contract_master WHERE id = ? LIMIT 1`,
-      [id]
+      [id],
     );
 
     if (existing[0]) {
@@ -317,7 +367,7 @@ export const processPnlGovernanceService = {
                 status = ?,
                 updated_at = NOW()
           WHERE id = ?`,
-        [...values, id]
+        [...values, id],
       );
     } else {
       await db.execute(
@@ -325,7 +375,7 @@ export const processPnlGovernanceService = {
           (id, client_id, process_id, contract_name, billing_type, billing_rate, currency, monthly_minimum_commitment,
            sla_target_percentage, penalty_rule_json, effective_from, effective_to, status, created_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, ...values, actorUserId]
+        [id, ...values, actorUserId],
       );
     }
 
@@ -344,18 +394,30 @@ export const processPnlGovernanceService = {
         FROM process_billing_rate pbr
         LEFT JOIN process_master pm ON pm.id = pbr.process_id
         LEFT JOIN client_contract_master ccm ON ccm.id = pbr.contract_id
-       ORDER BY pbr.effective_from DESC, pm.process_name`
+       ORDER BY pbr.effective_from DESC, pm.process_name`,
     );
 
     return rows;
   },
 
   async saveRate(input: SaveRateInput, actorUserId: string) {
-    await ensureRequiredTable("process_billing_rate", "Run the Process P&L governance migration first.");
+    await ensureRequiredTable(
+      "process_billing_rate",
+      "Run the Process P&L governance migration first.",
+    );
 
-    if (!input.process_id) throw Object.assign(new Error("process_id is required"), { statusCode: 400 });
-    if (!input.rate_type?.trim()) throw Object.assign(new Error("rate_type is required"), { statusCode: 400 });
-    if (!input.effective_from) throw Object.assign(new Error("effective_from is required"), { statusCode: 400 });
+    if (!input.process_id)
+      throw Object.assign(new Error("process_id is required"), {
+        statusCode: 400,
+      });
+    if (!input.rate_type?.trim())
+      throw Object.assign(new Error("rate_type is required"), {
+        statusCode: 400,
+      });
+    if (!input.effective_from)
+      throw Object.assign(new Error("effective_from is required"), {
+        statusCode: 400,
+      });
 
     const id = input.id?.trim() || randomUUID();
     const values = [
@@ -372,7 +434,7 @@ export const processPnlGovernanceService = {
 
     const existing = await queryRows<RowDataPacket>(
       `SELECT id FROM process_billing_rate WHERE id = ? LIMIT 1`,
-      [id]
+      [id],
     );
 
     if (existing[0]) {
@@ -389,14 +451,14 @@ export const processPnlGovernanceService = {
                 approval_reference = ?,
                 updated_at = NOW()
           WHERE id = ?`,
-        [...values, id]
+        [...values, id],
       );
     } else {
       await db.execute(
         `INSERT INTO process_billing_rate
           (id, process_id, contract_id, rate_type, rate_amount, unit, effective_from, effective_to, approved_by, approval_reference)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, ...values]
+        [id, ...values],
       );
     }
 
@@ -420,17 +482,26 @@ export const processPnlGovernanceService = {
         LEFT JOIN branch_master bm ON bm.id = pm.branch_id
        WHERE pmp.period_code = ?
        ORDER BY cm.client_name, pm.process_name`,
-      [period]
+      [period],
     );
 
     return rows;
   },
 
   async saveMonthlyPlan(input: SaveMonthlyPlanInput, actorUserId: string) {
-    await ensureRequiredTable("process_monthly_plan", "Run the Process P&L governance migration first.");
+    await ensureRequiredTable(
+      "process_monthly_plan",
+      "Run the Process P&L governance migration first.",
+    );
 
-    if (!input.process_id) throw Object.assign(new Error("process_id is required"), { statusCode: 400 });
-    if (!input.period_code) throw Object.assign(new Error("period_code is required"), { statusCode: 400 });
+    if (!input.process_id)
+      throw Object.assign(new Error("process_id is required"), {
+        statusCode: 400,
+      });
+    if (!input.period_code)
+      throw Object.assign(new Error("period_code is required"), {
+        statusCode: 400,
+      });
 
     const id = input.id?.trim() || randomUUID();
     const values = [
@@ -469,7 +540,7 @@ export const processPnlGovernanceService = {
          status = VALUES(status),
          updated_by = VALUES(updated_by),
          updated_at = NOW()`,
-      [id, ...values]
+      [id, ...values],
     );
 
     processPnlService.invalidateCaches();
@@ -496,21 +567,36 @@ export const processPnlGovernanceService = {
         LEFT JOIN client_master cm ON cm.id = pm.client_id
        WHERE ${conds.join(" AND ")}
        ORDER BY paj.created_at DESC`,
-      params
+      params,
     );
 
     return rows;
   },
 
   async createAdjustment(input: CreateAdjustmentInput, actorUserId: string) {
-    await ensureRequiredTable("pnl_adjustment_journal", "Run the Process P&L governance migration first.");
+    await ensureRequiredTable(
+      "pnl_adjustment_journal",
+      "Run the Process P&L governance migration first.",
+    );
 
-    if (!input.process_id) throw Object.assign(new Error("process_id is required"), { statusCode: 400 });
-    if (!input.period_code) throw Object.assign(new Error("period_code is required"), { statusCode: 400 });
-    if (!input.metric_key?.trim()) throw Object.assign(new Error("metric_key is required"), { statusCode: 400 });
-    if (!input.reason?.trim()) throw Object.assign(new Error("reason is required"), { statusCode: 400 });
+    if (!input.process_id)
+      throw Object.assign(new Error("process_id is required"), {
+        statusCode: 400,
+      });
+    if (!input.period_code)
+      throw Object.assign(new Error("period_code is required"), {
+        statusCode: 400,
+      });
+    if (!input.metric_key?.trim())
+      throw Object.assign(new Error("metric_key is required"), {
+        statusCode: 400,
+      });
+    if (!input.reason?.trim())
+      throw Object.assign(new Error("reason is required"), { statusCode: 400 });
     if (!ADJUSTMENT_CLASS_BY_METRIC[input.metric_key.trim()]) {
-      throw Object.assign(new Error("Unsupported adjustment metric_key"), { statusCode: 400 });
+      throw Object.assign(new Error("Unsupported adjustment metric_key"), {
+        statusCode: 400,
+      });
     }
 
     const id = randomUUID();
@@ -535,7 +621,7 @@ export const processPnlGovernanceService = {
         input.reason.trim(),
         input.attachment_path ?? null,
         actorUserId,
-      ]
+      ],
     );
 
     processPnlService.invalidateCaches();
@@ -543,25 +629,39 @@ export const processPnlGovernanceService = {
   },
 
   async approveAdjustment(adjustmentId: string, actorUserId: string) {
-    await ensureRequiredTable("pnl_adjustment_journal", "Run the Process P&L governance migration first.");
+    await ensureRequiredTable(
+      "pnl_adjustment_journal",
+      "Run the Process P&L governance migration first.",
+    );
 
     const rows = await queryRows<RowDataPacket>(
       `SELECT id, maker_user_id, approval_status
          FROM pnl_adjustment_journal
         WHERE id = ?
         LIMIT 1`,
-      [adjustmentId]
+      [adjustmentId],
     );
     const row = rows[0];
-    if (!row) throw Object.assign(new Error("Adjustment not found"), { statusCode: 404 });
+    if (!row)
+      throw Object.assign(new Error("Adjustment not found"), {
+        statusCode: 404,
+      });
     if (!row.maker_user_id) {
-      throw Object.assign(new Error("Adjustment has no maker — cannot be approved"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("Adjustment has no maker — cannot be approved"),
+        { statusCode: 400 },
+      );
     }
     if (String(row.maker_user_id) === actorUserId) {
-      throw Object.assign(new Error("Maker cannot approve their own adjustment"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("Maker cannot approve their own adjustment"),
+        { statusCode: 400 },
+      );
     }
     if (String(row.approval_status ?? "") === "reversed") {
-      throw Object.assign(new Error("Reversed adjustment cannot be approved"), { statusCode: 400 });
+      throw Object.assign(new Error("Reversed adjustment cannot be approved"), {
+        statusCode: 400,
+      });
     }
 
     await db.execute(
@@ -572,17 +672,26 @@ export const processPnlGovernanceService = {
               checked_at = NOW(),
               rejection_reason = NULL
         WHERE id = ?`,
-      [actorUserId, adjustmentId]
+      [actorUserId, adjustmentId],
     );
 
     processPnlService.invalidateCaches();
     return { success: true };
   },
 
-  async rejectAdjustment(adjustmentId: string, actorUserId: string, reason: string | null) {
-    await ensureRequiredTable("pnl_adjustment_journal", "Run the Process P&L governance migration first.");
+  async rejectAdjustment(
+    adjustmentId: string,
+    actorUserId: string,
+    reason: string | null,
+  ) {
+    await ensureRequiredTable(
+      "pnl_adjustment_journal",
+      "Run the Process P&L governance migration first.",
+    );
     if (!String(reason ?? "").trim()) {
-      throw Object.assign(new Error("Rejection reason is required"), { statusCode: 400 });
+      throw Object.assign(new Error("Rejection reason is required"), {
+        statusCode: 400,
+      });
     }
 
     const rows = await queryRows<RowDataPacket>(
@@ -590,9 +699,12 @@ export const processPnlGovernanceService = {
          FROM pnl_adjustment_journal
         WHERE id = ?
         LIMIT 1`,
-      [adjustmentId]
+      [adjustmentId],
     );
-    if (!rows[0]) throw Object.assign(new Error("Adjustment not found"), { statusCode: 404 });
+    if (!rows[0])
+      throw Object.assign(new Error("Adjustment not found"), {
+        statusCode: 404,
+      });
 
     await db.execute(
       `UPDATE pnl_adjustment_journal
@@ -601,17 +713,26 @@ export const processPnlGovernanceService = {
               checked_at = NOW(),
               rejection_reason = ?
         WHERE id = ?`,
-      [actorUserId, String(reason).trim(), adjustmentId]
+      [actorUserId, String(reason).trim(), adjustmentId],
     );
 
     processPnlService.invalidateCaches();
     return { success: true };
   },
 
-  async reverseAdjustment(adjustmentId: string, actorUserId: string, reason: string | null) {
-    await ensureRequiredTable("pnl_adjustment_journal", "Run the Process P&L governance migration first.");
+  async reverseAdjustment(
+    adjustmentId: string,
+    actorUserId: string,
+    reason: string | null,
+  ) {
+    await ensureRequiredTable(
+      "pnl_adjustment_journal",
+      "Run the Process P&L governance migration first.",
+    );
     if (!String(reason ?? "").trim()) {
-      throw Object.assign(new Error("Reversal reason is required"), { statusCode: 400 });
+      throw Object.assign(new Error("Reversal reason is required"), {
+        statusCode: 400,
+      });
     }
 
     const rows = await queryRows<RowDataPacket>(
@@ -619,12 +740,18 @@ export const processPnlGovernanceService = {
          FROM pnl_adjustment_journal
         WHERE id = ?
         LIMIT 1`,
-      [adjustmentId]
+      [adjustmentId],
     );
     const row = rows[0];
-    if (!row) throw Object.assign(new Error("Adjustment not found"), { statusCode: 404 });
+    if (!row)
+      throw Object.assign(new Error("Adjustment not found"), {
+        statusCode: 404,
+      });
     if (String(row.approval_status ?? "") !== "approved") {
-      throw Object.assign(new Error("Only approved adjustments can be reversed"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("Only approved adjustments can be reversed"),
+        { statusCode: 400 },
+      );
     }
 
     await db.execute(
@@ -634,7 +761,7 @@ export const processPnlGovernanceService = {
               reversed_by = ?,
               reversal_reason = ?
         WHERE id = ?`,
-      [actorUserId, String(reason).trim(), adjustmentId]
+      [actorUserId, String(reason).trim(), adjustmentId],
     );
 
     processPnlService.invalidateCaches();
@@ -643,7 +770,11 @@ export const processPnlGovernanceService = {
 
   async listPeriods() {
     if (!(await tableExists("finance_period"))) {
-      return [shiftPeriod(currentPeriod(), -1), currentPeriod(), shiftPeriod(currentPeriod(), 1)].map((periodCode) => ({
+      return [
+        shiftPeriod(currentPeriod(), -1),
+        currentPeriod(),
+        shiftPeriod(currentPeriod(), 1),
+      ].map((periodCode) => ({
         id: periodCode,
         period_code: periodCode,
         status: "open",
@@ -655,13 +786,17 @@ export const processPnlGovernanceService = {
       `SELECT *
          FROM finance_period
         ORDER BY period_year DESC, period_month DESC
-        LIMIT 24`
+        LIMIT 24`,
     );
 
     return rows;
   },
 
-  async getPeriodClose(periodCode?: string, userRoles?: string[], fallbackRole?: string) {
+  async getPeriodClose(
+    periodCode?: string,
+    userRoles?: string[],
+    fallbackRole?: string,
+  ) {
     const period = periodCode || currentPeriod();
     const financePeriod = await ensureFinancePeriod(period);
     const hasSignoffTable = await tableExists("pnl_period_signoff");
@@ -673,23 +808,34 @@ export const processPnlGovernanceService = {
              FROM pnl_period_signoff
             WHERE finance_period_id = ?
             ORDER BY signed_at DESC`,
-          [financePeriod.id]
+          [financePeriod.id],
         )
       : [];
     const adjustments = await this.listAdjustments(period);
 
     const requiredSignoffs: SignoffRole[] = [...SIGNOFF_SEQUENCE];
     const signoffMap = new Map(
-      signoffs.map((row) => [String(row.signoff_role), row])
+      signoffs.map((row) => [String(row.signoff_role), row]),
     );
     const signoffRows = signoffs.map((row) => ({
       signoff_role: String(row.signoff_role),
       status: String(row.status ?? "pending"),
     }));
     const nextSignoffRole = nextRequiredSignoffRole(signoffRows);
-    const allowedSignoffRoles = allowedSignoffRolesForUser(userRoles, fallbackRole);
+    const allowedSignoffRoles = allowedSignoffRolesForUser(
+      userRoles,
+      fallbackRole,
+    );
 
-    const groupedBranches = new Map<string, { branchName: string; revenue: number; indirectCost: number; activeHc: number }>();
+    const groupedBranches = new Map<
+      string,
+      {
+        branchName: string;
+        revenue: number;
+        indirectCost: number;
+        activeHc: number;
+      }
+    >();
     for (const row of processes) {
       const key = row.branchId ?? "unassigned";
       const current = groupedBranches.get(key) ?? {
@@ -704,11 +850,15 @@ export const processPnlGovernanceService = {
       groupedBranches.set(key, current);
     }
 
-    const totalIndirect = processes.reduce((sum, row) => sum + row.indirectCost, 0);
+    const totalIndirect = processes.reduce(
+      (sum, row) => sum + row.indirectCost,
+      0,
+    );
     const allocationDrivers = Array.from(groupedBranches.values())
       .map((row) => ({
         ...row,
-        sharePct: totalIndirect > 0 ? (row.indirectCost / totalIndirect) * 100 : 0,
+        sharePct:
+          totalIndirect > 0 ? (row.indirectCost / totalIndirect) * 100 : 0,
       }))
       .sort((left, right) => right.indirectCost - left.indirectCost);
 
@@ -716,17 +866,26 @@ export const processPnlGovernanceService = {
       period: financePeriod,
       summary: summary.kpis,
       alertCounts: {
-        critical: summary.alerts.filter((item) => item.type === "critical").length,
-        warning: summary.alerts.filter((item) => item.type === "warning").length,
+        critical: summary.alerts.filter((item) => item.type === "critical")
+          .length,
+        warning: summary.alerts.filter((item) => item.type === "warning")
+          .length,
         info: summary.alerts.filter((item) => item.type === "info").length,
       },
       topAlerts: summary.alerts.slice(0, 8),
       processCounts: {
         total: processes.length,
-        profitable: processes.filter((row) => row.processStatus === "profitable").length,
-        atRisk: processes.filter((row) => row.processStatus === "at-risk").length,
-        lossMaking: processes.filter((row) => row.processStatus === "loss-making").length,
-        pendingReconciliation: processes.filter((row) => row.reconciliationStatus !== "matched").length,
+        profitable: processes.filter(
+          (row) => row.processStatus === "profitable",
+        ).length,
+        atRisk: processes.filter((row) => row.processStatus === "at-risk")
+          .length,
+        lossMaking: processes.filter(
+          (row) => row.processStatus === "loss-making",
+        ).length,
+        pendingReconciliation: processes.filter(
+          (row) => row.reconciliationStatus !== "matched",
+        ).length,
       },
       lossMakingProcesses: processes
         .filter((row) => row.processStatus === "loss-making")
@@ -739,9 +898,17 @@ export const processPnlGovernanceService = {
         note: signoffMap.get(role)?.note ?? null,
       })),
       availableActions: {
-        signoffRole: nextSignoffRole && allowedSignoffRoles.includes(nextSignoffRole) ? nextSignoffRole : null,
-        canSignoff: Boolean(nextSignoffRole && allowedSignoffRoles.includes(nextSignoffRole)),
-        canLock: financePeriod.status !== "locked" && nextSignoffRole === null && signoffMap.get("ceo")?.status === "signed",
+        signoffRole:
+          nextSignoffRole && allowedSignoffRoles.includes(nextSignoffRole)
+            ? nextSignoffRole
+            : null,
+        canSignoff: Boolean(
+          nextSignoffRole && allowedSignoffRoles.includes(nextSignoffRole),
+        ),
+        canLock:
+          financePeriod.status !== "locked" &&
+          nextSignoffRole === null &&
+          signoffMap.get("ceo")?.status === "signed",
       },
       allocationDrivers,
       adjustments: adjustments.slice(0, 20),
@@ -749,39 +916,58 @@ export const processPnlGovernanceService = {
     };
   },
 
-  async signoffPeriod(periodId: string, note: string | null, actorUserId: string, userRoles?: string[], fallbackRole?: string) {
-    await ensureRequiredTable("pnl_period_signoff", "Run the Process P&L governance migration first.");
+  async signoffPeriod(
+    periodId: string,
+    note: string | null,
+    actorUserId: string,
+    userRoles?: string[],
+    fallbackRole?: string,
+  ) {
+    await ensureRequiredTable(
+      "pnl_period_signoff",
+      "Run the Process P&L governance migration first.",
+    );
 
     const periodRows = await queryRows<RowDataPacket>(
       `SELECT id, status FROM finance_period WHERE id = ? LIMIT 1`,
-      [periodId]
+      [periodId],
     );
     if (!periodRows[0]) {
-      throw Object.assign(new Error("Finance period not found"), { statusCode: 404 });
+      throw Object.assign(new Error("Finance period not found"), {
+        statusCode: 404,
+      });
     }
     if (String(periodRows[0].status ?? "") === "locked") {
-      throw Object.assign(new Error("Locked period cannot be signed"), { statusCode: 400 });
+      throw Object.assign(new Error("Locked period cannot be signed"), {
+        statusCode: 400,
+      });
     }
 
     const existingSignoffs = await queryRows<RowDataPacket>(
       `SELECT signoff_role, status
          FROM pnl_period_signoff
         WHERE finance_period_id = ?`,
-      [periodId]
+      [periodId],
     );
     const nextRole = nextRequiredSignoffRole(
       existingSignoffs.map((row) => ({
         signoff_role: String(row.signoff_role),
         status: String(row.status ?? "pending"),
-      }))
+      })),
     );
     if (!nextRole) {
-      throw Object.assign(new Error("All required signoffs are already completed"), { statusCode: 400 });
+      throw Object.assign(
+        new Error("All required signoffs are already completed"),
+        { statusCode: 400 },
+      );
     }
 
     const allowedRoles = allowedSignoffRolesForUser(userRoles, fallbackRole);
     if (!allowedRoles.includes(nextRole)) {
-      throw Object.assign(new Error(`You are not allowed to sign as ${nextRole}`), { statusCode: 403 });
+      throw Object.assign(
+        new Error(`You are not allowed to sign as ${nextRole}`),
+        { statusCode: 403 },
+      );
     }
 
     await db.execute(
@@ -794,7 +980,7 @@ export const processPnlGovernanceService = {
          signed_at = VALUES(signed_at),
          note = VALUES(note),
          updated_at = NOW()`,
-      [randomUUID(), periodId, nextRole, actorUserId, note ?? null]
+      [randomUUID(), periodId, nextRole, actorUserId, note ?? null],
     );
 
     await refreshFinancePeriodStatus(periodId);

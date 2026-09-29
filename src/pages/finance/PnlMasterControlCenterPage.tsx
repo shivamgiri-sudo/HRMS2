@@ -761,8 +761,8 @@ export default function PnlMasterControlCenterPage() {
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700"><SlidersHorizontal className="h-4 w-4" />Master scope</div>
               <div className="grid gap-4 lg:grid-cols-[220px_1fr_1fr_auto]">
                 <Field label="Financial period"><MonthYearPicker value={period} onChange={updatePeriod} /></Field>
-                <Field label="Process filter"><ProcessSelect value={processFilter} onChange={setProcessFilter} processes={processes} allowBlank /></Field>
-                <Field label="Branch filter"><BranchSelect value={branchFilter} onChange={setBranchFilter} branches={branches} allowBlank /></Field>
+                <Field label="Process filter"><ProcessSelect value={processFilter} onChange={setProcessFilter} processes={processes.filter((process) => !branchFilter || process.branch_id === branchFilter)} allowBlank /></Field>
+                <Field label="Branch filter"><BranchSelect value={branchFilter} onChange={(value) => { setBranchFilter(value); if (processFilter) setProcessFilter(""); }} branches={branches} allowBlank /></Field>
                 <div className="flex items-end"><Button variant="outline" className="w-full rounded-xl" disabled={legacy.referenceQuery.isFetching || legacy.contractsQuery.isFetching || bpo.revenueRulesQuery.isFetching || bpo.classificationRulesQuery.isFetching} onClick={() => { legacy.referenceQuery.refetch(); legacy.contractsQuery.refetch(); bpo.revenueRulesQuery.refetch(); bpo.classificationRulesQuery.refetch(); }}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button></div>
               </div>
             </section>

@@ -75,6 +75,7 @@ interface PayslipComponent {
 
 interface PayslipRecord {
   id: string;
+  run_id?: string;
   run_month: string;
   run_status?: string;
   status?: string;
@@ -127,6 +128,7 @@ interface PayslipRecord {
   uan_number?: string | null;
   pan_number?: string | null;
   bank_account_masked?: string | null;
+  bank_name?: string | null;
   esi_number?: string | null;
   payslip_ref?: string | null;
   cheque_no?: string | null;
@@ -137,6 +139,15 @@ interface PayslipRecord {
   /** Employer-side cost — employer PF, employer ESI, EPF admin charges. Not
    *  deducted from the employee; shown so the payslip states full CTC honestly. */
   employer_costs?: PayslipComponent[];
+  /** Financial-year-to-date total per component_code. Only present when fetched
+   *  via GET /api/payroll/payslip/:runId/:employeeId — the list endpoint this
+   *  component normally reads from does not compute it for every row. */
+  ytd?: Record<string, number>;
+  /** Reliable only via GET /api/payroll/payslip/:runId/:employeeId, which
+   *  applies payslip.service.ts's zero-fallback derivation. The /payslip/my
+   *  list this component normally reads from returns the raw, always-0 column. */
+  eligible_weekoff_days?: number;
+  eligible_holiday_days?: number | null;
 }
 
 const MONTHS = [
@@ -544,6 +555,46 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const knownDeductions = pf + esic + tds + lwpDed + loan + adDed;
     const otherDed = Math.max(unslottedDeductions, effectiveDeductions(record) - knownDeductions, 0);
 
+    // The list this component reads from (/payroll/payslip/my) does not compute
+    // YTD or bank_name per row — too expensive to do for every month in the
+    // list. Fetch the single-record endpoint (same one the admin Payslip Center
+    // uses) on demand, only for the record actually being downloaded. Legacy
+    // records have no run_id and simply download without YTD/bank name rather
+    // than fabricating either.
+    let bankName = "";
+    let ytdMap: Record<string, number> | undefined;
+    let weekOffDays = 0;
+    let paidHolidays = 0;
+    if (record.run_id) {
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: PayslipRecord }>(
+          `/api/payroll/payslip/${record.run_id}/${employeeId}`,
+        );
+        bankName = res.data?.bank_name || "";
+        ytdMap = res.data?.ytd;
+        weekOffDays = Number(res.data?.eligible_weekoff_days ?? 0);
+        paidHolidays = Number(res.data?.eligible_holiday_days ?? 0);
+      } catch {
+        // Non-fatal — download proceeds without YTD/bank name/leave breakdown.
+      }
+    }
+    const ytdFor = (...codes: string[]) => codes.reduce((t, c) => t + Number(ytdMap?.[c.toUpperCase()] ?? 0), 0);
+    const ytdUnslottedEarnings = ytdMap
+      ? Object.entries(ytdMap).filter(([code]) => !SLOTTED_EARNINGS.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
+      : 0;
+    const ytdUnslottedDeductions = ytdMap
+      ? Object.entries(ytdMap).filter(([code]) => !SLOTTED_DEDUCTIONS.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
+      : 0;
+    const ytd = ytdMap ? {
+      basic: ytdFor("BASIC"), hra: ytdFor("HRA"), bonus: ytdFor("BONUS"),
+      conv: ytdFor("CONVEYANCE", "CONV"), pa: ytdFor("PA", "PERSONAL_ALLOWANCE", "PORTFOLIO"),
+      ma: ytdFor("MA", "MEDICAL_ALLOWANCE", "MEDICAL"), sa: ytdFor("SPECIAL", "SPECIAL_ALLOWANCE"),
+      arrear: ytdFor("ARREAR"), incentive: ytdFor("INCENTIVE"), oa: ytdUnslottedEarnings,
+      pf: ytdFor("PF_EMPLOYEE", "PF_EMP"), esic: ytdFor("ESIC_EMPLOYEE", "ESIC_EMP"), tds: ytdFor("TDS"),
+      lwpDeduction: ytdFor("LWP_DEDUCTION", "LWP"), loan: ytdFor("LOAN", "LOAN_RECOVERY", "LOAN_EMI"),
+      adDed: ytdFor("ADVANCE", "ADVANCE_RECOVERY", "ADV"), otherDed: ytdUnslottedDeductions,
+    } : undefined;
+
     await downloadMasCallnetPayslipV2Format({
       companyName: "MAS CALLNET INDIA PVT. LTD.",
       monthYear: `${monthName} - ${recYear}`,
@@ -552,13 +603,22 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       designation: record.designation_name || "N/A",
       department: record.dept_name || "N/A",
       location: record.branch_name || record.location_name || "N/A",
+      bankName,
+      ytd,
       epfNo: record.epf_number || "",
       uanNo: record.uan_number || "",
       esiNo: record.esi_number || "",
+      panNo: record.pan_number || "",
       bankAccount: record.bank_account_masked || "",
       paymentDate: record.payment_date || "",
+      chequeNo: record.cheque_no || "",
+      paymentMode: record.payment_mode || "",
+      lwpDays: Number(record.lwp_days ?? 0),
+      employerPf: Number(record.pf_employer ?? 0),
+      employerEsic: Number(record.esic_employer ?? 0),
       wDays: Number(record.working_days ?? 30),
       earnedDays: Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
+      weekOffDays, paidHolidays,
       basic, hra, conv, pa, ma, sa, oa: otherEarnings, arrear, bonus, incentive,
       pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
       netSalary: Number(record.net_salary ?? 0),

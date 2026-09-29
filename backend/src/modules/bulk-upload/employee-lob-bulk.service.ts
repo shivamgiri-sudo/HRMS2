@@ -36,6 +36,7 @@ import {
 } from "../wfm/process-lob-map.service.js";
 import { resolveWfmScope } from "../wfm/wfm-scope-fallback.js";
 import { DashboardScopeConfigurationError } from "../../shared/dashboardScope.js";
+import { clearOnfidoResponseCache } from "../onfido-process/onfido-response-cache.js";
 import {
   chunk,
   marks,
@@ -607,6 +608,10 @@ export async function importEmployeeLobBatch(
   } finally {
     conn.release();
   }
+
+  // Dashboards (e.g. the Onfido Capacity Builder card) cache their LOB-derived reads for up to
+  // 30 minutes; a mapping change here must be visible right away, not after that TTL expires.
+  if (changes.length > 0) clearOnfidoResponseCache();
 
   await writeAuditLog({
     actor_user_id: importedByUserId,

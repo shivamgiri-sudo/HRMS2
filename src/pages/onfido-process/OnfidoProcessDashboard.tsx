@@ -1,13 +1,13 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PoaExternalPage, PoaInternalPage, PoaTrailPage, type PoaDrill } from "./PoaPagesViews";
-import { Area, AreaChart, Bar, BarChart, Cell, ComposedChart, LabelList, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, Cell, ComposedChart, LabelList, Legend, Line, LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowLeft, CalendarRange, ClipboardCheck, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Trophy, UserCheck, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { OnfidoDownloadButton } from "./OnfidoDownloadButton";
+import { OnfidoExportButton } from "./OnfidoExportButton";
 import OnfidoOutliersView from "./OnfidoOutliersView";
 import OnfidoFreshnessStrip from "./OnfidoFreshnessStrip";
 import { useHierarchyFilters } from "./useHierarchyFilters";
@@ -18,7 +18,7 @@ import OnfidoAnalystReport from "./OnfidoAnalystReport";
 import OnfidoNameMapping from "./OnfidoNameMapping";
 import OnfidoHero from "./OnfidoHero";
 import OnfidoUtilizationReport from "./OnfidoUtilizationReport";
-import { fmtDdMmmYy, formatBucketTick, shiftDays } from "./onfidoReportShared";
+import { fmtDdMmmYy, formatBucketTick, qualityPctStyle, shiftDays } from "./onfidoReportShared";
 import "./onfido-central-theme.css";
 
 /**
@@ -679,12 +679,6 @@ function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; va
   );
 }
 
-/** Green <= 0.75%, amber > 0.75-1%, red > 1%, muted for zero/no data. */
-function metricCellColor(pct: number | null): string {
-  if (pct === null || pct === 0) return "var(--muted)";
-  return pct > 1.0 ? "var(--red)" : pct > 0.75 ? "var(--orange)" : "var(--green)";
-}
-
 /** Metric-rows x time-bucket-columns table — mirrors the reference dashboard's
  *  buildTrendTable() (Quality page month/week/day-wise trend tables,
  *  2026-09-17 feedback). Each row is one metric so a reviewer reads a metric's
@@ -711,7 +705,7 @@ function MetricTrendTable({ title, columns, rows, hc }: {
                 <tr key={r.label}>
                   <td style={{ textAlign: "left", fontWeight: 600 }}>{r.label}</td>
                   {r.values.map((v, i) => (
-                    <td key={columns[i]} className="oc-right" style={{ color: metricCellColor(v), fontWeight: 700 }}>
+                    <td key={columns[i]} className="oc-right" style={qualityPctStyle(v)}>
                       {v !== null ? `${v}%` : "–"}
                     </td>
                   ))}
@@ -746,7 +740,9 @@ function QualityAreaChart({ points, title, hc, granularity = "monthly" }: { poin
             </linearGradient>
           </defs>
           <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: string) => formatBucketTick(v, granularity)} />
-          <YAxis tickLine={false} axisLine={false} width={44} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+          <YAxis domain={[0, (max: number) => Math.max(max, 1.2)]} tickLine={false} axisLine={false} width={44} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+          <ReferenceLine y={0.75} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: "0.75%", position: "insideTopRight", fontSize: 10, fill: "var(--muted)" }} />
+          <ReferenceLine y={1} stroke="#b91c1c" strokeDasharray="4 4" label={{ value: "1%", position: "insideTopRight", fontSize: 10, fill: "var(--muted)" }} />
           <RTooltip content={<DarkTooltip />} />
           <Area
             type="monotone" dataKey="errorRate" name="Error Rate %"
@@ -946,7 +942,7 @@ function AlertsView({ range, tlFilter, amFilter, analystFilter = "" }: { range: 
                   <td>{a.tlName ?? "-"}</td>
                   <td>{a.amName ?? "-"}</td>
                   <td>{a.metric}</td>
-                  <td className="oc-right">{a.value}%</td>
+                  <td className="oc-right" style={/error/i.test(a.metric) ? qualityPctStyle(a.value) : undefined}>{a.value}%</td>
                   <td className="oc-right" style={{ color: "var(--muted)" }}>{a.threshold}%</td>
                   <td className="oc-right">
                     <span className={a.severity === "high" ? "oc-badge-pill oc-severity-high" : "oc-badge-pill oc-severity-medium"}>
@@ -1046,7 +1042,7 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
                   <td>{r.amName ?? "—"}</td>
                   <td className="oc-right">{r.tasks.toLocaleString("en-IN")}</td>
                   <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
-                  <td className="oc-right" style={{ color: r.errorRate !== null && r.errorRate > 2 ? "var(--red)" : r.errorRate !== null && r.errorRate < 1 ? "var(--good)" : undefined }}>
+                  <td className="oc-right" style={qualityPctStyle(r.errorRate)}>
                     {r.errorRate !== null ? `${r.errorRate}%` : "—"}
                   </td>
                   <td className="oc-right">{r.poaTasks > 0 ? r.poaTasks.toLocaleString("en-IN") : "—"}</td>
@@ -1095,12 +1091,12 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
           <div className="kr">
             <KpiPlain kpi={perf.totalTasks} kc="var(--blue)" />
             <KpiPlain kpi={perf.avgManualProcessingTime} kc="var(--purple)" />
-            <KpiPlain kpi={perf.overallErrorRate} kc="var(--red)" />
+            <KpiPlain kpi={perf.overallErrorRate} kc="var(--red)" quality />
           </div>
           <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
             <KpiPlain kpi={perf.poaTasks} kc="var(--teal)" />
             <KpiPlain kpi={perf.poaAvgAht} kc="var(--teal)" />
-            <KpiPlain kpi={perf.poaErrorRate} kc="var(--teal)" />
+            <KpiPlain kpi={perf.poaErrorRate} kc="var(--teal)" quality />
           </div>
 
           <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
@@ -1134,7 +1130,7 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
                       <td><span className="oc-rank-badge">{i + 1}</span></td>
                       <td>{p.email}</td>
                       <td className="oc-right">{p.tasks}</td>
-                      <td className="oc-right">{p.errorRate !== null ? `${p.errorRate}%` : "—"}</td>
+                      <td className="oc-right" style={qualityPctStyle(p.errorRate)}>{p.errorRate !== null ? `${p.errorRate}%` : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1147,12 +1143,13 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
   );
 }
 
-function KpiPlain({ kpi, kc }: { kpi: KpiValue; kc: string }) {
+function KpiPlain({ kpi, kc, quality = false }: { kpi: KpiValue; kc: string; quality?: boolean }) {
   const empty = kpi.availability === "no_data" || kpi.value === null;
+  const fill = quality && !empty && kpi.unit === "percent" ? qualityPctStyle(kpi.value) : undefined;
   return (
     <div className="kpi" style={{ "--kc": kc } as React.CSSProperties}>
       <label>{kpi.label}</label>
-      <div className={empty ? "kv empty" : "kv"}>{formatValue(kpi)}</div>
+      <div className={empty ? "kv empty" : "kv"} style={fill ? { ...fill, display: "inline-block", padding: "2px 10px", borderRadius: 6 } : undefined}>{formatValue(kpi)}</div>
       <div className="ks">{empty ? "No data in this range" : kpi.note ?? " "}</div>
     </div>
   );
@@ -1672,7 +1669,6 @@ function AttritionView({
     <div className="space-y-4">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <PillGroup value={mode} onChange={setMode} options={[{ key: "all", label: "Attrition + Shrinkage" }, { key: "attrition", label: "Attrition" }, { key: "shrinkage", label: "Shrinkage" }]} />
-        <OnfidoDownloadButton path="/api/onfido-process/attrition/exits/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_attrition_analyst_wise.csv" label="Download analyst-wise attrition (CSV)" />
       </div>
       {/* 1 · Current-month status */}
       <div className={mode === "all" ? "kr k6" : "kr"}>
@@ -2047,9 +2043,6 @@ function EtmView({
 
   return (
     <div className="space-y-4">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-        <OnfidoDownloadButton path={`/api/onfido-process/records/${queue === "poa" ? "ONFIDO_POA_ETM" : "ONFIDO_DOC_ETM"}/export.csv`} params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename={`onfido_${queue}_etm.csv`} />
-      </div>
       <PillGroup value={queue} onChange={setQueue} options={[{ key: "doc", label: "DOC ETM" }, { key: "poa", label: "POA ETM" }]} />
 
       {q && (
@@ -2240,9 +2233,6 @@ function TaskSkipView({
 
   return (
     <div className="space-y-4">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_TASK_SKIP/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_task_skip.csv" />
-      </div>
       {ov && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.selected} kc="var(--orange)" />
@@ -2497,15 +2487,15 @@ function QualityView({
       {ov && showExternal && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
-          <KpiPlain kpi={ov.overallErrorRate} kc="var(--red)" />
-          <KpiPlain kpi={ov.farRate} kc="var(--orange)" />
+          <KpiPlain kpi={ov.overallErrorRate} kc="var(--red)" quality />
+          <KpiPlain kpi={ov.farRate} kc="var(--orange)" quality />
         </div>
       )}
       {((showInternal && (intOv || poaOv)) || (showExternal && poaExtOv)) && (
         <div className="kr" style={{ gridTemplateColumns: `repeat(${(showInternal ? (intOv ? 1 : 0) + (poaOv ? 1 : 0) : 0) + (showExternal && poaExtOv ? 1 : 0)}, 1fr)` }}>
-          {showInternal && intOv && <KpiPlain kpi={intOv.overallErrorRate} kc="var(--purple)" />}
-          {showInternal && poaOv && <KpiPlain kpi={poaOv.errorRate} kc="var(--teal)" />}
-          {showExternal && poaExtOv && <KpiPlain kpi={poaExtOv.errorRate} kc="var(--orange)" />}
+          {showInternal && intOv && <KpiPlain kpi={intOv.overallErrorRate} kc="var(--purple)" quality />}
+          {showInternal && poaOv && <KpiPlain kpi={poaOv.errorRate} kc="var(--teal)" quality />}
+          {showExternal && poaExtOv && <KpiPlain kpi={poaExtOv.errorRate} kc="var(--orange)" quality />}
         </div>
       )}
 
@@ -2546,7 +2536,9 @@ function QualityView({
               </defs>
 
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-              <YAxis tickLine={false} axisLine={false} width={44} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+              <YAxis domain={[0, (max: number) => Math.max(max, 1.2)]} tickLine={false} axisLine={false} width={44} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
+              <ReferenceLine y={0.75} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: "0.75%", position: "insideTopRight", fontSize: 10, fill: "var(--muted)" }} />
+              <ReferenceLine y={1} stroke="#b91c1c" strokeDasharray="4 4" label={{ value: "1%", position: "insideTopRight", fontSize: 10, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} />
               <Area
                 type="monotone" dataKey="errorRate" name="Error Rate %"
@@ -2585,7 +2577,7 @@ function QualityView({
                 <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label })}>
                   <td>{r.label}</td>
                   <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
-                  <td className="oc-right">{r.overallErrorRate !== null ? `${r.overallErrorRate}%` : "—"}</td>
+                  <td className="oc-right" style={qualityPctStyle(r.overallErrorRate)}>{r.overallErrorRate !== null ? `${r.overallErrorRate}%` : "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -2631,8 +2623,6 @@ function QualityView({
       {(() => {
         const allRows = analystQualityQuery.data?.data ?? [];
         const loading = analystQualityQuery.isLoading;
-        const errColor = (v: number | null) =>
-          v === null ? undefined : v > 1 ? "var(--red)" : v > 0.75 ? "var(--orange)" : "var(--green)";
         const fmtErr = (v: number | null) => v !== null ? `${v}%` : "—";
 
         const top20perf = [...allRows]
@@ -2675,10 +2665,10 @@ function QualityView({
                       <td style={{ fontSize: 11 }}>{r.analyst}</td>
                       <td style={{ fontSize: 11 }}>{r.tlName ?? "—"}</td>
                       <td className="oc-right">{r.intAudits > 0 ? r.intAudits.toLocaleString("en-IN") : "—"}</td>
-                      <td className="oc-right" style={{ color: errColor(r.intErrPct), fontWeight: r.intErrPct !== null ? 700 : undefined }}>{fmtErr(r.intErrPct)}</td>
+                      <td className="oc-right" style={qualityPctStyle(r.intErrPct)}>{fmtErr(r.intErrPct)}</td>
                       <td className="oc-right">{r.extAudits > 0 ? r.extAudits.toLocaleString("en-IN") : "—"}</td>
-                      <td className="oc-right" style={{ color: errColor(r.extErrPct), fontWeight: r.extErrPct !== null ? 700 : undefined }}>{fmtErr(r.extErrPct)}</td>
-                      <td className="oc-right" style={{ color: errColor(r.overallErrPct), fontWeight: r.overallErrPct !== null ? 700 : undefined }}>{fmtErr(r.overallErrPct)}</td>
+                      <td className="oc-right" style={qualityPctStyle(r.extErrPct)}>{fmtErr(r.extErrPct)}</td>
+                      <td className="oc-right" style={qualityPctStyle(r.overallErrPct)}>{fmtErr(r.overallErrPct)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -2767,10 +2757,6 @@ function EscalationsView({
 
   return (
     <div className="space-y-4">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_DOC_ESCALATION_CRE/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_cre.csv" label="Download CRE (CSV)" />
-        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_DOC_ESCALATION_CRQ/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_crq.csv" label="Download CRQ (CSV)" />
-      </div>
       <div className="flex flex-wrap items-center gap-3">
         <span className="oc-eyebrow">Queue</span>
         <PillGroup
@@ -2976,9 +2962,6 @@ function DocRawView({
 
   return (
     <div className="space-y-4">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_DOC_RAW/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_doc_raw.csv" label="Download RAW file (CSV)" />
-      </div>
       {ov && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
@@ -3071,12 +3054,6 @@ function DocRawView({
   );
 }
 
-/** Green <= 0.75%, amber > 0.75-1%, red > 1%. */
-function poaCellColor(pct: number | null): string {
-  if (pct === null) return "var(--muted)";
-  return pct > 1.0 ? "var(--red)" : pct > 0.75 ? "var(--orange)" : "var(--green)";
-}
-
 /** Entity x month grouped table (AM/TL/Analyst Wise POA tables, 2026-09-17
  *  feedback) — each month spans 4 sub-columns (Task/AHT/POA Err%/Ext POA%),
  *  mirroring the reference dashboard's buildGroupedTable(). */
@@ -3122,10 +3099,10 @@ function PoaEntityMonthTable({ title, months, rows, entityLabel, onRowClick }: {
                       <Fragment key={mo}>
                         <td className="oc-right" style={{ borderLeft: "1px solid var(--border)" }}>{c ? c.taskCount.toLocaleString("en-IN") : "–"}</td>
                         <td className="oc-right">{c?.avgAht != null ? `${c.avgAht}s` : "–"}</td>
-                        <td className="oc-right" style={{ color: poaCellColor(c?.poaErrPct ?? null), fontWeight: 700 }}>
+                        <td className="oc-right" style={qualityPctStyle(c?.poaErrPct ?? null)}>
                           {c?.poaErrPct != null ? `${c.poaErrPct}%` : "–"}
                         </td>
-                        <td className="oc-right" style={{ color: poaCellColor(c?.extPoaErrPct ?? null), fontWeight: 700 }}>
+                        <td className="oc-right" style={qualityPctStyle(c?.extPoaErrPct ?? null)}>
                           {c?.extPoaErrPct != null ? `${c.extPoaErrPct}%` : "–"}
                         </td>
                       </Fragment>
@@ -3166,10 +3143,10 @@ function PoaDayWiseTable({ rows }: { rows: PoaDayRow[] }) {
                   <td className="oc-right">{r.avgAht != null ? `${r.avgAht}s` : "–"}</td>
                   <td className="oc-right">{r.poaAudits.toLocaleString("en-IN")}</td>
                   <td className="oc-right">{r.poaErrors.toLocaleString("en-IN")}</td>
-                  <td className="oc-right" style={{ color: poaCellColor(r.poaErrPct), fontWeight: 700 }}>{r.poaErrPct != null ? `${r.poaErrPct}%` : "–"}</td>
+                  <td className="oc-right" style={qualityPctStyle(r.poaErrPct)}>{r.poaErrPct != null ? `${r.poaErrPct}%` : "–"}</td>
                   <td className="oc-right">{r.extPoaAudits.toLocaleString("en-IN")}</td>
                   <td className="oc-right">{r.extPoaErrors.toLocaleString("en-IN")}</td>
-                  <td className="oc-right" style={{ color: poaCellColor(r.extPoaErrPct), fontWeight: 700 }}>{r.extPoaErrPct != null ? `${r.extPoaErrPct}%` : "–"}</td>
+                  <td className="oc-right" style={qualityPctStyle(r.extPoaErrPct)}>{r.extPoaErrPct != null ? `${r.extPoaErrPct}%` : "–"}</td>
                 </tr>
               ))}
             </tbody>
@@ -3336,15 +3313,15 @@ function PoaView({
         <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
           <KpiPlain kpi={ov.avgAht} kc="var(--teal)" />
-          <KpiPlain kpi={ov.errorRate} kc="var(--red)" />
-          {poaExternalOverviewQuery.data?.data && <KpiPlain kpi={poaExternalOverviewQuery.data.data.errorRate} kc="var(--orange)" />}
+          <KpiPlain kpi={ov.errorRate} kc="var(--red)" quality />
+          {poaExternalOverviewQuery.data?.data && <KpiPlain kpi={poaExternalOverviewQuery.data.data.errorRate} kc="var(--orange)" quality />}
         </div>
       )}
       {ov && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-          <KpiPlain kpi={ov.classificationErrorRate} kc="var(--purple)" />
-          <KpiPlain kpi={ov.extractionErrorRate} kc="var(--purple)" />
-          <KpiPlain kpi={ov.dataComparisonErrorRate} kc="var(--purple)" />
+          <KpiPlain kpi={ov.classificationErrorRate} kc="var(--purple)" quality />
+          <KpiPlain kpi={ov.extractionErrorRate} kc="var(--purple)" quality />
+          <KpiPlain kpi={ov.dataComparisonErrorRate} kc="var(--purple)" quality />
         </div>
       )}
 
@@ -3556,7 +3533,7 @@ function PoaView({
                   <td>{r.label}</td>
                   <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
                   <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
-                  <td className="oc-right">{r.errorRate !== null ? `${r.errorRate}%` : "—"}</td>
+                  <td className="oc-right" style={qualityPctStyle(r.errorRate)}>{r.errorRate !== null ? `${r.errorRate}%` : "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -3981,7 +3958,7 @@ function PoaExternalView({
         <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
           <KpiPlain kpi={ov.avgAht} kc="var(--teal)" />
-          <KpiPlain kpi={ov.errorRate} kc="var(--red)" />
+          <KpiPlain kpi={ov.errorRate} kc="var(--red)" quality />
           <KpiPlain kpi={ov.distinctClients} kc="var(--purple)" />
         </div>
       )}
@@ -4038,7 +4015,7 @@ function PoaExternalView({
                   <td>{r.label}</td>
                   <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
                   <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
-                  <td className="oc-right">{r.errorRate !== null ? `${r.errorRate}%` : "—"}</td>
+                  <td className="oc-right" style={qualityPctStyle(r.errorRate)}>{r.errorRate !== null ? `${r.errorRate}%` : "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -4539,6 +4516,8 @@ function isoLocal(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+type DateRange = { from: string; to: string };
+
 // ── Audit Sampling View ────────────────────────────────────────────────────────
 
 interface AuditSamplingRow {
@@ -4570,20 +4549,22 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
 
   const filtered = rows.filter((r) => (!clientFilter || r.client === clientFilter) && (!docTypeFilter || r.documentType === docTypeFilter));
 
-  const errC = (v: number | null) =>
-    v === null ? undefined : v > 1 ? ({ background: "var(--red)", color: "#fff" } as React.CSSProperties) : v > 0.75 ? ({ background: "var(--orange)", color: "#fff" } as React.CSSProperties) : ({ background: "var(--green)", color: "#fff" } as React.CSSProperties);
+  const errC = (v: number | null) => qualityPctStyle(v);
+
 
   return (
     <div className="space-y-4">
       <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 style={{ marginBottom: 0 }}>Audit Sampling — DOC Check &amp; POA</h3>
-          <div className="oc-pillbar">
-            {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
-              <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
-                {g[0].toUpperCase() + g.slice(1)}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="oc-pillbar">
+              {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
+                <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
+                  {g[0].toUpperCase() + g.slice(1)}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -4674,11 +4655,7 @@ function StackRankingView({ range, tlFilter, amFilter }: { range: DateRange; tlF
 
   const rows = q.data?.data ?? [];
 
-  const errC = (v: number | null) =>
-    v === null ? undefined
-      : v > 1 ? ({ background: "var(--red)", color: "#fff" } as React.CSSProperties)
-      : v > 0.75 ? ({ background: "var(--orange)", color: "#fff" } as React.CSSProperties)
-      : ({ background: "var(--green)", color: "#fff" } as React.CSSProperties);
+  const errC = (v: number | null) => qualityPctStyle(v);
   const QUALITY_PCT_KEYS = new Set(["intErrPct", "extErrPct", "crePct"]);
 
   const WEIGHTS_AM_TL = [
@@ -4697,17 +4674,20 @@ function StackRankingView({ range, tlFilter, amFilter }: { range: DateRange; tlF
   ];
   const weights = tier === "Analyst" ? WEIGHTS_ANALYST : WEIGHTS_AM_TL;
 
+
   return (
     <div className="space-y-4">
       <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 style={{ marginBottom: 0 }}>Stack Ranking</h3>
-          <div className="oc-pillbar">
-            {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
-              <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
-                {g[0].toUpperCase() + g.slice(1)}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="oc-pillbar">
+              {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
+                <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
+                  {g[0].toUpperCase() + g.slice(1)}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -4789,6 +4769,7 @@ function defaultRange() {
 export default function OnfidoProcessDashboard({ embedded = false }: { embedded?: boolean }) {
   const Shell = embedded ? Fragment : DashboardLayout;
   const [view, setView] = useState<ViewKey>("overview");
+  const exportRef = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState(defaultRange());
   const { tlFilter, setTlFilter, amFilter, setAmFilter, analystFilter, setAnalystFilter, tlOptions, amOptions, analystOptions, clear: clearHierarchy } = useHierarchyFilters(range);
   const [activeTable, setActiveTable] = useState<string>("ONFIDO_DOC_RAW");
@@ -4869,6 +4850,10 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           )}
 
           <OnfidoFreshnessStrip />
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <OnfidoExportButton targetRef={exportRef} filename={`onfido_${view}`} label="Export (Excel)" />
+          </div>
+          <div ref={exportRef} className="space-y-5">
           {view === "trends" && <TrendsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "outliers" && <OnfidoOutliersView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "alerts" && <AlertsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
@@ -4896,6 +4881,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           {view === "stackranking" && <StackRankingView range={range} tlFilter={tlFilter} amFilter={amFilter} />}
 
           {view === "overview" && <OnfidoOverviewReport range={range} tlFilter={tlFilter} amFilter={amFilter} />}
+          </div>
         </div>
 
         <RecordDrawer

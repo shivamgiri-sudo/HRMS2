@@ -261,8 +261,10 @@ export function MatrixLineChart({ matrix, granularity, format, secondAxisFrom, f
 }
 
 /** The sheet's "row = task type / metric, column = period" grid. */
-export function MatrixTable({ matrix, granularity, format, formats, labelHeader }: {
+export function MatrixTable({ matrix, granularity, format, formats, labelHeader, quality = false }: {
   matrix: Matrix; granularity: Granularity; format: MatrixFormat; formats?: MatrixFormat[]; labelHeader: string;
+  /** Rows are error rates: fill percent cells green / amber / red. */
+  quality?: boolean;
 }) {
   return (
     <div style={{ overflowX: "auto", marginTop: 10 }}>
@@ -278,7 +280,7 @@ export function MatrixTable({ matrix, granularity, format, formats, labelHeader 
             <tr key={r.label}>
               <td>{r.label}</td>
               {r.values.map((v, i) => (
-                <td key={matrix.buckets[i]} className="oc-right">{formatMatrixValue(v, formats?.[idx] ?? format)}</td>
+                <td key={matrix.buckets[i]} className="oc-right" style={quality && (formats?.[idx] ?? format).unit === "percent" ? qualityPctStyle(v) : undefined}>{formatMatrixValue(v, formats?.[idx] ?? format)}</td>
               ))}
             </tr>
           ))}
@@ -291,4 +293,16 @@ export function MatrixTable({ matrix, granularity, format, formats, labelHeader 
 /** True when a matrix has no real number at all (so the chart would be a blank frame). */
 export function matrixIsEmpty(m: Matrix | null | undefined): boolean {
   return !m || m.buckets.length === 0 || m.rows.every((r) => r.values.every((v) => v === null));
+}
+
+/**
+ * Quality error-% fill: green <= 0.75, amber > 0.75 to 1, red > 1 (client rule, all quality parameters).
+ * Fills are picked for WCAG AA text contrast (>= 4.5:1): white on dark green 5.0, white on dark red 6.5,
+ * near-black on amber 8.3. The old white-on-amber was 2.2:1.
+ */
+export function qualityPctStyle(pct: number | null | undefined): CSSProperties | undefined {
+  if (pct === null || pct === undefined) return undefined;
+  if (pct > 1) return { background: "#b91c1c", color: "#fff", fontWeight: 700 };
+  if (pct > 0.75) return { background: "#f59e0b", color: "#111827", fontWeight: 700 };
+  return { background: "#15803d", color: "#fff", fontWeight: 700 };
 }

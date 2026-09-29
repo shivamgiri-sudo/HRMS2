@@ -21,7 +21,7 @@ export function withoutGridlines(xlsx: Uint8Array): Uint8Array {
   const files = unzipSync(xlsx);
   for (const [path, bytes] of Object.entries(files)) {
     if (!/^xl\/worksheets\/sheet\d+\.xml$/.test(path)) continue;
-    const xml = strFromU8(bytes).replace(/<sheetView(?![^>]*showGridLines)/g, '<sheetView showGridLines="0"');
+    const xml = strFromU8(bytes).replace(/<sheetView(?=[\s/>])(?![^>]*showGridLines)/g, '<sheetView showGridLines="0"');
     files[path] = strToU8(xml);
   }
   return zipSync(files);

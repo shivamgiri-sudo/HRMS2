@@ -59,11 +59,20 @@ describe("PnlMasterControlCenterPage — Process dropdowns scoped to their form'
     const occurrences = (
       SRC.match(/processes=\{processes\.filter\(\(process\) => !branchFilter \|\| process\.branch_id === branchFilter\)\}/g) ?? []
     ).length;
-    expect(occurrences).toBe(3);
+    // 4, not 3: the three form dropdowns below, plus the page's own top-level "Master scope"
+    // Process filter (added later — that one had no branch scoping at all, unlike the forms).
+    expect(occurrences).toBe(4);
     // Each must be wired to its own form's own onChange — not, say, three copies of the same
     // dropdown. Confirms the three distinct setters this fix touched are all present.
     expect(SRC).toContain("setRevenueRuleForm((current) => ({ ...current, processId: value }))");
     expect(SRC).toContain("setDeliveryForm((current) => ({ ...current, processId: value }))");
     expect(SRC).toContain("setRevenueComponentForm((current) => ({ ...current, processId: value }))");
+  });
+
+  it("Master scope Process filter is scoped to the Master scope Branch filter, and picking a branch clears a stale process selection", () => {
+    expect(SRC).toMatch(
+      /<Field label="Process filter"><ProcessSelect value=\{processFilter\} onChange=\{setProcessFilter\} processes=\{processes\.filter\(\(process\) => !branchFilter \|\| process\.branch_id === branchFilter\)\} allowBlank \/><\/Field>/
+    );
+    expect(SRC).toContain("onChange={(value) => { setBranchFilter(value); if (processFilter) setProcessFilter(\"\"); }}");
   });
 });

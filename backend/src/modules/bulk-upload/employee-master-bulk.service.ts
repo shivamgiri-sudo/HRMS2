@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 import { normalizeDate } from "./bulk-approval.service.js";
+import { clearOnfidoResponseCache } from "../onfido-process/onfido-response-cache.js";
 
 interface BatchRow extends RowDataPacket {
   id: string;
@@ -39,18 +40,22 @@ const CHUNK_SIZE = 200;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  for (let i = 0; i < items.length; i += size)
+    out.push(items.slice(i, i + size));
   return out;
 }
 
 /** Bulk-fetch a lookup table's id for every distinct code referenced in the batch. */
-async function bulkLookup(sql: string, codes: Set<string>): Promise<Map<string, string>> {
+async function bulkLookup(
+  sql: string,
+  codes: Set<string>,
+): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (codes.size === 0) return map;
   const codeList = Array.from(codes);
   const [rows] = await db.execute<CodeRow[]>(
     `${sql} IN (${codeList.map(() => "?").join(",")})`,
-    codeList
+    codeList,
   );
   for (const r of rows) map.set(r.code, r.id);
   return map;
@@ -58,13 +63,13 @@ async function bulkLookup(sql: string, codes: Set<string>): Promise<Map<string, 
 
 export async function importEmployeeMasterBatch(
   batchId: string,
-  importedByUserId: string
+  importedByUserId: string,
 ): Promise<{ importedRows: number; errorRows: number; errors: string[] }> {
   const [batchRows] = await db.execute<BatchRow[]>(
     `SELECT id, row_no, normalized_data FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
       ORDER BY row_no`,
-    [batchId]
+    [batchId],
   );
 
   if (batchRows.length === 0) {
@@ -137,10 +142,18 @@ export async function importEmployeeMasterBatch(
     }
 
     const branchCode = data.branch_code ? String(data.branch_code) : null;
-    const departmentCode = data.department_code ? String(data.department_code) : null;
-    const designationCode = data.designation_code ? String(data.designation_code) : null;
-    const costCentreCode = data.cost_centre_code ? String(data.cost_centre_code).trim() : null;
-    const processCode = data.process_code ? String(data.process_code).trim() : null;
+    const departmentCode = data.department_code
+      ? String(data.department_code)
+      : null;
+    const designationCode = data.designation_code
+      ? String(data.designation_code)
+      : null;
+    const costCentreCode = data.cost_centre_code
+      ? String(data.cost_centre_code).trim()
+      : null;
+    const processCode = data.process_code
+      ? String(data.process_code).trim()
+      : null;
     const lobCode = data.lob_code ? String(data.lob_code).trim() : null;
 
     if (branchCode) branchCodes.add(branchCode);
@@ -151,7 +164,10 @@ export async function importEmployeeMasterBatch(
     if (lobCode) lobCodes.add(lobCode);
 
     parsed.push({
-      rowId: row.id, rowNo: row.row_no, employeeCode, firstName,
+      rowId: row.id,
+      rowNo: row.row_no,
+      employeeCode,
+      firstName,
       lastName: data.last_name ? String(data.last_name).trim() : null,
       mobile: data.mobile ? String(data.mobile).trim() : null,
       email: data.email ? String(data.email).trim() : null,
@@ -165,7 +181,9 @@ export async function importEmployeeMasterBatch(
       // an unparseable value is left null rather than rejecting the row,
       // matching this file's existing leniency for other optional fields
       // (see the employmentType comment above).
-      dob: data.date_of_birth ? normalizeDate(String(data.date_of_birth).trim()) : null,
+      dob: data.date_of_birth
+        ? normalizeDate(String(data.date_of_birth).trim())
+        : null,
       // No fabricated default. 'PERMANENT' never existed among live employment_type
       // values (ONROLL, MGMT. TRAINEE, Full Time, HARYANA, OffRoll — varchar, not an
       // enum) and statutory/PF reporting hard-filters on employment_type = 'ONROLL'
@@ -173,21 +191,53 @@ export async function importEmployeeMasterBatch(
       // that left this blank was silently invisible to PF/ESIC reporting. NULL is
       // honest about "not classified"; asserting a specific wrong classification is
       // worse, the same reasoning this file already applies to unresolved master codes.
-      employmentType: data.employment_type ? String(data.employment_type).trim() : null,
-      branchCode, departmentCode, designationCode, costCentreCode, processCode, lobCode,
+      employmentType: data.employment_type
+        ? String(data.employment_type).trim()
+        : null,
+      branchCode,
+      departmentCode,
+      designationCode,
+      costCentreCode,
+      processCode,
+      lobCode,
     });
   }
 
   // Six bulk lookups (one per referenced master table) instead of up to six
   // SELECTs per row. cost_centre_code and process_code/lob_code are also
   // restricted to active_status = 1, same as the original per-row queries.
-  const [branchIds, departmentIds, designationIds, costCentreIds, processIds, lobIds] = await Promise.all([
-    bulkLookup(`SELECT id, branch_code AS code FROM branch_master WHERE branch_code`, branchCodes),
-    bulkLookup(`SELECT id, dept_code AS code FROM department_master WHERE dept_code`, departmentCodes),
-    bulkLookup(`SELECT id, designation_code AS code FROM designation_master WHERE designation_code`, designationCodes),
-    bulkLookup(`SELECT id, cost_centre_code AS code FROM cost_centre_master WHERE active_status = 1 AND cost_centre_code`, costCentreCodes),
-    bulkLookup(`SELECT id, process_code AS code FROM process_master WHERE active_status = 1 AND process_code`, processCodes),
-    bulkLookup(`SELECT id, lob_code AS code FROM lob_master WHERE active_status = 1 AND lob_code`, lobCodes),
+  const [
+    branchIds,
+    departmentIds,
+    designationIds,
+    costCentreIds,
+    processIds,
+    lobIds,
+  ] = await Promise.all([
+    bulkLookup(
+      `SELECT id, branch_code AS code FROM branch_master WHERE branch_code`,
+      branchCodes,
+    ),
+    bulkLookup(
+      `SELECT id, dept_code AS code FROM department_master WHERE dept_code`,
+      departmentCodes,
+    ),
+    bulkLookup(
+      `SELECT id, designation_code AS code FROM designation_master WHERE designation_code`,
+      designationCodes,
+    ),
+    bulkLookup(
+      `SELECT id, cost_centre_code AS code FROM cost_centre_master WHERE active_status = 1 AND cost_centre_code`,
+      costCentreCodes,
+    ),
+    bulkLookup(
+      `SELECT id, process_code AS code FROM process_master WHERE active_status = 1 AND process_code`,
+      processCodes,
+    ),
+    bulkLookup(
+      `SELECT id, lob_code AS code FROM lob_master WHERE active_status = 1 AND lob_code`,
+      lobCodes,
+    ),
   ]);
 
   /*
@@ -229,11 +279,23 @@ export async function importEmployeeMasterBatch(
    * Note the lookups for cost_centre/process/lob are restricted to active_status = 1, so a
    * code that exists but is inactive is reported here too.
    */
-  const RESOLVERS: Array<{ label: string; code: (r: ParsedRow) => string | null; map: Map<string, string> }> = [
-    { label: "branch_code",      code: (r) => r.branchCode,      map: branchIds },
-    { label: "department_code",  code: (r) => r.departmentCode,  map: departmentIds },
-    { label: "cost_centre_code", code: (r) => r.costCentreCode,  map: costCentreIds },
-    { label: "lob_code",         code: (r) => r.lobCode,         map: lobIds },
+  const RESOLVERS: Array<{
+    label: string;
+    code: (r: ParsedRow) => string | null;
+    map: Map<string, string>;
+  }> = [
+    { label: "branch_code", code: (r) => r.branchCode, map: branchIds },
+    {
+      label: "department_code",
+      code: (r) => r.departmentCode,
+      map: departmentIds,
+    },
+    {
+      label: "cost_centre_code",
+      code: (r) => r.costCentreCode,
+      map: costCentreIds,
+    },
+    { label: "lob_code", code: (r) => r.lobCode, map: lobIds },
   ];
 
   const importable: ParsedRow[] = [];
@@ -243,19 +305,25 @@ export async function importEmployeeMasterBatch(
     if (!r.processCode) {
       problems.push("process_code is required");
     } else if (!processIds.has(r.processCode)) {
-      problems.push(`process_code "${r.processCode}" does not match any active process`);
+      problems.push(
+        `process_code "${r.processCode}" does not match any active process`,
+      );
     }
 
     if (!r.designationCode) {
       problems.push("designation_code is required");
     } else if (!designationIds.has(r.designationCode)) {
-      problems.push(`designation_code "${r.designationCode}" does not match any active designation`);
+      problems.push(
+        `designation_code "${r.designationCode}" does not match any active designation`,
+      );
     }
 
     for (const res of RESOLVERS) {
       const code = res.code(r);
       if (code && !res.map.has(code)) {
-        problems.push(`${res.label} "${code}" does not match any active record`);
+        problems.push(
+          `${res.label} "${code}" does not match any active record`,
+        );
       }
     }
 
@@ -279,14 +347,20 @@ export async function importEmployeeMasterBatch(
   // as an error — every other row in the batch still lands, matching the
   // original per-row loop's error isolation.
   const buildParams = (r: ParsedRow) => [
-    r.employeeCode, toStoredNameRequired(r.firstName), toStoredName(r.lastName), r.mobile, r.email,
-    r.gender, r.doj, r.dob,
-    r.branchCode ? branchIds.get(r.branchCode) ?? null : null,
-    r.departmentCode ? departmentIds.get(r.departmentCode) ?? null : null,
-    r.designationCode ? designationIds.get(r.designationCode) ?? null : null,
-    r.costCentreCode ? costCentreIds.get(r.costCentreCode) ?? null : null,
-    r.processCode ? processIds.get(r.processCode) ?? null : null,
-    r.lobCode ? lobIds.get(r.lobCode) ?? null : null,
+    r.employeeCode,
+    toStoredNameRequired(r.firstName),
+    toStoredName(r.lastName),
+    r.mobile,
+    r.email,
+    r.gender,
+    r.doj,
+    r.dob,
+    r.branchCode ? (branchIds.get(r.branchCode) ?? null) : null,
+    r.departmentCode ? (departmentIds.get(r.departmentCode) ?? null) : null,
+    r.designationCode ? (designationIds.get(r.designationCode) ?? null) : null,
+    r.costCentreCode ? (costCentreIds.get(r.costCentreCode) ?? null) : null,
+    r.processCode ? (processIds.get(r.processCode) ?? null) : null,
+    r.lobCode ? (lobIds.get(r.lobCode) ?? null) : null,
     r.employmentType,
     r.employmentType,
   ];
@@ -316,7 +390,9 @@ export async function importEmployeeMasterBatch(
        emp_type = VALUES(emp_type)`;
 
   for (const rowsInChunk of chunk(importable, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')").join(", ");
+    const placeholders = rowsInChunk
+      .map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')")
+      .join(", ");
     const params = rowsInChunk.flatMap(buildParams);
 
     try {
@@ -329,7 +405,10 @@ export async function importEmployeeMasterBatch(
     } catch {
       for (const r of rowsInChunk) {
         try {
-          await db.execute(insertSql("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')"), buildParams(r));
+          await db.execute(
+            insertSql("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')"),
+            buildParams(r),
+          );
           importedRowIds.push(r.rowId);
           provisionQueue.push(r.employeeCode);
           importedRows++;
@@ -347,17 +426,20 @@ export async function importEmployeeMasterBatch(
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'imported'
        WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
-      importedRowIds
+      importedRowIds,
     );
   }
   if (errorUpdates.length > 0) {
     const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
-    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+    const caseParams = errorUpdates.flatMap((u) => [
+      u.rowId,
+      JSON.stringify([u.message]),
+    ]);
     const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
       `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...caseParams, ...ids]
+      [...caseParams, ...ids],
     );
   }
 
@@ -365,12 +447,20 @@ export async function importEmployeeMasterBatch(
   // logged and never turn a successfully imported row into an error.
   for (const employeeCode of provisionQueue) {
     try {
-      const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode, createdBy: importedByUserId });
+      const lmsResult = await provisionLmsIdentityForEmployee({
+        employeeCode,
+        createdBy: importedByUserId,
+      });
       if (lmsResult.message) {
-        console.warn(`[Bulk Import] LMS provisioning for ${employeeCode}: ${lmsResult.message}`);
+        console.warn(
+          `[Bulk Import] LMS provisioning for ${employeeCode}: ${lmsResult.message}`,
+        );
       }
     } catch (err) {
-      console.error(`[Bulk Import] LMS provisioning failed for ${employeeCode}:`, err instanceof Error ? err.message : String(err));
+      console.error(
+        `[Bulk Import] LMS provisioning failed for ${employeeCode}:`,
+        err instanceof Error ? err.message : String(err),
+      );
     }
   }
 
@@ -378,13 +468,17 @@ export async function importEmployeeMasterBatch(
     errorRows === 0
       ? "imported"
       : importedRows === 0
-      ? "validation_failed"
-      : "imported_with_errors";
+        ? "validation_failed"
+        : "imported_with_errors";
 
   await db.execute(
     `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId]
+    [finalStatus, importedRows, errorRows, batchId],
   );
+
+  // Dashboards (e.g. the Onfido Capacity Builder card) cache LOB-derived reads for up to 30
+  // minutes; a mapping change here must be visible right away, not after that TTL expires.
+  if (importedRows > 0) clearOnfidoResponseCache();
 
   return { importedRows, errorRows, errors };
 }

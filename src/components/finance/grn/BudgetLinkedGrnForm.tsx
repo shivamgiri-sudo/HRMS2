@@ -1523,6 +1523,8 @@ export function BudgetLinkedGrnForm({
             next.costCentreSplit = "No approved budget line matches this Head/Sub-head yet.";
           } else if (Math.abs(costCentreSplitTotal - 100) > 0.5) {
             next.costCentreSplit = `Cost-centre split percentages must total 100% (currently ${decimal(costCentreSplitTotal, 2)}%).`;
+          } else if (costCentreSplits.some((r) => r.included && !(Number(r.percentage) > 0))) {
+            next.costCentreSplit = "Every ticked cost centre must have a percentage greater than 0%. Set a percentage or untick the zero-percent rows.";
           }
           // Client-side budget cap per cost-centre split — mirrors the vendor check above.
           if (!next.costCentreSplit && costCentreSplits.length > 0 && Number(form.amount) > 0) {
@@ -1955,7 +1957,7 @@ export function BudgetLinkedGrnForm({
             // Vendor: a trivial placeholder — the follow-up invoice-components call below fully
             // overwrites every meaningful header column with the real N-cost-centre x M-component
             // breakdown, exactly like PUT .../allocations already fully overwrites this today.
-            quantity: isVendor ? 0.0001 : Number(rows[0].quantity),
+            quantity: isVendor ? 0.0001 : Math.max(0.0001, rows.reduce((sum, r) => sum + Number(r.quantity), 0)),
             unitRate: isVendor ? 0 : Number(rows[0].unitRate),
             billDate: form.billDate,
             // Send only when the user has explicitly picked a different accounting month.
