@@ -667,69 +667,50 @@ export async function getCostOfNonAdherence(
   }
   const whereClause = conditions.join(' AND ');
 
-  const [rows] = await db.execute<RowDataPacket[]>(
+  // Aggregated in SQL (one summary row) instead of pulling every roster-day into Node —
+  // a month for a branch is tens of thousands of rows, which was the page's main latency.
+  const [aggRows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       ra.assignment_type,
-       ra.shift_start_time,
-       ra.shift_end_time,
-       st.start_time AS template_start,
-       st.end_time AS template_end,
-       att.clock_in_time AS first_in,
-       att.raw_minutes / 60 AS total_hours
-     FROM employees e
-     JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
-     LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
-     WHERE ${whereClause}
-       AND ra.roster_date BETWEEN ? AND ?`,
+       COALESCE(SUM(x.exp_h), 0) AS planned_h,
+       COALESCE(SUM(CASE WHEN x.has_in = 1 THEN x.worked_h ELSE 0 END), 0) AS worked_h,
+       COALESCE(SUM(CASE WHEN x.has_in = 0 THEN x.exp_h ELSE 0 END), 0) AS absent_h,
+       COALESCE(SUM(CASE WHEN x.has_in = 1 AND x.ss IS NOT NULL AND x.in_sec / 60 > x.ss / 60 + ${GRACE_MINUTES}
+                         THEN LEAST((x.in_sec - x.ss) / 3600, 2) ELSE 0 END), 0) AS late_h,
+       COALESCE(SUM(CASE WHEN x.has_in = 1 AND x.worked_h < x.exp_h * 0.9 AND x.worked_h >= x.exp_h * 0.5
+                         THEN x.exp_h - x.worked_h ELSE 0 END), 0) AS early_h,
+       COALESCE(SUM(CASE WHEN x.has_in = 1 AND x.worked_h < x.exp_h * 0.5
+                         THEN x.exp_h - x.worked_h ELSE 0 END), 0) AS incomplete_h
+     FROM (
+       SELECT
+         CASE WHEN COALESCE(st.start_time, ra.shift_start_time) IS NOT NULL
+                   AND COALESCE(st.end_time, ra.shift_end_time) IS NOT NULL
+              THEN (CASE WHEN TIME_TO_SEC(COALESCE(st.end_time, ra.shift_end_time)) >= TIME_TO_SEC(COALESCE(st.start_time, ra.shift_start_time))
+                         THEN TIME_TO_SEC(COALESCE(st.end_time, ra.shift_end_time)) - TIME_TO_SEC(COALESCE(st.start_time, ra.shift_start_time))
+                         ELSE 86400 - TIME_TO_SEC(COALESCE(st.start_time, ra.shift_start_time)) + TIME_TO_SEC(COALESCE(st.end_time, ra.shift_end_time))
+                    END) / 3600
+              ELSE 8 END AS exp_h,
+         TIME_TO_SEC(COALESCE(st.start_time, ra.shift_start_time)) AS ss,
+         (att.clock_in_time IS NOT NULL) AS has_in,
+         TIME_TO_SEC(TIME(att.clock_in_time)) AS in_sec,
+         COALESCE(att.raw_minutes, 0) / 60 AS worked_h
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON e.id = ra.employee_id
+       LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
+       LEFT JOIN attendance_daily_record att ON att.employee_id = ra.employee_id AND att.record_date = ra.roster_date
+       WHERE ${whereClause}
+         AND ra.assignment_type NOT IN ('LEAVE', 'TRAINING')
+         AND ra.roster_date BETWEEN ? AND ?
+     ) x`,
     [...params, firstDay, lastDay]
   );
 
-  let totalPlannedHours = 0;
-  let actualWorkedHours = 0;
-  let unplannedAbsenceHours = 0;
-  let lateHours = 0;
-  let earlyDepartureHours = 0;
-  let incompleteHours = 0;
-
-  for (const r of rows) {
-    const type = String(r.assignment_type ?? '').toUpperCase();
-    if (type === 'LEAVE' || type === 'TRAINING') continue;
-
-    const shiftStart = r.template_start || r.shift_start_time;
-    const shiftEnd = r.template_end || r.shift_end_time;
-    let expectedHours = 8;
-    if (shiftStart && shiftEnd) {
-      const startMin = timeToMinutes(String(shiftStart));
-      const endMin = timeToMinutes(String(shiftEnd));
-      expectedHours = (endMin >= startMin ? endMin - startMin : (24 * 60 - startMin) + endMin) / 60;
-    }
-
-    totalPlannedHours += expectedHours;
-
-    if (!r.first_in) {
-      unplannedAbsenceHours += expectedHours;
-    } else {
-      const workedHours = Number(r.total_hours) || 0;
-      actualWorkedHours += workedHours;
-
-      const loginMin = timeToMinutes(String(r.first_in));
-      const shiftStartMin = shiftStart ? timeToMinutes(String(shiftStart)) : 0;
-
-      if (shiftStart && loginMin > shiftStartMin + GRACE_MINUTES) {
-        lateHours += Math.min((loginMin - shiftStartMin) / 60, 2);
-      }
-
-      if (workedHours < expectedHours * 0.9) {
-        const lost = expectedHours - workedHours;
-        if (workedHours < expectedHours * 0.5) {
-          incompleteHours += lost;
-        } else {
-          earlyDepartureHours += lost;
-        }
-      }
-    }
-  }
+  const agg = aggRows[0] ?? {};
+  const totalPlannedHours = Number(agg.planned_h) || 0;
+  const actualWorkedHours = Number(agg.worked_h) || 0;
+  const unplannedAbsenceHours = Number(agg.absent_h) || 0;
+  const lateHours = Number(agg.late_h) || 0;
+  const earlyDepartureHours = Number(agg.early_h) || 0;
+  const incompleteHours = Number(agg.incomplete_h) || 0;
 
   const hoursLost = totalPlannedHours - actualWorkedHours;
   const directCostLoss = Math.round(hoursLost * DEFAULT_HOURLY_COST_INR);

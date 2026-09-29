@@ -69,6 +69,7 @@ const TEAM_ROSTER_ROLES = [
 router.get(
   "/shrinkage-intelligence/:branchId",
   requireRole(...ANALYTICS_ROLES),
+  analyticsCache("roster-analytics-shrinkage-intelligence"),
   async (req, res) => {
     try {
       const { branchId } = req.params;
@@ -195,6 +196,7 @@ router.get(
 router.get(
   "/forecast/:branchId",
   requireRole(...ANALYTICS_ROLES),
+  analyticsCache("roster-analytics-forecast"),
   async (req, res) => {
     try {
       const { branchId } = req.params;
