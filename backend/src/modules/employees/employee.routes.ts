@@ -547,7 +547,7 @@ router.patch(
           });
       }
       const [conflictRows] = (await db.execute(
-        "SELECT id FROM auth_user WHERE LOWER(email) = ? AND id != ? LIMIT 1",
+        "SELECT id FROM auth_user WHERE email = ? AND id != ? LIMIT 1",
         [candidate, userId],
       )) as any[];
       if (conflictRows.length) {
@@ -1890,7 +1890,10 @@ router.get(
      * day's rows (~1,000) instead of every employee: 1,115/741/548ms before, 409/115/208ms
      * after. The scope clause still applies through the same `e` alias.
      */
-    const [rows] = await db.execute<RowDataPacket[]>(
+    // The per-day record aggregate and the active-headcount count are independent, so they
+    // run together (same statements, same params).
+    const [[rows], [totalRow]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
       `SELECT
        COUNT(*) AS total_with_record,
        SUM(adr.attendance_status = 'present')        AS present,
@@ -1907,11 +1910,12 @@ router.get(
       AND e.employment_status = 'Active'
      WHERE adr.record_date = ?${scopeSql}`,
       [today, ...scoped.params],
-    );
-    const [totalRow] = await db.execute<RowDataPacket[]>(
+      ),
+      db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM employees e WHERE e.active_status = 1 AND e.employment_status = 'Active'${scopeSql}`,
       scoped.params,
-    );
+      ),
+    ]);
     const total_active = Number((totalRow[0] as any)?.total ?? 0);
     const r = rows[0] as any;
     return res.json({
@@ -2635,7 +2639,7 @@ router.get(
            NULLIF(COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END), 0),
          1) AS attendance_pct
        FROM attendance_daily_record
-      WHERE employee_id = ? AND YEAR(record_date) = YEAR(NOW()) AND MONTH(record_date) = MONTH(NOW())`,
+      WHERE employee_id = ? AND record_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND record_date < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)`,
         [targetId],
       );
       if (attRows[0]) attendance = attRows[0] as any;
@@ -2973,7 +2977,7 @@ router.post(
     const bcrypt = (await import("bcryptjs")).default;
 
     const [existingAuth] = await db.execute<RowDataPacket[]>(
-      "SELECT id, is_blocked FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1",
+      "SELECT id, is_blocked FROM auth_user WHERE email = ? LIMIT 1",
       [authEmail],
     );
 

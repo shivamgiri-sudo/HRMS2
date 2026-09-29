@@ -415,11 +415,12 @@ export const jobRequisitionService = {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const [countRows] = await db.execute<RowDataPacket[]>(
+    // Count and page are independent reads over the same filter — issued together below.
+    const countPromise = db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM job_requisition jr ${whereClause}`,
       params
     );
-    const total = Number(countRows[0]?.total ?? 0);
+    countPromise.catch(() => undefined); // awaited below; avoids an unhandled rejection if the page query throws first
 
     // Use db.query() here — db.execute() (prepared statements) crashes mysql2 when a derived
     // subquery contains SUM(CASE WHEN...). LIMIT/OFFSET are safe integer-interpolated.
@@ -470,6 +471,8 @@ export const jobRequisitionService = {
        LIMIT ${limit} OFFSET ${offset}`,
       params
     );
+    const [countRows] = await countPromise;
+    const total = Number(countRows[0]?.total ?? 0);
 
     return {
       data: rows as JobRequisitionSummary[],
@@ -1234,7 +1237,9 @@ export const jobRequisitionService = {
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-    const [metrics] = await db.execute<RowDataPacket[]>(
+    // The four aggregates read the same filtered set independently, so they run concurrently.
+    const [[metrics], [byPriority], [byBranch], [byStatus]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
       `SELECT
         COUNT(*) AS total_requisitions,
         SUM(CASE WHEN approval_status NOT IN ('closed', 'cancelled') THEN 1 ELSE 0 END) AS open_requisitions,
@@ -1254,17 +1259,15 @@ export const jobRequisitionService = {
        FROM job_requisition
        ${whereClause}`,
       params
-    );
-
-    const [byPriority] = await db.execute<RowDataPacket[]>(
+    ),
+      db.execute<RowDataPacket[]>(
       `SELECT priority, COUNT(*) AS count
        FROM job_requisition
        ${whereClause}
        GROUP BY priority`,
       params
-    );
-
-    const [byBranch] = await db.execute<RowDataPacket[]>(
+    ),
+      db.execute<RowDataPacket[]>(
       `SELECT branch_name, COUNT(*) AS count,
         SUM(CASE WHEN approval_status = 'approved' THEN (requested_headcount - fulfilled_headcount) ELSE 0 END) AS open_positions
        FROM job_requisition
@@ -1273,15 +1276,15 @@ export const jobRequisitionService = {
        ORDER BY count DESC
        LIMIT 10`,
       params
-    );
-
-    const [byStatus] = await db.execute<RowDataPacket[]>(
+    ),
+      db.execute<RowDataPacket[]>(
       `SELECT approval_status, COUNT(*) AS count
        FROM job_requisition
        ${whereClause}
        GROUP BY approval_status`,
       params
-    );
+    ),
+    ]);
 
     const priorityMap: Record<string, number> = { low: 0, normal: 0, high: 0, urgent: 0 };
     for (const row of byPriority) {
@@ -2073,7 +2076,9 @@ ${bmiBlock}
     if (!reqRows[0]) throw Object.assign(new Error("Requisition not found"), { status: 404 });
     const req = reqRows[0];
 
-    const [funnelRows] = await db.execute<RowDataPacket[]>(
+    // Funnel, joined employees and pipeline are independent reads keyed on the same id.
+    const [[funnelRows], joinedEmployees, [pipelineRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(DISTINCT jrc.candidate_id) AS linked,
          COUNT(DISTINCT CASE WHEN c.walk_in_date IS NOT NULL OR qt.id IS NOT NULL THEN c.id END) AS walkin,
@@ -2091,19 +2096,18 @@ ${bmiBlock}
        LEFT JOIN lms_employee_mapping lm  ON lm.employee_id = e.id
        WHERE jrc.requisition_id = ?`,
       [id]
-    );
-    const fr = funnelRows[0] ?? {};
-
-    const joinedEmployees = await this.getJoinedEmployees(id);
-
-    const [pipelineRows] = await db.execute<RowDataPacket[]>(
+    ),
+      this.getJoinedEmployees(id),
+      db.execute<RowDataPacket[]>(
       `SELECT jrc.candidate_id, c.full_name, jrc.outcome, jrc.linked_at
        FROM job_requisition_candidate jrc
        JOIN ats_candidate c ON c.id = jrc.candidate_id
        WHERE jrc.requisition_id = ?
        ORDER BY jrc.linked_at ASC`,
       [id]
-    );
+    ),
+    ]);
+    const fr = funnelRows[0] ?? {};
 
     return {
       summary: {

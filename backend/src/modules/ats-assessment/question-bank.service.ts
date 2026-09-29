@@ -288,35 +288,36 @@ export async function countQuestionBankStats(): Promise<{
     setCount: number;
   }>;
 }> {
-  const [questionCount] = await db.execute<(RowDataPacket & { count: number })[]>(
-    `SELECT COUNT(*) as count FROM ats_question_bank WHERE active_status = 1`,
-  );
-  const [passageCount] = await db.execute<(RowDataPacket & { count: number })[]>(
-    `SELECT COUNT(*) as count FROM ats_typing_passage_bank WHERE active_status = 1`,
-  );
-
-  const [byProcessRole] = await db.execute<
-    (RowDataPacket & {
-      process_key: string;
-      role_key: string;
-      question_count: number;
-      set_count: number;
-    })[]
-  >(
-    `SELECT process_key, role_key, COUNT(*) as question_count, COUNT(DISTINCT set_number) as set_count
+  // Four independent aggregates — issued together rather than one after another.
+  const [[questionCount], [passageCount], [byProcessRole], [passageByProcessRole]] = await Promise.all([
+    db.execute<(RowDataPacket & { count: number })[]>(
+      `SELECT COUNT(*) as count FROM ats_question_bank WHERE active_status = 1`,
+    ),
+    db.execute<(RowDataPacket & { count: number })[]>(
+      `SELECT COUNT(*) as count FROM ats_typing_passage_bank WHERE active_status = 1`,
+    ),
+    db.execute<
+      (RowDataPacket & {
+        process_key: string;
+        role_key: string;
+        question_count: number;
+        set_count: number;
+      })[]
+    >(
+      `SELECT process_key, role_key, COUNT(*) as question_count, COUNT(DISTINCT set_number) as set_count
      FROM ats_question_bank
      WHERE active_status = 1
      GROUP BY process_key, role_key`,
-  );
-
-  const [passageByProcessRole] = await db.execute<
-    (RowDataPacket & { process_key: string; role_key: string; passage_count: number })[]
-  >(
-    `SELECT process_key, role_key, COUNT(*) as passage_count
+    ),
+    db.execute<
+      (RowDataPacket & { process_key: string; role_key: string; passage_count: number })[]
+    >(
+      `SELECT process_key, role_key, COUNT(*) as passage_count
      FROM ats_typing_passage_bank
      WHERE active_status = 1
      GROUP BY process_key, role_key`,
-  );
+    ),
+  ]);
 
   const passageMap = new Map(passageByProcessRole.map((p) => [`${p.process_key}:${p.role_key}`, p.passage_count]));
 

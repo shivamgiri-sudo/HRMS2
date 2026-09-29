@@ -132,4 +132,25 @@ describe('scopedAttendanceDailyHandler', () => {
     const res = await request(app).get(`/api/wfm/attendance/daily?branchId=${encodeURIComponent("'; DROP TABLE x --")}`);
     expect(res.status).toBe(400);
   });
+
+  it('issues the count and page queries concurrently (count started before page resolves)', async () => {
+    vi.mocked(hasRole).mockResolvedValue(false);
+    vi.mocked(getEmployeeForUser).mockResolvedValue({ id: 'emp-self' } as any);
+    const started: string[] = [];
+    mocks.execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('INFORMATION_SCHEMA')) return [[{ c: 0 }]];
+      if (sql.trim().startsWith('SELECT COUNT(*) AS total')) {
+        started.push('count');
+        await new Promise((r) => setTimeout(r, 15));
+        return [[{ total: 3 }]];
+      }
+      started.push('page');
+      expect(started).toContain('count');
+      return [[{ employee_id: 'emp-self', record_date: '2026-08-06' }]];
+    });
+    const res = await request(app).get('/api/wfm/attendance/daily?date=2026-08-06');
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(3);
+    expect(started).toEqual(['count', 'page']);
+  });
 });

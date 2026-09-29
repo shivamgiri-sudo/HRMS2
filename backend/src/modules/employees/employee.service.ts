@@ -77,7 +77,7 @@ const createAuthUserForEmployee = async (employeeId: string, email: string): Pro
 
   // Check if auth_user already exists for this email
   const [existingAuth] = await db.execute<RowDataPacket[]>(
-    'SELECT id, is_blocked FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1',
+    'SELECT id, is_blocked FROM auth_user WHERE email = ? LIMIT 1',
     [normalizedEmail]
   );
 
@@ -178,7 +178,7 @@ export const employeeService = {
     if (input.email) {
       const emailNorm = String(input.email).toLowerCase().trim();
       const [emailDup] = await db.execute<RowDataPacket[]>(
-        `SELECT employee_code FROM employees WHERE (LOWER(email) = ? OR LOWER(official_email) = ?) AND active_status = 1 LIMIT 1`,
+        `SELECT employee_code FROM employees WHERE (email = ? OR official_email = ?) AND active_status = 1 LIMIT 1`,
         [emailNorm, emailNorm]
       );
       if ((emailDup as RowDataPacket[]).length > 0)
@@ -408,7 +408,10 @@ export const employeeService = {
       ? `ORDER BY ${orderExpr} ${orderDir}`
       : `ORDER BY ${orderExpr} ${orderDir}, e.employee_code ASC`;
 
-    const [[rows], [countRows]] = await Promise.all([
+    // Analytics (when requested) are independent of the page rows and count, so they are issued
+    // in the same Promise.all instead of after it: wall time becomes the slowest single query
+    // rather than their sum. `null` placeholders keep the destructuring positions stable.
+    const [[rows], [countRows], statsResult, breakdownResult] = await Promise.all([
       db.execute<RowDataPacket[]>(
         `SELECT
            e.id, e.employee_code,
@@ -452,6 +455,49 @@ export const employeeService = {
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total FROM employees e ${where}`, params
       ),
+      includeAnalytics
+        ? db.execute<RowDataPacket[]>(
+            `SELECT
+               COUNT(*) AS total_employees,
+               SUM(e.active_status = 1) AS active_employees,
+               SUM(e.active_status = 0) AS inactive_employees,
+               COUNT(DISTINCT e.department_id) AS department_count
+             FROM employees e
+             ${filterWhere}`,
+            filterParams,
+          )
+        : null,
+      includeAnalytics
+        ? db.execute<RowDataPacket[]>(
+            // PERF: the old shape (employees LEFT JOIN process_master, GROUP BY pm.id, pm.process_name)
+            // did one process_master lookup per employee row (~59k) and ran past the 10s cap on prod.
+            // Aggregate by process_id first (142 groups) and join the small result instead; the
+            // outer GROUP BY still folds NULL / unknown process ids into the single "Unassigned"
+            // row exactly as before. With no filters the scan is pinned to the covering
+            // (active_status, process_id) index: the optimiser otherwise picks idx_emp_process
+            // and fetches every row just to read active_status.
+            `SELECT
+               pm.id AS process_id,
+               COALESCE(pm.process_name, 'Unassigned') AS process_name,
+               SUM(a.active_count) AS active_count,
+               SUM(a.inactive_count) AS inactive_count,
+               SUM(a.total_count) AS total_count
+             FROM (
+               SELECT e.process_id,
+                      SUM(e.active_status = 1) AS active_count,
+                      SUM(e.active_status = 0) AS inactive_count,
+                      COUNT(*) AS total_count
+                 FROM employees e ${filterConds.length === 0 ? "USE INDEX (idx_employees_directory_status_process)" : ""}
+                 ${filterWhere}
+                GROUP BY e.process_id
+             ) a
+             LEFT JOIN process_master pm ON pm.id = a.process_id
+             GROUP BY pm.id, pm.process_name
+             ORDER BY total_count DESC
+             LIMIT 100`,
+            filterParams,
+          )
+        : null,
     ]);
     const result: PaginatedResult<Employee> = {
       data: rows as Employee[],
@@ -464,34 +510,9 @@ export const employeeService = {
     // on the frontend, which fetches page=1&limit=1) — skip the extra aggregate queries on every
     // ordinary page navigation. Both queries reuse filterWhere/filterParams, i.e. every filter the
     // caller applied except recordStatus, for the reason documented above filterConds.
-    if (includeAnalytics) {
-      const [[statsRows], [breakdownRows]] = await Promise.all([
-        db.execute<RowDataPacket[]>(
-          `SELECT
-             COUNT(*) AS total_employees,
-             SUM(e.active_status = 1) AS active_employees,
-             SUM(e.active_status = 0) AS inactive_employees,
-             COUNT(DISTINCT e.department_id) AS department_count
-           FROM employees e
-           ${filterWhere}`,
-          filterParams,
-        ),
-        db.execute<RowDataPacket[]>(
-          `SELECT
-             pm.id AS process_id,
-             COALESCE(pm.process_name, 'Unassigned') AS process_name,
-             SUM(e.active_status = 1) AS active_count,
-             SUM(e.active_status = 0) AS inactive_count,
-             COUNT(*) AS total_count
-           FROM employees e
-           LEFT JOIN process_master pm ON pm.id = e.process_id
-           ${filterWhere}
-           GROUP BY pm.id, pm.process_name
-           ORDER BY total_count DESC
-           LIMIT 100`,
-          filterParams,
-        ),
-      ]);
+    if (includeAnalytics && statsResult && breakdownResult) {
+      const [statsRows] = statsResult;
+      const [breakdownRows] = breakdownResult;
       const s = (statsRows as any[])[0] ?? {};
       result.stats = {
         total_employees: Number(s.total_employees ?? 0),
@@ -825,7 +846,7 @@ export const employeeService = {
         // Employee has an account — sync the official email onto it
         const newEmail = input.officialEmail.toLowerCase().trim();
         const [conflict] = await db.execute<RowDataPacket[]>(
-          'SELECT id FROM auth_user WHERE LOWER(email) = ? AND id != ? LIMIT 1', [newEmail, userId]
+          'SELECT id FROM auth_user WHERE email = ? AND id != ? LIMIT 1', [newEmail, userId]
         );
         if (!(conflict as any[]).length) {
           await db.execute('UPDATE auth_user SET email = ? WHERE id = ?', [newEmail, userId]);

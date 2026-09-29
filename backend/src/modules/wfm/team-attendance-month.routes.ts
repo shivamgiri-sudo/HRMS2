@@ -96,8 +96,10 @@ teamAttendanceMonthRouter.get(
     const win = monthWindow(month);
 
     const userId = req.authUser!.id;
-    const isWide = await hasRole(userId, "admin", "hr", "wfm", "ceo", "super_admin");
-    const callerEmp = await getEmployeeForUser(userId);
+    const [isWide, callerEmp] = await Promise.all([
+      hasRole(userId, "admin", "hr", "wfm", "ceo", "super_admin"),
+      getEmployeeForUser(userId),
+    ]);
 
     // ── Who is in the team ────────────────────────────────────────────────────
     //
@@ -169,7 +171,8 @@ teamAttendanceMonthRouter.get(
     // for 31 days and then throw most of it away.
     const ids = employees.map((e) => String(e.id));
     const idPlaceholders = ids.map(() => "?").join(",");
-    const [cellRows] = await db.query<RowDataPacket[]>(
+    // Independent of the pending-regularization lookup below, so both run concurrently.
+    const cellRowsPromise = db.query<RowDataPacket[]>(
       `SELECT adr.employee_id,
               DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS d,
               adr.attendance_status, adr.lwp_value,
@@ -185,6 +188,16 @@ teamAttendanceMonthRouter.get(
           AND adr.record_date BETWEEN ? AND ?`,
       [...ids, win.start, win.end],
     );
+    // Pending regularizations, so a cell can offer the right action.
+    const regRowsPromise = db.query<RowDataPacket[]>(
+      `SELECT id, employee_id, DATE_FORMAT(session_date, '%Y-%m-%d') AS d, status, reason
+         FROM attendance_regularization
+        WHERE employee_id IN (${idPlaceholders})
+          AND session_date BETWEEN ? AND ?
+          AND status IN ('pending','manager_approved')`,
+      [...ids, win.start, win.end],
+    ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
+    const [[cellRows], [regRows]] = await Promise.all([cellRowsPromise, regRowsPromise]);
 
     const byEmployee = new Map<string, Map<string, any>>();
     for (const r of cellRows as any[]) {
@@ -193,15 +206,6 @@ teamAttendanceMonthRouter.get(
       byEmployee.get(empId)!.set(String(r.d), r);
     }
 
-    // ── Pending regularizations, so a cell can offer the right action ─────────
-    const [regRows] = await db.query<RowDataPacket[]>(
-      `SELECT id, employee_id, DATE_FORMAT(session_date, '%Y-%m-%d') AS d, status, reason
-         FROM attendance_regularization
-        WHERE employee_id IN (${idPlaceholders})
-          AND session_date BETWEEN ? AND ?
-          AND status IN ('pending','manager_approved')`,
-      [...ids, win.start, win.end],
-    ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
     const pendingByKey = new Map<string, any>();
     for (const r of regRows as any[]) pendingByKey.set(`${r.employee_id}:${r.d}`, r);
 

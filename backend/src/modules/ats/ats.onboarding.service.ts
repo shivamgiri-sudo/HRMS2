@@ -1252,9 +1252,38 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
   // A join would fan out a candidate whenever process_master holds duplicate
   // names ('BSS-OTHERS' ×2, 'C-SAT' ×2, etc.). Maps resolve both id and name
   // without fan-out.
-  const [procRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, process_name FROM process_master`,
-  );
+  // Steps 2-4 depend only on the rows above, not on each other, so their queries are issued
+  // together (one round trip instead of three).
+  const candidateIds = [...new Set((rows as any[]).map((r) => String(r.candidate_id)))];
+  const pvPlaceholders = candidateIds.map(() => '?').join(',');
+  const [[procRows], [desigRows], pvResult] = await Promise.all([
+    db.execute<RowDataPacket[]>(`SELECT id, process_name FROM process_master`),
+    db.execute<RowDataPacket[]>(`SELECT DISTINCT designation_name FROM designation_master`),
+    candidateIds.length > 0
+      ? db.execute<RowDataPacket[]>(
+          // Step 4: payroll validations — one query for all candidates in this batch.
+          // Replaces three correlated subqueries (has_validated, joining_date,
+          // salary_start_date) per row. ROW_NUMBER picks the newest validation row;
+          // MAX(CASE WHEN validation_status='validated') checks any row in history.
+          `SELECT
+             pv.candidate_id,
+             MAX(CASE WHEN pv.validation_status = 'validated' THEN 1 ELSE 0 END) AS has_validated,
+             MAX(CASE WHEN pv.rn = 1 THEN pv.joining_date       ELSE NULL END)   AS latest_joining_date,
+             MAX(CASE WHEN pv.rn = 1 THEN pv.salary_start_date  ELSE NULL END)   AS latest_salary_start_date
+           FROM (
+             SELECT candidate_id, validation_status, joining_date, salary_start_date,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY candidate_id
+                      ORDER BY COALESCE(validated_at, created_at) DESC
+                    ) AS rn
+             FROM ats_payroll_hr_validation
+             WHERE candidate_id IN (${pvPlaceholders})
+           ) pv
+           GROUP BY pv.candidate_id`,
+          candidateIds,
+        )
+      : Promise.resolve([[]] as unknown as [RowDataPacket[]]),
+  ]);
   const procById  = new Map<string, string>();
   const procByName = new Map<string, string>();
   for (const p of procRows as any[]) {
@@ -1263,47 +1292,14 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
       procByName.set(String(p.process_name), String(p.process_name));
     }
   }
-
-  // Step 3: designation_master names — for the "applied_for_process is actually
-  // a designation" flag. Load once, store in a Set for O(1) lookup.
-  const [desigRows] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT designation_name FROM designation_master`,
-  );
   const desigNames = new Set<string>((desigRows as any[]).map((d) => String(d.designation_name)));
-
-  // Step 4: payroll validations — one query for all candidates in this batch.
-  // Replaces three correlated subqueries (has_validated, joining_date,
-  // salary_start_date) per row. ROW_NUMBER picks the newest validation row;
-  // MAX(CASE WHEN validation_status='validated') checks any row in history.
-  const candidateIds = [...new Set((rows as any[]).map((r) => String(r.candidate_id)))];
   const pvMap = new Map<string, { hasValidated: boolean; joiningDate: string | null; salaryStartDate: string | null }>();
-  if (candidateIds.length > 0) {
-    const ph = candidateIds.map(() => '?').join(',');
-    const [pvRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         pv.candidate_id,
-         MAX(CASE WHEN pv.validation_status = 'validated' THEN 1 ELSE 0 END) AS has_validated,
-         MAX(CASE WHEN pv.rn = 1 THEN pv.joining_date       ELSE NULL END)   AS latest_joining_date,
-         MAX(CASE WHEN pv.rn = 1 THEN pv.salary_start_date  ELSE NULL END)   AS latest_salary_start_date
-       FROM (
-         SELECT candidate_id, validation_status, joining_date, salary_start_date,
-                ROW_NUMBER() OVER (
-                  PARTITION BY candidate_id
-                  ORDER BY COALESCE(validated_at, created_at) DESC
-                ) AS rn
-         FROM ats_payroll_hr_validation
-         WHERE candidate_id IN (${ph})
-       ) pv
-       GROUP BY pv.candidate_id`,
-      candidateIds,
-    );
-    for (const r of pvRows as any[]) {
-      pvMap.set(String(r.candidate_id), {
-        hasValidated:    Number(r.has_validated) === 1,
-        joiningDate:     (r.latest_joining_date    as string | null) ?? null,
-        salaryStartDate: (r.latest_salary_start_date as string | null) ?? null,
-      });
-    }
+  for (const r of pvResult[0] as any[]) {
+    pvMap.set(String(r.candidate_id), {
+      hasValidated:    Number(r.has_validated) === 1,
+      joiningDate:     (r.latest_joining_date    as string | null) ?? null,
+      salaryStartDate: (r.latest_salary_start_date as string | null) ?? null,
+    });
   }
 
   // Step 5: enrich each row in JS — all lookups are O(1) Map/Set operations.

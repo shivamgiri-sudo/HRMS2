@@ -231,35 +231,34 @@ router.get(
     // Aggregated in SQL, not summed from a fetched page — listProformas/listCreditNotes
     // are paginated (limit clamped to 200), so summing a page silently under-reports on
     // any dataset larger than that, same reasoning as grn.service.ts's getGrnSummary.
-    const [invoiceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT invoice_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
+    // The four aggregates are independent read-only queries, so they run concurrently.
+    const [[invoiceRows], [creditNoteRows], [[thisMonth]], [[pendingActionable]]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT invoice_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
        FROM client_invoice GROUP BY invoice_status`
-    );
-    const [creditNoteRows] = await db.execute<RowDataPacket[]>(
-      `SELECT credit_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT credit_status, COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
        FROM client_credit_note GROUP BY credit_status`
-    );
-    const [[thisMonth]] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(grand_total), 0) AS total
        FROM client_invoice
        WHERE invoice_status = 'approved'
          AND DATE_FORMAT(invoice_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`
-    );
-
-    // "Pending approval" must count only proformas somebody can ACT on. Both
-    // approveInvoice and rejectInvoice refuse any row with is_migrated = 1 (design §3 —
-    // a migrated historical record is read-only through the live workflow), so counting
-    // migrated proformas here produced a work queue that could never reach zero:
-    // verified live 2026-08-27 that both of the 2 rows in this tile were is_migrated = 1,
-    // and clicking Approve in the browser returned
-    // "...is a migrated historical record (is_migrated=1) and cannot be approved".
-    // The list endpoint still returns those rows — they are legitimate history to read —
-    // this only stops them being reported as outstanding work.
-    const [[pendingActionable]] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count
+      ),
+      // "Pending approval" must count only proformas somebody can ACT on. Both
+      // approveInvoice and rejectInvoice refuse any row with is_migrated = 1 (design §3 —
+      // a migrated historical record is read-only through the live workflow), so counting
+      // migrated proformas here produced a work queue that could never reach zero.
+      // The list endpoint still returns those rows — they are legitimate history to read —
+      // this only stops them being reported as outstanding work.
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count
        FROM client_invoice
        WHERE invoice_status = 'proforma' AND is_migrated = 0`
-    );
+      ),
+    ]);
 
     const invoices: Record<string, { count: number; total: number }> = {
       proforma: { count: 0, total: 0 }, approved: { count: 0, total: 0 }, rejected: { count: 0, total: 0 },

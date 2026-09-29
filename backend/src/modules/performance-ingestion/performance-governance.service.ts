@@ -825,7 +825,9 @@ export const performanceGovernanceService = {
       : "";
     const searchParams = term ? Array(4).fill(`%${term}%`) : [];
 
-    const [employees] = await db.execute<RowDataPacket[]>(
+    // The four option lists are independent; fetch them concurrently.
+    const [[employees], [processes], [branches], [metrics]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
       `SELECT e.id, e.employee_code,
               COALESCE(NULLIF(e.full_name, ''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name,
               e.process_id, e.branch_id, pm.process_name, bm.branch_name
@@ -838,9 +840,8 @@ export const performanceGovernanceService = {
         ORDER BY employee_name ASC, e.employee_code ASC
         LIMIT 200`,
       [...employeeScope.params, ...searchParams],
-    );
-
-    const [processes] = await db.execute<RowDataPacket[]>(
+    ),
+      db.execute<RowDataPacket[]>(
       `SELECT DISTINCT pm.id, pm.process_name
          FROM process_master pm
          JOIN employees e ON e.process_id = pm.id AND e.active_status = 1
@@ -848,9 +849,8 @@ export const performanceGovernanceService = {
           AND ${employeeScope.sql}
         ORDER BY pm.process_name ASC`,
       employeeScope.params,
-    );
-
-    const [branches] = await db.execute<RowDataPacket[]>(
+    ),
+      db.execute<RowDataPacket[]>(
       `SELECT DISTINCT bm.id, bm.branch_name
          FROM branch_master bm
          JOIN employees e ON e.branch_id = bm.id AND e.active_status = 1
@@ -858,15 +858,15 @@ export const performanceGovernanceService = {
           AND ${employeeScope.sql}
         ORDER BY bm.branch_name ASC`,
       employeeScope.params,
-    );
-
-    const [metrics] = await db.execute<RowDataPacket[]>(
+    ),
+      db.execute<RowDataPacket[]>(
       `SELECT id, metric_code, metric_name, unit, direction,
               COALESCE(aggregation_method, 'average') AS aggregation_method
          FROM kpi_metric_master
         WHERE active_status = 1
         ORDER BY COALESCE(display_order, 100), metric_name, metric_code`,
-    );
+    ),
+    ]);
 
     return {
       employees: employees.map((row) => ({

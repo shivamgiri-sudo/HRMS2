@@ -282,7 +282,7 @@ employeeReactivationRouter.post(
 
       // Check if F&F was already paid (placeholder logic - adjust based on your exit schema)
       const [ffRows] = await pool.execute<(RowDataPacket & { ff_paid: number })[]>(
-        "SELECT IF(ff_settlement_paid_on IS NOT NULL, 1, 0) as ff_paid FROM exit_requests WHERE employee_id = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1",
+        "SELECT IF(ff_paid_at IS NOT NULL, 1, 0) as ff_paid FROM full_final_calculation WHERE employee_id = ? ORDER BY created_at DESC LIMIT 1",
         [body.employee_id]
       );
       const ffAlreadyPaid = ffRows.length > 0 ? ffRows[0].ff_paid : 0;

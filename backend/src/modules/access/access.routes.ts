@@ -154,6 +154,13 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
   const arm2SearchFilter = search ? `AND (e.full_name LIKE ? OR e.employee_code LIKE ?)` : "";
   const arm2Params: unknown[] = search ? [like, like] : [];
 
+  // PERF: this list took ~6s per query on prod and ran twice (rows + count). The cost was the
+  // user_roles join + GROUP_CONCAT/GROUP BY evaluated for every one of ~1,750 accounts before
+  // sorting and cutting to one page. auth_user.id and employees.id are both primary keys, so
+  // the old GROUP BY (au.id ... e.id ...) never merged rows: it produced exactly one row per
+  // auth_user x active-employee pair, i.e. the plain join below. The row set and ordering are
+  // therefore unchanged; roles are now aggregated only for the page that is returned, and the
+  // count runs without the roles join. Rows and count also run concurrently.
   const unionSql = `
     SELECT
        au.id,
@@ -166,14 +173,10 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
        e.id AS employee_id,
        e.employee_code,
        e.employment_status,
-       GROUP_CONCAT(DISTINCT ur.role_key ORDER BY ur.role_key) AS roles,
        0 AS no_account
      FROM auth_user au
      LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
-     LEFT JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
      WHERE 1=1 ${blockFilter} ${searchFilter}
-     GROUP BY au.id, au.email, au.is_blocked, au.locked_until, au.failed_login_attempts,
-              au.last_login_at, e.id, e.full_name, e.official_email, e.employee_code, e.employment_status
      ${search ? `UNION ALL
      SELECT
        NULL AS id,
@@ -186,23 +189,30 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
        e.id AS employee_id,
        e.employee_code,
        e.employment_status,
-       NULL AS roles,
        1 AS no_account
      FROM employees e
      WHERE e.user_id IS NULL AND e.active_status = 1 ${arm2SearchFilter}` : ""}
   `;
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM (${unionSql}) AS combined
-     ORDER BY full_name
-     LIMIT ${limit} OFFSET ${offset}`,
-    [...arm1Params, ...arm2Params]
-  );
-
-  const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM (${unionSql}) AS combined`,
-    [...arm1Params, ...arm2Params]
-  );
+  const [[rows], [countRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT combined.*,
+              (SELECT GROUP_CONCAT(DISTINCT ur.role_key ORDER BY ur.role_key)
+                 FROM user_roles ur
+                WHERE ur.user_id = combined.id AND ur.active_status = 1) AS roles
+         FROM (
+           SELECT * FROM (${unionSql}) AS all_users
+            ORDER BY full_name
+            LIMIT ${limit} OFFSET ${offset}
+         ) AS combined
+        ORDER BY full_name`,
+      [...arm1Params, ...arm2Params]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM (${unionSql}) AS combined`,
+      [...arm1Params, ...arm2Params]
+    ),
+  ]);
 
   const total = Number((countRows as RowDataPacket[])[0]?.total ?? 0);
 

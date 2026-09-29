@@ -105,13 +105,16 @@ export async function getDataFreshness(): Promise<FreshnessRow[]> {
   return Promise.all(
     FRESHNESS_SOURCES.map(async (source): Promise<FreshnessRow> => {
       try {
-        const [rows] = await pool.query<RowDataPacket[]>(
-          `SELECT DATE_FORMAT(MAX(${source.dateColumn}), '%Y-%m-%d') AS d FROM ${source.table}`,
-        );
-        const [monthRows] = await pool.query<RowDataPacket[]>(
-          `SELECT DISTINCT DATE_FORMAT(${source.dateColumn}, '%Y-%m') AS m FROM ${source.table}
-            WHERE ${source.dateColumn} >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`,
-        );
+        // The latest-date probe and the 12-month gap scan are independent; run them together.
+        const [[rows], [monthRows]] = await Promise.all([
+          pool.query<RowDataPacket[]>(
+            `SELECT DATE_FORMAT(MAX(${source.dateColumn}), '%Y-%m-%d') AS d FROM ${source.table}`,
+          ),
+          pool.query<RowDataPacket[]>(
+            `SELECT DISTINCT DATE_FORMAT(${source.dateColumn}, '%Y-%m') AS m FROM ${source.table}
+              WHERE ${source.dateColumn} >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`,
+          ),
+        ]);
         return {
           key: source.key,
           label: source.label,

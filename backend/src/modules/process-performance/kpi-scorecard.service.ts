@@ -342,40 +342,52 @@ async function computeScorecards(
     // actual_value's aggregate depends on family, but every code here happens to
     // be single-family across this process's registry today, so one query per
     // family bucket rather than per code keeps this to two round trips, not N.
-    for (const family of ["rate", "volume", "duration", "roi"] as const) {
-      const codesInFamily = [...new Set(
-        set.metrics.filter((m) => m.family === family && m.kpiMetricCode).map((m) => m.kpiMetricCode as string),
-      )];
-      if (!codesInFamily.length) continue;
-      const agg = aggExprFor(family);
-      const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT m.metric_code, ${agg} AS value, COUNT(*) AS n
-           FROM kpi_daily_actual k
-           JOIN kpi_metric_master m ON m.id = k.metric_id
-           JOIN employees e ON e.id = k.employee_id
-          WHERE m.metric_code IN (${codesInFamily.map(() => "?").join(",")})
-            AND k.process_id_at_event = ?
-            AND k.score_date BETWEEN ? AND ?
-            AND (${scope.sql})
-          GROUP BY m.metric_code`,
-        [...codesInFamily, processId, filters.from, filters.to, ...scope.params],
-      );
-      for (const r of rows) {
+    // The four family buckets and each bucket's actual/trend pair are mutually
+    // independent reads, so fire them together (was 8 sequential round trips).
+    // Results are applied in the original family order so map/list contents are
+    // identical.
+    const familyResults = await Promise.all(
+      (["rate", "volume", "duration", "roi"] as const).map(async (family) => {
+        const codesInFamily = [...new Set(
+          set.metrics.filter((m) => m.family === family && m.kpiMetricCode).map((m) => m.kpiMetricCode as string),
+        )];
+        if (!codesInFamily.length) return null;
+        const agg = aggExprFor(family);
+        const [[rows], [trendRows]] = await Promise.all([
+          db.execute<RowDataPacket[]>(
+            `SELECT m.metric_code, ${agg} AS value, COUNT(*) AS n
+               FROM kpi_daily_actual k
+               JOIN kpi_metric_master m ON m.id = k.metric_id
+               JOIN employees e ON e.id = k.employee_id
+              WHERE m.metric_code IN (${codesInFamily.map(() => "?").join(",")})
+                AND k.process_id_at_event = ?
+                AND k.score_date BETWEEN ? AND ?
+                AND (${scope.sql})
+              GROUP BY m.metric_code`,
+            [...codesInFamily, processId, filters.from, filters.to, ...scope.params],
+          ),
+          db.execute<RowDataPacket[]>(
+            `SELECT m.metric_code, DATE_FORMAT(k.score_date, '%Y-%m') AS period, ${agg} AS value
+               FROM kpi_daily_actual k
+               JOIN kpi_metric_master m ON m.id = k.metric_id
+               JOIN employees e ON e.id = k.employee_id
+              WHERE m.metric_code IN (${codesInFamily.map(() => "?").join(",")})
+                AND k.process_id_at_event = ?
+                AND k.score_date BETWEEN ? AND ?
+                AND (${scope.sql})
+              GROUP BY m.metric_code, period ORDER BY period ASC`,
+            [...codesInFamily, processId, filters.from, filters.to, ...scope.params],
+          ),
+        ]);
+        return { rows, trendRows };
+      }),
+    );
+    for (const res of familyResults) {
+      if (!res) continue;
+      for (const r of res.rows) {
         actualByCode.set(String(r.metric_code), { value: r.value == null ? null : Number(r.value), count: Number(r.n) });
       }
-      const [trendRows] = await db.execute<RowDataPacket[]>(
-        `SELECT m.metric_code, DATE_FORMAT(k.score_date, '%Y-%m') AS period, ${agg} AS value
-           FROM kpi_daily_actual k
-           JOIN kpi_metric_master m ON m.id = k.metric_id
-           JOIN employees e ON e.id = k.employee_id
-          WHERE m.metric_code IN (${codesInFamily.map(() => "?").join(",")})
-            AND k.process_id_at_event = ?
-            AND k.score_date BETWEEN ? AND ?
-            AND (${scope.sql})
-          GROUP BY m.metric_code, period ORDER BY period ASC`,
-        [...codesInFamily, processId, filters.from, filters.to, ...scope.params],
-      );
-      for (const r of trendRows) {
+      for (const r of res.trendRows) {
         const code = String(r.metric_code);
         const list = trendByCode.get(code) ?? [];
         list.push({ period: String(r.period), value: r.value == null ? null : Number(r.value) });

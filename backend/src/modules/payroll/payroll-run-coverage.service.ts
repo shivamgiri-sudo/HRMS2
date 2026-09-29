@@ -53,7 +53,8 @@ export async function getMonthCoverage(
    * not_started — cancelling releases the claim, and the coverage view must agree with the rule
    * assertCostCentresFree() enforces, or the picker would offer a cost centre the API then refuses.
    */
-  const [ccRows] = await db.execute<RowDataPacket[]>(
+  // The two queries below are independent; they are issued together (in the same order).
+  const ccRowsPromise = db.execute<RowDataPacket[]>(
     `SELECT ccm.id            AS cost_centre_id,
             ccm.cost_centre_code,
             bm.id             AS branch_id,
@@ -91,7 +92,7 @@ export async function getMonthCoverage(
    * that is deliberately not offered there. Naming it points at the actual fix: reactivate the
    * cost centre, or move the people.
    */
-  const [uncovered] = await db.execute<RowDataPacket[]>(
+  const uncoveredPromise = db.execute<RowDataPacket[]>(
     `SELECT e.id,
             e.employee_code,
             -- Needed for row scope below. COALESCE because the whole point of this query is
@@ -122,6 +123,7 @@ export async function getMonthCoverage(
       ORDER BY e.employee_code`,
     [month],
   );
+  const [[ccRows], [uncovered]] = await Promise.all([ccRowsPromise, uncoveredPromise]);
 
   const allCostCentres: CoverageCostCentre[] = ccRows.map((r) => ({
     costCentreId: String(r.cost_centre_id),

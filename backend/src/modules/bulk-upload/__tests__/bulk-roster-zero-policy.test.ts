@@ -35,7 +35,7 @@ function keyedExecute() {
   conn.execute.mockImplementation(async (sql: string, params?: any[]) => {
     state.calls.push({ sql, params: params ?? [] });
     const s = sql.replace(/\s+/g, " ").trim().toUpperCase();
-    if (s.startsWith("SELECT * FROM UPLOAD_BATCH_ROW")) return [state.batchRows, []];
+    if (s.startsWith("SELECT * FROM UPLOAD_BATCH_ROW") || s.startsWith("SELECT ID, ROW_NO, NORMALIZED_DATA FROM UPLOAD_BATCH_ROW")) return [state.batchRows, []];
     if (s.includes("FROM EMPLOYEES WHERE EMPLOYEE_CODE IN")) {
       return [(params ?? []).map((c) => ({ id: `emp-${c}`, employee_code: c, process_id: "proc-1", branch_id: "br-1" })), []];
     }

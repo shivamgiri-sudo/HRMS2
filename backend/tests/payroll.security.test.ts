@@ -256,6 +256,7 @@ describe("e2) Employee payslip history", () => {
       [/FROM employees/i, [{ id: "emp-A", employee_code: "MCN001" }]],
       // More specific table first — salary_prep_line is a prefix of this one.
       [/salary_prep_line_component/i, [{
+        line_id: "line-1", // the batched component query returns line_id and the route groups by it
         component_code: "BASIC",
         component_name: "Basic Salary",
         component_type: "earning",

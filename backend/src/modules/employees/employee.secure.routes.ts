@@ -149,54 +149,106 @@ async function employeeScopeWhere(userId: string) {
 router.get("/stats", h(async (req: any, res: any) => {
   const userId = req.authUser!.id;
   const scoped = await employeeScopeWhere(userId);
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COUNT(*) AS total_employees,
-       COUNT(CASE WHEN e.active_status = 1 AND LOWER(COALESCE(e.employment_status, 'active')) NOT IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN 1 END) AS active_employees,
-       COUNT(CASE WHEN LOWER(COALESCE(e.employment_status, '')) IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN 1 END) AS inactive_employees,
-       COUNT(CASE WHEN e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) THEN 1 END) AS new_joiners_90d
-       FROM employees e
-      WHERE (${scoped.sql})`,
-    scoped.params,
-  );
-  return res.json({ success: true, data: rows[0] });
+  /*
+   * PERF: the single-pass COUNT(CASE ...) over employees read every wide row (59k, no usable
+   * index for LOWER(COALESCE(employment_status))) and ran past the 10s cap on prod for
+   * unscoped callers. The three status counts depend only on (active_status, employment_status),
+   * which the covering index idx_employees_directory_status holds, so they are counted per
+   * (active_status, employment_status) group (6 groups) and the CASE logic is applied to
+   * those groups. Same predicates, same scope clause; only the row source changed.
+   * new_joiners_90d needs date_of_joining, so it is a separate concurrent query.
+   */
+  const [[statusRows], [joinerRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         COALESCE(CAST(SUM(g.c) AS UNSIGNED), 0) AS total_employees,
+         COALESCE(CAST(SUM(CASE WHEN g.active_status = 1 AND LOWER(COALESCE(g.employment_status, 'active')) NOT IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN g.c ELSE 0 END) AS UNSIGNED), 0) AS active_employees,
+         COALESCE(CAST(SUM(CASE WHEN LOWER(COALESCE(g.employment_status, '')) IN ('inactive','terminated','offboarded','absconded','resigned','left','separated') THEN g.c ELSE 0 END) AS UNSIGNED), 0) AS inactive_employees
+       FROM (
+         SELECT e.active_status, e.employment_status, COUNT(*) AS c
+           FROM employees e
+          WHERE (${scoped.sql})
+          GROUP BY e.active_status, e.employment_status
+       ) g`,
+      scoped.params,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS new_joiners_90d
+         FROM employees e
+        WHERE e.date_of_joining >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+          AND (${scoped.sql})`,
+      scoped.params,
+    ),
+  ]);
+  return res.json({ success: true, data: { ...statusRows[0], new_joiners_90d: joinerRows[0]?.new_joiners_90d ?? 0 } });
 }));
+
+/**
+ * Directory filter dropdowns: process / branch names with headcount, for employees that are
+ * active OR carry a leaver status (i.e. everyone except the few pre-boarding rows).
+ *
+ * PERF: `(active_status = 1 OR LOWER(COALESCE(employment_status,'')) IN (...))` cannot use an
+ * index, so the old shape joined ~59k employee rows to the master table and ran past the 10s
+ * cap on prod for unscoped callers. Since the predicate matches almost every row, it is counted
+ * as (all rows in scope) - (rows the predicate rejects), each grouped by the master id first
+ * (covering-index scan / tiny range) and only then joined to the master table. The rejected set
+ * is `active_status <> 1 AND employment_status NOT IN (...)`; employment_status is NOT NULL and
+ * utf8mb4_unicode_ci, so the bare comparison equals LOWER(COALESCE(...)) IN (...) and is
+ * sargable. HAVING > 0 keeps the old behaviour of omitting names with no matching employee.
+ */
+const DIRECTORY_LEAVER_STATUSES = "'inactive', 'terminated', 'offboarded', 'absconded', 'resigned', 'left', 'separated'";
+
+function directoryMasterCountsSql(opts: {
+  masterTable: "process_master" | "branch_master";
+  masterAlias: "p" | "b";
+  nameColumn: "process_name" | "branch_name";
+  employeeColumn: "process_id" | "branch_id";
+  scopeSql: string;
+}): string {
+  const { masterTable, masterAlias: m, nameColumn, employeeColumn: col, scopeSql } = opts;
+  // Pin the covering index only for the unscoped scan; scoped callers keep the optimiser's choice.
+  const hint = scopeSql === "1=1"
+    ? (col === "process_id" ? "USE INDEX (idx_employees_directory_status_process)" : "USE INDEX (idx_emp_branch_active)")
+    : "";
+  return `SELECT MIN(${m}.id) AS id,
+            ${m}.${nameColumn},
+            CAST(SUM(t_all.c - COALESCE(t_rej.c, 0)) AS UNSIGNED) AS employee_count
+       FROM (
+         SELECT e.${col}, COUNT(*) AS c
+           FROM employees e ${hint}
+          WHERE (${scopeSql})
+          GROUP BY e.${col}
+       ) t_all
+       LEFT JOIN (
+         SELECT e.${col}, COUNT(*) AS c
+           FROM employees e
+          WHERE e.active_status <> 1
+            AND e.employment_status NOT IN (${DIRECTORY_LEAVER_STATUSES})
+            AND (${scopeSql})
+          GROUP BY e.${col}
+       ) t_rej ON t_rej.${col} = t_all.${col}
+       JOIN ${masterTable} ${m} ON ${m}.id = t_all.${col}
+      WHERE TRIM(COALESCE(${m}.${nameColumn}, '')) <> ''
+      GROUP BY LOWER(TRIM(${m}.${nameColumn})), ${m}.${nameColumn}
+     HAVING SUM(t_all.c - COALESCE(t_rej.c, 0)) > 0
+      ORDER BY ${m}.${nameColumn} ASC`;
+}
 
 router.get("/directory-masters", h(async (req: any, res: any) => {
   const userId = req.authUser!.id;
   const scoped = await employeeScopeWhere(userId);
-  const activeEmployeeWhere = `
-    e.active_status = 1
-    OR LOWER(COALESCE(e.employment_status, '')) IN ('inactive', 'terminated', 'offboarded', 'absconded', 'resigned', 'left', 'separated')
-  `;
+  const params = [...scoped.params, ...scoped.params];
 
-  const [processes] = await db.execute<RowDataPacket[]>(
-    `SELECT MIN(p.id) AS id,
-            p.process_name,
-            COUNT(*) AS employee_count
-       FROM employees e
-       JOIN process_master p ON p.id = e.process_id
-      WHERE (${activeEmployeeWhere})
-        AND (${scoped.sql})
-        AND TRIM(COALESCE(p.process_name, '')) <> ''
-      GROUP BY LOWER(TRIM(p.process_name)), p.process_name
-      ORDER BY p.process_name ASC`,
-    scoped.params,
-  );
-
-  const [branches] = await db.execute<RowDataPacket[]>(
-    `SELECT MIN(b.id) AS id,
-            b.branch_name,
-            COUNT(*) AS employee_count
-       FROM employees e
-       JOIN branch_master b ON b.id = e.branch_id
-      WHERE (${activeEmployeeWhere})
-        AND (${scoped.sql})
-        AND TRIM(COALESCE(b.branch_name, '')) <> ''
-      GROUP BY LOWER(TRIM(b.branch_name)), b.branch_name
-      ORDER BY b.branch_name ASC`,
-    scoped.params,
-  );
+  const [[processes], [branches]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      directoryMasterCountsSql({ masterTable: "process_master", masterAlias: "p", nameColumn: "process_name", employeeColumn: "process_id", scopeSql: scoped.sql }),
+      params,
+    ),
+    db.execute<RowDataPacket[]>(
+      directoryMasterCountsSql({ masterTable: "branch_master", masterAlias: "b", nameColumn: "branch_name", employeeColumn: "branch_id", scopeSql: scoped.sql }),
+      params,
+    ),
+  ]);
 
   return res.json({ success: true, data: { processes, branches } });
 }));
@@ -208,8 +260,7 @@ router.get("/options/search", h(async (req: any, res: any) => {
 
   const limit = Math.min(Math.max(Number(req.query.limit ?? 30), 1), 50);
   const like = `%${search}%`;
-  const scoped = await employeeScopeWhere(userId);
-  const self = await getEmployeeForUser(userId);
+  const [scoped, self] = await Promise.all([employeeScopeWhere(userId), getEmployeeForUser(userId)]);
   const selfClause = self?.id ? " OR e.id = ?" : "";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id,
@@ -382,8 +433,8 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
          1) AS attendance_pct
          FROM attendance_daily_record
         WHERE employee_id = ?
-          AND YEAR(record_date) = YEAR(CURDATE())
-          AND MONTH(record_date) = MONTH(CURDATE())`,
+          AND record_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+          AND record_date <  DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 1 MONTH)`,
       [targetId],
     ),
     db.execute<RowDataPacket[]>(

@@ -55,7 +55,20 @@ financeAnalyticsRouter.get(
     let overdueAmount = 0;
     let overdueCount = 0;
     let dso = 0;
+    // The four blocks below are independent, so they are started together and awaited once after
+    // the last one is defined. Each block keeps its own try/catch, so a failure still degrades only
+    // that block to its zero/empty fallback, exactly as when they ran back to back.
+    const receivablesBlock = (async () => {
     try {
+      // DSO's collected-total query does not depend on the receivables query; start it now so the
+      // two overlap. The no-op catch stops an unhandled rejection if the receivables await throws
+      // first (the awaited path below still surfaces the failure to the try/catch as before).
+      const collectedPromise = db.query<any[]>(
+        `SELECT SUM(pay_amount) / 12 AS avg_monthly_collected
+         FROM client_bill_collection_run_snapshot
+         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`,
+      );
+      collectedPromise.catch(() => undefined);
       const [receivableRows] = await db.query<any[]>(
         `SELECT
            SUM(ci.grand_total) AS total_receivables,
@@ -77,11 +90,7 @@ financeAnalyticsRouter.get(
       }
 
       // DSO = (open AR / avg monthly collected over 12 months) * 30
-      const [collectedRows] = await db.query<any[]>(
-        `SELECT SUM(pay_amount) / 12 AS avg_monthly_collected
-         FROM client_bill_collection_run_snapshot
-         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`,
-      );
+      const [collectedRows] = await collectedPromise;
       const avgMonthly = num(collectedRows?.[0]?.avg_monthly_collected);
       if (avgMonthly > 0) {
         dso = Math.round((totalReceivables / avgMonthly) * 30 * 10) / 10;
@@ -89,9 +98,11 @@ financeAnalyticsRouter.get(
     } catch {
       // fallback: leave 0s
     }
+    })();
 
     // 2. Bank balances — last running_balance per account (or opening_balance if no entries)
     let bankBalances: { id: string; name: string; balance: number }[] = [];
+    const bankBlock = (async () => {
     try {
       const [bankRows] = await db.query<any[]>(
         `SELECT
@@ -116,10 +127,12 @@ financeAnalyticsRouter.get(
     } catch {
       // fallback: empty array
     }
+    })();
 
     // 3. Total payables — vendor_payment_tracking pending/partial
     //    Actual status values: 'Payment Pending', 'Partially Paid'
     let totalPayables = 0;
+    const payablesBlock = (async () => {
     try {
       const [payableRows] = await db.query<any[]>(
         `SELECT SUM(due_amount) AS total_payables
@@ -130,6 +143,9 @@ financeAnalyticsRouter.get(
     } catch {
       // fallback: 0
     }
+    })();
+
+    await Promise.all([receivablesBlock, bankBlock, payablesBlock]);
 
     res.json({
       success: true,
@@ -222,6 +238,19 @@ financeAnalyticsRouter.get(
 
     const monthMap = new Map<string, MonthEntry>();
 
+    // The two queries are independent: start both, then fold the results into monthMap in the
+    // original order (invoiced first, collected second) so the output is unchanged.
+    const collectedQuery = db.query<any[]>(
+      `SELECT
+         DATE_FORMAT(pay_date, '%Y-%m') AS month,
+         SUM(pay_amount) AS collected
+       FROM client_bill_collection_run_snapshot
+       WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+       GROUP BY month
+       ORDER BY month ASC`,
+    );
+    collectedQuery.catch(() => undefined);
+
     // Invoiced by month
     try {
       const [invoicedRows] = await db.query<any[]>(
@@ -254,15 +283,7 @@ financeAnalyticsRouter.get(
 
     // Collected by month (from collection run snapshots)
     try {
-      const [collectedRows] = await db.query<any[]>(
-        `SELECT
-           DATE_FORMAT(pay_date, '%Y-%m') AS month,
-           SUM(pay_amount) AS collected
-         FROM client_bill_collection_run_snapshot
-         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-         GROUP BY month
-         ORDER BY month ASC`,
-      );
+      const [collectedRows] = await collectedQuery;
       for (const r of collectedRows ?? []) {
         const m = String(r.month);
         const existing = monthMap.get(m);
@@ -327,6 +348,21 @@ financeAnalyticsRouter.get(
       cumulative: 0,
     }));
 
+    // The expected_in and expected_out queries are independent; both are started here and
+    // folded into the buckets in the original order.
+    const outQuery = db.query<any[]>(
+      `SELECT
+         due_date,
+         SUM(due_amount) AS amount
+       FROM vendor_payment_tracking
+       WHERE payment_status IN ('Payment Pending', 'Partially Paid')
+         AND due_date >= ?
+         AND due_date < ?
+       GROUP BY due_date`,
+      [toISODate(getWeekStart(0)), toISODate(getWeekStart(14))],
+    );
+    outQuery.catch(() => undefined);
+
     // expected_in: invoices whose due date (invoice_date + 30 days) falls in each week
     try {
       const [inRows] = await db.query<any[]>(
@@ -361,17 +397,7 @@ financeAnalyticsRouter.get(
     // expected_out: vendor payments pending/partial due in each week
     //   vendor_payment_tracking has a due_date column
     try {
-      const [outRows] = await db.query<any[]>(
-        `SELECT
-           due_date,
-           SUM(due_amount) AS amount
-         FROM vendor_payment_tracking
-         WHERE payment_status IN ('Payment Pending', 'Partially Paid')
-           AND due_date >= ?
-           AND due_date < ?
-         GROUP BY due_date`,
-        [toISODate(getWeekStart(0)), toISODate(getWeekStart(14))],
-      );
+      const [outRows] = await outQuery;
       for (const r of outRows ?? []) {
         if (!r.due_date) continue;
         const dueDate = new Date(r.due_date);
@@ -415,6 +441,23 @@ financeAnalyticsRouter.get(
     let monthly: any[] = [];
     let topVendors: any[] = [];
 
+    // The monthly query does not depend on the KPI query; start it now so both run together.
+    // It is awaited below at the same point as before, inside its own try/catch.
+    const monthQuery = db.query<any[]>(
+      `SELECT
+         DATE_FORMAT(gr.bill_date, '%Y-%m') AS month,
+         gr.head AS expense_head,
+         SUM(gr.amount_with_tax) AS amount
+       FROM grn_request gr
+       WHERE gr.status = 'approved'
+         AND gr.bill_date BETWEEN ? AND ?
+         AND gr.head IS NOT NULL
+       GROUP BY month, gr.head
+       ORDER BY month ASC`,
+      [fyStart, fyEnd],
+    );
+    monthQuery.catch(() => undefined);
+
     try {
       const [kpiRows] = await db.query<any[]>(
         `SELECT
@@ -440,19 +483,7 @@ financeAnalyticsRouter.get(
     }
 
     try {
-      const [monthRows] = await db.query<any[]>(
-        `SELECT
-           DATE_FORMAT(gr.bill_date, '%Y-%m') AS month,
-           gr.head AS expense_head,
-           SUM(gr.amount_with_tax) AS amount
-         FROM grn_request gr
-         WHERE gr.status = 'approved'
-           AND gr.bill_date BETWEEN ? AND ?
-           AND gr.head IS NOT NULL
-         GROUP BY month, gr.head
-         ORDER BY month ASC`,
-        [fyStart, fyEnd],
-      );
+      const [monthRows] = await monthQuery;
       // Pivot: month -> { month (string), [head]: number }
       const monthMap = new Map<string, Record<string, number | string>>();
       const headSet = new Set<string>();
@@ -532,30 +563,53 @@ financeAnalyticsRouter.get(
     let clientBreakdown: any[] = [];
     let paymentStatusSummary: any[] = [];
 
+    // The four queries are independent of each other; start them all now and consume each in the
+    // original order inside its original try/catch, so a failing block still falls back alone.
+    const invQuery = db.query<any[]>(
+      `SELECT DATE_FORMAT(invoice_date, '%Y-%m') AS month, SUM(grand_total) AS invoiced
+         FROM client_invoice
+         WHERE invoice_status = 'approved'
+           AND invoice_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+         GROUP BY month ORDER BY month`,
+      [months],
+    );
+    const colQuery = db.query<any[]>(
+      `SELECT DATE_FORMAT(pay_date, '%Y-%m') AS month, SUM(pay_amount) AS collected
+         FROM client_bill_collection_run_snapshot
+         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+         GROUP BY month ORDER BY month`,
+      [months],
+    );
+    const cbQuery = db.query<any[]>(
+      `SELECT
+           COALESCE(ccm.company_name, ci.cost_centre_id) AS client_name,
+           SUM(ci.grand_total) AS invoiced
+         FROM client_invoice ci
+         LEFT JOIN cost_centre_master ccm ON ci.cost_centre_id = ccm.id
+         WHERE ci.invoice_status = 'approved'
+           AND ci.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+         GROUP BY ci.cost_centre_id, ccm.company_name
+         ORDER BY invoiced DESC
+         LIMIT 5`,
+    );
+    const psQuery = db.query<any[]>(
+      `SELECT payment_status, COUNT(*) AS cnt, SUM(total_amount) AS amount
+         FROM client_invoice_payment_status
+         GROUP BY payment_status`,
+    );
+    for (const q of [invQuery, colQuery, cbQuery, psQuery]) q.catch(() => undefined);
+
     try {
       const monthMap = new Map<
         string,
         { month: string; invoiced: number; collected: number }
       >();
-      const [invRows] = await db.query<any[]>(
-        `SELECT DATE_FORMAT(invoice_date, '%Y-%m') AS month, SUM(grand_total) AS invoiced
-         FROM client_invoice
-         WHERE invoice_status = 'approved'
-           AND invoice_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
-         GROUP BY month ORDER BY month`,
-        [months],
-      );
+      const [invRows] = await invQuery;
       for (const r of invRows) {
         const m = String(r.month);
         monthMap.set(m, { month: m, invoiced: num(r.invoiced), collected: 0 });
       }
-      const [colRows] = await db.query<any[]>(
-        `SELECT DATE_FORMAT(pay_date, '%Y-%m') AS month, SUM(pay_amount) AS collected
-         FROM client_bill_collection_run_snapshot
-         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
-         GROUP BY month ORDER BY month`,
-        [months],
-      );
+      const [colRows] = await colQuery;
       for (const r of colRows) {
         const m = String(r.month);
         const existing = monthMap.get(m);
@@ -575,18 +629,7 @@ financeAnalyticsRouter.get(
     }
 
     try {
-      const [cbRows] = await db.query<any[]>(
-        `SELECT
-           COALESCE(ccm.company_name, ci.cost_centre_id) AS client_name,
-           SUM(ci.grand_total) AS invoiced
-         FROM client_invoice ci
-         LEFT JOIN cost_centre_master ccm ON ci.cost_centre_id = ccm.id
-         WHERE ci.invoice_status = 'approved'
-           AND ci.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-         GROUP BY ci.cost_centre_id, ccm.company_name
-         ORDER BY invoiced DESC
-         LIMIT 5`,
-      );
+      const [cbRows] = await cbQuery;
       clientBreakdown = cbRows.map((r) => ({
         client_name: String(r.client_name ?? "Unknown"),
         invoiced: num(r.invoiced),
@@ -596,11 +639,7 @@ financeAnalyticsRouter.get(
     }
 
     try {
-      const [psRows] = await db.query<any[]>(
-        `SELECT payment_status, COUNT(*) AS cnt, SUM(total_amount) AS amount
-         FROM client_invoice_payment_status
-         GROUP BY payment_status`,
-      );
+      const [psRows] = await psQuery;
       paymentStatusSummary = psRows.map((r) => ({
         status: String(r.payment_status),
         count: num(r.cnt),
@@ -625,6 +664,21 @@ financeAnalyticsRouter.get(
   h(async (_req, res) => {
     let buckets = { b0_30: 0, b31_60: 0, b61_90: 0, b90_plus: 0, total: 0 };
     let topVendors: any[] = [];
+
+    // The vendor query is independent of the bucket query; start it now, consume it below.
+    const vendorQuery = db.query<any[]>(
+      `SELECT
+           COALESCE(vm.vendor_name, vpt.vendor_id) AS vendor_name,
+           SUM(vpt.due_amount) AS pending_amount,
+           MIN(vpt.due_date) AS oldest_due
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         WHERE vpt.payment_status IN ('Payment Pending', 'Partially Paid')
+         GROUP BY vpt.vendor_id, vm.vendor_name
+         ORDER BY pending_amount DESC
+         LIMIT 10`,
+    );
+    vendorQuery.catch(() => undefined);
 
     try {
       const [rows] = await db.query<any[]>(
@@ -651,18 +705,7 @@ financeAnalyticsRouter.get(
     }
 
     try {
-      const [vRows] = await db.query<any[]>(
-        `SELECT
-           COALESCE(vm.vendor_name, vpt.vendor_id) AS vendor_name,
-           SUM(vpt.due_amount) AS pending_amount,
-           MIN(vpt.due_date) AS oldest_due
-         FROM vendor_payment_tracking vpt
-         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
-         WHERE vpt.payment_status IN ('Payment Pending', 'Partially Paid')
-         GROUP BY vpt.vendor_id, vm.vendor_name
-         ORDER BY pending_amount DESC
-         LIMIT 10`,
-      );
+      const [vRows] = await vendorQuery;
       topVendors = vRows.map((r) => ({
         vendor_name: String(r.vendor_name ?? "Unknown"),
         pending_amount: num(r.pending_amount),

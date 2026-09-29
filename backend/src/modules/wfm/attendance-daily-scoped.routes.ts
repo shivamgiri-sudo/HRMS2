@@ -118,10 +118,14 @@ export async function scopedAttendanceDailyHandler(req: AuthenticatedRequest, re
   `;
   const whereSql = `WHERE ${where.join(" AND ")}`;
 
-  const [countRows] = await db.execute<RowDataPacket[]>(
+  // Independent of the page query below, so start it now and await both together.
+  const countPromise = db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total ${fromSql} ${whereSql}`,
     params,
   );
+  // Avoid an unhandled rejection if the page query throws first; the rejection is still
+  // surfaced through the Promise.all below.
+  countPromise.catch(() => undefined);
 
   // Dialler/APR days carry no punch times in attendance_daily_record, so
   // Login/Logout rendered empty for APR employees. Pull the real times from
@@ -141,7 +145,7 @@ export async function scopedAttendanceDailyHandler(req: AuthenticatedRequest, re
             ) END AS apr_logout_time,`
     : `NULL AS apr_login_time, NULL AS apr_logout_time,`;
 
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const rowsPromise = db.execute<RowDataPacket[]>(
     `SELECT adr.*,
             DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
             DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS date,
@@ -184,6 +188,7 @@ export async function scopedAttendanceDailyHandler(req: AuthenticatedRequest, re
       LIMIT ${limit} OFFSET ${offset}`,
     params,
   );
+  const [[countRows], [rows]] = await Promise.all([countPromise, rowsPromise]);
 
   const data = rows.map((r: any) => ({
     ...r,

@@ -1001,47 +1001,59 @@ router.get(
     );
     const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
 
-    const [branches] = await db.execute<RowDataPacket[]>(
-      `SELECT DISTINCT bm.id, bm.branch_name
+    // Was: SELECT DISTINCT ... FROM master JOIN employees JOIN salary_prep_line, three times in
+    // sequence. That joins every employee to every one of their payroll lines (~130k rows) only
+    // to DISTINCT the master rows back out, and did not finish inside 10s on production. It only
+    // ever asks "does this branch/process/department have at least one employee (in scope) with
+    // a payroll line", so it is now a per-master-row existence probe: the scalar subquery is
+    // deliberately not an EXISTS(...) because MySQL flattens that into a semijoin that
+    // materialises the whole salary_prep_line join again. Same rows: masters with >=1 in-scope
+    // employee having >=1 line (master ids are unique, so DISTINCT was a no-op on them).
+    const branchQuery = `SELECT bm.id, bm.branch_name
        FROM branch_master bm
-       JOIN employees e ON e.branch_id = bm.id
-       JOIN salary_prep_line spl ON spl.employee_id = e.id
-      WHERE bm.active_status = 1${scopeSql}
-      ORDER BY bm.branch_name`,
-      scoped.params,
-    );
+      WHERE bm.active_status = 1
+        AND (SELECT e.id FROM employees e
+              WHERE e.branch_id = bm.id${scopeSql}
+                AND EXISTS (SELECT 1 FROM salary_prep_line spl WHERE spl.employee_id = e.id)
+              LIMIT 1) IS NOT NULL
+      ORDER BY bm.branch_name`;
 
     const processParams: unknown[] = [...scoped.params];
-    let processQuery = `SELECT DISTINCT pm.id, pm.process_name
+    let processQuery = `SELECT pm.id, pm.process_name
        FROM process_master pm
-       JOIN employees e ON e.process_id = pm.id
-       JOIN salary_prep_line spl ON spl.employee_id = e.id
-      WHERE pm.active_status = 1${scopeSql}`;
+      WHERE pm.active_status = 1
+        AND (SELECT e.id FROM employees e
+              WHERE e.process_id = pm.id${scopeSql}`;
     if (branchId) {
       processQuery += ` AND e.branch_id = ?`;
       processParams.push(branchId);
     }
-    processQuery += ` ORDER BY pm.process_name`;
-    const [processes] = await db.execute<RowDataPacket[]>(
-      processQuery,
-      processParams,
-    );
+    processQuery += `
+                AND EXISTS (SELECT 1 FROM salary_prep_line spl WHERE spl.employee_id = e.id)
+              LIMIT 1) IS NOT NULL
+      ORDER BY pm.process_name`;
 
     const deptParams: unknown[] = [...scoped.params];
-    let deptQuery = `SELECT DISTINCT dm.id, dm.dept_name
+    let deptQuery = `SELECT dm.id, dm.dept_name
        FROM department_master dm
-       JOIN employees e ON e.department_id = dm.id
-       JOIN salary_prep_line spl ON spl.employee_id = e.id
-      WHERE dm.active_status = 1${scopeSql}`;
+      WHERE dm.active_status = 1
+        AND (SELECT e.id FROM employees e
+              WHERE e.department_id = dm.id${scopeSql}`;
     if (branchId) {
       deptQuery += ` AND e.branch_id = ?`;
       deptParams.push(branchId);
     }
-    deptQuery += ` ORDER BY dm.dept_name`;
-    const [departments] = await db.execute<RowDataPacket[]>(
-      deptQuery,
-      deptParams,
-    );
+    deptQuery += `
+                AND EXISTS (SELECT 1 FROM salary_prep_line spl WHERE spl.employee_id = e.id)
+              LIMIT 1) IS NOT NULL
+      ORDER BY dm.dept_name`;
+
+    // Independent reads: run together.
+    const [[branches], [processes], [departments]] = await Promise.all([
+      db.execute<RowDataPacket[]>(branchQuery, scoped.params),
+      db.execute<RowDataPacket[]>(processQuery, processParams),
+      db.execute<RowDataPacket[]>(deptQuery, deptParams),
+    ]);
 
     res.json({ success: true, data: { branches, processes, departments } });
   }),
@@ -1847,7 +1859,63 @@ router.get(
       [callerEmp.id, `${year}-%`],
     );
 
-    // For each line, fetch detailed component breakdown
+    // Component breakdown for every line in ONE query (was one query per line), and the legacy
+    // snapshot read, which does not depend on it, issued alongside. Per-line order is the same
+    // ORDER BY the per-line query used, applied within each line_id.
+    const myLineIds = (rows as any[]).map((r) => r.id);
+    const componentsByLine = new Map<string, any[]>();
+    const componentsPromise = myLineIds.length
+      ? db.execute<RowDataPacket[]>(
+          `SELECT line_id, component_code, component_name, component_type, amount, taxable
+       FROM salary_prep_line_component
+       WHERE line_id IN (${myLineIds.map(() => "?").join(",")})
+       ORDER BY
+         line_id,
+         CASE component_type
+           WHEN 'earning' THEN 1
+           WHEN 'deduction' THEN 2
+           ELSE 3
+         END,
+         component_code`,
+          myLineIds,
+        )
+      : Promise.resolve([[] as RowDataPacket[]] as unknown as [RowDataPacket[]]);
+    const legacyPromise = db.execute<RowDataPacket[]>(
+      `SELECT lps.id AS legacy_id, lps.employee_code, lps.pay_month AS run_month,
+            lps.sal_date, lps.gross_salary, lps.gross_earned, lps.total_deductions,
+            lps.net_salary, lps.basic, lps.hra, lps.special_allowance, lps.conveyance,
+            lps.portfolio, lps.medical_allowance, lps.lta, lps.other_allowance,
+            lps.bonus, lps.incentive, lps.arrear, lps.pli, lps.extra_day,
+            lps.epf_employee, lps.esic_employee, lps.professional_tax, lps.income_tax,
+            lps.advance_paid, lps.loan_deduction, lps.other_deduction,
+            lps.short_collection, lps.asset_recovery, lps.leave_deduction,
+            lps.epf_employer, lps.esic_employer, lps.admin_charges,
+            lps.ctc_monthly, lps.ctc_offered, lps.working_days, lps.earned_days,
+            lps.leave_days, lps.epf_number, lps.esic_number, lps.salary_payment_mode,
+            lps.cheque_number, lps.is_fnf, lps.status AS db_bill_status,
+            NULL AS acknowledged_at, NULL AS file_url, NULL AS run_id,
+            NULL AS run_status, NULL AS paid_at, NULL AS payslip_ref,
+            'legacy' AS source
+     FROM legacy_payslip_snapshot lps
+     WHERE lps.employee_id = ?
+       AND lps.pay_month LIKE ?
+     ORDER BY lps.pay_month DESC`,
+      [callerEmp.id, `${year}-%`],
+    );
+    // Components are issued first, then the legacy read (the original call order). Both promises are created before either is awaited, so a rejection in one can never go
+    // unhandled while the other is being awaited.
+    const [[allComponents], [legacyRows]] = await Promise.all([
+      componentsPromise,
+      legacyPromise,
+    ]);
+    for (const comp of allComponents as any[]) {
+      const { line_id, ...rest } = comp;
+      const key = String(line_id);
+      if (!componentsByLine.has(key)) componentsByLine.set(key, []);
+      componentsByLine.get(key)!.push(rest);
+    }
+
+    // For each line, attach the detailed component breakdown
     for (const line of rows as any[]) {
       // PAN was serialized straight from the plaintext column; employees also carries
       // pan_number_encrypted for exactly this read. Prefer ciphertext, fall back to
@@ -1858,19 +1926,7 @@ router.get(
       ).value;
       delete line.pan_number_encrypted;
 
-      const [components] = await db.execute<RowDataPacket[]>(
-        `SELECT component_code, component_name, component_type, amount, taxable
-       FROM salary_prep_line_component
-       WHERE line_id = ?
-       ORDER BY
-         CASE component_type
-           WHEN 'earning' THEN 1
-           WHEN 'deduction' THEN 2
-           ELSE 3
-         END,
-         component_code`,
-        [line.id],
-      );
+      const components = componentsByLine.get(String(line.id)) ?? [];
 
       // Split components by type
       line.earnings = (components as any[]).filter(
@@ -1920,29 +1976,6 @@ router.get(
         String(r.run_month || "").substring(0, 7),
       ),
     );
-    const [legacyRows] = await db.execute<RowDataPacket[]>(
-      `SELECT lps.id AS legacy_id, lps.employee_code, lps.pay_month AS run_month,
-            lps.sal_date, lps.gross_salary, lps.gross_earned, lps.total_deductions,
-            lps.net_salary, lps.basic, lps.hra, lps.special_allowance, lps.conveyance,
-            lps.portfolio, lps.medical_allowance, lps.lta, lps.other_allowance,
-            lps.bonus, lps.incentive, lps.arrear, lps.pli, lps.extra_day,
-            lps.epf_employee, lps.esic_employee, lps.professional_tax, lps.income_tax,
-            lps.advance_paid, lps.loan_deduction, lps.other_deduction,
-            lps.short_collection, lps.asset_recovery, lps.leave_deduction,
-            lps.epf_employer, lps.esic_employer, lps.admin_charges,
-            lps.ctc_monthly, lps.ctc_offered, lps.working_days, lps.earned_days,
-            lps.leave_days, lps.epf_number, lps.esic_number, lps.salary_payment_mode,
-            lps.cheque_number, lps.is_fnf, lps.status AS db_bill_status,
-            NULL AS acknowledged_at, NULL AS file_url, NULL AS run_id,
-            NULL AS run_status, NULL AS paid_at, NULL AS payslip_ref,
-            'legacy' AS source
-     FROM legacy_payslip_snapshot lps
-     WHERE lps.employee_id = ?
-       AND lps.pay_month LIKE ?
-     ORDER BY lps.pay_month DESC`,
-      [callerEmp.id, `${year}-%`],
-    );
-
     // Only include legacy rows for months not in current HRMS run data
     const legacyFiltered = (legacyRows as any[]).filter(
       (r) => !coveredMonths.has(r.run_month),
@@ -1992,7 +2025,8 @@ router.get(
     // The real tables are salary_prep_line (80,338 rows) and salary_prep_run (66),
     // which is what the /payslip/history endpoint immediately below already uses
     // successfully. Column names are aliased so the response shape is unchanged.
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const [[rows], [[countRow]]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
       `SELECT spl.run_id            AS run_id,
             spr.run_month         AS run_label,
             spr.run_month         AS period_label,
@@ -2008,15 +2042,16 @@ router.get(
       ORDER BY spr.run_month DESC
       LIMIT ${limit} OFFSET ${offset}`,
       [employeeId],
-    );
-    const [[countRow]] = await db.execute<RowDataPacket[]>(
+      ),
+      db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total
        FROM salary_prep_line spl
        JOIN salary_prep_run spr ON spr.id = spl.run_id
       WHERE spl.employee_id = ?
         AND spr.status NOT IN ('draft', 'cancelled')`,
       [employeeId],
-    );
+      ),
+    ]);
     return res.json({
       success: true,
       data: rows,
@@ -3106,23 +3141,8 @@ router.get(
       });
     const runId = run.id;
 
-    const [kpiRows] = await db.execute<RowDataPacket[]>(
-      // avg_net is derived from the same numerator and denominator the dimension
-      // table uses (total ÷ distinct employees) so the KPI card and the table can
-      // never disagree about what "average" means.
-      `SELECT COUNT(DISTINCT spl.employee_id)             AS headcount,
-            ROUND(SUM(spl.net_salary),2)                AS total_net,
-            ROUND(SUM(spl.net_salary) / NULLIF(COUNT(DISTINCT spl.employee_id),0),2) AS avg_net,
-            ROUND(SUM(spl.gross_salary),2)              AS total_gross,
-            ROUND(SUM(spl.total_deductions),2)          AS total_deductions,
-            ROUND(SUM(spl.basic),2)                     AS total_basic,
-            ROUND(SUM(COALESCE(spl.pf_employer,0)),2)   AS total_pf_employer,
-            ROUND(SUM(COALESCE(spl.esic_employer,0)),2) AS total_esic_employer
-     FROM salary_prep_line spl
-     WHERE spl.run_id = ? AND spl.status != 'cancelled'`,
-      [runId],
-    );
-
+    // KPI and dimension queries only depend on runId (and the validated dimension), so they are
+    // issued together; `d` is resolved first, before either is started.
     const DIM: Record<string, { sel: string; join: string; grp: string }> = {
       department: {
         sel: "COALESCE(dm.dept_name, 'Unknown') AS dimension_name",
@@ -3142,7 +3162,24 @@ router.get(
     };
     const d = DIM[dimension] ?? DIM.department;
 
-    const [dimRows] = await db.execute<RowDataPacket[]>(
+    const [[kpiRows], [dimRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+      // avg_net is derived from the same numerator and denominator the dimension
+      // table uses (total ÷ distinct employees) so the KPI card and the table can
+      // never disagree about what "average" means.
+      `SELECT COUNT(DISTINCT spl.employee_id)             AS headcount,
+            ROUND(SUM(spl.net_salary),2)                AS total_net,
+            ROUND(SUM(spl.net_salary) / NULLIF(COUNT(DISTINCT spl.employee_id),0),2) AS avg_net,
+            ROUND(SUM(spl.gross_salary),2)              AS total_gross,
+            ROUND(SUM(spl.total_deductions),2)          AS total_deductions,
+            ROUND(SUM(spl.basic),2)                     AS total_basic,
+            ROUND(SUM(COALESCE(spl.pf_employer,0)),2)   AS total_pf_employer,
+            ROUND(SUM(COALESCE(spl.esic_employer,0)),2) AS total_esic_employer
+     FROM salary_prep_line spl
+     WHERE spl.run_id = ? AND spl.status != 'cancelled'`,
+      [runId],
+      ),
+      db.execute<RowDataPacket[]>(
       `SELECT ${d.sel},
             COUNT(DISTINCT spl.employee_id)                                                           AS headcount,
             ROUND(SUM(spl.basic),2)                                                                   AS total_basic,
@@ -3162,7 +3199,8 @@ router.get(
      GROUP BY ${d.grp}
      ORDER BY total_net DESC`,
       [runId],
-    );
+      ),
+    ]);
 
     // Provenance: which run these figures came from, its status, and whether other
     // runs exist for the month. Without this the reader cannot tell a final

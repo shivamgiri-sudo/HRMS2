@@ -69,50 +69,53 @@ interface FieldSchemaItem {
 
 export const atsFormConfigService = {
   async getBootstrap() {
-    const [rows] = await db.execute<ConfigRow[]>(
-      'SELECT config_key, config_value FROM ats_form_config WHERE 1=1'
-    );
+    // Six independent lookups (this is the public registration form's load call) — issued
+    // together instead of one after another. The roster read is best-effort: a failure there
+    // leaves the contact details empty, exactly as the previous try/catch did.
+    const [
+      [rows],
+      [branchRows],
+      processOptions,
+      [aliasRows],
+      [recruiterRows],
+      rosterResult,
+    ] = await Promise.all([
+      db.execute<ConfigRow[]>(
+        'SELECT config_key, config_value FROM ats_form_config WHERE 1=1'
+      ),
+      db.execute<BranchRow[]>(
+        'SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
+      ),
+      // Process names come from process_master, the single place a process exists.
+      listActiveProcessNames(),
+      // Get branch aliases (display names like Trapezoid, Okaya, etc.)
+      db.execute<BranchAliasRow[]>(
+        `SELECT canonical_key, MAX(display_name) AS display_name, MIN(alias_text) AS alias_text
+         FROM ats_branch_alias_master
+         WHERE active_status = 1
+         GROUP BY canonical_key
+         ORDER BY display_name ASC`
+      ),
+      db.execute<RecruiterRow[]>(
+        'SELECT name FROM ats_recruiter WHERE active_status = 1 ORDER BY sort_order ASC, name ASC'
+      ),
+      // Try to fetch contact details from ats_recruiter_roster (if available)
+      db.execute<RecruiterRow[]>(
+        'SELECT name, email, mobile FROM ats_recruiter_roster WHERE active_status = 1'
+      ).catch(() => null),
+    ]);
     const configMap: Record<string, unknown> = {};
     for (const row of rows) {
       configMap[row.config_key as string] = row.config_value;
     }
-
-    const [branchRows] = await db.execute<BranchRow[]>(
-      'SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name ASC'
-    );
     const branchOptions = branchRows.map((r) => r.branch_name);
-
-    // Process names come from process_master, the single place a process exists.
-    const processOptions = await listActiveProcessNames();
-
-    // Get branch aliases (display names like Trapezoid, Okaya, etc.)
-    const [aliasRows] = await db.execute<BranchAliasRow[]>(
-      `SELECT canonical_key, MAX(display_name) AS display_name, MIN(alias_text) AS alias_text
-       FROM ats_branch_alias_master
-       WHERE active_status = 1
-       GROUP BY canonical_key
-       ORDER BY display_name ASC`
-    );
     const branchAliases = aliasRows.map((r) => ({
       canonical: r.canonical_key,
       display: r.display_name,
       alias: r.alias_text
     }));
-
-    const [recruiterRows] = await db.execute<RecruiterRow[]>(
-      'SELECT name FROM ats_recruiter WHERE active_status = 1 ORDER BY sort_order ASC, name ASC'
-    );
     let recruiterOptions = recruiterRows.map((r) => r.name);
-
-    // Try to fetch contact details from ats_recruiter_roster (if available)
-    let rosterRows: RecruiterRow[] = [];
-    try {
-      [rosterRows] = await db.execute<RecruiterRow[]>(
-        'SELECT name, email, mobile FROM ats_recruiter_roster WHERE active_status = 1'
-      );
-    } catch {
-      rosterRows = [];
-    }
+    const rosterRows: RecruiterRow[] = rosterResult ? rosterResult[0] : [];
     const recruiterDetails = recruiterOptions.map(name => {
       const roster = rosterRows.find((r) => r.name === name);
       return {

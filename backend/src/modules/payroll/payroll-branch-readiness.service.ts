@@ -200,20 +200,46 @@ async function tableExists(): Promise<boolean> {
   }
 }
 
+// Metric queries inside refreshLiveMetrics are independent, so they are started together
+// (see there). A module-wide cap keeps the fan-out (branches x processes x metrics) from
+// swamping the shared DB pool / its bounded wait queue: excess tasks wait here in memory.
+const METRIC_CONCURRENCY = 10;
+let metricInFlight = 0;
+const metricWaiters: Array<() => void> = [];
+async function acquireMetricSlot(): Promise<void> {
+  if (metricInFlight < METRIC_CONCURRENCY) {
+    metricInFlight++;
+    return;
+  }
+  await new Promise<void>((resolve) => metricWaiters.push(resolve));
+}
+function releaseMetricSlot(): void {
+  const next = metricWaiters.shift();
+  if (next) next(); // hand the slot straight to the next waiter
+  else metricInFlight--;
+}
+
 /** Safely execute a single-metric query. Returns a fallback value on any error. */
 async function safeQuery<T>(
   fn: () => Promise<T>,
   fallback: T,
   label: string
 ): Promise<T> {
+  await acquireMetricSlot();
   try {
     return await fn();
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[BranchReadiness] metric '${label}' failed — ${msg}`);
     return fallback;
+  } finally {
+    releaseMetricSlot();
   }
 }
+
+// information_schema lookup result for holiday_work_request's date column. Only a positive
+// hit is cached (schema does not lose the column at runtime); a miss is re-checked each call.
+let holidayWorkDateColCache: string | undefined;
 
 // ---------------------------------------------------------------------------
 // Service
@@ -365,7 +391,7 @@ export const payrollBranchReadinessService = {
     const updates: Record<string, unknown> = {};
 
     // --- attendance_frozen ---------------------------------------------------
-    const attendanceFrozen = await safeQuery(
+    const attendanceFrozenP = safeQuery(
       async () => {
         // The freeze signal is the run for this month, and it is two things, not one:
         // attendance_snapshot_locked, OR a status that means the run is already settled.
@@ -408,10 +434,9 @@ export const payrollBranchReadinessService = {
       0,
       "attendance_frozen"
     );
-    updates.attendance_frozen = attendanceFrozen;
 
     // --- incentives_status ---------------------------------------------------
-    const incentivesStatus = await safeQuery(
+    const incentivesStatusP = safeQuery(
       async () => {
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT status
@@ -428,16 +453,9 @@ export const payrollBranchReadinessService = {
       "not_uploaded" as const,
       "incentives_status"
     );
-    updates.incentives_status = incentivesStatus;
-    if (incentivesStatus === "approved") {
-      updates.incentives_confirmed_at = new Date()
-        .toISOString()
-        .slice(0, 19)
-        .replace("T", " ");
-    }
 
     // --- bank_details_pct ----------------------------------------------------
-    const bankDetailsPct = await safeQuery(
+    const bankDetailsPctP = safeQuery(
       async () => {
         const processFilter = processId ? 'AND e.process_id = ?' : '';
         const processParams = processId ? [processId] : [];
@@ -483,10 +501,9 @@ export const payrollBranchReadinessService = {
       0,
       "bank_details_pct"
     );
-    updates.bank_details_pct = bankDetailsPct;
 
     // --- uan_complete_pct ----------------------------------------------------
-    const uanCompletePct = await safeQuery(
+    const uanCompletePctP = safeQuery(
       async () => {
         const processFilter = processId ? 'AND process_id = ?' : '';
         const processParams = processId ? [processId] : [];
@@ -511,7 +528,6 @@ export const payrollBranchReadinessService = {
       0,
       "uan_complete_pct"
     );
-    updates.uan_complete_pct = uanCompletePct;
 
     // --- noc_resolved --------------------------------------------------------
     // Previously: any error on any candidate table — including a genuine query
@@ -523,7 +539,7 @@ export const payrollBranchReadinessService = {
     // only case treated as "NOC tracking isn't configured here, don't block on
     // it" — every other error is logged loudly and blocks (0), never silently
     // passes.
-    const nocResolved = await safeQuery(
+    const nocResolvedP = safeQuery(
       async () => {
         let sawGenuineError = false;
         // Try payroll_noc / noc_issuance / employee_noc tables
@@ -575,7 +591,6 @@ export const payrollBranchReadinessService = {
       0,
       "noc_resolved"
     );
-    updates.noc_resolved = nocResolved;
 
     // --- holiday_work_approved -----------------------------------------------
     // The COUNT query below previously had no try/catch of its own, so any failure
@@ -584,7 +599,7 @@ export const payrollBranchReadinessService = {
     // "no pending holiday-work approvals." Now caught explicitly and blocks (0);
     // the outer fallback is also changed from 1 to 0 for the same reason as
     // noc_resolved above.
-    const holidayWorkApproved = await safeQuery(
+    const holidayWorkApprovedP = safeQuery(
       async () => {
         const [year, mon] = month.split("-");
         const monthStart = `${year}-${mon}-01`;
@@ -592,16 +607,20 @@ export const payrollBranchReadinessService = {
         const monthEnd = `${year}-${mon}-${String(lastDay).padStart(2, "0")}`;
 
         // work_date column may be named differently across environments
-        const [cols] = await db.execute<RowDataPacket[]>(
-          `SELECT COLUMN_NAME FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'holiday_work_request'
-            AND COLUMN_NAME IN ('work_date','date','holiday_date','request_date') LIMIT 1`
-        );
+        let dateCol = holidayWorkDateColCache;
+        if (!dateCol) {
+          const [cols] = await db.execute<RowDataPacket[]>(
+            `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'holiday_work_request'
+              AND COLUMN_NAME IN ('work_date','date','holiday_date','request_date') LIMIT 1`
+          );
+          dateCol = (cols[0] as any)?.COLUMN_NAME as string | undefined;
+          if (dateCol) holidayWorkDateColCache = dateCol;
+        }
         // The lookup above is defensive, but falling back to 'work_date' when it finds
         // nothing defeats the point: holiday_work_request has no such column, so the query
         // below then threw on every branch. If no known date column exists there is nothing
         // to count — return 0 rather than guessing a name.
-        const dateCol = (cols[0] as any)?.COLUMN_NAME as string | undefined;
         if (!dateCol) return 0;
         try {
           const [rows] = await db.execute<RowDataPacket[]>(
@@ -625,7 +644,6 @@ export const payrollBranchReadinessService = {
       0,
       "holiday_work_approved"
     );
-    updates.holiday_work_approved = holidayWorkApproved;
 
     // --- outstanding-work counters -------------------------------------------
     // REPORTING ONLY. computeScore() and computeStatus() do not read any of these, so they
@@ -646,7 +664,7 @@ export const payrollBranchReadinessService = {
     // Leave still awaiting a decision, for leave whose span touches this month. Dates exist
     // under BOTH naming styles on leave_request (start_date/end_date and from_date/to_date),
     // so both are COALESCEd rather than assuming one.
-    updates.pending_leave_count = await safeQuery(
+    const pendingLeaveCountP = safeQuery(
       async () => {
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS cnt
@@ -668,7 +686,7 @@ export const payrollBranchReadinessService = {
 
     // attendance_regularization carries branch_id but NO process_id, so the process cut has to
     // come from employees via the join rather than from the row itself.
-    updates.pending_regularization_count = await safeQuery(
+    const pendingRegCountP = safeQuery(
       async () => {
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS cnt
@@ -690,7 +708,7 @@ export const payrollBranchReadinessService = {
     // Active employees with NO attendance row at all this month. This is the number behind
     // "Attendance Data Ready": a non-zero value means the month demonstrably is not complete.
     // The column is record_date, not attendance_date.
-    updates.employees_without_attendance = await safeQuery(
+    const employeesWithoutAttP = safeQuery(
       async () => {
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS cnt
@@ -716,7 +734,7 @@ export const payrollBranchReadinessService = {
     // is requireRole('admin','finance') — so without this the branch sees a fifth of its score
     // withheld by a team that appears nowhere on the page. NULL means no batch was uploaded,
     // which is a different problem from one uploaded and not yet approved.
-    updates.incentive_batch_status = await safeQuery(
+    const incentiveBatchStatusP = safeQuery(
       async () => {
         const proc = processId ? "AND process_id = ?" : "";
         const [rows] = await db.execute<RowDataPacket[]>(
@@ -756,7 +774,7 @@ export const payrollBranchReadinessService = {
     // Attendance: every cost centre in this branch finalised through the CC chain. That chain
     // IS the WFM/Branch Head/HO declaration, and it is a far stronger signal than the checkbox
     // it was being asked to duplicate.
-    const ccAttendanceReady = await safeQuery(
+    const ccAttendanceReadyP = safeQuery(
       async () => {
         const [rows] = await db.execute<RowDataPacket[]>(
           `SELECT
@@ -779,13 +797,10 @@ export const payrollBranchReadinessService = {
       0,
       "cc_attendance_ho_approved"
     );
-    if (ccAttendanceReady === 1) updates.attendance_data_ready = 1;
-
     // Leave and regularizations: the counters computed immediately above already say whether
     // anything is outstanding. Nothing pending IS the finished state — asking someone to also
     // confirm it by hand adds a step that can only introduce disagreement.
-    if (Number(updates.pending_leave_count ?? -1) === 0) updates.leave_finalized = 1;
-    if (Number(updates.pending_regularization_count ?? -1) === 0) updates.regularization_complete = 1;
+    // (applied below, after the metrics are collected)
 
     // Custom deductions: NOTHING TO UPLOAD IS NOT THE SAME AS NOT DONE.
     //
@@ -799,7 +814,7 @@ export const payrollBranchReadinessService = {
     // there is nothing outstanding. Where entries DO exist the manual confirmation still stands,
     // because "somebody uploaded some deductions" does not tell us they uploaded all of them —
     // that judgement needs a person, and this is the case where the tick earns its keep.
-    const deductionsPending = await safeQuery(
+    const deductionsPendingP = safeQuery(
       async () => {
         const proc = processId ? "AND e.process_id = ?" : "";
         const [rows] = await db.execute<RowDataPacket[]>(
@@ -819,6 +834,33 @@ export const payrollBranchReadinessService = {
       -1,
       "deduction_entry_count"
     );
+
+    // All metric queries above were started together; collect them here in the original
+    // order so `updates` (and therefore the derived flags and the SET list) is unchanged.
+    updates.attendance_frozen = await attendanceFrozenP;
+    const incentivesStatus = await incentivesStatusP;
+    updates.incentives_status = incentivesStatus;
+    if (incentivesStatus === "approved") {
+      updates.incentives_confirmed_at = new Date()
+        .toISOString()
+        .slice(0, 19)
+        .replace("T", " ");
+    }
+    updates.bank_details_pct = await bankDetailsPctP;
+    updates.uan_complete_pct = await uanCompletePctP;
+    updates.noc_resolved = await nocResolvedP;
+    updates.holiday_work_approved = await holidayWorkApprovedP;
+    updates.pending_leave_count = await pendingLeaveCountP;
+    updates.pending_regularization_count = await pendingRegCountP;
+    updates.employees_without_attendance = await employeesWithoutAttP;
+    updates.incentive_batch_status = await incentiveBatchStatusP;
+    const ccAttendanceReady = await ccAttendanceReadyP;
+    const deductionsPending = await deductionsPendingP;
+    if (ccAttendanceReady === 1) updates.attendance_data_ready = 1;
+
+    // Leave and regularizations: nothing pending IS the finished state (see above).
+    if (Number(updates.pending_leave_count ?? -1) === 0) updates.leave_finalized = 1;
+    if (Number(updates.pending_regularization_count ?? -1) === 0) updates.regularization_complete = 1;
     if (deductionsPending === 0) updates.custom_deductions_uploaded = 1;
 
     // --- Persist updates when table exists -----------------------------------
@@ -1077,8 +1119,11 @@ export const payrollBranchReadinessService = {
       await this.ensureRecord(month, branchId, processId);
     }
 
-    await this.refreshLiveMetrics(month, branchId, processId);
-    await this.refreshProjection(month, branchId, processId);
+    // Independent: they read different sources and UPDATE disjoint columns of the same row.
+    await Promise.all([
+      this.refreshLiveMetrics(month, branchId, processId),
+      this.refreshProjection(month, branchId, processId),
+    ]);
 
     // Compute score/status and persist
     let record: Partial<BranchReadinessRecord> = {};
@@ -1503,15 +1548,26 @@ export const payrollBranchReadinessService = {
       return [];
     }
 
+    // Processes are independent rows (distinct process_id), so refresh them in small concurrent
+    // chunks rather than strictly one after another. Chunked, not all-at-once, because every
+    // branch does this simultaneously (getHOSummaryGrouped) and the DB pool queue is bounded.
+    // Order is preserved; a failing process is skipped exactly as before.
     const results: BranchReadinessRecord[] = [];
-    for (const proc of processes) {
-      try {
-        const rec = await this.getOrRefresh(month, branchId, proc.id);
-        results.push(rec);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[BranchReadiness] getSummaryForBranch process ${proc.id} failed — ${msg}`);
-      }
+    const PROCESS_CHUNK = 3;
+    for (let i = 0; i < processes.length; i += PROCESS_CHUNK) {
+      const chunk = processes.slice(i, i + PROCESS_CHUNK);
+      const recs = await Promise.all(
+        chunk.map(async (proc) => {
+          try {
+            return await this.getOrRefresh(month, branchId, proc.id);
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[BranchReadiness] getSummaryForBranch process ${proc.id} failed — ${msg}`);
+            return null;
+          }
+        })
+      );
+      for (const rec of recs) if (rec) results.push(rec);
     }
     return results;
   },

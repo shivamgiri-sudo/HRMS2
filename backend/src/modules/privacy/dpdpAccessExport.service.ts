@@ -37,13 +37,17 @@ export interface PersonalDataExport {
 
 export async function buildPersonalDataExport(principalId: string): Promise<PersonalDataExport> {
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_code, full_name, first_name, last_name, date_of_birth, gender,
-            blood_group, nationality, official_email, personal_email, mobile, address1,
-            city, state, country, designation, department, branch_id, process_id,
-            employment_type, employment_status, date_of_joining,
-            pan_number_masked, aadhaar_last4, nominee_name, nominee_relation,
-            created_at, updated_at
-     FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    `SELECT e.id, e.employee_code, e.full_name, e.first_name, e.last_name, e.date_of_birth, e.gender,
+            e.blood_group, e.official_email, e.personal_email, e.mobile, e.address1,
+            e.city, e.state, e.country, dg.designation_name AS designation, dp.dept_name AS department,
+            e.branch_id, e.process_id,
+            e.employment_type, e.employment_status, e.date_of_joining,
+            e.pan_number_masked, e.aadhaar_last4, e.nominee_name, e.nominee_relation,
+            e.created_at, e.updated_at
+     FROM employees e
+     LEFT JOIN designation_master dg ON dg.id = e.designation_id
+     LEFT JOIN department_master dp ON dp.id = e.department_id
+     WHERE e.user_id = ? AND e.active_status = 1 LIMIT 1`,
     [principalId]
   );
 
@@ -57,7 +61,6 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
         date_of_birth: emp.date_of_birth,
         gender: emp.gender,
         blood_group: emp.blood_group,
-        nationality: emp.nationality,
         pan_number: emp.pan_number_masked,
         aadhaar_last4: emp.aadhaar_last4,
         nominee_name: emp.nominee_name,
@@ -190,10 +193,10 @@ export async function buildPersonalDataExport(principalId: string): Promise<Pers
 
   // ── Audit events (principal as actor or subject — sensitive data excluded)
   const [auditRows] = await db.execute<RowDataPacket[]>(
-    `SELECT action_type, target_type, created_at, ip_address
+    `SELECT action_type, entity_type AS target_type, acted_at AS created_at, ip_address
      FROM sensitive_action_log
      WHERE actor_user_id = ?
-     ORDER BY created_at DESC
+     ORDER BY acted_at DESC
      LIMIT 200`,
     [principalId]
   );

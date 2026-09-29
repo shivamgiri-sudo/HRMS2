@@ -174,47 +174,50 @@ export const attendanceReconciliationService = {
       (excludedRows as any[]).map((row) => String(row.cosec_user_id ?? "")),
     );
 
-    const [ibdRows] = await db.query<RowDataPacket[]>(
-      `SELECT employee_code, DATE_FORMAT(activity_date, '%Y-%m-%d') AS record_date,
-              biometric_minutes, total_punches
-         FROM integration_biometric_daily
-        WHERE activity_date BETWEEN ? AND ?`,
-      [options.from, options.to],
-    );
+    // The four range reads are independent of each other; run them concurrently.
+    const [[ibdRows], [adrRows], [aprRows], [diallerRows]] = await Promise.all([
+      db.query<RowDataPacket[]>(
+        `SELECT employee_code, DATE_FORMAT(activity_date, '%Y-%m-%d') AS record_date,
+                biometric_minutes, total_punches
+           FROM integration_biometric_daily
+          WHERE activity_date BETWEEN ? AND ?`,
+        [options.from, options.to],
+      ),
+      db.query<RowDataPacket[]>(
+        `SELECT employee_id, DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date,
+                attendance_status, attendance_source, source_system,
+                raw_minutes, dialler_minutes, biometric_minutes, is_locked, mismatch_flag
+           FROM attendance_daily_record
+          WHERE record_date BETWEEN ? AND ?`,
+        [options.from, options.to],
+      ),
+      db.query<RowDataPacket[]>(
+        `SELECT e.employee_code, DATE_FORMAT(a.ReportDate, '%Y-%m-%d') AS record_date,
+                ROUND(SUM(TIME_TO_SEC(a.Net_Login)) / 60) AS apr_minutes
+           FROM apr a
+           JOIN employees e ON e.employee_code = a.UserID
+          WHERE a.ReportDate BETWEEN ? AND ?
+          GROUP BY e.employee_code, DATE_FORMAT(a.ReportDate, '%Y-%m-%d')`,
+        [options.from, options.to],
+      ),
+      db.query<RowDataPacket[]>(
+        `SELECT employee_id, DATE_FORMAT(session_date, '%Y-%m-%d') AS record_date,
+                COALESCE(SUM(login_minutes), 0) AS dialler_minutes
+           FROM dialer_session_log
+          WHERE session_date BETWEEN ? AND ?
+          GROUP BY employee_id, DATE_FORMAT(session_date, '%Y-%m-%d')`,
+        [options.from, options.to],
+      ),
+    ]);
     const ibdByEmployeeDate = new Map<string, any>();
     for (const row of ibdRows as any[]) ibdByEmployeeDate.set(`${row.employee_code}__${row.record_date}`, row);
 
-    const [adrRows] = await db.query<RowDataPacket[]>(
-      `SELECT employee_id, DATE_FORMAT(record_date, '%Y-%m-%d') AS record_date,
-              attendance_status, attendance_source, source_system,
-              raw_minutes, dialler_minutes, biometric_minutes, is_locked, mismatch_flag
-         FROM attendance_daily_record
-        WHERE record_date BETWEEN ? AND ?`,
-      [options.from, options.to],
-    );
     const adrByEmployeeDate = new Map<string, any>();
     for (const row of adrRows as any[]) adrByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
 
-    const [aprRows] = await db.query<RowDataPacket[]>(
-      `SELECT e.employee_code, DATE_FORMAT(a.ReportDate, '%Y-%m-%d') AS record_date,
-              ROUND(SUM(TIME_TO_SEC(a.Net_Login)) / 60) AS apr_minutes
-         FROM apr a
-         JOIN employees e ON e.employee_code = a.UserID
-        WHERE a.ReportDate BETWEEN ? AND ?
-        GROUP BY e.employee_code, DATE_FORMAT(a.ReportDate, '%Y-%m-%d')`,
-      [options.from, options.to],
-    );
     const aprByEmployeeDate = new Map<string, any>();
     for (const row of aprRows as any[]) aprByEmployeeDate.set(`${row.employee_code}__${row.record_date}`, row);
 
-    const [diallerRows] = await db.query<RowDataPacket[]>(
-      `SELECT employee_id, DATE_FORMAT(session_date, '%Y-%m-%d') AS record_date,
-              COALESCE(SUM(login_minutes), 0) AS dialler_minutes
-         FROM dialer_session_log
-        WHERE session_date BETWEEN ? AND ?
-        GROUP BY employee_id, DATE_FORMAT(session_date, '%Y-%m-%d')`,
-      [options.from, options.to],
-    );
     const diallerByEmployeeDate = new Map<string, any>();
     for (const row of diallerRows as any[]) diallerByEmployeeDate.set(`${row.employee_id}__${row.record_date}`, row);
 

@@ -232,7 +232,7 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
         `SELECT COUNT(DISTINCT s.employee_id) AS available_hc
          FROM wfm_attendance_session s
          JOIN employees e ON e.id = s.employee_id
-         WHERE DATE(CONVERT_TZ(s.session_date, '+00:00', '+05:30')) = ${IST_DATE_EXPR}
+         WHERE s.session_date = ${IST_DATE_EXPR}
            AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
            AND ${availScopeSql}`,
         availScopeParams
@@ -487,7 +487,7 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
       `SELECT COUNT(DISTINCT s.employee_id) AS live_present
        FROM wfm_attendance_session s
        JOIN employees e ON e.id = s.employee_id
-       WHERE DATE(s.session_date) = ${IST_DATE_EXPR}
+       WHERE s.session_date = ${IST_DATE_EXPR}
          AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
          AND ${employeeScopeE.sql}`,
       employeeScopeE.params
@@ -1341,7 +1341,7 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
   try {
     const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "emp.branch_id", "emp.process_id");
 
-    const [rows] = await db.execute<RowDataPacket[]>(
+    const openIssuesQuery = db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS source_rows,
          SUM(CASE WHEN ari.resolved_at IS NULL THEN 1 ELSE 0 END) AS open_total,
@@ -1372,7 +1372,7 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
     // constrained by issue_date: the query above counts resolved rows inside a window
     // filtered on issue_date, i.e. "raised in the last 30 days and since cleared", while
     // the panel labels that row "Cleared in the last 30 days". Those are different sets.
-    const [clearedRows] = await db.execute<RowDataPacket[]>(
+    const clearedQuery = db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS resolved_last_30d
          FROM attendance_reconciliation_issue ari
          LEFT JOIN employees emp ON emp.id = ari.employee_id
@@ -1380,6 +1380,10 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
           AND ${scopeSql}`,
       scopeParams,
     );
+
+    // The open-issue breakdown and the resolved-in-30-days count read different predicates of the
+    // same table and depend on nothing but the scope, so they run together, not back to back.
+    const [[rows], [clearedRows]] = await Promise.all([openIssuesQuery, clearedQuery]);
 
     const r = rows[0] as any;
     const blockers = Number(r.blockers ?? 0);

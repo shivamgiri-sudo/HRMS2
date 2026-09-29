@@ -5,6 +5,20 @@ import { payrollService } from "./payroll.service.js";
 import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 
+// The running-summary batch computes up to 100 employees concurrently and every one of them read
+// the identical statutory_config rows for the same month. Callers that overlap in time now share
+// one in-flight query (no TTL: the entry is dropped the moment it settles, so nothing is ever
+// served stale). Each caller receives its own copy of the map.
+const statConfigInflight = new Map<string, Promise<Record<string, number>>>();
+function loadStatConfigShared(runMonth: string): Promise<Record<string, number>> {
+  let p = statConfigInflight.get(runMonth);
+  if (!p) {
+    p = loadFlatStatutoryConfig(runMonth).finally(() => statConfigInflight.delete(runMonth));
+    statConfigInflight.set(runMonth, p);
+  }
+  return p.then((cfg) => ({ ...cfg }));
+}
+
 // ─── Running salary helpers ───────────────────────────────────────────────────
 
 /**
@@ -142,7 +156,7 @@ export async function computeRunningSalary(
   // Statutory config for deductions, in force for the month being shown — a
   // rate dated next quarter must not change what this month's running salary
   // reads as earned so far.
-  const statConfig = await loadFlatStatutoryConfig(runMonth);
+  const statConfig = await loadStatConfigShared(runMonth);
   const pfEmployeePct  = statConfig["pf_employee_pct"]   ?? 12;
   const esicEmpPct     = statConfig["esic_employee_pct"] ?? 0.75;
   const esicEmrPct     = statConfig["esic_employer_pct"] ?? 3.25;

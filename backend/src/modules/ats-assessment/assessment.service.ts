@@ -2071,24 +2071,28 @@ export async function getAssessmentAttemptDetail(attemptId: string) {
   );
   const attempt = attempts[0];
   if (!attempt) throw appError("Assessment attempt not found", 404, "ASSESSMENT_NOT_FOUND");
-  const template = await loadTemplate(attempt.template_id);
-  const responses = await rows<ResponseRow>(
-    db,
-    `SELECT * FROM ats_assessment_response WHERE assessment_id = ? ORDER BY answered_at ASC`,
-    [attempt.id],
-  );
-  const typing = await rows<TypingRow>(
-    db,
-    `SELECT * FROM ats_typing_test_attempt WHERE assessment_id = ? ORDER BY attempt_no ASC`,
-    [attempt.id],
-  );
-  const audit = await rows<RowDataPacket>(
-    db,
-    `SELECT event_type, event_payload, actor_type, actor_id, ip_address, created_at
-     FROM ats_assessment_audit_log
-     WHERE assessment_id = ? ORDER BY created_at ASC`,
-    [attempt.id],
-  );
+  // Template, responses, typing attempts and audit trail are independent reads keyed on the
+  // attempt — issued together.
+  const [template, responses, typing, audit] = await Promise.all([
+    loadTemplate(attempt.template_id),
+    rows<ResponseRow>(
+      db,
+      `SELECT * FROM ats_assessment_response WHERE assessment_id = ? ORDER BY answered_at ASC`,
+      [attempt.id],
+    ),
+    rows<TypingRow>(
+      db,
+      `SELECT * FROM ats_typing_test_attempt WHERE assessment_id = ? ORDER BY attempt_no ASC`,
+      [attempt.id],
+    ),
+    rows<RowDataPacket>(
+      db,
+      `SELECT event_type, event_payload, actor_type, actor_id, ip_address, created_at
+       FROM ats_assessment_audit_log
+       WHERE assessment_id = ? ORDER BY created_at ASC`,
+      [attempt.id],
+    ),
+  ]);
   return {
     attempt: {
       ...attempt,
@@ -2267,7 +2271,9 @@ export async function reviewAssessment(input: {
 
 export async function getAssessmentDashboard() {
   await ensureReady();
-  const metrics = await rows<RowDataPacket>(
+  // The two aggregates are independent reads — issued together.
+  const [metrics, byProcess] = await Promise.all([
+    rows<RowDataPacket>(
     db,
     `SELECT
        COUNT(*) AS total_assigned,
@@ -2280,8 +2286,8 @@ export async function getAssessmentDashboard() {
        ROUND(AVG(CASE WHEN status = 'completed' THEN percentage END), 2) AS average_score,
        ROUND(100 * SUM(result = 'pass') / NULLIF(SUM(result IN ('pass','fail')), 0), 2) AS pass_rate
      FROM ats_candidate_assessment`,
-  );
-  const byProcess = await rows<RowDataPacket>(
+  ),
+    rows<RowDataPacket>(
     db,
     `SELECT t.process_key, t.role_key, COUNT(*) AS total,
             SUM(a.status = 'completed') AS completed,
@@ -2291,7 +2297,8 @@ export async function getAssessmentDashboard() {
      JOIN ats_assessment_template t ON t.id = a.template_id
      GROUP BY t.process_key, t.role_key
      ORDER BY t.process_key, t.role_key`,
-  );
+  ),
+  ]);
   return { metrics: metrics[0] ?? {}, byProcess };
 }
 

@@ -201,9 +201,10 @@ describe("atsFullParityService.webData() — scope injection", () => {
 
   it("TC-S11-04: scope returns 1=0 → candidateRows empty", async () => {
     mockBuildScopeWhereClause.mockResolvedValueOnce({ sql: "1=0", params: [] });
+    // webData issues the (independent) config lookup first and the candidate query right behind it.
+    mockDbExecute.mockResolvedValueOnce([configRows]); // getConfigMap
     // candidateSelect with 1=0 returns no rows
     mockDbExecute.mockResolvedValueOnce([[]]); // candidateSelect
-    mockDbExecute.mockResolvedValueOnce([configRows]); // getConfigMap
     const { atsFullParityService } = await import("../src/modules/ats-full-parity/atsFullParity.service.js");
     const result = await atsFullParityService.webData({ actorId: "user-bh-out-of-scope" });
     expect(result.candidateRows).toHaveLength(0);

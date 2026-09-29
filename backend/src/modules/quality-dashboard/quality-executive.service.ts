@@ -1,5 +1,6 @@
 import { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { logger } from '../../logger.js';
+import { TtlCache } from '../../shared/ttlCache.js';
 
 export interface ExecutiveQualityMetrics {
   overall_quality_score: number;
@@ -44,48 +45,181 @@ export interface ExecutiveSummaryResponse {
 
 type DbPoolLike = { getConnection: () => Promise<PoolConnection> };
 
+// The audit table is wide (92 columns) and every statement below aggregates a trailing window of it,
+// so each one costs a scan of the window. The summary is identical for every viewer, and both
+// /quality-summary and /quality-summary/process-breakdown call it (the CEO and Super Admin layouts
+// load both at once), so one computation per `daysBack` is shared for 60s, including by callers that
+// arrive while it is still running. Failures are never cached.
+const EXECUTIVE_SUMMARY_TTL_MS = 60_000;
+
 export class QualityExecutiveService {
+  private readonly summaryCache = new TtlCache<ExecutiveSummaryResponse>({
+    maxEntries: 32,
+    defaultTtlMs: EXECUTIVE_SUMMARY_TTL_MS,
+  });
+
   constructor(private db: DbPoolLike) {}
 
   async getExecutiveSummary(daysBack: number = 30): Promise<ExecutiveSummaryResponse> {
+    const { value } = await this.summaryCache.getOrCompute(String(daysBack), () => this.computeExecutiveSummary(daysBack));
+    return value;
+  }
+
+  /** Runs one statement on its own pooled connection so the aggregates below can overlap. */
+  private async withConnection<T>(fn: (conn: PoolConnection) => Promise<T>): Promise<T> {
     const conn = await this.db.getConnection();
-
     try {
-      // Get current period overall metrics
-      const [currentMetrics] = await conn.execute<RowDataPacket[]>(
-        `SELECT
-           ROUND(AVG(cqa.quality_percentage), 2) as current_quality,
-           COUNT(*) as total_calls,
-           COUNT(DISTINCT cqa.User) as unique_agents
-         FROM db_audit.call_quality_assessment cqa
-         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
-        [daysBack]
-      );
+      return await fn(conn);
+    } finally {
+      conn.release();
+    }
+  }
 
-      const currentRow = currentMetrics?.[0] as any;
+  private async computeExecutiveSummary(daysBack: number): Promise<ExecutiveSummaryResponse> {
+    {
+      // Five independent aggregates over the audit table (they used to be eight statements awaited one
+      // after another on a single connection). Each runs on its own connection, in this order:
+      //   [0] current/7-day/30-day window averages   [1] top performers   [2] bottom performers
+      //   [3] per-process performance                [4] per-agent scores + org benchmarks
+      const [
+        [windowMetrics],
+        [topPerformers],
+        [bottomPerformers],
+        [processMetrics],
+        [agentQualityRows],
+      ] = await Promise.all([
+        // Current period, 7-day and 30-day averages in ONE pass. They were three separate scans of
+        // overlapping windows; NOW() is evaluated once per statement, and AVG ignores the NULLs the
+        // CASE produces outside each window, so each figure equals its old standalone query.
+        this.withConnection((conn) => conn.execute<RowDataPacket[]>(
+          `SELECT
+             ROUND(AVG(CASE WHEN cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
+                            THEN cqa.quality_percentage END), 2) as current_quality,
+             COUNT(CASE WHEN cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY) THEN 1 END) as total_calls,
+             COUNT(DISTINCT CASE WHEN cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
+                                 THEN cqa.User END) as unique_agents,
+             ROUND(AVG(CASE WHEN cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                            THEN cqa.quality_percentage END), 2) as avg_quality_7d,
+             ROUND(AVG(CASE WHEN cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                            THEN cqa.quality_percentage END), 2) as avg_quality_30d
+           FROM db_audit.call_quality_assessment cqa
+           WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
+          [daysBack, daysBack, daysBack, Math.max(daysBack, 30)]
+        )),
+        this.withConnection((conn) => conn.execute<RowDataPacket[]>(
+          `SELECT
+             @rank := @rank + 1 as rank_position,
+             cqa.User as agent_code,
+             e.first_name,
+             e.last_name,
+             ROUND(AVG(cqa.quality_percentage), 2) as quality_score,
+             COUNT(*) as calls_handled,
+             SUBSTRING_INDEX(
+               GROUP_CONCAT(DISTINCT COALESCE(ccfg.display_name, CONCAT('Client ', cqa.ClientId))
+                            ORDER BY cqa.ClientId),
+               ',', 1) as process
+           FROM db_audit.call_quality_assessment cqa
+           LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
+           LEFT JOIN Shivamgiri.portal_client_config ccfg
+             ON ccfg.client_id = CAST(cqa.ClientId AS UNSIGNED)
+           CROSS JOIN (SELECT @rank := 0) AS init
+           WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
+           GROUP BY cqa.User, e.first_name, e.last_name
+           HAVING calls_handled >= 10
+           ORDER BY quality_score DESC
+           LIMIT 10`,
+          [daysBack]
+        )),
+        this.withConnection((conn) => conn.execute<RowDataPacket[]>(
+          `SELECT
+             @rank := @rank + 1 as rank_position,
+             cqa.User as agent_code,
+             e.first_name,
+             e.last_name,
+             ROUND(AVG(cqa.quality_percentage), 2) as quality_score,
+             COUNT(*) as calls_handled,
+             SUBSTRING_INDEX(
+               GROUP_CONCAT(DISTINCT COALESCE(ccfg.display_name, CONCAT('Client ', cqa.ClientId))
+                            ORDER BY cqa.ClientId),
+               ',', 1) as process
+           FROM db_audit.call_quality_assessment cqa
+           LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
+           LEFT JOIN Shivamgiri.portal_client_config ccfg
+             ON ccfg.client_id = CAST(cqa.ClientId AS UNSIGNED)
+           CROSS JOIN (SELECT @rank := 0) AS init
+           WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
+           GROUP BY cqa.User, e.first_name, e.last_name
+           HAVING calls_handled >= 10
+           ORDER BY quality_score ASC
+           LIMIT 10`,
+          [daysBack]
+        )),
+        // Process performance.
+        //
+        // Keyed on ClientId, NOT on Campaign. `Campaign` stopped being written after April
+        // 2026: on 2026-08-28 every one of the 14,488 rows in the trailing 30-day window has
+        // Campaign IS NULL (COUNT(DISTINCT Campaign) = 0 for the window; 35,150 NULLs overall,
+        // all of them from 2026-05 onward). `GROUP BY Campaign` therefore returned exactly ONE
+        // row, with a NULL name, blending nine processes spanning 47%-87% into a single 73.6%
+        // — which the CEO dashboard rendered as the literal filler string "Process 1".
+        //
+        // ClientId is populated on 100% of those rows and resolves to 9 processes. The display
+        // name comes from Shivamgiri.portal_client_config, the same lookup call-master.service.ts
+        // already uses for this table. Campaign is kept as a second-choice label so historic
+        // windows (daysBack spanning before May 2026) still read with their original names, and
+        // `Client <id>` covers the two live ids that carry no config row (487, 417).
+        this.withConnection((conn) => conn.execute<RowDataPacket[]>(
+          `SELECT
+             COALESCE(
+               ccfg.display_name,
+               NULLIF(MAX(cqa.Campaign), ''),
+               CONCAT('Client ', cqa.ClientId),
+               'Unattributed'
+             ) as process_name,
+             ROUND(AVG(cqa.quality_percentage), 2) as avg_quality,
+             COUNT(DISTINCT cqa.User) as agent_count,
+             COUNT(*) as calls_handled
+           FROM db_audit.call_quality_assessment cqa
+           LEFT JOIN Shivamgiri.portal_client_config ccfg
+             ON ccfg.client_id = CAST(cqa.ClientId AS UNSIGNED)
+           WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
+           GROUP BY cqa.ClientId, ccfg.display_name
+           ORDER BY avg_quality DESC`,
+          [daysBack]
+        )),
+        // Per-agent averages AND the organisation benchmarks from one grouped pass: the benchmark
+        // AVG/STDDEV are taken over exactly these per-agent rows (previously a second statement
+        // that recomputed the same GROUP BY as a derived table). STDDEV/AVG as window functions
+        // are the same population aggregates the standalone query used.
+        this.withConnection((conn) => conn.execute<RowDataPacket[]>(
+          `SELECT
+             user_stats.agent_code,
+             user_stats.avg_quality,
+             ROUND(AVG(user_stats.avg_quality) OVER (), 2) as bench_avg_quality,
+             ROUND(STDDEV(user_stats.avg_quality) OVER (), 2) as bench_std_dev
+           FROM (
+             SELECT
+               cqa.User as agent_code,
+               ROUND(AVG(cqa.quality_percentage), 2) as avg_quality
+             FROM db_audit.call_quality_assessment cqa
+             WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
+             GROUP BY cqa.User
+           ) AS user_stats`,
+          [daysBack]
+        )),
+      ]);
+
+      const currentRow = windowMetrics?.[0] as any;
       // ROUND(AVG(...), 2) is a MySQL DECIMAL, and mysql2 hands DECIMALs back as *strings*
       // ("73.45", not 73.45) — the same defect class as the frontend .toFixed() crash on
       // /quality-dashboard earlier this session. Number(...) here, not `|| 0` alone: `|| 0`
       // only guards a missing row, it does nothing about the value still being a string.
       const currentQuality = Number(currentRow?.current_quality) || 0;
 
-      // Get 7-day average for trend
-      const [sevenDayMetrics] = await conn.execute<RowDataPacket[]>(
-        `SELECT ROUND(AVG(cqa.quality_percentage), 2) as avg_quality
-         FROM db_audit.call_quality_assessment cqa
-         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY)`
-      );
+      // 7-day and 30-day averages come from the same single-pass window query above.
+      const sevenDayQuality = Number(currentRow?.avg_quality_7d) || currentQuality;
 
-      const sevenDayQuality = Number((sevenDayMetrics?.[0] as any)?.avg_quality) || currentQuality;
-
-      // Get 30-day baseline for 30-day trend
-      const [thirtyDayMetrics] = await conn.execute<RowDataPacket[]>(
-        `SELECT ROUND(AVG(cqa.quality_percentage), 2) as avg_quality
-         FROM db_audit.call_quality_assessment cqa
-         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
-      );
-
-      const thirtyDayQuality = Number((thirtyDayMetrics?.[0] as any)?.avg_quality) || currentQuality;
+      const thirtyDayQuality = Number(currentRow?.avg_quality_30d) || currentQuality;
 
       // Calculate trends.
       //
@@ -120,102 +254,6 @@ export class QualityExecutiveService {
         trend_30day: trend30day
       };
 
-      // Get top 10 performers
-      const [topPerformers] = await conn.execute<RowDataPacket[]>(
-        `SELECT
-           @rank := @rank + 1 as rank_position,
-           cqa.User as agent_code,
-           e.first_name,
-           e.last_name,
-           ROUND(AVG(cqa.quality_percentage), 2) as quality_score,
-           COUNT(*) as calls_handled,
-           SUBSTRING_INDEX(
-             GROUP_CONCAT(DISTINCT COALESCE(ccfg.display_name, CONCAT('Client ', cqa.ClientId))
-                          ORDER BY cqa.ClientId),
-             ',', 1) as process
-         FROM db_audit.call_quality_assessment cqa
-         LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
-         LEFT JOIN Shivamgiri.portal_client_config ccfg
-           ON ccfg.client_id = CAST(cqa.ClientId AS UNSIGNED)
-         CROSS JOIN (SELECT @rank := 0) AS init
-         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
-         GROUP BY cqa.User, e.first_name, e.last_name
-         HAVING calls_handled >= 10
-         ORDER BY quality_score DESC
-         LIMIT 10`,
-        [daysBack]
-      );
-
-      // Get bottom 10 performers
-      const [bottomPerformers] = await conn.execute<RowDataPacket[]>(
-        `SELECT
-           @rank := @rank + 1 as rank_position,
-           cqa.User as agent_code,
-           e.first_name,
-           e.last_name,
-           ROUND(AVG(cqa.quality_percentage), 2) as quality_score,
-           COUNT(*) as calls_handled,
-           SUBSTRING_INDEX(
-             GROUP_CONCAT(DISTINCT COALESCE(ccfg.display_name, CONCAT('Client ', cqa.ClientId))
-                          ORDER BY cqa.ClientId),
-             ',', 1) as process
-         FROM db_audit.call_quality_assessment cqa
-         LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
-         LEFT JOIN Shivamgiri.portal_client_config ccfg
-           ON ccfg.client_id = CAST(cqa.ClientId AS UNSIGNED)
-         CROSS JOIN (SELECT @rank := 0) AS init
-         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
-         GROUP BY cqa.User, e.first_name, e.last_name
-         HAVING calls_handled >= 10
-         ORDER BY quality_score ASC
-         LIMIT 10`,
-        [daysBack]
-      );
-
-      // Get process performance.
-      //
-      // Keyed on ClientId, NOT on Campaign. `Campaign` stopped being written after April
-      // 2026: on 2026-08-28 every one of the 14,488 rows in the trailing 30-day window has
-      // Campaign IS NULL (COUNT(DISTINCT Campaign) = 0 for the window; 35,150 NULLs overall,
-      // all of them from 2026-05 onward). `GROUP BY Campaign` therefore returned exactly ONE
-      // row, with a NULL name, blending nine processes spanning 47%-87% into a single 73.6%
-      // — which the CEO dashboard rendered as the literal filler string "Process 1".
-      //
-      // ClientId is populated on 100% of those rows and resolves to 9 processes. The display
-      // name comes from Shivamgiri.portal_client_config, the same lookup call-master.service.ts
-      // already uses for this table. Campaign is kept as a second-choice label so historic
-      // windows (daysBack spanning before May 2026) still read with their original names, and
-      // `Client <id>` covers the two live ids that carry no config row (487, 417).
-      const [processMetrics] = await conn.execute<RowDataPacket[]>(
-        `SELECT
-           COALESCE(
-             ccfg.display_name,
-             NULLIF(MAX(cqa.Campaign), ''),
-             CONCAT('Client ', cqa.ClientId),
-             'Unattributed'
-           ) as process_name,
-           ROUND(AVG(cqa.quality_percentage), 2) as avg_quality,
-           COUNT(DISTINCT cqa.User) as agent_count,
-           COUNT(*) as calls_handled
-         FROM db_audit.call_quality_assessment cqa
-         LEFT JOIN Shivamgiri.portal_client_config ccfg
-           ON ccfg.client_id = CAST(cqa.ClientId AS UNSIGNED)
-         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
-         GROUP BY cqa.ClientId, ccfg.display_name
-         ORDER BY avg_quality DESC`,
-        [daysBack]
-      );
-
-      const [agentQualityRows] = await conn.execute<RowDataPacket[]>(
-        `SELECT
-           cqa.User as agent_code,
-           ROUND(AVG(cqa.quality_percentage), 2) as avg_quality
-         FROM db_audit.call_quality_assessment cqa
-         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
-         GROUP BY cqa.User`,
-        [daysBack]
-      );
-
       const agentQualityScores = (agentQualityRows || [])
         .map((row: any) => Number(row.avg_quality))
         .filter((score) => Number.isFinite(score));
@@ -233,21 +271,8 @@ export class QualityExecutiveService {
                   100
               ) / 100;
 
-      // Organization benchmarks
-      const [benchmarks] = await conn.execute<RowDataPacket[]>(
-        `SELECT
-           ROUND(AVG(user_stats.quality_percentage), 2) as avg_quality,
-           ROUND(STDDEV(user_stats.quality_percentage), 2) as std_dev
-         FROM (
-           SELECT ROUND(AVG(cqa.quality_percentage), 2) as quality_percentage
-           FROM db_audit.call_quality_assessment cqa
-           WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
-           GROUP BY cqa.User
-         ) AS user_stats`,
-        [daysBack]
-      );
-
-      const benchmarkRow = benchmarks?.[0] as any;
+      // Organisation benchmarks ride on every per-agent row (identical on each); none when there are no rows.
+      const benchmarkRow = (agentQualityRows?.[0] ?? null) as any;
 
       return {
         metrics: metrics,
@@ -287,13 +312,11 @@ export class QualityExecutiveService {
           coaching_priority_count: agentQualityScores.filter((score) => score >= 70 && score < 80).length
         },
         org_benchmarks: {
-          avg_quality: benchmarkRow?.avg_quality || 0,
+          avg_quality: benchmarkRow?.bench_avg_quality || 0,
           median_quality: medianQuality,
-          std_deviation: benchmarkRow?.std_dev || 0
+          std_deviation: benchmarkRow?.bench_std_dev || 0
         }
       };
-    } finally {
-      conn.release();
     }
   }
 }

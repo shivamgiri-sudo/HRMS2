@@ -778,7 +778,7 @@ export const attendanceEngineService = {
        FROM integration_biometric_daily ibd
        JOIN employees e
          ON e.id = ?
-        AND (ibd.employee_code = e.employee_code OR ibd.employee_code = e.biometric_code)
+        AND ibd.employee_code IN (e.employee_code, e.biometric_code)
        WHERE ibd.activity_date = ?`,
       [employeeId, date]
     );

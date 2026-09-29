@@ -32,8 +32,11 @@ router.get("/bellavita-sale-dashboard", requireRole(...VIEWER_ROLES), h(async (r
   const to = String(req.query.to ?? "");
   const lob = req.query.lob ? String(req.query.lob).slice(0, 60) : undefined;
   const empId = req.query.empId ? String(req.query.empId).slice(0, 60) : undefined;
-  const data = await getBellavitaSaleDashboard(from, to, lob, empId);
-  const canSetTarget = await hasAnyRole(req.authUser!.id, ...TARGET_ADMIN_ROLES);
+  // Role lookup is independent of the dashboard payload -- run both together.
+  const [data, canSetTarget] = await Promise.all([
+    getBellavitaSaleDashboard(from, to, lob, empId),
+    hasAnyRole(req.authUser!.id, ...TARGET_ADMIN_ROLES),
+  ]);
   res.json({ success: true, data: { ...data, canSetTarget } });
 }));
 

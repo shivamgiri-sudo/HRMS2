@@ -129,42 +129,48 @@ async function calculateEmployeeSnapshot(employee: any) {
   const employeeId = String(employee.id);
   // null, not 3: an employee with no pulse response has no measured mood, and inventing one puts a
   // fabricated number into 20% of their engagement score. The weight is redistributed below.
-  const pulseAvg = await pulseAverage(employeeId, 90);
-  const pulses = await scalar(
-    `SELECT COUNT(*) AS cnt FROM pulse_response pr WHERE pr.employee_id = ? AND ${PULSE_WINDOW_SQL}`,
-    [employeeId, 90]
-  );
-  const kudosReceived = await scalar(
-    "SELECT COUNT(*) AS cnt FROM kudos_transaction WHERE receiver_id = ? AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
-    [employeeId]
-  );
-  const kudosGiven = await scalar(
-    "SELECT COUNT(*) AS cnt FROM kudos_transaction WHERE sender_id = ? AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
-    [employeeId]
-  );
-  const surveyResponses = await scalar(
-    "SELECT COUNT(DISTINCT survey_id) AS cnt FROM survey_response WHERE employee_id = ? AND submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
-    [employeeId]
-  );
-  const openTickets = await scalar(
-    "SELECT COUNT(*) AS cnt FROM helpdesk_ticket WHERE employee_id = ? AND status NOT IN ('resolved','closed','cancelled')",
-    [employeeId]
-  );
-  const openGrievances = await scalar(
-    "SELECT COUNT(*) AS cnt FROM grievance WHERE employee_id = ? AND status NOT IN ('resolved','closed')",
-    [employeeId]
-  );
+  // The eight lookups below are independent of each other — run them concurrently.
+  const attendanceTableExists = tableExists("attendance_daily_record");
+  const [pulseAvg, pulses, kudosReceived, kudosGiven, surveyResponses, openTickets, openGrievances] = await Promise.all([
+    pulseAverage(employeeId, 90),
+    scalar(
+      `SELECT COUNT(*) AS cnt FROM pulse_response pr WHERE pr.employee_id = ? AND ${PULSE_WINDOW_SQL}`,
+      [employeeId, 90]
+    ),
+    scalar(
+      "SELECT COUNT(*) AS cnt FROM kudos_transaction WHERE receiver_id = ? AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
+      [employeeId]
+    ),
+    scalar(
+      "SELECT COUNT(*) AS cnt FROM kudos_transaction WHERE sender_id = ? AND sent_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
+      [employeeId]
+    ),
+    scalar(
+      "SELECT COUNT(DISTINCT survey_id) AS cnt FROM survey_response WHERE employee_id = ? AND submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)",
+      [employeeId]
+    ),
+    scalar(
+      "SELECT COUNT(*) AS cnt FROM helpdesk_ticket WHERE employee_id = ? AND status NOT IN ('resolved','closed','cancelled')",
+      [employeeId]
+    ),
+    scalar(
+      "SELECT COUNT(*) AS cnt FROM grievance WHERE employee_id = ? AND status NOT IN ('resolved','closed')",
+      [employeeId]
+    ),
+  ]);
 
   let attendanceScore = 72;
-  if (await tableExists("attendance_daily_record")) {
-    const days = await scalar(
-      "SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND attendance_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)",
-      [employeeId]
-    );
-    const absent = await scalar(
-      "SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND attendance_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND LOWER(status) IN ('absent','a','lwp')",
-      [employeeId]
-    );
+  if (await attendanceTableExists) {
+    const [days, absent] = await Promise.all([
+      scalar(
+        "SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)",
+        [employeeId]
+      ),
+      scalar(
+        "SELECT COUNT(*) AS cnt FROM attendance_daily_record WHERE employee_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND LOWER(attendance_status) IN ('absent','a','lwp')",
+        [employeeId]
+      ),
+    ]);
     attendanceScore = days > 0 ? clamp(100 - (absent / days) * 100) : 72;
   }
 
@@ -237,6 +243,15 @@ async function calculateEmployeeSnapshot(employee: any) {
   };
 }
 
+/** Compute snapshots 20 employees at a time so the fan-out cannot flood the connection pool. */
+async function snapshotsInChunks(employees: any[], chunk = 20) {
+  const out: Array<readonly [string, Awaited<ReturnType<typeof calculateEmployeeSnapshot>>]> = [];
+  for (let i = 0; i < employees.length; i += chunk) {
+    out.push(...await Promise.all(employees.slice(i, i + chunk).map(async (employee) => [String(employee.id), await calculateEmployeeSnapshot(employee)] as const)));
+  }
+  return out;
+}
+
 export async function scanPeopleExperience(scope: PeopleExperienceScope, filters: FilterMap = {}, limit = 500) {
   const employees = (await scopedEmployees(scope, filters)).slice(0, Math.min(limit, 2000));
   const results: Awaited<ReturnType<typeof calculateEmployeeSnapshot>>[] = [];
@@ -290,7 +305,7 @@ export async function getPeopleExperienceCommandCenter(scope: PeopleExperienceSc
   const health = await latestHealthForEmployees(employeeIds);
   const fallbackNeeded = employeeIds.length > 0 && health.size === 0;
   const computed = fallbackNeeded
-    ? new Map((await Promise.all(employees.slice(0, 200).map(async (employee) => [String(employee.id), await calculateEmployeeSnapshot(employee)] as const))))
+    ? new Map(await snapshotsInChunks(employees.slice(0, 200)))
     : new Map<string, any>();
 
   const healthFor = (id: string) => health.get(id) ?? computed.get(id) ?? {

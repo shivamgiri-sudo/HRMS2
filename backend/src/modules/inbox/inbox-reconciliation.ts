@@ -95,7 +95,24 @@ export interface ResolutionRule {
   resolvedWhen: string;
   /** WHERE body over alias `w`; must include the is_actioned = 0 guard. */
   where: string;
+  /**
+   * Find the ids with a plain (non-locking) SELECT, then close them by id — instead of a
+   * single `UPDATE ... WHERE <rule> LIMIT n`. A rule whose WHERE probes other tables per
+   * row makes that UPDATE take X locks on every scanned alert row for the whole statement
+   * (20-35s for the dated attendance rules on production), blocking alert inserts.
+   * The set of rows closed is the same; only the lock footprint differs.
+   */
+  twoPhase?: boolean;
+  /**
+   * Run this rule at most once per interval (per process). For rules whose per-row probes
+   * are expensive. The rows closed are the same — they are just closed up to this much later.
+   * Ignored on a dry run.
+   */
+  minIntervalMs?: number;
 }
+
+/** The two dated attendance rules probe attendance_daily_record per open alert. */
+const HEAVY_RULE_MIN_INTERVAL_MS = 30 * 60 * 1000;
 
 export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
   {
@@ -189,6 +206,8 @@ export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
     // off 'missing_punch' is just as much affirmative evidence the day is no
     // longer missing a punch, however it got fixed.
     key: "attendance_missing_punch",
+    twoPhase: true,
+    minIntervalMs: HEAVY_RULE_MIN_INTERVAL_MS,
     resolvedWhen: "a regularization has been raised for that employee and date, or the day's attendance record no longer shows missing_punch",
     where: `
       w.type = 'attendance_missing_punch' AND w.is_actioned = 0
@@ -212,6 +231,8 @@ export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
     // settled, non-ambiguous status rather than still sitting on whatever
     // provisional/anomalous status raised the alert in the first place.
     key: "attendance_validation",
+    twoPhase: true,
+    minIntervalMs: HEAVY_RULE_MIN_INTERVAL_MS,
     resolvedWhen: "a regularization has been raised for that employee and date, or the day's attendance record now shows a settled status",
     where: `
       w.type = 'attendance_validation' AND w.is_actioned = 0
@@ -358,6 +379,11 @@ const MAX_BATCHES_PER_RULE = 200;
  * With `dryRun`, counts what would close and writes nothing — use it before
  * running this against a backlog.
  */
+const lastRuleRunAt = new Map<string, number>();
+
+/** Test hook: forget when throttled rules last ran. */
+export function resetRuleThrottle(): void { lastRuleRunAt.clear(); }
+
 export async function runInboxReconciliation(
   opts: { dryRun?: boolean; rules?: readonly ResolutionRule[] } = {},
 ): Promise<ReconciliationResult> {
@@ -378,7 +404,33 @@ export async function runInboxReconciliation(
         continue;
       }
 
+      if (rule.minIntervalMs) {
+        const now = Date.now();
+        const last = lastRuleRunAt.get(rule.key);
+        if (last !== undefined && now - last < rule.minIntervalMs) {
+          byRule[rule.key] = 0;
+          continue;
+        }
+        lastRuleRunAt.set(rule.key, now);
+      }
+
       let closed = 0;
+      if (rule.twoPhase) {
+        for (let batch = 0; batch < MAX_BATCHES_PER_RULE; batch += 1) {
+          const [idRows] = await db.execute<RowDataPacket[]>(
+            `SELECT w.id FROM work_inbox_item w
+              WHERE ${rule.where}
+              LIMIT ${BATCH_SIZE}`,
+          );
+          const ids = (idRows as RowDataPacket[]).map((r) => String(r.id));
+          if (ids.length === 0) break;
+          closed += await closeItemsByIds(ids);
+          if (ids.length < BATCH_SIZE) break;
+        }
+        byRule[rule.key] = closed;
+        total += closed;
+        continue;
+      }
       for (let batch = 0; batch < MAX_BATCHES_PER_RULE; batch += 1) {
         const [result] = await db.execute<ResultSetHeader>(
           `UPDATE work_inbox_item w

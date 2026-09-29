@@ -35,6 +35,13 @@ export async function recalculateOpenPayrollForEmployee(params: {
   sourceEventId?: string | null;
   reason: string;
   actorUserId?: string | null;
+  /**
+   * Default true: a miss (no run line / closed run) is recorded as a new queue row.
+   * The queue drainer passes false — it is already working a queue row, and re-queueing from
+   * there inserted a fresh pending row every cycle with the reason text one suffix longer
+   * (self-feeding loop; ~16 KB reasons, multi-GB table). The drainer marks its own row instead.
+   */
+  enqueueOnMiss?: boolean;
 }): Promise<{ status: "recalculated" | "queued" | "no_open_run"; runId: string | null; message: string }> {
   // EVERY run the employee has a line in for this month, not just the newest.
   //
@@ -59,8 +66,10 @@ export async function recalculateOpenPayrollForEmployee(params: {
   );
   const runs = runRows as any[];
 
+  const enqueueOnMiss = params.enqueueOnMiss !== false;
+
   if (runs.length === 0) {
-    await queuePayrollRecalculation({
+    if (enqueueOnMiss) await queuePayrollRecalculation({
       employeeId: params.employeeId,
       payrollMonth: params.payrollMonth,
       sourceEventType: params.sourceEventType,
@@ -77,6 +86,7 @@ export async function recalculateOpenPayrollForEmployee(params: {
   // A closed run cannot be rewritten in place; queue it so the divergence is at
   // least recorded rather than lost.
   for (const run of closedRuns) {
+    if (!enqueueOnMiss) break;
     await queuePayrollRecalculation({
       employeeId: params.employeeId,
       payrollMonth: params.payrollMonth,

@@ -191,13 +191,16 @@ router.get("/records", requireRole(
     ) ranked
     WHERE ranked.rn = 1`;
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * ${baseQuery}
+  // Page and total are independent reads: issue together.
+  const [[rows], [countRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT * ${baseQuery}
       ORDER BY run_month DESC, employee_code ASC
       LIMIT ${limit} OFFSET ${offset}`,
-    params,
-  );
-  const [countRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${baseQuery}`, params);
+      params,
+    ),
+    db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${baseQuery}`, params),
+  ]);
 
   return res.json({ success: true, data: rows, total: Number(countRows[0]?.total ?? 0), page, limit });
 }));

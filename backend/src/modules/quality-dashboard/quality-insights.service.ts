@@ -123,16 +123,61 @@ export async function generateInsights(from: string, to: string) {
     action?: string;
   }> = [];
 
+  // The five source queries are mutually independent, so they run concurrently
+  // (was five sequential round trips). Insights are still assembled in the
+  // original order below, so the output is identical.
+  const [[trendData], [criticalAgents], [topPerformers], [bottomPerformers], [peakHours]] = await Promise.all([
+    pool.execute<RowDataPacket[]>(`
+        SELECT
+          AVG(CASE WHEN DATE(CallDate) = CURDATE() THEN quality_percentage END) as today_avg,
+          AVG(CASE WHEN DATE(CallDate) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) THEN quality_percentage END) as yesterday_avg,
+          AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN quality_percentage END) as week_avg,
+          AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN quality_percentage END) as month_avg
+        FROM db_audit.call_quality_assessment
+        WHERE CallDate BETWEEN ? AND ?
+      `, [from, to]),
+    pool.execute<RowDataPacket[]>(`
+        SELECT cqa.User, COUNT(*) as poor_calls,
+               COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User) AS display_name
+        FROM db_audit.call_quality_assessment cqa
+        LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
+        WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+          AND cqa.quality_percentage < 50
+        GROUP BY cqa.User, e.full_name, e.first_name, e.last_name
+        HAVING COUNT(*) >= 3
+        ORDER BY poor_calls DESC
+        LIMIT 3
+      `, []),
+    pool.execute<RowDataPacket[]>(`
+        SELECT
+          COUNT(DISTINCT User) as top_count,
+          AVG(quality_percentage) as top_avg
+        FROM db_audit.call_quality_assessment
+        WHERE CallDate BETWEEN ? AND ?
+          AND quality_percentage >= 90
+      `, [from, to]),
+    pool.execute<RowDataPacket[]>(`
+        SELECT
+          COUNT(DISTINCT User) as bottom_count,
+          AVG(quality_percentage) as bottom_avg
+        FROM db_audit.call_quality_assessment
+        WHERE CallDate BETWEEN ? AND ?
+          AND quality_percentage < 70
+      `, [from, to]),
+    pool.execute<RowDataPacket[]>(`
+        SELECT
+          HOUR(CallDate) as hour,
+          AVG(quality_percentage) as avg_score,
+          COUNT(*) as call_volume
+        FROM db_audit.call_quality_assessment
+        WHERE CallDate BETWEEN ? AND ?
+        GROUP BY HOUR(CallDate)
+        ORDER BY avg_score ASC
+        LIMIT 1
+      `, [from, to]),
+  ]);
+
   // Insight 1: Quality trend
-  const [trendData] = await pool.execute<RowDataPacket[]>(`
-    SELECT
-      AVG(CASE WHEN DATE(CallDate) = CURDATE() THEN quality_percentage END) as today_avg,
-      AVG(CASE WHEN DATE(CallDate) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) THEN quality_percentage END) as yesterday_avg,
-      AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN quality_percentage END) as week_avg,
-      AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN quality_percentage END) as month_avg
-    FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ?
-  `, [from, to]);
 
   const trend = trendData[0];
   if (trend.today_avg && trend.yesterday_avg) {
@@ -157,18 +202,6 @@ export async function generateInsights(from: string, to: string) {
   }
 
   // Insight 2: Critical agents
-  const [criticalAgents] = await pool.execute<RowDataPacket[]>(`
-    SELECT cqa.User, COUNT(*) as poor_calls,
-           COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User) AS display_name
-    FROM db_audit.call_quality_assessment cqa
-    LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
-    WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-      AND cqa.quality_percentage < 50
-    GROUP BY cqa.User, e.full_name, e.first_name, e.last_name
-    HAVING COUNT(*) >= 3
-    ORDER BY poor_calls DESC
-    LIMIT 3
-  `, []);
 
   if (criticalAgents.length > 0) {
     insights.push({
@@ -180,23 +213,7 @@ export async function generateInsights(from: string, to: string) {
   }
 
   // Insight 3: Best practices opportunity
-  const [topPerformers] = await pool.execute<RowDataPacket[]>(`
-    SELECT
-      COUNT(DISTINCT User) as top_count,
-      AVG(quality_percentage) as top_avg
-    FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ?
-      AND quality_percentage >= 90
-  `, [from, to]);
 
-  const [bottomPerformers] = await pool.execute<RowDataPacket[]>(`
-    SELECT
-      COUNT(DISTINCT User) as bottom_count,
-      AVG(quality_percentage) as bottom_avg
-    FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ?
-      AND quality_percentage < 70
-  `, [from, to]);
 
   if (topPerformers[0].top_count > 0 && bottomPerformers[0].bottom_count > 0) {
     const gap = topPerformers[0].top_avg - bottomPerformers[0].bottom_avg;
@@ -209,17 +226,6 @@ export async function generateInsights(from: string, to: string) {
   }
 
   // Insight 4: Peak hour performance
-  const [peakHours] = await pool.execute<RowDataPacket[]>(`
-    SELECT
-      HOUR(CallDate) as hour,
-      AVG(quality_percentage) as avg_score,
-      COUNT(*) as call_volume
-    FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ?
-    GROUP BY HOUR(CallDate)
-    ORDER BY avg_score ASC
-    LIMIT 1
-  `, [from, to]);
 
   if (peakHours[0]) {
     insights.push({

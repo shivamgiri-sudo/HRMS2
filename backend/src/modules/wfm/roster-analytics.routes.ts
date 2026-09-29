@@ -14,6 +14,7 @@ import {
 } from "./roster-analytics.service.js";
 import { getProcessTeamRosterView } from "./process-team-roster.service.js";
 import { todayLocalDateStr } from "./shift-due.util.js";
+import { monthBounds } from "./month-bounds.util.js";
 import { lobAnd, readLobFilter } from "../../shared/lobFilter.js";
 import { analyticsCache } from "../../shared/analyticsCache.js";
 
@@ -338,9 +339,9 @@ router.get(
          0 AS incomplete
        FROM wfm_roster_assignment ra
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
-       WHERE ra.employee_id = ? AND DATE_FORMAT(ra.roster_date, '%Y-%m') = ?
+       WHERE ra.employee_id = ? AND ra.roster_date >= ? AND ra.roster_date < ?
          AND ${realRoster("ra")}`,
-        [employeeId, currentMonth],
+        [employeeId, ...monthBounds(currentMonth)],
       );
 
       const currentPeriod = {
@@ -453,17 +454,17 @@ router.get(
           FROM attendance_daily_record adr2
           JOIN employees et ON et.id = adr2.employee_id
           WHERE et.reporting_manager_id = ?
-            AND DATE_FORMAT(adr2.record_date, '%Y-%m') = ?) AS team_avg,
+            AND adr2.record_date >= ? AND adr2.record_date < ?) AS team_avg,
          (SELECT AVG(CASE WHEN adr3.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) * 100
           FROM attendance_daily_record adr3
           JOIN employees eb ON eb.id = adr3.employee_id
           WHERE eb.branch_id = (SELECT branch_id FROM employees WHERE id = ?)
-            AND DATE_FORMAT(adr3.record_date, '%Y-%m') = ?) AS branch_avg`,
+            AND adr3.record_date >= ? AND adr3.record_date < ?) AS branch_avg`,
         [
           emp.reporting_manager_id || employeeId,
-          currentMonth,
+          ...monthBounds(currentMonth),
           employeeId,
-          currentMonth,
+          ...monthBounds(currentMonth),
         ],
       );
 
@@ -1044,7 +1045,7 @@ router.get(
 
       let dateFilter = `ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster("ra")}`;
       if (period === "last") {
-        dateFilter = `DATE_FORMAT(ra.roster_date, '%Y-%m') = DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m') AND ${realRoster("ra")}`;
+        dateFilter = `ra.roster_date >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01') AND ra.roster_date < DATE_FORMAT(CURDATE(), '%Y-%m-01') AND ${realRoster("ra")}`;
       } else if (period === "quarter") {
         dateFilter = `ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ${realRoster("ra")}`;
       }

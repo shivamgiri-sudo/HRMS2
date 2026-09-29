@@ -832,7 +832,8 @@ export async function getMetricDetail(
   // -- Attrition: leavers, read OUTSIDE the active-employee filter ------------
   if (section === "attrition") {
     const exitScoped = `AND (${scope.sql}) ${narrow.sql}`;
-    const [tr] = await db.execute<RowDataPacket[]>(
+    const [[tr], [recs]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(COALESCE(e.date_of_exit, e.resignation_date), '%Y-%m') AS period,
               COUNT(*) AS value
          FROM employees e
@@ -840,8 +841,8 @@ export async function getMetricDetail(
           ${exitScoped}
         GROUP BY period ORDER BY period ASC`,
       [filters.from, filters.to, ...scope.params, ...narrow.params],
-    );
-    const [recs] = await db.execute<RowDataPacket[]>(
+      ),
+      db.execute<RowDataPacket[]>(
       `SELECT e.id, e.full_name AS name, e.employee_code AS subtitle,
               DATEDIFF(COALESCE(e.date_of_exit, e.resignation_date), e.date_of_joining) AS value
          FROM employees e
@@ -850,7 +851,8 @@ export async function getMetricDetail(
         ORDER BY value ASC
         LIMIT 100`,
       [filters.from, filters.to, ...scope.params, ...narrow.params],
-    );
+      ),
+    ]);
     return {
       ...base,
       availability: tr.length || recs.length ? "ok" : "no_data",
@@ -877,10 +879,19 @@ export async function getMetricDetail(
     const auditJoin = `JOIN db_audit.call_quality_assessment q ON q.User = e.employee_code
       WHERE q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)`;
     const auditParams = [filters.from, filters.to, ...scopedParams];
-    const [tr] = await db.execute<RowDataPacket[]>(
+    const trP = db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(q.CallDate, '%Y-%m') AS period, ROUND(AVG(q.quality_percentage), 2) AS value
          FROM employees e ${auditJoin} ${scoped}
         GROUP BY period ORDER BY period ASC`,
+      auditParams,
+    );
+    const recsP = db.execute<RowDataPacket[]>(
+      `SELECT ${recordKey.id} AS id, ${recordKey.name} AS name, ${recordKey.sub} AS subtitle,
+              ROUND(AVG(q.quality_percentage), 2) AS value
+         FROM employees e ${recordKey.join} ${auditJoin} ${scoped}
+        GROUP BY id, name, subtitle
+        ORDER BY value ASC
+        LIMIT 100`,
       auditParams,
     );
     // One pass over the window returns a fail count and an applicable count for
@@ -889,10 +900,11 @@ export async function getMetricDetail(
     const failCols = QUALITY_PARAMS
       .map((c) => `SUM(q.${c} = 0) AS f_${c}, SUM(q.${c} IS NOT NULL) AS n_${c}`)
       .join(", ");
-    const [rcRows] = await db.execute<RowDataPacket[]>(
+    const rcRowsP = db.execute<RowDataPacket[]>(
       `SELECT ${failCols} FROM employees e ${auditJoin} ${scoped}`,
       auditParams,
     );
+    const [[tr], [rcRows], [recs]] = await Promise.all([trP, rcRowsP, recsP]);
     const rcRow = rcRows[0] ?? {};
     const causes = QUALITY_PARAMS
       .map((c) => ({
@@ -902,15 +914,6 @@ export async function getMetricDetail(
       }))
       .filter((x) => x.applicable > 0 && x.value > 0)
       .sort((a, b) => b.value - a.value);
-    const [recs] = await db.execute<RowDataPacket[]>(
-      `SELECT ${recordKey.id} AS id, ${recordKey.name} AS name, ${recordKey.sub} AS subtitle,
-              ROUND(AVG(q.quality_percentage), 2) AS value
-         FROM employees e ${recordKey.join} ${auditJoin} ${scoped}
-        GROUP BY id, name, subtitle
-        ORDER BY value ASC
-        LIMIT 100`,
-      auditParams,
-    );
     return {
       ...base,
       availability: tr.length || recs.length ? "ok" : "no_data",
@@ -936,13 +939,14 @@ export async function getMetricDetail(
     const kpiJoin = `JOIN kpi_daily_actual k ON k.employee_id = e.id
        JOIN kpi_metric_master m ON m.id = k.metric_id AND m.metric_code = ?
       WHERE k.score_date BETWEEN ? AND ?`;
-    const [tr] = await db.execute<RowDataPacket[]>(
+    const [[tr], [recs]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(k.score_date, '%Y-%m') AS period, ROUND(AVG(k.actual_value), 2) AS value
          FROM employees e ${kpiJoin} ${scoped}
         GROUP BY period ORDER BY period ASC`,
       [code, filters.from, filters.to, ...scopedParams],
-    );
-    const [recs] = await db.execute<RowDataPacket[]>(
+      ),
+      db.execute<RowDataPacket[]>(
       `SELECT ${recordKey.id} AS id, ${recordKey.name} AS name, ${recordKey.sub} AS subtitle,
               ROUND(AVG(k.actual_value), 2) AS value
          FROM employees e ${recordKey.join} ${kpiJoin} ${scoped}
@@ -950,7 +954,8 @@ export async function getMetricDetail(
         ORDER BY value ASC
         LIMIT 100`,
       [code, filters.from, filters.to, ...scopedParams],
-    );
+      ),
+    ]);
     return {
       ...base,
       availability: tr.length || recs.length ? "ok" : "no_data",
@@ -971,27 +976,30 @@ export async function getMetricDetail(
   if (section === "pnl") {
     const snapJoin = `JOIN pnl_running_salary_snapshot s ON s.employee_id = e.id
       WHERE s.period_code BETWEEN ? AND ?`;
-    const [tr] = await db.execute<RowDataPacket[]>(
+    const pnlParams = [toPeriod(filters.from), toPeriod(filters.to), ...scopedParams];
+    const [[tr], [rc], [recs]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
       `SELECT s.period_code AS period, ROUND(SUM(s.earned_salary_till_date)) AS value
          FROM employees e ${snapJoin} ${scoped}
         GROUP BY period ORDER BY period ASC`,
-      [toPeriod(filters.from), toPeriod(filters.to), ...scopedParams],
-    );
-    const [rc] = await db.execute<RowDataPacket[]>(
+      pnlParams,
+      ),
+      db.execute<RowDataPacket[]>(
       `SELECT s.pnl_bucket AS label, ROUND(SUM(s.earned_salary_till_date)) AS value
          FROM employees e ${snapJoin} ${scoped}
         GROUP BY label ORDER BY value DESC`,
-      [toPeriod(filters.from), toPeriod(filters.to), ...scopedParams],
-    );
-    const [recs] = await db.execute<RowDataPacket[]>(
+      pnlParams,
+      ),
+      db.execute<RowDataPacket[]>(
       `SELECT ${recordKey.id} AS id, ${recordKey.name} AS name, ${recordKey.sub} AS subtitle,
               ROUND(SUM(s.earned_salary_till_date)) AS value
          FROM employees e ${recordKey.join} ${snapJoin} ${scoped}
         GROUP BY id, name, subtitle
         ORDER BY value DESC
         LIMIT 100`,
-      [toPeriod(filters.from), toPeriod(filters.to), ...scopedParams],
-    );
+      pnlParams,
+      ),
+    ]);
     const buckets = rc.map((r) => ({ label: String(r.label ?? "unclassified"), value: Number(r.value ?? 0) }));
     return {
       ...base,

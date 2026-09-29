@@ -170,24 +170,45 @@ function buildCrud(
 
 // Canonical filter source for all pages. Use this instead of building filters from employee/report rows.
 router.get("/filter-options", h(async (_req: Request, res: Response) => {
-  const [managers] = await db.execute<any[]>(
+  // The manager list used to test `EXISTS (... team.reporting_manager_id = e.id OR team.manager_id = e.id)`.
+  // An OR across two different columns defeats index use: EXPLAIN showed a full scan of the
+  // 57k-row employees table per candidate ("Range checked for each record") and the query ran
+  // past the 10s cap. Each column has its own index, so the set of manager ids is now built with
+  // one loose-index-scan GROUP BY per column (UNION de-duplicates) and joined to employees by PK.
+  // Same row set: an employee qualifies when some employee names them in either column.
+  const managersPromise = db.execute<any[]>(
     `SELECT e.id, e.employee_code,
             COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
        FROM employees e
+       JOIN (
+              SELECT reporting_manager_id AS manager_key FROM employees
+               WHERE reporting_manager_id IS NOT NULL GROUP BY reporting_manager_id
+              UNION
+              SELECT manager_id FROM employees
+               WHERE manager_id IS NOT NULL GROUP BY manager_id
+            ) m ON m.manager_key = e.id
       WHERE e.active_status = 1
         AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
-        AND EXISTS (SELECT 1 FROM employees team WHERE team.reporting_manager_id = e.id OR team.manager_id = e.id)
       ORDER BY full_name ASC`
   );
+  const [[managers], branches, departments, processes, costCentres, designations, locations] = await Promise.all([
+    managersPromise,
+    branchService.list(),
+    departmentService.list(),
+    processService.list(),
+    costCentreService.list({ active_status: 1, limit: 500 }),
+    designationService.list(),
+    locationService.list(),
+  ]);
   res.json({
     success: true,
     data: {
-      branches: await branchService.list(),
-      departments: await departmentService.list(),
-      processes: await processService.list(),
-      costCentres: await costCentreService.list({ active_status: 1, limit: 500 }),
-      designations: await designationService.list(),
-      locations: await locationService.list(),
+      branches,
+      departments,
+      processes,
+      costCentres,
+      designations,
+      locations,
       managers,
     },
     meta: { activeOnly: true },

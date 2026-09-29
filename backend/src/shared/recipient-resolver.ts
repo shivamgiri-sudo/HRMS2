@@ -262,7 +262,7 @@ async function roleScopeRows(
   // user_roles is the plain grant; user_assignment_scope is the scoped grant. A person can
   // appear in either, so both are considered (accessGuard.fetchUserRoles does the same).
   let where = '';
-  const params: unknown[] = [keys, keys];
+  const params: unknown[] = [keys, keys, keys, keys];
   if (scope.type === 'branch') {
     // A scope row explicitly on the branch, OR an 'all'-scoped holder, OR the person simply
     // sits in that branch. Without the last clause, branches with no scope rows get nobody.
@@ -279,7 +279,12 @@ async function roleScopeRows(
 
   const [rows] = await db.query<PersonRow[]>(
     `SELECT DISTINCT ${PERSON_COLS}
-       FROM employees e
+       FROM (
+              SELECT r.user_id FROM user_roles r WHERE r.active_status = 1 AND r.role_key IN (?)
+              UNION
+              SELECT s.user_id FROM user_assignment_scope s WHERE s.active_status = 1 AND s.role_key IN (?)
+            ) g
+       JOIN employees e ON e.user_id = g.user_id
        JOIN auth_user au ON au.id = e.user_id
        LEFT JOIN user_roles ur           ON ur.user_id = e.user_id AND ur.active_status = 1 AND ur.role_key IN (?)
        LEFT JOIN user_assignment_scope uas ON uas.user_id = e.user_id AND uas.active_status = 1 AND uas.role_key IN (?)

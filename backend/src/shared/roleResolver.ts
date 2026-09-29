@@ -123,28 +123,27 @@ function uniqueRoles(values: unknown[]): string[] {
 export async function getUserRoleKeys(userId: string): Promise<string[]> {
   const resolved: string[] = [];
 
-  // MySQL user_roles remains the role authority.
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(
+  // MySQL user_roles remains the role authority. The scoped-assignment lookup below is
+  // independent of it, so both run concurrently (one round-trip of latency instead of two on
+  // every auth-cache miss); results are still appended in the same order, user_roles first.
+  const [userRoleRows, scopeRoleRows] = await Promise.all([
+    db.execute<RowDataPacket[]>(
       "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
       [userId],
-    );
-    resolved.push(...rows.map((row) => row.role_key));
-  } catch (error) {
-    console.error("[roleResolver] user_roles lookup failed", error);
-  }
-
-  // Scoped assignments also carry a role_key. They must participate in role
-  // resolution because many WFM/manager accounts are provisioned through scope.
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(
+    ).then(([rows]) => rows, (error) => {
+      console.error("[roleResolver] user_roles lookup failed", error);
+      return [] as RowDataPacket[];
+    }),
+    // Scoped assignments also carry a role_key. They must participate in role
+    // resolution because many WFM/manager accounts are provisioned through scope.
+    // Older databases may not have this table yet; user_roles still works.
+    db.execute<RowDataPacket[]>(
       "SELECT role_key FROM user_assignment_scope WHERE user_id = ? AND active_status = 1",
       [userId],
-    );
-    resolved.push(...rows.map((row) => row.role_key));
-  } catch {
-    // Older databases may not have this table yet; user_roles still works.
-  }
+    ).then(([rows]) => rows, () => [] as RowDataPacket[]),
+  ]);
+  resolved.push(...userRoleRows.map((row) => row.role_key));
+  resolved.push(...scopeRoleRows.map((row) => row.role_key));
 
   /*
    * Compatibility fallback for installations that still store one role on auth_user.

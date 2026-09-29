@@ -21,6 +21,7 @@ import { getUnifiedInboxSummary } from "../work-inbox/work-inbox.service.js";
 import { executeDashboardMetrics, isMetricConfiguredForDashboard } from "./dashboard-definition.service.js";
 import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js";
 import { cacheInstance as dashboardMetricsCache } from "../../lib/cache/quality-cache.js";
+import { sharedInFlight } from "./metrics-in-flight.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
 import {
   HALF_DAY_STATUS,
@@ -402,7 +403,7 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
     catch (err) { logSourceFailure(`dashboard.payroll-${key}`, err, { runId: currentRun?.id }); return null; }
   };
 
-  const disbursement = currentRun ? await panel("disbursement", async () => {
+  const disbursementP = currentRun ? panel("disbursement", async () => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT status, total_amount, employee_count, bank_ref, disbursed_at
          FROM payroll_disbursement WHERE run_id = ? ORDER BY disbursed_at DESC LIMIT 1`,
@@ -416,9 +417,9 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
       bankRef: d.bank_ref ?? null,
       disbursedAt: d.disbursed_at ?? null,
     } : null;
-  }) : null;
+  }) : Promise.resolve(null);
 
-  const branchReadiness = currentRun ? await panel("branch-readiness", async () => {
+  const branchReadinessP = currentRun ? panel("branch-readiness", async () => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS branches,
               SUM(attendance_frozen = 1) AS attendanceFrozen,
@@ -433,13 +434,13 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
       attendanceFrozen: Number(r.attendanceFrozen ?? 0),
       dataReady: Number(r.dataReady ?? 0),
     };
-  }) : null;
+  }) : Promise.resolve(null);
 
   // salary_payslip is keyed by run_month (no run_id), so generation is counted for
   // the run's month against the lines in the run. This is what the "Payslip
   // Generation Status" panel was trying to show with a `disbursement` breakdown
   // that the endpoint never returned.
-  const payslips = currentRun ? await panel("payslips", async () => {
+  const payslipsP = currentRun ? panel("payslips", async () => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          (SELECT COUNT(*) FROM salary_payslip
@@ -457,7 +458,9 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
       pending: Math.max(0, expected - generated),
       pct: Math.round((generated / expected) * 1000) / 10,
     };
-  }) : null;
+  }) : Promise.resolve(null);
+  // The three panels are independent and each already catches its own failure.
+  const [disbursement, branchReadiness, payslips] = await Promise.all([disbursementP, branchReadinessP, payslipsP]);
 
   // Loans and reimbursements are deliberately NOT queried here.
   //
@@ -569,10 +572,18 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
   // pnl cache below (see canonical-pnl.service.ts) but lower stakes here since
   // these are operational aggregates, not the P&L figures shown to finance/CEO.
   const metricsCacheKey = `dash-metrics:v1:${dashboardCode}:${scope.level}:${scope.branchIds.join(",")}:${scope.processIds.join(",")}:${scope.employeeIds.join(",")}`;
-  const metricsPromise = dashboardMetricsCache.getOrSet(
+  //
+  // getOrSet() only de-duplicates AFTER a value is stored. When the 30s entry expired, or on a cold
+  // start, every request in that window ran the entire metric bundle itself — SUPER_ADMIN alone is
+  // eight metrics, several with multi-second scans — so a few open dashboards stampeded the DB into
+  // 502s. Concurrent callers for the same key now await the one computation already in flight.
+  const metricsPromise = sharedInFlight(
     metricsCacheKey,
-    () => executeDashboardMetrics(dashboardCode, scope, generatedAt) as Promise<Record<string, unknown>>,
-    30,
+    () => dashboardMetricsCache.getOrSet(
+      metricsCacheKey,
+      () => executeDashboardMetrics(dashboardCode, scope, generatedAt) as Promise<Record<string, unknown>>,
+      30,
+    ),
   );
 
   const [{ workItems, workItemsStatus }, metrics] = await Promise.all([
@@ -708,16 +719,16 @@ router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: a
   const branchScope = buildScopeWhere(scope, "bm.id", "pm.id");
   const processScope = buildScopeWhere(scope, "e.branch_id", "pm.id");
 
-  const [branches] = await db.execute<RowDataPacket[]>(
+  const [[branches], [processes]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
     `SELECT bm.id, bm.branch_name AS name
        FROM branch_master bm
       WHERE bm.active_status = 1
         AND ${scope.level === "ORG_ALL" ? "1=1" : branchScope.sql.replaceAll("pm.id", "NULL")}
       ORDER BY bm.branch_name`,
     scope.level === "ORG_ALL" ? [] : branchScope.params,
-  );
-
-  const [processes] = await db.execute<RowDataPacket[]>(
+    ),
+    db.execute<RowDataPacket[]>(
     `SELECT pm.id, pm.process_name AS name, MIN(e.branch_id) AS branchId
        FROM process_master pm
        LEFT JOIN employees e ON e.process_id = pm.id AND e.active_status = 1
@@ -725,7 +736,8 @@ router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: a
       GROUP BY pm.id, pm.process_name
       ORDER BY pm.process_name`,
     processScope.params,
-  );
+    ),
+  ]);
 
   return res.json({ success: true, data: { branches, processes, scope: { level: scope.level } } });
 }));

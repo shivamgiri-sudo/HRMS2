@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import { demoRoleForUserId } from "./demoAuth.js";
+import { memoizeForRequest } from "./requestContext.js";
 
 export type ScopeType =
   | "all"
@@ -42,6 +43,15 @@ export interface ScopeAliases {
 }
 
 export async function getUserRoleKeys(userId: string): Promise<string[]> {
+  // buildScopeWhereClause / hasScopedAccess call hasAnyRole up to 4x per request, each of which
+  // re-read the same user_roles rows. Memoised for ONE request only (see requestContext.ts:
+  // no TTL, so a role change applies on the next request); a copy is returned so a caller that
+  // mutates the array cannot poison the memo. Outside a request this is a direct query.
+  const roles = await memoizeForRequest(`scope-roles:${userId}`, () => fetchUserRoleKeys(userId));
+  return [...roles];
+}
+
+async function fetchUserRoleKeys(userId: string): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
     [userId]

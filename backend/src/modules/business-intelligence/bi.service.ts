@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { querySource } from '../../db/sourceDb.js';
+import { TtlCache } from '../../shared/ttlCache.js';
 import { getLegacyPool } from '../../db/legacyDb.js';
 import { getIstDateString, getIstMonthStart } from '../../utils/dateUtils.js';
 import { getPolicyValue } from '../policy-engine/policy-engine.cache.js';
@@ -36,8 +37,26 @@ export interface DailyOpsPulse {
   intervention_flags: InterventionFlag[];
 }
 
+// Short-TTL cache with in-flight de-duplication. Every dashboard layout that renders the pulse
+// or the quality-intervention feed polls it; without this, N concurrent viewers each ran the
+// full query bundle (and a cold cache stampeded the DB). 30s matches the dashboards summary
+// metrics cache. Failures are never cached (see TtlCache.getOrCompute).
+const BI_CACHE_TTL_MS = 30_000;
+const biCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: BI_CACHE_TTL_MS });
+
+/** Test seam: drop every cached BI payload. */
+export function resetBiCacheForTest(): void {
+  biCache.clear();
+}
+
 export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[], processIds?: string[]): Promise<DailyOpsPulse> {
   const date = targetDate || getIstDateString(0);
+  const key = `pulse:${date}:${(branchIds ?? []).join(',')}:${(processIds ?? []).join(',')}`;
+  const { value } = await biCache.getOrCompute(key, () => computeDailyOpsPulse(date, branchIds, processIds));
+  return value as DailyOpsPulse;
+}
+
+async function computeDailyOpsPulse(date: string, branchIds?: string[], processIds?: string[]): Promise<DailyOpsPulse> {
   // branchIds/processIds accepted for future scoped queries; currently the apr table
   // does not carry branch_id so the main APR aggregation remains org-wide.
 
@@ -74,59 +93,6 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
   // ~2026-06-12, a separate live data-feed gap unrelated to this fix, worth
   // its own investigation): per-agent 2.69% vs weighted 2.39% on the same
   // 220 agents — different enough to matter for a capacity call.
-  const [aprRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COUNT(DISTINCT a.UserID) AS agents_logged_in,
-       SUM(a.Calls) AS total_calls,
-       ROUND(AVG(TIME_TO_SEC(a.AHT)), 0) AS avg_aht_seconds,
-       ROUND(SUM(TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')))
-             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_lunch_pct,
-       ROUND(SUM(TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')))
-             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_bio_pct,
-       ROUND(SUM(TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')))
-             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_training_pct,
-       ROUND(SUM(TIME_TO_SEC(IFNULL(a.QA,'00:00:00')))
-             / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_qa_pct,
-       ROUND(
-         (SUM(TIME_TO_SEC(IFNULL(a.BIO,'00:00:00'))) + SUM(TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00'))) +
-          SUM(TIME_TO_SEC(IFNULL(a.QA,'00:00:00'))) + SUM(TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00'))))
-         / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100
-       , 2) AS avg_shrinkage_pct,
-       ROUND(AVG(
-         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
-           TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
-         ELSE 0 END
-       ), 2) AS lunch_pct_per_agent,
-       ROUND(AVG(
-         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
-           TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
-         ELSE 0 END
-       ), 2) AS bio_pct_per_agent,
-       ROUND(AVG(
-         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
-           TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
-         ELSE 0 END
-       ), 2) AS training_pct_per_agent,
-       ROUND(AVG(
-         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
-           TIME_TO_SEC(IFNULL(a.QA,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
-         ELSE 0 END
-       ), 2) AS qa_pct_per_agent,
-       ROUND(AVG(
-         CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
-           (TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) + TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) +
-            TIME_TO_SEC(IFNULL(a.QA,'00:00:00')) + TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')))
-           / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
-         ELSE 0 END
-       ), 2) AS shrinkage_pct_per_agent
-     FROM apr a
-     WHERE DATE(a.ReportDate) = ?`,
-    [date]
-  ).catch((err) => {
-    logger.error({ err, date }, "[bi.service] getDailyOpsPulse apr aggregate query failed");
-    return [[null]] as any;
-  });
-
   // Scheduled agents from attendance records — scoped to branch/process when provided
   const attendScopeClause = branchIds && branchIds.length > 0
     ? ` AND employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => "?").join(",")}) AND active_status = 1)`
@@ -136,7 +102,12 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
   const attendScopeParams = branchIds && branchIds.length > 0 ? branchIds : processIds && processIds.length > 0 ? processIds : [];
   // Fetched alongside `scheduled`, not sequentially — see scheduledDataReliable
   // below for why a baseline from the latest fully-processed day is needed.
-  const [[attendRows], [baselineRows]] = await Promise.all([
+  //
+  // apr aggregate, top process and the policy thresholds are independent of these too, so
+  // all of them go out in one batch instead of five sequential round trips. `a.ReportDate`
+  // is a DATE column: comparing it directly (was DATE(a.ReportDate) = ?) lets the primary key
+  // (ReportDate, UserID, campaign_id) serve the lookup instead of scanning the table.
+  const [[attendRows], [baselineRows], [aprRows], [topProcRows], policyValues] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(DISTINCT employee_id) AS scheduled
        FROM attendance_daily_record
@@ -149,6 +120,79 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
        WHERE record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}${attendScopeClause}`,
       [...attendScopeParams]
     ).catch(() => [[{ baseline: 0 }]] as any),
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT a.UserID) AS agents_logged_in,
+         SUM(a.Calls) AS total_calls,
+         ROUND(AVG(TIME_TO_SEC(a.AHT)), 0) AS avg_aht_seconds,
+         ROUND(SUM(TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')))
+               / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_lunch_pct,
+         ROUND(SUM(TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')))
+               / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_bio_pct,
+         ROUND(SUM(TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')))
+               / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_training_pct,
+         ROUND(SUM(TIME_TO_SEC(IFNULL(a.QA,'00:00:00')))
+               / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100, 2) AS avg_qa_pct,
+         ROUND(
+           (SUM(TIME_TO_SEC(IFNULL(a.BIO,'00:00:00'))) + SUM(TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00'))) +
+            SUM(TIME_TO_SEC(IFNULL(a.QA,'00:00:00'))) + SUM(TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00'))))
+           / NULLIF(SUM(TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00'))),0) * 100
+         , 2) AS avg_shrinkage_pct,
+         ROUND(AVG(
+           CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+             TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+           ELSE 0 END
+         ), 2) AS lunch_pct_per_agent,
+         ROUND(AVG(
+           CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+             TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+           ELSE 0 END
+         ), 2) AS bio_pct_per_agent,
+         ROUND(AVG(
+           CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+             TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+           ELSE 0 END
+         ), 2) AS training_pct_per_agent,
+         ROUND(AVG(
+           CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+             TIME_TO_SEC(IFNULL(a.QA,'00:00:00')) / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+           ELSE 0 END
+         ), 2) AS qa_pct_per_agent,
+         ROUND(AVG(
+           CASE WHEN TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) > 0 THEN
+             (TIME_TO_SEC(IFNULL(a.BIO,'00:00:00')) + TIME_TO_SEC(IFNULL(a.LUNCH,'00:00:00')) +
+              TIME_TO_SEC(IFNULL(a.QA,'00:00:00')) + TIME_TO_SEC(IFNULL(a.TRAINING,'00:00:00')))
+             / TIME_TO_SEC(IFNULL(a.Login_Time,'00:00:00')) * 100
+           ELSE 0 END
+         ), 2) AS shrinkage_pct_per_agent
+       FROM apr a
+       WHERE a.ReportDate = ?`,
+      [date]
+    ).catch((err) => {
+      logger.error({ err, date }, "[bi.service] getDailyOpsPulse apr aggregate query failed");
+      return [[null]] as any;
+    }),
+    // Top process by calls
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(pm.process_name, a.campaign_id) AS name,
+              SUM(a.Calls) AS calls,
+              COUNT(DISTINCT a.UserID) AS agent_count
+       FROM apr a
+       LEFT JOIN process_master pm ON pm.process_code = a.campaign_id
+       WHERE a.ReportDate = ?
+       GROUP BY a.campaign_id
+       ORDER BY calls DESC
+       LIMIT 1`,
+      [date]
+    ).catch(() => [[null]] as any),
+    // Load thresholds from policy engine
+    Promise.all([
+      getPolicyValue('rta',        'login_adherence', 'critical_threshold_pct', '50'),
+      getPolicyValue('rta',        'login_adherence', 'warning_threshold_pct',  '70'),
+      getPolicyValue('operations', 'shrinkage',       'critical_threshold_pct', '25'),
+      getPolicyValue('operations', 'shrinkage',       'warning_threshold_pct',  '18'),
+      getPolicyValue('operations', 'call_quality',    'aht_benchmark_seconds',  '400'),
+    ]),
   ]);
 
   const aprRow = (aprRows as any[])[0] ?? {};
@@ -205,29 +249,8 @@ export async function getDailyOpsPulse(targetDate?: string, branchIds?: string[]
   const qaPctPerAgent = parseFloat(String(aprRow.qa_pct_per_agent ?? 0));
   const idlePctPerAgent = Math.max(0, parseFloat((avgShrinkagePerAgent - lunchPctPerAgent - bioPctPerAgent - trainingPctPerAgent - qaPctPerAgent).toFixed(2)));
 
-  // Top process by calls
-  const [topProcRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(pm.process_name, a.campaign_id) AS name,
-            SUM(a.Calls) AS calls,
-            COUNT(DISTINCT a.UserID) AS agent_count
-     FROM apr a
-     LEFT JOIN process_master pm ON pm.process_code = a.campaign_id
-     WHERE DATE(a.ReportDate) = ?
-     GROUP BY a.campaign_id
-     ORDER BY calls DESC
-     LIMIT 1`,
-    [date]
-  ).catch(() => [[null]] as any);
   const topProc = (topProcRows as any[])[0] ?? null;
-
-  // Load thresholds from policy engine
-  const [loginCrit, loginWarn, shrinkCrit, shrinkWarn, ahtBench] = await Promise.all([
-    getPolicyValue('rta',        'login_adherence', 'critical_threshold_pct', '50'),
-    getPolicyValue('rta',        'login_adherence', 'warning_threshold_pct',  '70'),
-    getPolicyValue('operations', 'shrinkage',       'critical_threshold_pct', '25'),
-    getPolicyValue('operations', 'shrinkage',       'warning_threshold_pct',  '18'),
-    getPolicyValue('operations', 'call_quality',    'aht_benchmark_seconds',  '400'),
-  ]);
+  const [loginCrit, loginWarn, shrinkCrit, shrinkWarn, ahtBench] = policyValues;
   const T = {
     loginCritical:  Number(loginCrit),
     loginWarning:   Number(loginWarn),
@@ -620,10 +643,23 @@ export interface RevenueAtRisk {
   intervention_flags: InterventionFlag[];
 }
 
+/**
+ * [first-of-month, first-of-next-month) bounds for a calendar month, so a DATE column can be
+ * filtered by range (sargable, uses idx_month) instead of YEAR(col)=? AND MONTH(col)=? which
+ * forces a full scan of bill_revenue_target_snapshot (392k rows).
+ */
+export function monthRangeBounds(y: number, m: number): [string, string] {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const ny = m === 12 ? y + 1 : y;
+  const nm = m === 12 ? 1 : m + 1;
+  return [`${y}-${pad(m)}-01`, `${ny}-${pad(nm)}-01`];
+}
+
 export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
   const today = getIstDateString(0);
   const monthStart = getIstMonthStart();
   const [y, m] = monthStart.split('-').map(Number);
+  const [tgtFrom, tgtTo] = monthRangeBounds(y, m);
   const daysInMonth = new Date(y, m, 0).getDate();
   const dayOfMonth = parseInt(today.slice(8), 10);
   const daysElapsed = dayOfMonth;
@@ -637,8 +673,8 @@ export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
     const [targetRows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(target_revenue),0) AS total_target
        FROM bill_revenue_target_snapshot
-       WHERE YEAR(target_month) = ? AND MONTH(target_month) = ?`,
-      [y, m]
+       WHERE target_month >= ? AND target_month < ?`,
+      [tgtFrom, tgtTo]
     );
     target = Number((targetRows as any[])[0]?.total_target ?? 0);
 
@@ -660,11 +696,11 @@ export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
        LEFT JOIN bill_revenue_actual_snapshot a
          ON a.process_name = t.process_name
          AND a.revenue_date BETWEEN ? AND ?
-       WHERE YEAR(t.target_month) = ? AND MONTH(t.target_month) = ?
+       WHERE t.target_month >= ? AND t.target_month < ?
        GROUP BY t.process_name
        ORDER BY target DESC
        LIMIT 10`,
-      [monthStart, today, y, m]
+      [monthStart, today, tgtFrom, tgtTo]
     );
     for (const r of processRows as any[]) {
       const tgt = Number(r.target), act = Number(r.actual);
@@ -717,6 +753,15 @@ function auditRag(score: number): 'red' | 'amber' | 'green' {
 }
 
 export async function getQualityIntervention(branchId?: string, processId?: string): Promise<QualityIntervention> {
+  // branchId/processId are accepted for API symmetry but the audit table carries neither, so
+  // they do not change the result; the key still includes them so a future scoped version
+  // cannot be served another scope's cached payload.
+  const key = `quality-intervention:${getIstDateString(0)}:${branchId ?? ''}:${processId ?? ''}`;
+  const { value } = await biCache.getOrCompute(key, () => computeQualityIntervention());
+  return value as QualityIntervention;
+}
+
+async function computeQualityIntervention(): Promise<QualityIntervention> {
   const fromDate = getIstDateString(7);
   const toDate = getIstDateString(0);
   const prevFromDate = getIstDateString(14);
@@ -738,7 +783,7 @@ export async function getQualityIntervention(branchId?: string, processId?: stri
   // this valid under ONLY_FULL_GROUP_BY without relying on MySQL's
   // functional-dependency detection for a cross-joined single row.
   interface SummaryRow { avg_score: number; total_agents: number; below_threshold: number }
-  const summaryRows = await querySource<SummaryRow>(`
+  const summaryPromise = querySource<SummaryRow>(`
     SELECT
       MAX(g.avg_score)                                                     AS avg_score,
       COUNT(DISTINCT t.agent)                                              AS total_agents,
@@ -762,12 +807,9 @@ export async function getQualityIntervention(branchId?: string, processId?: stri
     return [] as SummaryRow[];
   });
 
-  const avgScore = Number(summaryRows[0]?.avg_score ?? 0);
-  const belowThreshold = Number(summaryRows[0]?.below_threshold ?? 0);
-
   // ── Bottom agents (min 3 audits, ordered by lowest quality_percentage) ───
   interface AgentRow { agent_code: string; agent_name: string; call_count: number; avg_score: number; client_id: string }
-  const agentRows = await querySource<AgentRow>(`
+  const agentPromise = querySource<AgentRow>(`
     SELECT
       q.User                                                 AS agent_code,
       COALESCE(am.AgentName, q.User)                        AS agent_name,
@@ -787,7 +829,7 @@ export async function getQualityIntervention(branchId?: string, processId?: stri
 
   // ── Per-client/process RAG with WoW change ────────────────────────────────
   interface ProcRow { process: string; avg_score: number }
-  const [currProcRows, prevProcRows] = await Promise.all([
+  const procPromise = Promise.all([
     querySource<ProcRow>(`
       SELECT
         q.ClientId                           AS process,
@@ -811,6 +853,15 @@ export async function getQualityIntervention(branchId?: string, processId?: stri
       LIMIT 15
     `, [prevFromDate, prevToDate]).catch(() => [] as ProcRow[]),
   ]);
+
+  // The four audit-table aggregates are independent of each other; they used to be awaited
+  // one after another (summary, then agents, then the two process queries). Each keeps its
+  // own .catch, so the failure semantics are unchanged.
+  const [summaryRows, agentRows, [currProcRows, prevProcRows]] = await Promise.all([
+    summaryPromise, agentPromise, procPromise,
+  ]);
+  const avgScore = Number(summaryRows[0]?.avg_score ?? 0);
+  const belowThreshold = Number(summaryRows[0]?.below_threshold ?? 0);
 
   const prevMap = new Map(prevProcRows.map(r => [String(r.process), Number(r.avg_score)]));
   const processRag = currProcRows.map(r => {

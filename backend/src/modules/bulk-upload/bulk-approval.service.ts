@@ -199,14 +199,14 @@ export class BulkUploadError extends Error {
 /** Load the rows a batch staged, normalising the JSON column shape. */
 export async function loadStagedRows(batchId: string): Promise<StagedRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, row_no, normalized_data, raw_data
+    `SELECT id, row_no, COALESCE(normalized_data, raw_data) AS normalized_data
        FROM upload_batch_row
       WHERE upload_batch_id = ? AND row_status IN ('valid','pending')
       ORDER BY row_no ASC`,
     [batchId],
   );
   return (rows as RowDataPacket[]).map((r) => {
-    const source = r.normalized_data ?? r.raw_data;
+    const source = r.normalized_data;
     const parsed = typeof source === "string" ? JSON.parse(source) : source;
     const data: Record<string, string> = {};
     for (const [k, v] of Object.entries((parsed ?? {}) as Record<string, unknown>)) {

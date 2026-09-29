@@ -216,3 +216,21 @@ describe('empty resolution', () => {
     )).rejects.toMatchObject({ code: 'EMPTY_TO' });
   });
 });
+
+describe('role_scope query shape (perf)', () => {
+  it('drives from the small role tables and binds keys 4 times', async () => {
+    (db.query as any).mockClear();
+    try {
+      await resolveRecipients(
+        { to: [{ kind: 'role_scope', roleKeys: ['HR'], scope: 'all' } as any] },
+        { sensitivity: 'int', context: {} },
+      );
+    } catch { /* empty To is fine */ }
+    const call = (db.query as any).mock.calls.find((c: any[]) => String(c[0]).includes('user_assignment_scope'));
+    expect(call).toBeTruthy();
+    const sql = String(call[0]);
+    expect(sql.indexOf('FROM (')).toBeLessThan(sql.indexOf('JOIN employees e'));
+    expect(sql).toMatch(/UNION/);
+    expect(call[1].slice(0, 4)).toEqual([['hr'], ['hr'], ['hr'], ['hr']]);
+  });
+});

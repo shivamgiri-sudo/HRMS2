@@ -305,7 +305,12 @@ async function loadQrcDaily(from: string, to: string, types: ChatUserType[]): Pr
 const SALE_WHERE = "campaign = 'Chat' AND calling_status = 'Sale Made'";
 
 async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<string, SaleAgg>; blankRows: number }> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const blankP = db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM db_masmis.bb_sale
+      WHERE ${SALE_WHERE} AND \`Date\` BETWEEN ? AND ? AND (bella_vita_order_id IS NULL OR bella_vita_order_id = '')`,
+    [from, to],
+  );
+  const [[rows], [[blank]]] = await Promise.all([db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS d, COUNT(*) AS orders, SUM(a) AS revenue, SUM(n) AS row_cnt, SUM(gross) AS gross,
        SUM(is_rto) AS rto_orders, SUM(pay = 'cod') AS cod_orders, SUM(pay = 'paid') AS paid_orders
      FROM (
@@ -319,16 +324,11 @@ async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<st
      ) x
      GROUP BY d`,
     [from, to],
-  );
+  ), blankP]);
   const daily = new Map<string, SaleAgg>();
   for (const r of rows) {
     daily.set(String(r.d), { orders: num(r.orders), revenue: num(r.revenue), rows: num(r.row_cnt), gross: num(r.gross), rtoOrders: num(r.rto_orders), codOrders: num(r.cod_orders), paidOrders: num(r.paid_orders) });
   }
-  const [[blank]] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS n FROM db_masmis.bb_sale
-      WHERE ${SALE_WHERE} AND \`Date\` BETWEEN ? AND ? AND (bella_vita_order_id IS NULL OR bella_vita_order_id = '')`,
-    [from, to],
-  );
   return { daily, blankRows: num(blank?.n) };
 }
 
@@ -593,7 +593,8 @@ export async function getBellavitaChatOverview(
   const salesAvailable = salesAvailableFor(userType);
   const days = eachDay(from, to);
 
-  const [chatDaily, sales, qrcDaily, avgResolutionMin, dayNight, roster, fraudCount, topAgents] = await Promise.all([
+  const months = [...new Set(days.map((d) => d.slice(0, 7)))];
+  const [chatDaily, sales, qrcDaily, avgResolutionMin, dayNight, roster, fraudCount, topAgents, capacity, frtTarget] = await Promise.all([
     loadChatDaily(from, to, types),
     salesAvailable ? loadSalesDaily(from, to) : Promise.resolve(null),
     loadQrcDaily(from, to, types),
@@ -602,11 +603,9 @@ export async function getBellavitaChatOverview(
     loadRoster(from, to),
     loadFraudCount(from, to, types),
     loadTopAgents(from, to, types, salesAvailable),
+    loadCapacity(months),
+    loadFrtTarget(months[months.length - 1]),
   ]);
-
-  const months = [...new Set(days.map((d) => d.slice(0, 7)))];
-  const capacity = await loadCapacity(months);
-  const frtTarget = await loadFrtTarget(months[months.length - 1]);
   const capFor = (ym: string): number | null => {
     const e = capacity.get(ym) ?? {};
     const vals = types.map((t) => e[t]);

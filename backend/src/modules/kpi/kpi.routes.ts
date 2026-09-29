@@ -12,28 +12,9 @@ import { logSourceFailure } from "../../shared/apiResponse.js";
 import { buildScopeWhere, resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
+import { emptyOnError, getKpiOrgSummary } from "./kpi-org-summary.js";
 
-/**
- * Swallow a KPI query failure into an empty row set, but always log it.
- * These reads previously discarded ER_BAD_FIELD_ERROR silently, so a query against
- * nonexistent columns returned HTTP 200 with empty data indefinitely.
- */
-export function emptyOnError(
-  context: string,
-  detail: Record<string, unknown> = {},
-  failures?: string[],
-) {
-  return (err: unknown) => {
-    logSourceFailure("kpi", err, { query: context, ...detail });
-    // Record the miss for the caller as well as the log. Logging alone told
-    // operators something broke but still handed the UI an empty result that
-    // reads as "nothing happened this period" — the two are not the same
-    // answer, and only one of them means someone should look at it.
-    failures?.push(context);
-    return [[]] as any;
-  };
-}
-
+export { emptyOnError };
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -219,131 +200,8 @@ router.get("/org-summary", requireRole("admin", "hr", ...dashboardConsumerRoles(
   // unpopulated), so scope routes through the employee.
   const roleContext = await getUserRoleContext(req.authUser!.id);
   const scope = await resolveDashboardScopeForRequest(req.authUser!, roleContext.primaryRole);
-  const empScope = buildScopeWhere(scope, "e.branch_id", "e.process_id");
 
-  // Any guarded query that fails pushes its name here, so the response can say
-  // "the source failed" rather than "there is no data".
-  const sourceFailures: string[] = [];
-
-  const [metricRows] = await db.execute<RowDataPacket[]>(
-    `SELECT m.metric_code, m.metric_name, m.unit, m.direction,
-            ROUND(AVG(a.actual_value), 2) AS avg_value,
-            COUNT(DISTINCT a.employee_id) AS employees,
-            COUNT(*) AS samples
-       FROM kpi_daily_actual a
-       JOIN kpi_metric_master m ON m.id = a.metric_id
-       LEFT JOIN employees e ON e.id = a.employee_id
-      WHERE DATE_FORMAT(a.score_date, '%Y-%m') = ? AND ${empScope.sql}
-      GROUP BY m.id
-      ORDER BY samples DESC`,
-    [period, ...empScope.params],
-  ).catch(emptyOnError("kpi org-summary by_metric", { period }, sourceFailures));
-
-  const byMetric = (metricRows as any[]) ?? [];
-
-  // ATTENDANCE_PCT has by far the widest coverage and would otherwise win headline
-  // selection, but attendance has a single system of record: attendance_daily_record,
-  // the processed attendance engine that payroll is computed from. The KPI copy is a
-  // derived nightly roll-up from the dialer feed and disagrees materially with it
-  // (~45% vs ~75% present for the same population). Attendance is therefore reported
-  // only from attendance_daily_record via the ATTENDANCE metric; the KPI duplicate is
-  // excluded from the headline so the two can never appear as competing figures.
-  const HEADLINE_EXCLUDED = new Set(["ATTENDANCE_PCT"]);
-
-  const headline =
-    byMetric.find((row) =>
-      String(row.unit) === "percent" &&
-      String(row.direction) === "higher_is_better" &&
-      !HEADLINE_EXCLUDED.has(String(row.metric_code))) ?? null;
-
-  let summary: Record<string, unknown> = {};
-  let processRows: RowDataPacket[] = [];
-  let trendRows: RowDataPacket[] = [];
-
-  if (headline) {
-    const [summaryRows] = await db.execute<RowDataPacket[]>(
-      `SELECT ROUND(AVG(a.actual_value), 2) AS org_avg_score,
-              COUNT(DISTINCT a.employee_id) AS employees_scored,
-              COUNT(DISTINCT e.process_id) AS processes_covered,
-              ROUND(MAX(a.actual_value), 2) AS best_score,
-              ROUND(MIN(a.actual_value), 2) AS lowest_score,
-              SUM(CASE WHEN a.actual_value >= 90 THEN 1 ELSE 0 END) AS high_performers,
-              SUM(CASE WHEN a.actual_value < 60 THEN 1 ELSE 0 END) AS needs_attention,
-              COUNT(*) AS sample_count
-         FROM kpi_daily_actual a
-         JOIN kpi_metric_master m ON m.id = a.metric_id AND m.metric_code = ?
-         LEFT JOIN employees e ON e.id = a.employee_id
-        WHERE DATE_FORMAT(a.score_date, '%Y-%m') = ? AND ${empScope.sql}`,
-      [headline.metric_code, period, ...empScope.params],
-    ).catch(emptyOnError("kpi org-summary rollup", { period }, sourceFailures));
-
-    summary = {
-      ...((summaryRows as any[])[0] ?? {}),
-      metric_code: headline.metric_code,
-      metric_name: headline.metric_name,
-      metric_unit: headline.unit,
-    };
-
-    // process_id_at_event is present on kpi_daily_actual but 0% populated, so the
-    // per-process split must come from the employee's current process.
-    [processRows] = await db.execute<RowDataPacket[]>(
-      `SELECT pm.process_name AS label,
-              ROUND(AVG(a.actual_value), 2) AS avg_score,
-              COUNT(DISTINCT a.employee_id) AS agents
-         FROM kpi_daily_actual a
-         JOIN kpi_metric_master m ON m.id = a.metric_id AND m.metric_code = ?
-         JOIN employees e ON e.id = a.employee_id
-         JOIN process_master pm ON pm.id = e.process_id
-        WHERE DATE_FORMAT(a.score_date, '%Y-%m') = ? AND ${empScope.sql}
-        GROUP BY e.process_id, pm.process_name
-        ORDER BY avg_score DESC
-        LIMIT 10`,
-      [headline.metric_code, period, ...empScope.params],
-    ).catch(emptyOnError("kpi org-summary by_process", { period }, sourceFailures));
-
-    [trendRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(a.score_date, '%Y-%m') AS period,
-              ROUND(AVG(a.actual_value), 2) AS avg_score
-         FROM kpi_daily_actual a
-         JOIN kpi_metric_master m ON m.id = a.metric_id AND m.metric_code = ?
-         LEFT JOIN employees e ON e.id = a.employee_id
-        WHERE a.score_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH) AND ${empScope.sql}
-        GROUP BY DATE_FORMAT(a.score_date, '%Y-%m')
-        ORDER BY period ASC`,
-      [headline.metric_code, ...empScope.params],
-    ).catch(emptyOnError("kpi org-summary trend", { period }, sourceFailures));
-  }
-
-  return res.json({
-    success: true,
-    data: {
-      period,
-      summary,
-      by_process: processRows,
-      by_metric: byMetric,
-      trend: trendRows,
-      // A failed query and an empty period are different answers. Saying "no
-      // actuals were recorded" when the query actually errored is what makes
-      // real breakage look like a quiet month.
-      ...(sourceFailures.length
-        ? {
-            unavailableSources: {
-              kpi: `${sourceFailures.length} KPI source quer${sourceFailures.length === 1 ? "y" : "ies"} ` +
-                `failed for ${period} — the figures below are incomplete, not zero`,
-              failedQueries: sourceFailures,
-            },
-          }
-        : headline
-          ? {}
-          : {
-              unavailableSources: {
-                kpi: byMetric.length
-                  ? `No higher-is-better percent KPI is available as a headline for ${period}`
-                  : `No KPI actuals were recorded for ${period}`,
-              },
-            }),
-    },
-  });
+  return res.json({ success: true, data: await getKpiOrgSummary(period, scope) });
 }));
 
 export { router as kpiRouter };

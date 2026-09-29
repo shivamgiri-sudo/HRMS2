@@ -4,6 +4,7 @@ import { atsService } from "./ats.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { TtlCache } from "../../shared/ttlCache.js";
 import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import {
@@ -37,6 +38,13 @@ async function resolveNames(table: "branch_master" | "process_master", column: s
 
 const resolveBranchNames = (ids: readonly string[]) => resolveNames("branch_master", "branch_name", ids);
 const resolveProcessNames = (ids: readonly string[]) => resolveNames("process_master", "process_name", ids);
+
+// /api/ats/stats is read by five dashboard layouts and takes several seconds cold. The payload
+// depends only on the date window and the resolved branch/process NAMES (never on the user),
+// so viewers with the same filters share one computation per 30s window, and concurrent
+// requests share the in-flight one instead of each running the whole query batch.
+const ATS_STATS_TTL_MS = 30_000;
+export const atsStatsCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: ATS_STATS_TTL_MS });
 
 export const atsController = {
   async listCandidates(req: AuthenticatedRequest, res: Response) {
@@ -185,12 +193,17 @@ export const atsController = {
       resolveProcessNames(processIds),
     ]);
 
-    const data = await atsService.getDashboardStats({
+    const statsFilters = {
       fromDate,
       toDate,
       branch: branch ?? branchNames,
       process: process ?? processNames,
-    });
+    };
+    const asKey = (v: unknown) => JSON.stringify(v ?? null);
+    const { value: data } = await atsStatsCache.getOrCompute(
+      `ats-stats:${asKey(statsFilters.fromDate)}:${asKey(statsFilters.toDate)}:${asKey(statsFilters.branch)}:${asKey(statsFilters.process)}`,
+      () => atsService.getDashboardStats(statsFilters),
+    );
     return res.json({ success: true, data });
   },
 };
