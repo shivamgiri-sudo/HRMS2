@@ -104,6 +104,12 @@ const EXPENSE_MASTER_READ_ROLES: RoleKey[] = [
   "accounts_head",
 ];
 const EXPENSE_MASTER_WRITE_ROLES: RoleKey[] = ["super_admin", "finance_head"];
+/** branch_admin may map vendors to existing heads/subheads but cannot create or rename them. */
+const VENDOR_MAPPING_WRITE_ROLES: RoleKey[] = [
+  "super_admin",
+  "finance_head",
+  "branch_admin",
+];
 /**
  * Adding a head or sub-head stays with Finance Head. Editing or deleting one that budgets, GRNs
  * and coverage reviews already reference by name is Super Admin only — a rename silently detaches
@@ -360,7 +366,7 @@ function grNExpenseMasterRoutes(router: Router) {
   router.put(
     "/vendors/:vendorId/expense-mappings",
     requireWriteAccess,
-    requireRole(...EXPENSE_MASTER_WRITE_ROLES),
+    requireRole(...VENDOR_MAPPING_WRITE_ROLES),
     async (req: AuthenticatedRequest, res) => {
       try {
         const mappings = Array.isArray(req.body?.mappings) ? req.body.mappings : [];
