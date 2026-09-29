@@ -417,20 +417,27 @@ export default function AnalyticsPanel() {
                       </h3>
                     </div>
                     <div className="p-4">
-                      <div className="flex items-end justify-between h-40 gap-2">
-                        {shrinkageData.dayOfWeekPattern.map((d) => (
-                          <div key={d.day} className="flex-1 flex flex-col items-center">
-                            <div
-                              className={`w-full rounded-t-lg transition-all ${d.isHighRisk ? "bg-gradient-to-t from-red-600 to-red-400" : "bg-gradient-to-t from-teal-600 to-teal-400"}`}
-                              style={{ height: `${Math.max(d.shrinkagePct * 4, 8)}px` }}
-                            />
-                            <span className="text-xs mt-2 text-slate-600 font-medium">{d.day.slice(0, 3)}</span>
-                            <span className={`text-xs font-bold ${d.isHighRisk ? "text-red-600" : "text-teal-700"}`}>
-                              {d.shrinkagePct}%
-                            </span>
+                      {(() => {
+                        const maxPct = Math.max(100, ...shrinkageData.dayOfWeekPattern.map((x) => x.shrinkagePct));
+                        return (
+                          <div className="flex items-end justify-between gap-2">
+                            {shrinkageData.dayOfWeekPattern.map((d) => (
+                              <div key={d.day} className="flex-1 flex flex-col items-center min-w-0">
+                                <div className="h-32 w-full flex items-end">
+                                  <div
+                                    className={`w-full rounded-t-lg transition-all ${d.isHighRisk ? "bg-gradient-to-t from-red-600 to-red-400" : "bg-gradient-to-t from-teal-600 to-teal-400"}`}
+                                    style={{ height: `${Math.max((Math.min(d.shrinkagePct, maxPct) / maxPct) * 100, 4)}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs mt-2 text-slate-600 font-medium">{d.day.slice(0, 3)}</span>
+                                <span className={`text-xs font-bold ${d.isHighRisk ? "text-red-600" : "text-teal-700"}`}>
+                                  {d.shrinkagePct}%
+                                </span>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })()}
                     </div>
                   </ConsoleCard>
                 </div>

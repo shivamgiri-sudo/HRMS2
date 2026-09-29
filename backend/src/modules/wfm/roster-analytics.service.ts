@@ -255,11 +255,19 @@ export async function getWeeklyShrinkageIntelligence(
 
     if (type === 'LEAVE') {
       plannedLeave++;
+      // Leave/training days are part of the denominator too, otherwise day/manager/process % exceed 100.
+      if (dayStat) dayStat.planned++;
+      mgrStat.teamDays++;
+      procStat.planned++;
       if (dayStat) dayStat.shrinkage++;
       mgrStat.shrinkageDays++;
       procStat.shrinkage++;
     } else if (type === 'TRAINING') {
       training++;
+      // Leave/training days are part of the denominator too, otherwise day/manager/process % exceed 100.
+      if (dayStat) dayStat.planned++;
+      mgrStat.teamDays++;
+      procStat.planned++;
       if (dayStat) dayStat.shrinkage++;
       mgrStat.shrinkageDays++;
       procStat.shrinkage++;
