@@ -173,8 +173,9 @@ function startServer() {
     // are never killed mid-flight. Nginx proxy_read_timeout (120s/300s) is the outer
     // guard; Express itself has no built-in request timeout.
     httpServer!.setTimeout(0);
-    // The P&L Trend reads years of payroll; fill its cache once the boot-time migrations and jobs have settled.
-    setTimeout(() => { void import("./modules/process-pnl/pnl-trend.service.js").then((m) => m.warmPnlTrendCache()); }, 180_000).unref();
+    // The P&L Trend reads years of payroll; fill its cache shortly after boot so the first user
+    // request doesn't wait 90+ seconds on the cold 130K-row salary scan.
+    setTimeout(() => { void import("./modules/process-pnl/pnl-trend.service.js").then((m) => m.warmPnlTrendCache()); }, 20_000).unref();
     // Process Operations /feeds counts ~36 source tables; keep those counts warm so the page never waits on them.
     setTimeout(() => { void import("./modules/process-operations/feed-health.service.js").then((m) => m.startFeedHealthCacheWarmer()); }, 200_000).unref();
     // The Onfido Overview and Analyst reports take 20-26s cold; keep them in the response cache so the dashboard's first load is instant.
