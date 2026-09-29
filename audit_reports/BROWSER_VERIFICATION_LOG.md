@@ -4,6 +4,25 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-09-30 — LIVE: Approved HC 181 + Audit Sampling paging (deploy `f5b1e50`)
+
+**Deploy note:** the first deploy of these changes (`3ccaa50`, run 36618309461) failed its health check and the deploy script restored the previous build automatically (site stayed up). Cause: migration 449, added by another developer's merge, failed at boot because the app DB user cannot CREATE in `db_masmis`; it was unregistered in `f5b1e50`, and the re-deploy of `f5b1e50` (which contains these changes) succeeded.
+
+**Method:** logged in as a Manager user in headless Playwright Chromium against https://mcnhrms.teammas.in.
+
+| Check | Live result |
+|---|---|
+| Manage approved HC queue list | "Company total (all queues)", EWYS, POA, Encord (migration 1917 applied) |
+| Entered "Company total = 181, effective 01/07/2026" | Saved; no API errors. (An EWYS 181 dated 28/09/2026 already existed but was after the data's last day, 31/08/2026, so it never counted.) |
+| Overview headline + Manpower Status | Approved 181, Required 217.2, Active 199, **Buffer 9.9%, Shortfall 18.2**; "Approved HC has not been entered" warning gone |
+| Audit Sampling | 100 rows per page of 3,005; "Export (Excel) includes all of them" |
+| Audit Sampling Excel export | 3,007 rows (title + header + 3,005 data rows) |
+| Console / page errors, 4xx/5xx | None |
+
+**Data written to production:** one `onfido_manpower_plan` row (TOTAL, 2026-07-01, 181), entered at the owner's request. Editable via Manage approved HC.
+
+---
+
 ## 2026-09-30 (later) — Company-wide Approved HC (181) + Audit Sampling paging
 
 **Method:** temporary Vite harness (mocked API, 250 audit rows, canEdit=true), headless Playwright Chromium; migration 1917 on a throwaway `mysql:8`.
@@ -173,3 +192,18 @@ Every UI-affecting change is opened in a real browser after building, and record
 - External `db_audit` call-quality feed (absent locally; failure path exercised, success path not).
 - Productivity / break / LMS / live-session SQL ran against empty tables (syntax only).
 - Migration `1915_operations_command_indexes.sql` applied to the local DB only, not production.
+
+### 2026-09-30 (follow-up) — Operations Command verified on REAL data
+
+**Method:** localhost-only preview API (`scripts/ops-preview-server.mts`, ORG_ALL scope, SELECT-only) over the production `mas_hrms` read path, plus the page rendered by Vite (temporary harness, deleted afterwards) and driven by headless Playwright. DB credentials were passed as environment variables only; none written to files.
+
+**Fixed by running on real data (all passed unit/type checks before):**
+- `employees.designation` does not exist in production (join `designation_master` via `designation_id`).
+- `lms_learner_progress.course_completion_pct` does not exist in production; removed from records + agent drawer.
+- Performance: first build took ~100s per summary (production DB fetches wide rows slowly; a plain group-by over 30k attendance rows = 21s). Rewrote to load the scoped employee list once (scope still enforced in SQL) and scan each fact table once, both cached 5 min with stale-while-revalidate; all aggregation in memory. Now: cold first load ~27s, warm 0.6–2s.
+
+**Endpoints exercised on production data, all OK:** definitions, filters, summary (branch/process/lob/manager/employee + branch filter), previous, trend, performance (process/branch/employee), heatmap, records (all 11 domains + single-day drill), employee detail, employee day-by-day.
+**Real numbers seen (30 days to 29/09/2026):** HC 1,076; joiners 211; exits 123; attrition 11.9%; attendance 60.3%; shrinkage 39.8% = absence 18.3% + missing-punch 21.4% (unresolved punches dominate); mandate fill 131.7%; open positions 40.
+**Browser:** overview, tabs, drill by branch, analyst drill, Agent 360 drawer for a real employee: zero console/page errors, zero non-200 API responses.
+
+**Still NOT verified:** login-gated real page with a JWT and role scope (preview used ORG_ALL); BRANCH/PROCESS/TEAM scoped roles against production; migration 1915 (incl. covering attendance index `idx_ops_adr_cover`) not applied to production — cold-load time will drop once it is; nothing deployed.
