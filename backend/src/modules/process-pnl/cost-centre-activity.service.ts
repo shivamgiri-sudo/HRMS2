@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
 
@@ -59,7 +60,10 @@ export const ACTIVITY_WINDOW_MONTHS = 3;
  * The window as an inclusive list of period codes, ending at (and including) the period given.
  * Built by calendar arithmetic rather than string maths so a December window rolls the year.
  */
-export function activityWindow(endPeriod: string, months = ACTIVITY_WINDOW_MONTHS): string[] {
+export function activityWindow(
+  endPeriod: string,
+  months = ACTIVITY_WINDOW_MONTHS,
+): string[] {
   const match = /^(\d{4})-(\d{2})$/.exec(endPeriod);
   if (!match) return [];
   const year = Number(match[1]);
@@ -67,7 +71,9 @@ export function activityWindow(endPeriod: string, months = ACTIVITY_WINDOW_MONTH
   const periods: string[] = [];
   for (let back = months - 1; back >= 0; back--) {
     const d = new Date(Date.UTC(year, month - 1 - back, 1));
-    periods.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+    periods.push(
+      `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`,
+    );
   }
   return periods;
 }
@@ -79,13 +85,20 @@ export function activityWindow(endPeriod: string, months = ACTIVITY_WINDOW_MONTH
  * in three unrelated tables at three different grains, and joining them produces a fan-out that
  * multiplies the amounts. They are combined in memory instead, where the arithmetic is visible.
  */
-export async function getCostCentreActivity(endPeriod: string): Promise<CostCentreActivityRow[]> {
+export async function getCostCentreActivity(
+  endPeriod: string,
+): Promise<CostCentreActivityRow[]> {
   const periods = activityWindow(endPeriod);
   if (periods.length === 0) return [];
   const placeholders = periods.map(() => "?").join(",");
 
+  // DialDesk/I-Spark/Pikquick cost centres are IDC entities, not MAS Callnet (owner rule
+  // 2026-09-24) — excluded the same way process-pnl.service.ts excludes their processes.
   const [centres] = await db.execute<RowDataPacket[]>(
-    `SELECT id, cost_centre_code, cost_centre_name FROM cost_centre_master`,
+    `SELECT id, cost_centre_code, cost_centre_name
+       FROM cost_centre_master cc
+      WHERE NULLIF(TRIM(COALESCE(cc.company_name, '')), '') IS NULL
+         OR ${ownCompanyCostCentreSql("cc")}`,
   );
 
   // Salary is the signal that needs no mirror — payroll is native to mas_hrms.
@@ -120,7 +133,8 @@ export async function getCostCentreActivity(endPeriod: string): Promise<CostCent
         GROUP BY cost_centre_code`,
       periods,
     );
-    for (const r of rows) revenue.set(String(r.code).trim().toUpperCase(), Number(r.amount ?? 0));
+    for (const r of rows)
+      revenue.set(String(r.code).trim().toUpperCase(), Number(r.amount ?? 0));
   }
 
   if (await tableExists("grn_entry_line_snapshot")) {
@@ -133,26 +147,36 @@ export async function getCostCentreActivity(endPeriod: string): Promise<CostCent
         GROUP BY l.cost_centre_code`,
       periods,
     );
-    for (const r of rows) spend.set(String(r.code).trim().toUpperCase(), Number(r.amount ?? 0));
+    for (const r of rows)
+      spend.set(String(r.code).trim().toUpperCase(), Number(r.amount ?? 0));
   }
 
   const salaryById = new Map(
-    salary.map((r) => [String(r.id), {
-      peoplePaid: Number(r.people_paid ?? 0),
-      salaryCost: Number(r.salary_cost ?? 0),
-    }]),
+    salary.map((r) => [
+      String(r.id),
+      {
+        peoplePaid: Number(r.people_paid ?? 0),
+        salaryCost: Number(r.salary_cost ?? 0),
+      },
+    ]),
   );
 
   return centres.map((c) => {
     const id = String(c.id);
-    const key = String(c.cost_centre_code ?? "").trim().toUpperCase();
+    const key = String(c.cost_centre_code ?? "")
+      .trim()
+      .toUpperCase();
     const pay = salaryById.get(id) ?? { peoplePaid: 0, salaryCost: 0 };
     const rev = revenue.get(key) ?? 0;
     const spn = spend.get(key) ?? 0;
 
     // The rule. Revenue OR people paid means active; spend alone is its own state.
     const activity: CostCentreActivity =
-      rev > 0 || pay.peoplePaid > 0 ? "active" : spn > 0 ? "spend_only" : "inactive";
+      rev > 0 || pay.peoplePaid > 0
+        ? "active"
+        : spn > 0
+          ? "spend_only"
+          : "inactive";
 
     return {
       costCentreId: id,
@@ -193,24 +217,37 @@ export interface AttributionGap {
  * is refuse to present the resulting margin as fact. Callers should show these alongside the
  * figures, not filter them away.
  */
-export async function getAttributionGaps(endPeriod: string): Promise<AttributionGap[]> {
+export async function getAttributionGaps(
+  endPeriod: string,
+): Promise<AttributionGap[]> {
   const rows = await getCostCentreActivity(endPeriod);
   return rows
-    .filter((r) => (r.revenue > 0 && r.salaryCost === 0) || (r.salaryCost > 0 && r.revenue === 0))
+    .filter(
+      (r) =>
+        (r.revenue > 0 && r.salaryCost === 0) ||
+        (r.salaryCost > 0 && r.revenue === 0),
+    )
     .map((r) => ({
       costCentreCode: r.costCentreCode ?? "(unknown)",
       costCentreName: r.costCentreName,
       revenue: r.revenue,
       salaryCost: r.salaryCost,
-      kind: r.revenue > 0 ? ("revenue_without_people" as const) : ("people_without_revenue" as const),
+      kind:
+        r.revenue > 0
+          ? ("revenue_without_people" as const)
+          : ("people_without_revenue" as const),
     }))
-    .sort((a, b) => (b.revenue + b.salaryCost) - (a.revenue + a.salaryCost));
+    .sort((a, b) => b.revenue + b.salaryCost - (a.revenue + a.salaryCost));
 }
 
 /** Just the ids that are active, for callers that only need to filter. */
-export async function getActiveCostCentreIds(endPeriod: string): Promise<Set<string>> {
+export async function getActiveCostCentreIds(
+  endPeriod: string,
+): Promise<Set<string>> {
   const rows = await getCostCentreActivity(endPeriod);
-  return new Set(rows.filter((r) => r.activity === "active").map((r) => r.costCentreId));
+  return new Set(
+    rows.filter((r) => r.activity === "active").map((r) => r.costCentreId),
+  );
 }
 
 export const costCentreActivityService = {
