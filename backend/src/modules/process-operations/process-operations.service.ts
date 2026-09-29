@@ -3503,7 +3503,49 @@ export async function getProcessBusinessHealthForPortal(
 }
 
 /** How long this panel waits for the org-wide P&L allocation before degrading honestly. 8s by default; overridable for slow links (tests / remote checks). */
-const PNL_WAIT_MS = Math.max(1000, Number(process.env.BUSINESS_HEALTH_PNL_WAIT_MS) || 8000);
+const PNL_WAIT_MS = Math.max(1000, Number(process.env.BUSINESS_HEALTH_PNL_WAIT_MS) || 12000);
+
+/**
+ * The org-wide P&L allocation takes ~19-33s cold but its own cache lives only 60s, so most requests met a cold cache,
+ * hit the wait limit above and showed blank Revenue / Operating %. Keep the last GOOD summary per period and serve it,
+ * plainly labelled with its age, while a fresh one finishes computing in the background. Never older than 6 hours, and
+ * never served unlabelled.
+ */
+const pnlLastGood = new Map<string, { at: number; summary: any }>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+const PNL_STALE_MAX_MS = 6 * 60 * 60_000;
+async function pnlSummaryWithFallback(period: string): Promise<{ summary: any; ageMinutes: number | null }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const live = getCachedAllocationSummary({ period }).then((summary: any) => { pnlLastGood.set(period, { at: Date.now(), summary }); return summary; }); // eslint-disable-line @typescript-eslint/no-explicit-any
+  live.catch(() => { /* handled below; keeps a late failure from becoming an unhandled rejection */ });
+  try {
+    const summary = await Promise.race([live, new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`P&L allocation summary timed out after ${PNL_WAIT_MS / 1000}s`)), PNL_WAIT_MS))]);
+    return { summary, ageMinutes: null };
+  } catch (err) {
+    const good = pnlLastGood.get(period);
+    if (good && Date.now() - good.at < PNL_STALE_MAX_MS) return { summary: good.summary, ageMinutes: Math.max(1, Math.round((Date.now() - good.at) / 60_000)) };
+    throw err;
+  }
+}
+
+/**
+ * Keep the last-good P&L summary warm so the Business Health panel (and Operating %) does not meet a cold ~20-30s
+ * calculation after every restart. Runs 60s after the process starts, then every 30 minutes, one month at a time.
+ * Same computation a user opening the P&L page triggers. Off with BUSINESS_HEALTH_PNL_WARM=false; never runs in tests.
+ */
+function warmPnlSummary(): void {
+  const now = new Date();
+  const code = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const periods = [code(now), code(new Date(now.getFullYear(), now.getMonth() - 1, 1))];
+  void (async () => {
+    for (const period of periods) {
+      try { await getCachedAllocationSummary({ period }).then((summary: any) => { pnlLastGood.set(period, { at: Date.now(), summary }); }); } // eslint-disable-line @typescript-eslint/no-explicit-any
+      catch { /* a failed warm-up is harmless: the panel degrades exactly as before */ }
+    }
+  })();
+}
+if (process.env.BUSINESS_HEALTH_PNL_WARM !== "false" && !process.env.VITEST && process.env.NODE_ENV !== "test") {
+  setTimeout(warmPnlSummary, 60_000).unref();
+  setInterval(warmPnlSummary, 30 * 60_000).unref();
+}
 
 async function computeProcessBusinessHealth(processId: string): Promise<ProcessBusinessHealth | null> {
   const [processRows] = await db.execute<RowDataPacket[]>(
@@ -3534,11 +3576,7 @@ async function computeProcessBusinessHealth(processId: string): Promise<ProcessB
     // existing try/catch below can degrade from, so race it against a timeout
     // and degrade the same honest way the catch block already does for a
     // real error -- this endpoint must always answer, even if finance can't.
-    const summary: any = await Promise.race([
-      getCachedAllocationSummary({ period: periodCode }),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`P&L allocation summary timed out after ${PNL_WAIT_MS / 1000}s`)), PNL_WAIT_MS)),
-    ]);
+    const { summary, ageMinutes: summaryAgeMin } = await pnlSummaryWithFallback(periodCode);
     const row = (summary?.rows as any[] | undefined)?.find((r) => r.processId === processId) ?? null;
     if (!row) {
       finance = {
@@ -3548,7 +3586,8 @@ async function computeProcessBusinessHealth(processId: string): Promise<ProcessB
       };
     } else {
       finance = {
-        available: true, reason: null,
+        available: true,
+        reason: summaryAgeMin !== null ? `Figures from a calculation ${summaryAgeMin} minute${summaryAgeMin === 1 ? "" : "s"} ago; a fresh one is being computed.` : null,
         revenue: row.recognizedRevenue ?? null,
         revenueStatus: row.revenueDataStatus ?? null,
         grn: row.grnVendorActual ?? null,
@@ -3610,10 +3649,7 @@ async function computeProcessBusinessHealth(processId: string): Promise<ProcessB
             `SELECT COUNT(*) n FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id
                JOIN employees e ON e.id = spl.employee_id WHERE spr.run_month = ? AND e.process_id = ?`, [prevCode, processId]);
           if (Number((prevRun as any[])[0]?.n ?? 0) > 0) {
-            const prevSummary: any = await Promise.race([
-              getCachedAllocationSummary({ period: prevCode }),
-              new Promise((_, reject) => setTimeout(() => reject(new Error("timed out")), PNL_WAIT_MS)),
-            ]);
+            const { summary: prevSummary } = await pnlSummaryWithFallback(prevCode);
             const prow = (prevSummary?.rows as any[] | undefined)?.find((r) => r.processId === processId) ?? null;
             const pct = prow?.operatingProfitPct ?? null;
             if (prow && pct !== null) {

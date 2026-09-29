@@ -504,6 +504,8 @@ interface ProcessBusinessHealth {
     grn: number | null; agentSalary: number | null;
     agentSalaryIsRealThisMonth: boolean;
     ebit: number | null; operatingProfitPct: number | null;
+    /** Month the salary / EBIT / Op% belong to; the previous month when this month has no processed payroll yet. */
+    operatingPeriod?: string | null; operatingFromPriorMonth?: boolean;
   };
   headcount: {
     available: boolean; reason: string | null;
@@ -554,6 +556,11 @@ function formatValue(value: number | null, unit: string | null): string {
   }
   if (u === "currency") return `₹${Math.round(value).toLocaleString("en-IN")}`;
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+/** Salary / EBIT / Op% can be shown: this month has a processed payroll, or we are showing the last month that did (labelled). */
+function hasPayroll(f?: { agentSalaryIsRealThisMonth: boolean; operatingFromPriorMonth?: boolean } | null): boolean {
+  return !!f && (f.agentSalaryIsRealThisMonth || !!f.operatingFromPriorMonth);
 }
 
 /** Is a move good news? Only knowable when the metric declares a direction. */
@@ -3170,21 +3177,21 @@ function BusinessHealthPanel({ processId, onOpen }: { processId: string; onOpen?
               <HealthStat label="GRN (vendor cost)" value={currency(finance.grn)} tone="neutral"
                 onClick={() => onOpen?.("hs_grn")} />
               <HealthStat label="Agent Salary"
-                value={finance.agentSalaryIsRealThisMonth ? currency(finance.agentSalary) : "no data"}
-                caption={!finance.agentSalaryIsRealThisMonth ? "Pending payroll run" : undefined}
+                value={hasPayroll(finance) ? currency(finance.agentSalary) : "no data"}
+                caption={!hasPayroll(finance) ? "Pending payroll run" : finance.operatingFromPriorMonth ? `Payroll of ${finance.operatingPeriod}` : undefined}
                 tone="neutral" icon={Users}
                 onClick={() => onOpen?.("hs_salary")} />
               <HealthStat label="EBIT"
-                value={finance.agentSalaryIsRealThisMonth ? currency(finance.ebit) : "no data"}
-                caption={!finance.agentSalaryIsRealThisMonth ? "Pending payroll run" : undefined}
-                tone={!finance.agentSalaryIsRealThisMonth || finance.ebit === null ? "neutral" : finance.ebit >= 0 ? "good" : "bad"}
+                value={hasPayroll(finance) ? currency(finance.ebit) : "no data"}
+                caption={!hasPayroll(finance) ? "Pending payroll run" : finance.operatingFromPriorMonth ? `Payroll of ${finance.operatingPeriod}` : undefined}
+                tone={!hasPayroll(finance) || finance.ebit === null ? "neutral" : finance.ebit >= 0 ? "good" : "bad"}
                 onClick={() => onOpen?.("hs_ebit")} />
               <HealthStat label="Operating %"
-                value={finance.agentSalaryIsRealThisMonth
+                value={hasPayroll(finance)
                   ? (finance.operatingProfitPct === null ? "no data" : `${finance.operatingProfitPct.toFixed(1)}%`)
                   : "no data"}
-                caption={!finance.agentSalaryIsRealThisMonth ? "Pending payroll run" : undefined}
-                tone={!finance.agentSalaryIsRealThisMonth || finance.operatingProfitPct === null ? "neutral" : finance.operatingProfitPct >= 0 ? "good" : "bad"}
+                caption={!hasPayroll(finance) ? "Pending payroll run" : finance.operatingFromPriorMonth ? `Payroll of ${finance.operatingPeriod}` : undefined}
+                tone={!hasPayroll(finance) || finance.operatingProfitPct === null ? "neutral" : finance.operatingProfitPct >= 0 ? "good" : "bad"}
                 onClick={() => onOpen?.("hs_op_pct")} />
             </div>
           ) : (
@@ -4192,13 +4199,13 @@ function SummaryTileDrillDrawer({ metricKey, health, passCount, failCount, onClo
     },
     ceo_op_pct: {
       title: "Operating %",
-      value: f?.agentSalaryIsRealThisMonth && f.operatingProfitPct !== null ? `${f.operatingProfitPct.toFixed(1)}%` : "—",
+      value: hasPayroll(f) && f.operatingProfitPct !== null ? `${f.operatingProfitPct.toFixed(1)}%` : "—",
       target: "12–18% (BPO benchmark)",
-      trend: !f?.agentSalaryIsRealThisMonth || f?.operatingProfitPct === null ? "action"
+      trend: !hasPayroll(f) || f?.operatingProfitPct === null ? "action"
         : f.operatingProfitPct >= 12 ? "positive" : f.operatingProfitPct >= 0 ? "action" : "negative",
-      trendLabel: !f?.agentSalaryIsRealThisMonth ? "Payroll pending" : f?.operatingProfitPct === null ? "No data"
+      trendLabel: !hasPayroll(f) ? "Payroll pending" : f?.operatingProfitPct === null ? "No data"
         : f.operatingProfitPct >= 12 ? "Healthy" : f.operatingProfitPct >= 0 ? "Below target" : "Loss",
-      analysis: f?.agentSalaryIsRealThisMonth && f?.operatingProfitPct !== null
+      analysis: hasPayroll(f) && f?.operatingProfitPct !== null
         ? `Operating margin is ${f.operatingProfitPct.toFixed(1)}% (${fmtL(f.ebit)} EBIT ÷ ${fmtL(f.revenue)} revenue). BPO benchmark is 12–18%. ${f.operatingProfitPct >= 12 ? "This process is in the healthy range." : f.operatingProfitPct >= 0 ? "Margin is below benchmark — review cost structure." : "Process is operating at a loss — immediate action required on cost or revenue."}`
         : "Operating % requires payroll data to compute. Once the current month's payroll run is complete, this will reflect EBIT ÷ Revenue.",
       actions: f?.operatingProfitPct != null && f.operatingProfitPct < 12
@@ -4249,9 +4256,9 @@ function SummaryTileDrillDrawer({ metricKey, health, passCount, failCount, onClo
     // ── Business Health — Finance ──────────────────────────────────────────────
     hs_revenue: { title: "Revenue", value: f?.available ? fmtL(f.revenue) : "—", trend: !f?.available ? "action" : f?.revenue && f.revenue > 0 ? "positive" : "action", trendLabel: !f?.available ? "No data" : "This month", analysis: `Monthly process revenue is ${fmtL(f?.revenue)}. This feeds directly into operating profit and margin calculations.`, actions: ["Verify billing rule is correctly mapped to this process", "Cross-check with client invoice register"], related: ["EBIT", "Operating %", "GRN (vendor cost)"] },
     hs_grn: { title: "GRN (Vendor Cost)", value: f?.available ? fmtL(f.grn) : "—", trend: "neutral", trendLabel: "Vendor cost", analysis: `GRN vendor costs this month: ${fmtL(f?.grn)}. This is deducted from revenue when computing EBIT.`, actions: ["Review vendor invoices for accuracy", "Identify optimisation opportunities in vendor costs"], related: ["EBIT", "Revenue"] },
-    hs_salary: { title: "Agent Salary", value: f?.agentSalaryIsRealThisMonth ? fmtL(f.agentSalary) : "Pending payroll", trend: !f?.agentSalaryIsRealThisMonth ? "action" : "neutral", trendLabel: !f?.agentSalaryIsRealThisMonth ? "Payroll pending" : "This month", analysis: !f?.agentSalaryIsRealThisMonth ? "Agent salary has not yet been processed for the current month. Run payroll to populate this metric." : `Agent salary cost is ${fmtL(f?.agentSalary)}, the primary cost driver for this process.`, actions: !f?.agentSalaryIsRealThisMonth ? ["Run current month payroll", "Verify all active agents are enrolled in payroll"] : ["Monitor salary cost as % of revenue", "Review against billing rate per agent"], related: ["EBIT", "Operating %", "Revenue"] },
-    hs_ebit: { title: "EBIT", value: f?.agentSalaryIsRealThisMonth ? fmtL(f.ebit) : "Pending payroll", target: "> 0 (profitable)", trend: !f?.agentSalaryIsRealThisMonth || f?.ebit == null ? "action" : f.ebit >= 0 ? "positive" : "negative", trendLabel: !f?.agentSalaryIsRealThisMonth ? "Payroll pending" : f?.ebit != null && f.ebit >= 0 ? "Profitable" : "Loss", analysis: f?.agentSalaryIsRealThisMonth && f?.ebit != null ? `EBIT is ${fmtL(f.ebit)} (Revenue ${fmtL(f?.revenue)} − GRN ${fmtL(f?.grn)} − Salary ${fmtL(f?.agentSalary)}). ${f.ebit >= 0 ? "Process is profitable this month." : "Process is at a loss — cost or revenue action required."}` : "EBIT computation requires completed payroll. Run the current month's payroll to enable P&L.", actions: f?.ebit != null && f.ebit < 0 ? ["Investigate revenue shortfall vs prior month", "Review all cost components for reduction opportunities", "Escalate to operations head"] : ["Monitor monthly EBIT trend", "Ensure all cost inputs are complete and accurate"], related: ["Revenue", "GRN (vendor cost)", "Agent Salary", "Operating %"] },
-    hs_op_pct: { title: "Operating %", value: f?.agentSalaryIsRealThisMonth && f?.operatingProfitPct !== null ? `${f.operatingProfitPct.toFixed(1)}%` : "Pending payroll", target: "12–18% (BPO benchmark)", trend: !f?.agentSalaryIsRealThisMonth || f?.operatingProfitPct === null ? "action" : f.operatingProfitPct >= 12 ? "positive" : f.operatingProfitPct >= 0 ? "action" : "negative", trendLabel: !f?.agentSalaryIsRealThisMonth ? "Payroll pending" : f?.operatingProfitPct !== null && f.operatingProfitPct >= 12 ? "Healthy" : "Below target", analysis: f?.agentSalaryIsRealThisMonth && f?.operatingProfitPct !== null ? `Operating margin ${f.operatingProfitPct.toFixed(1)}% — BPO benchmark is 12–18%. ${f.operatingProfitPct >= 12 ? "This process is in the healthy range." : "Below benchmark — review cost structure."}` : "Requires completed payroll to compute.", actions: ["Compare to BPO benchmark (12–18%)", "Review cost structure if below target", "Verify revenue recognition rules are complete"], related: ["EBIT", "Revenue", "Agent Salary"] },
+    hs_salary: { title: "Agent Salary", value: hasPayroll(f) ? fmtL(f.agentSalary) : "Pending payroll", trend: !hasPayroll(f) ? "action" : "neutral", trendLabel: !hasPayroll(f) ? "Payroll pending" : "This month", analysis: !hasPayroll(f) ? "Agent salary has not yet been processed for the current month. Run payroll to populate this metric." : `Agent salary cost is ${fmtL(f?.agentSalary)}, the primary cost driver for this process.`, actions: !hasPayroll(f) ? ["Run current month payroll", "Verify all active agents are enrolled in payroll"] : ["Monitor salary cost as % of revenue", "Review against billing rate per agent"], related: ["EBIT", "Operating %", "Revenue"] },
+    hs_ebit: { title: "EBIT", value: hasPayroll(f) ? fmtL(f.ebit) : "Pending payroll", target: "> 0 (profitable)", trend: !hasPayroll(f) || f?.ebit == null ? "action" : f.ebit >= 0 ? "positive" : "negative", trendLabel: !hasPayroll(f) ? "Payroll pending" : f?.ebit != null && f.ebit >= 0 ? "Profitable" : "Loss", analysis: hasPayroll(f) && f?.ebit != null ? `EBIT is ${fmtL(f.ebit)} (Revenue ${fmtL(f?.revenue)} − GRN ${fmtL(f?.grn)} − Salary ${fmtL(f?.agentSalary)}). ${f.ebit >= 0 ? "Process is profitable this month." : "Process is at a loss — cost or revenue action required."}` : "EBIT computation requires completed payroll. Run the current month's payroll to enable P&L.", actions: f?.ebit != null && f.ebit < 0 ? ["Investigate revenue shortfall vs prior month", "Review all cost components for reduction opportunities", "Escalate to operations head"] : ["Monitor monthly EBIT trend", "Ensure all cost inputs are complete and accurate"], related: ["Revenue", "GRN (vendor cost)", "Agent Salary", "Operating %"] },
+    hs_op_pct: { title: "Operating %", value: hasPayroll(f) && f?.operatingProfitPct !== null ? `${f.operatingProfitPct.toFixed(1)}%` : "Pending payroll", target: "12–18% (BPO benchmark)", trend: !hasPayroll(f) || f?.operatingProfitPct === null ? "action" : f.operatingProfitPct >= 12 ? "positive" : f.operatingProfitPct >= 0 ? "action" : "negative", trendLabel: !hasPayroll(f) ? "Payroll pending" : f?.operatingProfitPct !== null && f.operatingProfitPct >= 12 ? "Healthy" : "Below target", analysis: hasPayroll(f) && f?.operatingProfitPct !== null ? `Operating margin ${f.operatingProfitPct.toFixed(1)}% — BPO benchmark is 12–18%. ${f.operatingProfitPct >= 12 ? "This process is in the healthy range." : "Below benchmark — review cost structure."}` : "Requires completed payroll to compute.", actions: ["Compare to BPO benchmark (12–18%)", "Review cost structure if below target", "Verify revenue recognition rules are complete"], related: ["EBIT", "Revenue", "Agent Salary"] },
     // ── Business Health — Headcount ────────────────────────────────────────────
     hs_active_hc: { title: "Active Headcount", value: String(hc?.activeHc ?? "—"), trend: "neutral", trendLabel: "On process", analysis: `${hc?.activeHc ?? 0} active employees are currently allocated to this process. ${hc?.mandatedHc ? `Mandate is ${hc.mandatedHc} — gap is ${hc.gap !== null ? (hc.gap >= 0 ? `+${hc.gap}` : String(hc.gap)) : "unknown"}.` : "No mandate configured."}`, actions: ["Verify all active agents are correctly mapped to this process", "Check agents on leave that reduce availability"], related: ["HC vs Mandate", "Available Now", "Gap vs Mandate"] },
     hs_mandate: { title: "Mandate", value: hc?.mandatedHc != null ? String(hc.mandatedHc) : "Not configured", trend: hc?.mandatedHc ? "neutral" : "action", trendLabel: hc?.mandatedHc ? "Sanctioned" : "Not configured", analysis: hc?.mandatedHc ? `Mandate headcount is ${hc.mandatedHc}. This is the target staffing level set for this process.` : "No mandate has been configured for this process. Set it in process master to enable gap tracking.", actions: hc?.mandatedHc ? ["Review mandate periodically as client volume changes", "Update mandate when contract headcount changes"] : ["Configure mandate headcount in process master settings", "Align with client contract staffing requirements"], related: ["Active Headcount", "Gap vs Mandate", "Shortfall"] },
@@ -5424,15 +5431,15 @@ export default function ProcessOperationsPage() {
                       trend={!h?.finance?.available ? "action" : h?.finance?.revenue && h.finance.revenue > 0 ? "positive" : "action"}
                       trendLabel={!h?.finance?.available ? "Data gap" : h?.finance?.revenueStatus === "accounting_fallback" ? "Fallback" : "On track"} />
                     <LiveKpiCard label="Operating %"
-                      value={h?.finance?.agentSalaryIsRealThisMonth && h.finance.operatingProfitPct !== null
+                      value={hasPayroll(h?.finance) && h.finance.operatingProfitPct !== null
                         ? `${h.finance.operatingProfitPct.toFixed(1)}%` : "—"}
-                      sub={!h?.finance?.agentSalaryIsRealThisMonth ? "payroll pending" : "EBIT ÷ Revenue"}
-                      color={h?.finance?.agentSalaryIsRealThisMonth && h.finance.operatingProfitPct !== null
+                      sub={!hasPayroll(h?.finance) ? "payroll pending" : h?.finance?.operatingFromPriorMonth ? `${h.finance.operatingPeriod} payroll (latest)` : "EBIT ÷ Revenue"}
+                      color={hasPayroll(h?.finance) && h.finance.operatingProfitPct !== null
                         ? (h.finance.operatingProfitPct >= 0 ? "linear-gradient(135deg,#047857,#10b981)" : "linear-gradient(135deg,#be123c,#f43f5e)")
                         : "linear-gradient(135deg,#334155,#64748b)"}
                       onClick={() => setSummaryDrill("ceo_op_pct")}
-                      trend={!h?.finance?.agentSalaryIsRealThisMonth || h?.finance?.operatingProfitPct === null ? "action" : h.finance.operatingProfitPct >= 12 ? "positive" : h.finance.operatingProfitPct >= 0 ? "action" : "negative"}
-                      trendLabel={!h?.finance?.agentSalaryIsRealThisMonth ? "Payroll pending" : h?.finance?.operatingProfitPct === null ? "No data" : h.finance.operatingProfitPct >= 12 ? "Healthy" : h.finance.operatingProfitPct >= 0 ? "Below target" : "Loss"} />
+                      trend={!hasPayroll(h?.finance) || h?.finance?.operatingProfitPct === null ? "action" : h.finance.operatingProfitPct >= 12 ? "positive" : h.finance.operatingProfitPct >= 0 ? "action" : "negative"}
+                      trendLabel={!hasPayroll(h?.finance) ? "Payroll pending" : h?.finance?.operatingProfitPct === null ? "No data" : h.finance.operatingProfitPct >= 12 ? "Healthy" : h.finance.operatingProfitPct >= 0 ? "Below target" : "Loss"} />
                     <LiveKpiCard label="Quality Score"
                       value={qualityPct !== null ? `${qualityPct}%` : "—"}
                       ringPct={qualityPct}
