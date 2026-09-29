@@ -4,6 +4,25 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-09-30 (later) — Utilization: uploaded static values instead of formulas
+
+**Method:** temporary Vite harness (mocked API, canEdit=true), headless Playwright Chromium, real CSV file upload; harness removed. SQL run against a throwaway `mysql:8` container (migration 1845 + new 1916, then the exact upsert/select statements taken from the service source).
+
+| Check | Result |
+|---|---|
+| Utilization tab, "Bulk upload (CSV)" (canEdit=true) | Button enabled |
+| CSV with `Utilization Forecaste`, `Utilization with Adhoc %`, `Escalated %` columns | "1 day(s) ready"; Save -> "Saved 1 day(s)."; PUT payload carries fixedUtilizationForecast 52447, fixedUtilizationWithAdhocPct 114.4 (the "%" stripped), fixedEscalatedPct 0.31 |
+| Migration 1916 on MySQL 8 | Applies cleanly (re-run correctly errors "Duplicate column", runner records it once) |
+| Upsert twice + select | Row stored/updated, all seven fixed_* values read back exactly |
+| Trends tab | Both error-rate charts show 0.75% / 1% reference lines (4 lines), no errors |
+| Console / page errors | None |
+
+**Behaviour:** an uploaded value wins per column (including 0); a blank falls back to the existing calculation, so previously entered data is unchanged. The MTD row is still computed from the daily inputs.
+
+**Not verified:** live site (login); migration on the real production DB (it runs automatically at backend boot after deploy); Client & Document tab (not modified in a way that touches error colouring).
+
+---
+
 ## 2026-09-30 — Remaining tabs + single Export button
 
 **Method:** temporary Vite harness with mocked API, headless Playwright Chromium; harness removed afterwards.

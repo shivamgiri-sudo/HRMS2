@@ -63,6 +63,17 @@ const PROJECTS: ProjectConfig[] = [
     campaigns: ["DU_Bangladesh_Bangla", "DU_Bangladesh_Eng", "DU_Bangladesh_Hindi"],
     mandate: 3, required: 3, hasFCR: false, clientId: "380",
   },
+  // Live on cdr_in_249 (10 language-variant campaigns), confirmed live
+  // 2026-09-15: ~1,700 calls/30 days, active through today. required/mandate
+  // set to 9 -- the observed daily distinct-agent-login count (8-9 over the
+  // last 14 days), not an invented target. No clientId set: not verified
+  // against data_master_in, and this process has no FCR tracking anyway.
+  {
+    key: "dalmia", name: "Dalmia", icon: "\u{1F3ED}", color: "#16A085",
+    table: "cdr_in_249", pattern: "B",
+    campaigns: ["Dalmia_Hindi", "Dalmia_English", "Dalmia_Kannada", "Dalmia_Tamil", "Dalmia_Bengoli", "Dalmia_Malayalam", "Dalmia_Odiya", "Dalmia_Marathi", "Dalmia_Telugu", "Dalmia_Assamese"],
+    mandate: 9, required: 9, hasFCR: false,
+  },
 ];
 
 export function getProjectsMeta() {

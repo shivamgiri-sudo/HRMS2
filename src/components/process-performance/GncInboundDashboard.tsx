@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AreaChart, Area, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -12,6 +12,8 @@ import {
   currentMonthRange, formatShortDate,
   type ExportSlide,
 } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * GNC's own beautified "Inbound" view — Overview / Agent-wise / Date-wise,
@@ -45,6 +47,61 @@ interface AgentRow {
 const n = (v: unknown): number => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
 const pct = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
 const secondsToMin = (s: number) => `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+
+/* --------------------------- table column defs (Excel-style sort/filter) --------------------------- */
+
+interface AgentPerfCol {
+  key: string; label: string; headerClassName: string; tdClassName: string;
+  get: (r: AgentRow) => string | number | null;
+  cell: (r: AgentRow) => ReactNode;
+}
+const INBOUND_AGENT_COLS: AgentPerfCol[] = [
+  {
+    key: "agent", label: "Agent", headerClassName: "py-2 pr-3 font-semibold", tdClassName: "py-2.5 pr-3", get: (a) => a.agentName,
+    cell: (a) => <><div className="font-medium text-slate-700">{a.agentName}</div><div className="text-[11px] text-slate-400">{a.agentId}</div></>,
+  },
+  { key: "offered", label: "Offered", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.offered, cell: (a) => a.offered },
+  { key: "answered", label: "Answered", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.answered, cell: (a) => a.answered },
+  { key: "answerPct", label: "Answer %", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => pct(a.answered, a.offered), cell: (a) => `${pct(a.answered, a.offered)}%` },
+  {
+    key: "sl_pct", label: "Service Level", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right font-semibold", get: (a) => a.sl_pct, cell: (a) => `${a.sl_pct}%`,
+  },
+  { key: "acht", label: "Avg Handle", headerClassName: "py-2 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (a) => a.acht, cell: (a) => (a.acht ? secondsToMin(a.acht) : "—") },
+  { key: "repeat_pct", label: "Repeat %", headerClassName: "py-2 pr-0 text-right font-semibold", tdClassName: "py-2.5 pr-0 text-right text-slate-600", get: (a) => a.repeat_pct, cell: (a) => `${a.repeat_pct}%` },
+];
+const INBOUND_AGENT_FILTER_COLS: Array<FilterColumn<AgentRow>> = INBOUND_AGENT_COLS.map((c) => ({ key: c.key, get: c.get }));
+const inboundAgentColGetter = (r: AgentRow, key: string) => INBOUND_AGENT_COLS.find((c) => c.key === key)?.get(r);
+
+interface EnrichedDateRow extends TrendRow {
+  offered: number; answered: number; abandoned: number; ansPct: number; abandonPct: number; slPct: number;
+}
+interface DateWiseCol {
+  key: string; label: string; headerClassName: string; tdClassName: string;
+  get: (r: EnrichedDateRow) => string | number | null;
+  cell: (r: EnrichedDateRow) => ReactNode;
+}
+const INBOUND_DATEWISE_COLS: DateWiseCol[] = [
+  { key: "date", label: "Date", headerClassName: "py-2.5 pl-3 pr-3 font-bold text-slate-500", tdClassName: "py-2.5 pl-3 pr-3 font-medium text-slate-700", get: (r) => r.date, cell: (r) => formatShortDate(r.date) },
+  { key: "login_count", label: "Active Agents", headerClassName: "py-2.5 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (r) => r.login_count, cell: (r) => r.login_count },
+  { key: "offered", label: "Offered", headerClassName: "py-2.5 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (r) => r.offered, cell: (r) => r.offered },
+  {
+    key: "answered", label: "Call Answered", headerClassName: "border-l border-slate-100 bg-emerald-50/60 py-2.5 pr-3 text-right font-bold text-emerald-700",
+    tdClassName: "border-l border-slate-50 bg-emerald-50/20 py-2.5 pr-3 text-right font-bold text-emerald-700", get: (r) => r.answered, cell: (r) => r.answered,
+  },
+  { key: "ansPct", label: "Answer %", headerClassName: "py-2.5 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (r) => r.ansPct, cell: (r) => `${r.ansPct}%` },
+  { key: "abandoned", label: "Abandoned", headerClassName: "py-2.5 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (r) => r.abandoned, cell: (r) => r.abandoned },
+  {
+    key: "abandonPct", label: "AL %", headerClassName: "border-l border-slate-100 bg-emerald-50/60 py-2.5 pr-3 text-right font-bold text-emerald-700",
+    tdClassName: "border-l border-slate-50 bg-emerald-50/20 py-2.5 pr-3 text-right font-bold text-emerald-600", get: (r) => r.abandonPct, cell: (r) => `${r.abandonPct}%`,
+  },
+  {
+    key: "slPct", label: "SL %", headerClassName: "border-l border-slate-100 bg-indigo-50/60 py-2.5 pr-3 text-right font-bold text-indigo-700",
+    tdClassName: "border-l border-slate-50 bg-indigo-50/20 py-2.5 pr-3 text-right font-bold", get: (r) => r.slPct, cell: (r) => `${r.slPct}%`,
+  },
+  { key: "acht", label: "Avg Handle", headerClassName: "py-2.5 pr-3 text-right font-semibold", tdClassName: "py-2.5 pr-3 text-right text-slate-600", get: (r) => r.acht, cell: (r) => (r.acht ? secondsToMin(n(r.acht)) : "—") },
+];
+const INBOUND_DATEWISE_FILTER_COLS: Array<FilterColumn<EnrichedDateRow>> = INBOUND_DATEWISE_COLS.map((c) => ({ key: c.key, get: c.get }));
+const inboundDatewiseColGetter = (r: EnrichedDateRow, key: string) => INBOUND_DATEWISE_COLS.find((c) => c.key === key)?.get(r);
 
 type TabKey = "overview" | "agents" | "datewise";
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -109,6 +166,13 @@ export function GncInboundDashboard() {
       slPct: pct(n(r.sl_num), answered),
     };
   }).sort((a, b) => a.date.localeCompare(b.date)), [trend]);
+
+  // Excel-style: every header sorts (click) and filters (funnel icon); filters AND together, then the sort applies.
+  const inboundAgentFilters = useColumnFilters(filteredAgents, INBOUND_AGENT_FILTER_COLS);
+  const inboundAgentSort = useSortableRows(inboundAgentFilters.filtered, inboundAgentColGetter);
+
+  const inboundDateFilters = useColumnFilters(dateWiseRows, INBOUND_DATEWISE_FILTER_COLS);
+  const inboundDateSort = useSortableRows(inboundDateFilters.filtered, inboundDatewiseColGetter);
 
   /** Export slides for "Download Snap"/"Download Excel" — one per tab. */
   const exportSlides = useMemo<ExportSlide[]>(() => {
@@ -265,36 +329,34 @@ export function GncInboundDashboard() {
         </div>
 
         <SectionCard icon={Users} title="Agent-wise Call Performance" tone="indigo">
+          {inboundAgentFilters.activeCount > 0 && (
+            <button type="button" onClick={inboundAgentFilters.clearAll} className="mb-2 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {inboundAgentFilters.activeCount} filter{inboundAgentFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Agent</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Offered</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Answered</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Answer %</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Service Level</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Avg Handle</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Repeat %</th>
+                  {INBOUND_AGENT_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={inboundAgentSort.sortKey} sortDir={inboundAgentSort.sortDir} onSort={inboundAgentSort.toggleSort} filters={inboundAgentFilters}
+                      className={c.headerClassName} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredAgents.map((a, i) => (
+                {inboundAgentSort.sorted.map((a, i) => (
                   <tr key={a.agentId} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40 ${i % 2 === 1 ? "bg-indigo-50/20" : "bg-white"}`}>
-                    <td className="py-2.5 pr-3">
-                      <div className="font-medium text-slate-700">{a.agentName}</div>
-                      <div className="text-[11px] text-slate-400">{a.agentId}</div>
-                    </td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.offered}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.answered}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{pct(a.answered, a.offered)}%</td>
-                    <td className={`py-2.5 pr-3 text-right font-semibold ${a.sl_pct >= 70 ? "text-emerald-600" : a.sl_pct >= 40 ? "text-amber-600" : "text-red-600"}`}>{a.sl_pct}%</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.acht ? secondsToMin(a.acht) : "—"}</td>
-                    <td className="py-2.5 pr-0 text-right text-slate-600">{a.repeat_pct}%</td>
+                    {INBOUND_AGENT_COLS.map((c) => (
+                      <td key={c.key} className={`${c.tdClassName} ${c.key === "sl_pct" ? (a.sl_pct >= 70 ? "text-emerald-600" : a.sl_pct >= 40 ? "text-amber-600" : "text-red-600") : ""}`}>{c.cell(a)}</td>
+                    ))}
                   </tr>
                 ))}
+                {filteredAgents.length > 0 && inboundAgentSort.sorted.length === 0 && (
+                  <tr><td colSpan={INBOUND_AGENT_COLS.length} className="py-6 text-center text-slate-400">No agents match the filters.</td></tr>
+                )}
                 {filteredAgents.length === 0 && (
-                  <tr><td colSpan={7} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
+                  <tr><td colSpan={INBOUND_AGENT_COLS.length} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
                 )}
               </tbody>
             </table>
@@ -332,37 +394,34 @@ export function GncInboundDashboard() {
         </SectionCard>
 
         <SectionCard icon={PhoneCall} title="Date-wise Call Performance" tone="blue">
+          {inboundDateFilters.activeCount > 0 && (
+            <button type="button" onClick={inboundDateFilters.clearAll} className="mb-2 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {inboundDateFilters.activeCount} filter{inboundDateFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          )}
           <div className="overflow-x-auto rounded-xl border border-slate-100">
             <table className="w-full min-w-[720px] border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/80 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2.5 pl-3 pr-3 font-bold text-slate-500">Date</th>
-                  <th className="py-2.5 pr-3 text-right font-semibold">Active Agents</th>
-                  <th className="py-2.5 pr-3 text-right font-semibold">Offered</th>
-                  <th className="border-l border-slate-100 bg-emerald-50/60 py-2.5 pr-3 text-right font-bold text-emerald-700">Call Answered</th>
-                  <th className="py-2.5 pr-3 text-right font-semibold">Answer %</th>
-                  <th className="py-2.5 pr-3 text-right font-semibold">Abandoned</th>
-                  <th className="border-l border-slate-100 bg-emerald-50/60 py-2.5 pr-3 text-right font-bold text-emerald-700">AL %</th>
-                  <th className="border-l border-slate-100 bg-indigo-50/60 py-2.5 pr-3 text-right font-bold text-indigo-700">SL %</th>
-                  <th className="py-2.5 pr-3 text-right font-semibold">Avg Handle</th>
+                  {INBOUND_DATEWISE_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={inboundDateSort.sortKey} sortDir={inboundDateSort.sortDir} onSort={inboundDateSort.toggleSort} filters={inboundDateFilters}
+                      className={c.headerClassName} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {dateWiseRows.map((r, i) => (
+                {inboundDateSort.sorted.map((r, i) => (
                   <tr key={r.date} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-blue-50/40 ${i % 2 === 1 ? "bg-slate-50/60" : "bg-white"}`}>
-                    <td className="py-2.5 pl-3 pr-3 font-medium text-slate-700">{formatShortDate(r.date)}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.login_count}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.offered}</td>
-                    <td className="border-l border-slate-50 bg-emerald-50/20 py-2.5 pr-3 text-right font-bold text-emerald-700">{r.answered}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.ansPct}%</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.abandoned}</td>
-                    <td className="border-l border-slate-50 bg-emerald-50/20 py-2.5 pr-3 text-right font-bold text-emerald-600">{r.abandonPct}%</td>
-                    <td className={`border-l border-slate-50 bg-indigo-50/20 py-2.5 pr-3 text-right font-bold ${r.slPct >= 70 ? "text-emerald-600" : r.slPct >= 40 ? "text-amber-600" : "text-red-600"}`}>{r.slPct}%</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.acht ? secondsToMin(n(r.acht)) : "—"}</td>
+                    {INBOUND_DATEWISE_COLS.map((c) => (
+                      <td key={c.key} className={`${c.tdClassName} ${c.key === "slPct" ? (r.slPct >= 70 ? "text-emerald-600" : r.slPct >= 40 ? "text-amber-600" : "text-red-600") : ""}`}>{c.cell(r)}</td>
+                    ))}
                   </tr>
                 ))}
+                {dateWiseRows.length > 0 && inboundDateSort.sorted.length === 0 && (
+                  <tr><td colSpan={INBOUND_DATEWISE_COLS.length} className="py-6 text-center text-slate-400">No rows match the filters.</td></tr>
+                )}
                 {dateWiseRows.length === 0 && (
-                  <tr><td colSpan={9} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                  <tr><td colSpan={INBOUND_DATEWISE_COLS.length} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
                 )}
               </tbody>
             </table>

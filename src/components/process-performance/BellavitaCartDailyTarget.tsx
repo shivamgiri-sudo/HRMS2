@@ -3,6 +3,8 @@ import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Target, Plus, Trash2, Upload, Pencil } from "lucide-react";
 import { SectionCard, formatINR, formatShortDate } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Date-wise Abandon Cart Revenue target, per the reference sheet the user
@@ -39,6 +41,20 @@ function computeRow(r: UploadRow): ComputedRow {
 const SOURCE_LABEL: Record<DailyRow["source"], string> = { daily: "Uploaded", monthly: "Monthly (even split)", none: "Not set" };
 const SOURCE_TONE: Record<DailyRow["source"], string> = {
   daily: "bg-emerald-100 text-emerald-700", monthly: "bg-slate-100 text-slate-500", none: "bg-amber-100 text-amber-700",
+};
+const achvPctOf = (r: DailyRow): number | null => (r.target ? Math.round((r.actualRevenue / r.target) * 1000) / 10 : null);
+const DAILY_FILTER_COLS: Array<FilterColumn<DailyRow>> = [
+  { key: "date", get: (r) => r.date }, { key: "target", get: (r) => r.target },
+  { key: "actual", get: (r) => r.actualRevenue }, { key: "achv", get: (r) => achvPctOf(r) },
+  { key: "source", get: (r) => SOURCE_LABEL[r.source] },
+];
+const dailyColGetter = (r: DailyRow, key: string): string | number | null | undefined => {
+  if (key === "date") return r.date;
+  if (key === "target") return r.target;
+  if (key === "actual") return r.actualRevenue;
+  if (key === "achv") return achvPctOf(r);
+  if (key === "source") return SOURCE_LABEL[r.source];
+  return undefined;
 };
 
 export function BellavitaCartDailyTarget({ from, to }: { from: string; to: string }) {
@@ -116,6 +132,8 @@ export function BellavitaCartDailyTarget({ from, to }: { from: string; to: strin
 
   const chartData = data?.rows.map((r) => ({ date: r.date, target: r.target ?? 0, actual: r.actualRevenue })) ?? [];
   const computedPending = pending.map(computeRow);
+  const dailyFilters = useColumnFilters(data?.rows ?? [], DAILY_FILTER_COLS);
+  const { sorted: sortedDailyRows, sortKey: dailySortKey, sortDir: dailySortDir, toggleSort: toggleDailySort } = useSortableRows(dailyFilters.filtered, dailyColGetter);
 
   return (
     <SectionCard
@@ -138,20 +156,27 @@ export function BellavitaCartDailyTarget({ from, to }: { from: string; to: strin
             </ComposedChart>
           </ResponsiveContainer>
 
+          {dailyFilters.activeCount > 0 && (
+            <div className="mt-2 flex justify-end">
+              <button type="button" onClick={dailyFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {dailyFilters.activeCount} filter{dailyFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            </div>
+          )}
           <div className="mt-3 max-h-64 overflow-y-auto rounded-xl border border-slate-100">
             <table className="w-full text-left text-xs">
               <thead className="sticky top-0 bg-white">
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pl-3 pr-3 font-semibold">Date</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Target</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Actual</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Achv%</th>
-                  <th className="py-2 pr-3 font-semibold">Source</th>
+                  <FilterSortTh label="Date" columnKey="date" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="py-2 pl-3 pr-3 font-semibold" />
+                  <FilterSortTh label="Target" columnKey="target" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="py-2 pr-3 text-right font-semibold" />
+                  <FilterSortTh label="Actual" columnKey="actual" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="py-2 pr-3 text-right font-semibold" />
+                  <FilterSortTh label="Achv%" columnKey="achv" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="py-2 pr-3 text-right font-semibold" />
+                  <FilterSortTh label="Source" columnKey="source" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="py-2 pr-3 font-semibold" />
                   {data.canSetTarget && <th className="py-2 pr-3 font-semibold">Edit</th>}
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((r) => (
+                {sortedDailyRows.map((r) => (
                   <tr key={r.date} className="border-b border-slate-50 last:border-0">
                     <td className="py-2 pl-3 pr-3 font-medium text-slate-700">{formatShortDate(r.date)}</td>
                     <td className="py-2 pr-3 text-right text-slate-600">{r.target !== null ? formatINR(r.target) : "—"}</td>
@@ -181,6 +206,9 @@ export function BellavitaCartDailyTarget({ from, to }: { from: string; to: strin
                     )}
                   </tr>
                 ))}
+                {sortedDailyRows.length === 0 && (
+                  <tr><td colSpan={data.canSetTarget ? 6 : 5} className="py-6 text-center text-slate-400">No dates match the current filters.</td></tr>
+                )}
               </tbody>
             </table>
           </div>

@@ -3,7 +3,7 @@ import { normaliseImportDate, parseUtilizationCsv, splitCsvLine } from "../onfid
 import { bucketAxisLabel, fmtDate, fmtHc, fmtInt, fmtRatioPct, presetRange } from "../onfidoReportShared";
 
 describe("utilization CSV import", () => {
-  it("reads only the hand-entered columns and ignores report and formula columns", () => {
+  it("reads the hand-entered columns and ignores report columns", () => {
     const csv = [
       "Date,Month,WC,Forecasted Task,Forecasted Task POA,Utilization Forecaste,Actual Task,Manual FAR Case,Adhoc Time,Analyst QC,Facial checks,Cross training task POA,POA Live Audits / POA PQ Audits",
       '01/07/2026,Jul-26,29-Jun,"35,626.99",5734.42,52447,29580,335,7885,2143,,0,662',
@@ -14,6 +14,19 @@ describe("utilization CSV import", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ inputDate: "2026-07-01", forecastTask: "35,626.99", forecastTaskPoa: "5734.42", manualFarCases: "335", adhocTime: "7885", analystQc: "2143", facialChecks: "", crossTrainingTaskPoa: "0", poaLiveAuditsPq: "662" });
     expect(rows[1].inputDate).toBe("2026-07-02");
+  });
+
+  it("stores the sheet's calculated columns as uploaded static values, stripping %", () => {
+    const csv = [
+      "Date,Adhoc Time,Utilization Forecaste,Utilization with Adhoc,Utilization without Adhoc,Utilization with Adhoc %,Utilization without Adhoc %,POA Answering,Escalated %",
+      "01/07/2026,7885,52447,60000,55000,114.4%,104.9%,88.25%,0.31%",
+    ].join("\n");
+    const { rows, errors } = parseUtilizationCsv(csv);
+    expect(errors).toEqual([]);
+    expect(rows[0]).toMatchObject({
+      fixedUtilizationForecast: "52447", fixedUtilizationWithAdhoc: "60000", fixedUtilizationWithoutAdhoc: "55000",
+      fixedUtilizationWithAdhocPct: "114.4", fixedUtilizationWithoutAdhocPct: "104.9", fixedPoaAnsweringPct: "88.25", fixedEscalatedPct: "0.31",
+    });
   });
 
   it("skips the MTD totals row and reports genuinely bad dates", () => {

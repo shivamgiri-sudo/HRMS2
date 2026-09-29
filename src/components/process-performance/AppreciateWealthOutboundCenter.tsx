@@ -12,6 +12,8 @@ import type { DrawerTarget } from "./AppreciateWealthDrawer";
 import {
   TOOLTIP_PROPS, fmtHms, fmtNum, fmtPctVal, deltaOf, CcShell, CcHeader, CcPanel, CcTile, CoverageNote,
 } from "./AwControlKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Appreciate Wealth -- "Outbound Performance Dashboard". Every figure is live
@@ -55,6 +57,24 @@ interface Data {
 const effTint = (v: number, has: boolean) => (!has ? "text-slate-400" : v >= 100 ? "bg-emerald-200 font-bold text-emerald-900" : v >= 60 ? "bg-amber-100 font-bold text-amber-900" : "bg-rose-200 font-bold text-rose-900");
 const lateTint = (v: number) => (v >= 50 ? "bg-rose-200 font-bold text-rose-800" : v > 0 ? "bg-amber-100 font-bold text-amber-800" : "text-slate-600");
 
+/** Daily Details table header/sort/filter columns -- one row per date. */
+const DAILY_COLS: Array<{ key: string; label: string; get: (d: Day) => string | number | null }> = [
+  { key: "date", label: "Date", get: (d) => d.date },
+  { key: "agents", label: "Agents", get: (d) => d.agents },
+  { key: "target", label: "Calls Target", get: (d) => d.target },
+  { key: "calls", label: "Calls Actual", get: (d) => d.calls },
+  { key: "achPct", label: "Achievement %", get: (d) => d.achPct },
+  { key: "connected", label: "Connected", get: (d) => d.connected },
+  { key: "connectedPct", label: "Connectivity %", get: (d) => d.connectedPct },
+  { key: "latePct", label: "Late Login %", get: (d) => d.latePct },
+  { key: "occNetPct", label: "Occupancy %", get: (d) => d.occNetPct },
+  { key: "salesT", label: "Sales ₹ Target", get: (d) => d.salesT },
+  { key: "salesA", label: "Sales ₹ Achieved", get: (d) => d.salesA },
+  { key: "effPct", label: "Eff %", get: (d) => (d.salesT > 0 ? (d.salesA / d.salesT) * 100 : null) },
+];
+const DAILY_FILTER_COLS: Array<FilterColumn<Day>> = DAILY_COLS.map((c) => ({ key: c.key, get: c.get }));
+const dailyColGetter = (d: Day, key: string) => DAILY_COLS.find((c) => c.key === key)?.get(d);
+
 export function AppreciateWealthOutboundCenter({ from, to, onOpen }: { from: string; to: string; onOpen: (t: DrawerTarget) => void }) {
   const [data, setData] = useState<Data | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,6 +91,8 @@ export function AppreciateWealthOutboundCenter({ from, to, onOpen }: { from: str
   }, [from, to]);
 
   const trend = useMemo(() => (data?.daily ?? []).map((d) => ({ ...d, x: shortDay(d.date) })), [data]);
+  const dailyFilters = useColumnFilters(data?.daily ?? [], DAILY_FILTER_COLS);
+  const { sorted: dailySorted, sortKey: dailySortKey, sortDir: dailySortDir, toggleSort: toggleDailySort } = useSortableRows(dailyFilters.filtered, dailyColGetter);
 
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -355,11 +377,20 @@ export function AppreciateWealthOutboundCenter({ from, to, onOpen }: { from: str
       </div>
 
       <CcPanel title="Daily Details" icon={Layers}>
+        {dailyFilters.activeCount > 0 && (
+          <div className="mb-1 flex justify-end">
+            <button type="button" onClick={dailyFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {dailyFilters.activeCount} filter{dailyFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          </div>
+        )}
         <div className="max-h-[300px] overflow-auto rounded-lg border border-slate-200">
           <table className="w-full text-center text-[11px]">
-            <thead><tr>{["Date", "Agents", "Calls Target", "Calls Actual", "Achievement %", "Connected", "Connectivity %", "Late Login %", "Occupancy %", "Sales ₹ Target", "Sales ₹ Achieved", "Eff %"].map((h) => <th key={h} className={TOTAL_TH}>{h}</th>)}</tr></thead>
+            <thead><tr>{DAILY_COLS.map((c) => (
+              <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className={TOTAL_TH} />
+            ))}</tr></thead>
             <tbody>
-              {data.daily.map((d, i) => (
+              {dailySorted.map((d, i) => (
                 <tr key={d.date} onClick={() => openDay(d.date, d.date, fullDay(d.date))} className={`cursor-pointer hover:bg-indigo-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
                   <td className="whitespace-nowrap px-2 py-1 font-semibold text-slate-700">{fullDay(d.date)}</td>
                   <td className="px-2 py-1">{d.agents}</td>
@@ -375,7 +406,7 @@ export function AppreciateWealthOutboundCenter({ from, to, onOpen }: { from: str
                   <td className={`px-2 py-1 ${effTint(d.salesT > 0 ? (d.salesA / d.salesT) * 100 : 0, d.salesT > 0)}`}>{d.salesT > 0 ? fmtPctVal((d.salesA / d.salesT) * 100) : "—"}</td>
                 </tr>
               ))}
-              {data.daily.length === 0 && <tr><td colSpan={12} className="py-4 text-slate-400">None</td></tr>}
+              {dailySorted.length === 0 && <tr><td colSpan={12} className="py-4 text-slate-400">{data.daily.length === 0 ? "None" : "No days match the filters."}</td></tr>}
             </tbody>
           </table>
         </div>

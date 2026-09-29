@@ -89,7 +89,7 @@ export default function OnfidoUtilizationReport() {
   return (
     <SectionCard
       title="Utilization" accent="var(--green)"
-      subtitle="Actual Task, POA Live, AHT, GD%, MCN%, SLA, APS and Escalated Task come from the uploaded reports. The other inputs are entered by WFM; a formula with a missing input shows -."
+      subtitle="Actual Task, POA Live, AHT, GD%, MCN%, SLA, APS and Escalated Task come from the uploaded reports. The other inputs, and the calculated columns, are uploaded by WFM as fixed values (Bulk upload); a calculated column with no uploaded value falls back to the sheet formula, and shows - when an input is missing."
       right={
         <div className="flex items-end gap-3">
           <div className="oc-field">
@@ -192,7 +192,7 @@ function DrawerBody({ day, canEdit, onSaved }: { day: Day; canEdit: boolean; onS
         </tbody></table>
       </div>
       <div>
-        <div className="oc-kv-label">Calculated (sheet formulas)</div>
+        <div className="oc-kv-label">Calculated columns (uploaded value, else sheet formula)</div>
         <table className="oc-table"><tbody>
           <tr><td>Utilization Forecast = D + E x (220/75)</td><td className="oc-right">{dec(d.utilizationForecast)}</td></tr>
           <tr><td>Utilization with Adhoc = G + H + I x (220/75) + J + K x 1.2 + M x (220/75) + N x (220/75)</td><td className="oc-right">{dec(d.utilizationWithAdhoc)}</td></tr>

@@ -58,7 +58,31 @@ type DailyRow = {
   unique_phones: number;
 };
 
-async function runProjectQuery(p: ProjectConfig, filters: InboundFilters): Promise<DailyRow[]> {
+/**
+ * Short-lived result cache with in-flight sharing for the slow remote dialer_db queries. A project's detail
+ * page asks for summary, trend, hourly and LOB at once, and summary and trend run the SAME daily query; on a
+ * multi-month range each such query takes 10-15 s, which added up past the browser's 30 s limit. Concurrent
+ * identical requests now share one query and repeats within the TTL are served from memory (dialer data is
+ * append-only within a day, so a minute of staleness is immaterial). A failure is never cached.
+ */
+const MEMO_TTL_MS = 60_000;
+const memoStore = new Map<string, { at: number; p: Promise<unknown> }>();
+function memo<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const hit = memoStore.get(key);
+  if (hit && Date.now() - hit.at < MEMO_TTL_MS) return hit.p as Promise<T>;
+  const p = fn();
+  memoStore.set(key, { at: Date.now(), p });
+  p.catch(() => { if (memoStore.get(key)?.p === p) memoStore.delete(key); });
+  if (memoStore.size > 200) for (const k of memoStore.keys()) { memoStore.delete(k); break; }
+  return p;
+}
+const memoKey = (name: string, projectKey: string, f: InboundFilters) => `${name}|${projectKey}|${f.startDate}|${f.endDate}`;
+
+function runProjectQuery(p: ProjectConfig, filters: InboundFilters): Promise<DailyRow[]> {
+  return memo(memoKey("daily", p.key, filters), () => runProjectQueryRaw(p, filters));
+}
+
+async function runProjectQueryRaw(p: ProjectConfig, filters: InboundFilters): Promise<DailyRow[]> {
   const { startDate, endDate } = filters;
   const pool = await getDialerPool();
   const ph   = p.campaigns.map(() => "?").join(",");
@@ -69,10 +93,9 @@ async function runProjectQuery(p: ProjectConfig, filters: InboundFilters): Promi
     sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date,
       COUNT(DISTINCT CASE WHEN DisconnBy != 'HOLDTIME' THEN AgentId END) AS login_count,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
-      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
-               OR   (AgentId = 'VDCL'  AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
-               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num,
+               AND AgentId != 'VDCL' THEN 1 ELSE 0 END) AS sl_num,
       ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht,
       COUNT(DISTINCT CASE WHEN DisconnBy != 'HOLDTIME' THEN PhoneNumber END) AS unique_phones
      FROM dialer_db.${p.table}
@@ -130,8 +153,11 @@ function aggregateRows(rows: DailyRow[]) {
   }
   const sl_pct     = totals.answered ? Math.round(totals.sl_num / totals.answered * 10000) / 100 : 0;
   const aht        = totals.acht_count ? Math.round(totals.acht_sum / totals.acht_count) : 0;
-  const abandon_pct = totals.offered ? Math.round((totals.offered - totals.answered) / totals.offered * 10000) / 100 : 0;
   const ans_pct    = totals.offered ? Math.round(totals.answered / totals.offered * 10000) / 100 : 0;
+  // AL % redefined 2026-09-23 at explicit user request: Answered / Offered
+  // (previously Abandoned / Offered) -- identical to ans_pct now, kept as its
+  // own field/name so every existing "AL%" consumer keeps reading abandon_pct.
+  const abandon_pct = ans_pct;
   const avg_wait   = aht; // use AHT as proxy; replace with actual queue time if available
   return {
     total: totals.offered,
@@ -220,7 +246,8 @@ export async function getConsolidatedTrend(filters: InboundFilters) {
     .map((r) => ({
       ...r,
       sl_pct:    r.answered ? Math.round(r.sl_num / r.answered * 100 * 100) / 100 : 0,
-      abandon_pct: r.offered ? Math.round((r.offered - r.answered) / r.offered * 100 * 100) / 100 : 0,
+      // AL % = Answered / Offered (redefined 2026-09-23, see aggregateRows).
+      abandon_pct: r.offered ? Math.round(r.answered / r.offered * 100 * 100) / 100 : 0,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -292,7 +319,10 @@ export async function getProjectAgentSummary(filters: InboundFilters, projectKey
       agentName: r.agent_name || r.agent_id,
       offered,
       answered,
-      sl_pct: offered ? Math.round((sl_num / offered) * 10000) / 100 : 0,
+      // SL % = answered-within-threshold / Answered. This query already only
+      // has AgentId != 'VDCL' rows (offered === answered here), but divides
+      // by `answered` explicitly to match the formula used everywhere else.
+      sl_pct: answered ? Math.round((sl_num / answered) * 10000) / 100 : 0,
       acht: n(r.acht),
       repeat_pct: offered ? Math.round(((offered - unique_phones) / offered) * 10000) / 100 : 0,
     };
@@ -325,10 +355,9 @@ export async function getProjectHourlyByDate(filters: InboundFilters, projectKey
   if (p.pattern === "A") {
     sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, HOUR(HoursSlot) AS hour,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
-      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
-               OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
-               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num,
+               AND AgentId != 'VDCL' THEN 1 ELSE 0 END) AS sl_num,
       ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht
      FROM dialer_db.${p.table}
      WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
@@ -352,7 +381,7 @@ export async function getProjectHourlyByDate(filters: InboundFilters, projectKey
     hour: n(r.hour),
     offered: n(r.offered),
     answered: n(r.answered),
-    sl_pct: n(r.offered) ? Math.round((n(r.sl_num) / n(r.offered)) * 10000) / 100 : 0,
+    sl_pct: n(r.answered) ? Math.round((n(r.sl_num) / n(r.answered)) * 10000) / 100 : 0,
     acht: n(r.acht),
   }));
 }
@@ -365,7 +394,7 @@ export async function getProjectHourlyByDate(filters: InboundFilters, projectKey
  * company (GNC/Bellavita/Clovia/Neemans/Dalmia/DU Bangladesh/Viega/Exicom),
  * so the fix benefits all of them, not just Clovia.
  */
-export async function getProjectHourly(filters: InboundFilters, projectKey: string) {
+async function getProjectHourlyRaw(filters: InboundFilters, projectKey: string) {
   const p = PROJECTS.find((x) => x.key === projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
@@ -378,10 +407,9 @@ export async function getProjectHourly(filters: InboundFilters, projectKey: stri
   if (p.pattern === "A") {
     sql = `SELECT HOUR(HoursSlot) AS hour,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
-      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
-               OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
-               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num
+               AND AgentId != 'VDCL' THEN 1 ELSE 0 END) AS sl_num
      FROM dialer_db.${p.table}
      WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
        AND CampaignName IN (${ph})
@@ -418,7 +446,7 @@ type LobRow = {
  * English/Hindi). Same Pattern A/B query shape as runProjectQuery, GROUP BY
  * CampaignName instead of date/hour.
  */
-export async function getProjectLobSummary(filters: InboundFilters, projectKey: string) {
+async function getProjectLobSummaryRaw(filters: InboundFilters, projectKey: string) {
   const p = PROJECTS.find((x) => x.key === projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
@@ -431,10 +459,9 @@ export async function getProjectLobSummary(filters: InboundFilters, projectKey: 
   if (p.pattern === "A") {
     sql = `SELECT CampaignName AS campaign,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
-      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
-               OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
-               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num,
+               AND AgentId != 'VDCL' THEN 1 ELSE 0 END) AS sl_num,
       ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht,
       COUNT(DISTINCT CASE WHEN DisconnBy != 'HOLDTIME' THEN PhoneNumber END) AS unique_phones
      FROM dialer_db.${p.table}
@@ -464,10 +491,19 @@ export async function getProjectLobSummary(filters: InboundFilters, projectKey: 
       offered,
       answered,
       answeredPct: offered ? Math.round((answered / offered) * 10000) / 100 : 0,
-      abandonPct: offered ? Math.round(((offered - answered) / offered) * 10000) / 100 : 0,
-      slPct: offered ? Math.round((slNum / offered) * 10000) / 100 : 0,
+      // AL % = Answered / Offered (redefined 2026-09-23, see aggregateRows above).
+      abandonPct: offered ? Math.round((answered / offered) * 10000) / 100 : 0,
+      // SL % = answered-within-threshold / Answered (redefined 2026-09-23).
+      slPct: answered ? Math.round((slNum / answered) * 10000) / 100 : 0,
       acht: n(r.acht),
       uniquePhones: n(r.unique_phones),
     };
   });
+}
+
+export function getProjectHourly(filters: InboundFilters, projectKey: string): ReturnType<typeof getProjectHourlyRaw> {
+  return memo(memoKey("hourly", projectKey, filters), () => getProjectHourlyRaw(filters, projectKey));
+}
+export function getProjectLobSummary(filters: InboundFilters, projectKey: string): ReturnType<typeof getProjectLobSummaryRaw> {
+  return memo(memoKey("lob", projectKey, filters), () => getProjectLobSummaryRaw(filters, projectKey));
 }

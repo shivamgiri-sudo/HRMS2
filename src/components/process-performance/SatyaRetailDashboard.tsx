@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ComposedChart, Bar, Line, BarChart, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -15,6 +15,8 @@ import { SatyaAgentTab } from "./SatyaAgentTab";
 import { SatyaDailyTracker } from "./SatyaDailyTracker";
 import { SatyaDetailDrawer, type SatyaDetailTarget } from "./SatyaDetailDrawer";
 import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 import {
   callsMade, filtersQuery, fmtInt, fmtRatio, outcomeLabel, ratio, subDispositionTotals, weekOf, type SatyaReportData,
 } from "./satyaReportModel";
@@ -81,6 +83,23 @@ function withRatios(b: Bucket) {
     aov: b.orders > 0 ? Math.round(b.revenue / b.orders) : 0,
   };
 }
+
+/** Row shown in the "Outcomes on connected calls" table -- the sub-disposition
+ * totals plus their share of connected calls, computed once headline data is loaded. */
+interface OutcomeRow { name: string; count: number; pct: number | null }
+interface OutcomeCol {
+  key: string; label: string;
+  get: (r: OutcomeRow) => string | number | null;
+  cell: (r: OutcomeRow) => ReactNode;
+  className: string;
+}
+const OUTCOME_COLS: OutcomeCol[] = [
+  { key: "name", label: "Outcome", get: (r) => outcomeLabel(r.name), cell: (r) => outcomeLabel(r.name), className: "px-2 py-1.5 font-medium text-slate-700" },
+  { key: "count", label: "Count", get: (r) => r.count, cell: (r) => fmtInt(r.count), className: "px-2 py-1.5 text-center text-slate-600" },
+  { key: "pct", label: "% of connected", get: (r) => r.pct, cell: (r) => fmtRatio(r.pct), className: "px-2 py-1.5 text-center font-semibold text-violet-700" },
+];
+const OUTCOME_FILTER_COLS: Array<FilterColumn<OutcomeRow>> = OUTCOME_COLS.map((c) => ({ key: c.key, get: c.get }));
+const outcomeColGetter = (r: OutcomeRow, key: string) => OUTCOME_COLS.find((c) => c.key === key)?.get(r);
 
 function ViewDetailsBtn({ onClick }: { onClick: () => void }) {
   return (
@@ -178,6 +197,14 @@ export function SatyaRetailDashboard() {
 
   const outcomeTotals = useMemo(() => (data ? subDispositionTotals(data, "Connected") : []), [data]);
   const outcomeNames = useMemo(() => outcomeTotals.map((o) => outcomeLabel(o.name)), [outcomeTotals]);
+  const outcomeRows = useMemo<OutcomeRow[]>(
+    () => outcomeTotals.map((o) => ({ ...o, pct: data ? ratio(o.count, data.headline.connected) : null })),
+    [outcomeTotals, data],
+  );
+  // Excel-style: every header sorts (click) and filters (funnel icon); filters AND together, then the sort applies.
+  const outcomeFilters = useColumnFilters(outcomeRows, OUTCOME_FILTER_COLS);
+  const { sorted: sortedOutcomes, sortKey: outcomeSortKey, sortDir: outcomeSortDir, toggleSort: toggleOutcomeSort } =
+    useSortableRows(outcomeFilters.filtered, outcomeColGetter);
 
   const outcomeDaily = useMemo(() => {
     const byDate = new Map<string, Record<string, string | number>>();
@@ -408,24 +435,35 @@ export function SatyaRetailDashboard() {
               footnote="The Excel's outcome list (Stock Available, Not Interested, Order Placed, Call Back, ...) -- the sub-disposition of connected calls."
               action={<ViewDetailsBtn onClick={() => openOutcomes("Outcomes on connected calls")} />}
             >
+              {outcomeFilters.activeCount > 0 && (
+                <div className="mb-2 flex justify-end">
+                  <button type="button" onClick={outcomeFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                    Clear {outcomeFilters.activeCount} filter{outcomeFilters.activeCount > 1 ? "s" : ""}
+                  </button>
+                </div>
+              )}
               <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-100">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="sticky top-0 z-10 bg-violet-800 text-[10px] uppercase tracking-wide text-white">
-                      <th className="px-2 py-1.5 text-left font-bold text-white">Outcome</th>
-                      <th className="px-2 py-1.5 font-bold text-white">Count</th>
-                      <th className="px-2 py-1.5 font-bold text-white">% of connected</th>
+                      {OUTCOME_COLS.map((c) => (
+                        <FilterSortTh
+                          key={c.key} label={c.label} columnKey={c.key}
+                          sortKey={outcomeSortKey} sortDir={outcomeSortDir} onSort={toggleOutcomeSort} filters={outcomeFilters}
+                          className={c.key === "name" ? "px-2 py-1.5 text-left font-bold text-white" : "px-2 py-1.5 font-bold text-white"}
+                        />
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {outcomeTotals.map((o, i) => (
+                    {sortedOutcomes.map((o, i) => (
                       <tr key={o.name} className={`border-b border-slate-50 last:border-0 ${i % 2 ? "bg-violet-50/30" : "bg-white"}`}>
-                        <td className="px-2 py-1.5 font-medium text-slate-700">{outcomeLabel(o.name)}</td>
-                        <td className="px-2 py-1.5 text-center text-slate-600">{fmtInt(o.count)}</td>
-                        <td className="px-2 py-1.5 text-center font-semibold text-violet-700">{fmtRatio(ratio(o.count, h.connected))}</td>
+                        {OUTCOME_COLS.map((c) => <td key={c.key} className={c.className}>{c.cell(o)}</td>)}
                       </tr>
                     ))}
-                    {outcomeTotals.length === 0 && <tr><td colSpan={3} className="py-6 text-center text-slate-400">No data for this period.</td></tr>}
+                    {sortedOutcomes.length === 0 && (
+                      <tr><td colSpan={OUTCOME_COLS.length} className="py-6 text-center text-slate-400">{outcomeTotals.length === 0 ? "No data for this period." : "No outcomes match the filters."}</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>

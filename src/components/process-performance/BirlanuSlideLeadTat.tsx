@@ -1,7 +1,10 @@
+import type { ReactNode } from "react";
 import { ComposedChart, Bar, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { Users, CheckCircle2, Clock, Target, Timer, BarChart3, PieChart as PieIcon, Table2, LineChart as LineIcon, Layers } from "lucide-react";
-import type { BirlanuMis } from "./birlanuTypes";
+import type { BirlanuMis, TatRow } from "./birlanuTypes";
 import { BCard, DetailsBtn, Empty, Kpi, LegendList, Th, TOOLTIP_STYLE, delta, int, pct1, ppDelta, type DrawerSpec } from "./BirlanuKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Slide 4 -- Lead TAT. Logic = the workbook's "Lead TAT" sheet: Outbound leads (Call Type "Outbound") of one LeadRegisterMonth
@@ -14,8 +17,45 @@ import { BCard, DetailsBtn, Empty, Kpi, LegendList, Th, TOOLTIP_STYLE, delta, in
 const fmtHrs = (h: number | null) => (h === null ? "—" : h < 1 ? `${Math.round(h * 60)} min` : `${(Math.round(h * 10) / 10).toFixed(1)} Hrs`);
 const short = (b: string) => b.replace("hrs", "h").replace("Hrs", "h").replace(" Min", "m");
 
+const TAT_TH_BASE = "whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white";
+type SourceRow = TatRow & { source: string };
+type SrcPerfMonth = { month: string; enquiry: number; connected: number; las: number; contPct: number; lasPct: number };
+type SrcPerfRow = { source: string; months: SrcPerfMonth[] };
+
 export function BirlanuSlideLeadTat({ data, open }: { data: BirlanuMis; open: (s: DrawerSpec) => void }) {
   const t = data.leadTat;
+  const maxCellForShade = Math.max(1, ...t.bySource.flatMap((r) => r.counts));
+  const shadeCell = (v: number) => (v > 0 ? { backgroundColor: `rgba(22, 163, 74, ${Math.min(0.6, (v / maxCellForShade) * 0.9 + 0.05)})` } : undefined);
+  const BY_SOURCE_COLS: Array<{ key: string; label: string; get: (r: SourceRow) => string | number; cell: (r: SourceRow) => ReactNode; th: string; td: string; style?: (r: SourceRow) => React.CSSProperties | undefined }> = [
+    { key: "source", label: "Source", get: (r) => r.source, cell: (r) => r.source, th: "rounded-l-md text-left", td: "px-2 py-1 text-left font-semibold text-[#0b2a5b]" },
+    ...t.buckets.map((b, bi) => ({
+      key: `bucket${bi}`, label: short(b), get: (r: SourceRow) => r.counts[bi] ?? 0, cell: (r: SourceRow) => int(r.counts[bi] ?? 0), th: "", td: "px-1.5 py-1", style: (r: SourceRow) => shadeCell(r.counts[bi] ?? 0),
+    })),
+    { key: "within", label: "Within TAT", get: (r) => r.within, cell: (r) => int(r.within), th: "bg-emerald-700", td: "bg-emerald-50 px-1.5 py-1 font-bold text-emerald-800" },
+    { key: "out", label: "Out of TAT", get: (r) => r.out, cell: (r) => int(r.out), th: "rounded-r-md bg-orange-600", td: "bg-orange-50 px-1.5 py-1 font-bold text-orange-700" },
+    { key: "total", label: "Total", get: (r) => r.total, cell: (r) => int(r.total), th: "", td: "px-1.5 py-1 font-bold" },
+  ];
+  const BY_SOURCE_FILTER_COLS: Array<FilterColumn<SourceRow>> = BY_SOURCE_COLS.map((c) => ({ key: c.key, get: c.get }));
+  const bySourceGetter = (r: SourceRow, key: string) => BY_SOURCE_COLS.find((c) => c.key === key)?.get(r);
+  const bySourceFilters = useColumnFilters(t.bySource, BY_SOURCE_FILTER_COLS);
+  const { sorted: bySourceRows, sortKey: bySourceSortKey, sortDir: bySourceSortDir, toggleSort: bySourceToggleSort } = useSortableRows(bySourceFilters.filtered, bySourceGetter);
+
+  const perfMonths = t.sourcePerformance[0]?.months.map((m) => m.month) ?? [];
+  const SRC_PERF_COLS: Array<{ key: string; label: string; get: (r: SrcPerfRow) => string | number; cell: (r: SrcPerfRow) => ReactNode }> = [
+    { key: "source", label: "Source", get: (r) => r.source, cell: (r) => r.source },
+    ...perfMonths.flatMap((_m, mi) => ([
+      { key: `m${mi}-enquiry`, label: "Enquiry", get: (r: SrcPerfRow) => r.months[mi]?.enquiry ?? 0, cell: (r: SrcPerfRow) => int(r.months[mi]?.enquiry ?? 0) },
+      { key: `m${mi}-connected`, label: "Connected", get: (r: SrcPerfRow) => r.months[mi]?.connected ?? 0, cell: (r: SrcPerfRow) => int(r.months[mi]?.connected ?? 0) },
+      { key: `m${mi}-las`, label: "LAS", get: (r: SrcPerfRow) => r.months[mi]?.las ?? 0, cell: (r: SrcPerfRow) => int(r.months[mi]?.las ?? 0) },
+      { key: `m${mi}-contPct`, label: "Cont%", get: (r: SrcPerfRow) => r.months[mi]?.contPct ?? 0, cell: (r: SrcPerfRow) => (r.months[mi]?.enquiry ? pct1(r.months[mi].contPct) : "—") },
+      { key: `m${mi}-lasPct`, label: "LAS%", get: (r: SrcPerfRow) => r.months[mi]?.lasPct ?? 0, cell: (r: SrcPerfRow) => (r.months[mi]?.connected ? pct1(r.months[mi].lasPct) : "—") },
+    ])),
+  ];
+  const SRC_PERF_FILTER_COLS: Array<FilterColumn<SrcPerfRow>> = SRC_PERF_COLS.map((c) => ({ key: c.key, get: c.get }));
+  const srcPerfGetter = (r: SrcPerfRow, key: string) => SRC_PERF_COLS.find((c) => c.key === key)?.get(r);
+  const srcPerfFilters = useColumnFilters(t.sourcePerformance, SRC_PERF_FILTER_COLS);
+  const { sorted: srcPerfRows, sortKey: srcPerfSortKey, sortDir: srcPerfSortDir, toggleSort: srcPerfToggleSort } = useSortableRows(srcPerfFilters.filtered, srcPerfGetter);
+
   if (t.totals.total === 0 && t.monthly.every((m) => m.total === 0)) return <Empty text="No Outbound leads with a first-response bucket for the current selection." />;
   const idx = t.monthly.findIndex((m) => m.month === t.month);
   const cur = idx >= 0 ? t.monthly[idx] : undefined;
@@ -115,18 +155,39 @@ export function BirlanuSlideLeadTat({ data, open }: { data: BirlanuMis; open: (s
           </ResponsiveContainer>
         </BCard>
 
-        <BCard className="lg:col-span-7" icon={Table2} title={`TAT Distribution by Source (${t.week ? `${t.month} · ${t.week}` : "Whole Month"})`} footnote="Only Outbound leads that have a first-response bucket are counted. Click a source for its monthly funnel." action={<DetailsBtn onClick={bucketDrill} />}>
+        <BCard
+          className="lg:col-span-7" icon={Table2} title={`TAT Distribution by Source (${t.week ? `${t.month} · ${t.week}` : "Whole Month"})`}
+          footnote="Only Outbound leads that have a first-response bucket are counted. Click a source for its monthly funnel."
+          action={
+            <div className="flex items-center gap-2">
+              {bySourceFilters.activeCount > 0 && (
+                <button type="button" onClick={bySourceFilters.clearAll} className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold text-white hover:bg-white/20">
+                  Clear {bySourceFilters.activeCount} filter{bySourceFilters.activeCount > 1 ? "s" : ""}
+                </button>
+              )}
+              <DetailsBtn onClick={bucketDrill} />
+            </div>
+          }
+        >
           <div className="overflow-x-auto">
             <table className="w-full min-w-[820px] text-center text-[10px]">
-              <thead><tr><Th className="rounded-l-md text-left">Source</Th>{t.buckets.map((b) => <Th key={b}>{short(b)}</Th>)}<Th className="bg-emerald-700">Within TAT</Th><Th className="rounded-r-md bg-orange-600">Out of TAT</Th><Th>Total</Th></tr></thead>
+              <thead>
+                <tr>
+                  {BY_SOURCE_COLS.map((c) => (
+                    <FilterSortTh
+                      key={c.key} label={c.label} columnKey={c.key} sortKey={bySourceSortKey} sortDir={bySourceSortDir} onSort={bySourceToggleSort} filters={bySourceFilters}
+                      className={`${TAT_TH_BASE} ${c.th}`}
+                    />
+                  ))}
+                </tr>
+              </thead>
               <tbody>
-                {t.bySource.map((r, i) => (
+                {bySourceRows.map((r, i) => (
                   <tr key={r.source} role="button" tabIndex={0} onClick={() => sourceDrill(r.source)} className={`cursor-pointer hover:bg-amber-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
-                    <td className="px-2 py-1 text-left font-semibold text-[#0b2a5b]">{r.source}</td>
-                    {r.counts.map((c, ci) => <td key={ci} style={shade(c)} className="px-1.5 py-1">{int(c)}</td>)}
-                    <td className="bg-emerald-50 px-1.5 py-1 font-bold text-emerald-800">{int(r.within)}</td><td className="bg-orange-50 px-1.5 py-1 font-bold text-orange-700">{int(r.out)}</td><td className="px-1.5 py-1 font-bold">{int(r.total)}</td>
+                    {BY_SOURCE_COLS.map((c) => <td key={c.key} className={c.td} style={c.style?.(r)}>{c.cell(r)}</td>)}
                   </tr>
                 ))}
+                {bySourceRows.length === 0 && <tr><td colSpan={BY_SOURCE_COLS.length} className="py-4 text-slate-400">No sources match the current filters.</td></tr>}
               </tbody>
               <tfoot><tr className="bg-[#0b2a5b] font-bold text-white"><td className="px-2 py-1.5 text-left">Total</td>{t.totals.counts.map((c, ci) => <td key={ci} className="px-1.5 py-1.5">{int(c)}</td>)}<td className="px-1.5 py-1.5">{int(t.totals.within)}</td><td className="px-1.5 py-1.5">{int(t.totals.out)}</td><td className="px-1.5 py-1.5">{int(t.totals.total)}</td></tr></tfoot>
             </table>
@@ -134,20 +195,35 @@ export function BirlanuSlideLeadTat({ data, open }: { data: BirlanuMis; open: (s
         </BCard>
       </div>
 
-      <BCard icon={Table2} title="Monthly Source Performance" footnote="Enquiry = rows by LeadRegisterMonth; Connected = Calling Status Connect; LAS = connected leads assigned to the sales team; Cont % = Connected / Enquiry; LAS % = LAS / Connected.">
+      <BCard
+        icon={Table2} title="Monthly Source Performance"
+        footnote="Enquiry = rows by LeadRegisterMonth; Connected = Calling Status Connect; LAS = connected leads assigned to the sales team; Cont % = Connected / Enquiry; LAS % = LAS / Connected."
+        action={srcPerfFilters.activeCount > 0 ? (
+          <button type="button" onClick={srcPerfFilters.clearAll} className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {srcPerfFilters.activeCount} filter{srcPerfFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-center text-[10px]" style={{ minWidth: 200 + months.length * 250 }}>
             <thead>
               <tr><Th className="rounded-tl-md text-left" >Source</Th>{months.map((m) => <th key={m} colSpan={5} className="border-l border-white/20 bg-[#0b2a5b] px-2 py-1 text-[11px] font-bold text-white">{m}</th>)}</tr>
-              <tr><Th className="rounded-bl-md">{" "}</Th>{months.map((m) => ["Enquiry", "Connected", "LAS", "Cont%", "LAS%"].map((h) => <th key={`${m}-${h}`} className="bg-[#123a7a] px-1.5 py-1 text-[9px] font-semibold text-white">{h}</th>))}</tr>
+              <tr>
+                {SRC_PERF_COLS.map((c) => (
+                  <FilterSortTh
+                    key={c.key} label={c.label} columnKey={c.key} sortKey={srcPerfSortKey} sortDir={srcPerfSortDir} onSort={srcPerfToggleSort} filters={srcPerfFilters}
+                    className={c.key === "source" ? "whitespace-nowrap rounded-bl-md bg-[#0b2a5b] px-2 py-1.5 text-left text-[10px] font-bold text-white" : "whitespace-nowrap bg-[#123a7a] px-1.5 py-1 text-[9px] font-semibold text-white"}
+                  />
+                ))}
+              </tr>
             </thead>
             <tbody>
-              {t.sourcePerformance.map((r, i) => (
+              {srcPerfRows.map((r, i) => (
                 <tr key={r.source} role="button" tabIndex={0} onClick={() => sourceDrill(r.source)} className={`cursor-pointer hover:bg-amber-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
-                  <td className="whitespace-nowrap px-2 py-1 text-left font-semibold text-[#0b2a5b]">{r.source}</td>
-                  {r.months.map((m) => [int(m.enquiry), int(m.connected), int(m.las), m.enquiry ? pct1(m.contPct) : "—", m.connected ? pct1(m.lasPct) : "—"].map((v, k) => <td key={`${m.month}-${k}`} className="px-1.5 py-1">{v}</td>))}
+                  {SRC_PERF_COLS.map((c) => <td key={c.key} className={c.key === "source" ? "whitespace-nowrap px-2 py-1 text-left font-semibold text-[#0b2a5b]" : "px-1.5 py-1"}>{c.cell(r)}</td>)}
                 </tr>
               ))}
+              {srcPerfRows.length === 0 && <tr><td colSpan={SRC_PERF_COLS.length} className="py-4 text-slate-400">No sources match the current filters.</td></tr>}
             </tbody>
             <tfoot>
               <tr className="bg-emerald-700 font-bold text-white"><td className="px-2 py-1.5 text-left">Total</td>{months.map((m, mi) => { const x = spTotal(mi); return [int(x.enquiry), int(x.connected), int(x.las), x.enquiry ? pct1(x.contPct) : "—", x.connected ? pct1(x.lasPct) : "—"].map((v, k) => <td key={`${m}-${k}`} className="px-1.5 py-1.5">{v}</td>); })}</tr>
