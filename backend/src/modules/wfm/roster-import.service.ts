@@ -1078,6 +1078,26 @@ export async function commitImportBatch(
   // assignments); this is a separate, unconditional notify pass over whatever actually landed.
   const employeesNotified = await notifyEmployeesForImportBatch(batchId);
 
+  // Sync employees.working_hours_start / working_hours_end to the roster shift
+  // times so the attendance engine's fallback is always correct.  The engine
+  // falls back to working_hours_start when a roster row has no shift_start_time
+  // snapshot; without this sync that fallback uses a stale default (e.g. 09:00)
+  // even when the roster clearly says 09:30, producing false late marks for
+  // anyone who arrived before their shift start but after the stale default.
+  if (assignmentsCreated + assignmentsUpdated > 0) {
+    await db.execute(
+      `UPDATE employees e
+          JOIN wfm_roster_assignment wra ON wra.employee_id = e.id
+          LEFT JOIN wfm_shift_master wsm ON wsm.id = wra.shift_id
+         SET e.working_hours_start = COALESCE(wra.shift_start_time, wsm.start_time),
+             e.working_hours_end   = COALESCE(wra.shift_end_time,   wsm.end_time)
+       WHERE wra.import_batch_id = ?
+         AND UPPER(COALESCE(wra.assignment_type, '')) NOT IN ('WEEK_OFF','LEAVE','HOLIDAY')
+         AND COALESCE(wra.shift_start_time, wsm.start_time) IS NOT NULL`,
+      [batchId]
+    );
+  }
+
   // Fire async attendance recompute for every (employee, date) pair that was written.
   // Non-blocking: the API response is not delayed. Locked records are skipped by upsertDailyRecord
   // itself (via ON DUPLICATE KEY UPDATE ... IF(is_locked = 0, ...)). Each employee gets one serial
