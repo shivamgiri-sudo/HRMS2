@@ -933,7 +933,8 @@
     "migrations/1906_attendance_data_fixes.sql",
     "migrations/1907_skill_roadmap_fk_fix.sql",
     "migrations/1908_backfill_esi_docs_vault.sql",
-    "migrations/1909_performance_indexes.sql"
+    "migrations/1909_performance_indexes.sql",
+    "migrations/1910_bla_bli_blu_sales_dashboard.sql"
   ],
   "approvedDeletions": [
     {
@@ -1155,7 +1156,8 @@
     "migrations/1906_attendance_data_fixes.sql",
     "migrations/1907_skill_roadmap_fk_fix.sql",
     "migrations/1908_backfill_esi_docs_vault.sql",
-    "migrations/1909_performance_indexes.sql"
+    "migrations/1909_performance_indexes.sql",
+    "migrations/1910_bla_bli_blu_sales_dashboard.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
