@@ -15,6 +15,8 @@ import { LiveQueueTab } from "@/components/ats/command-center/LiveQueueTab";
 import { JourneyTab } from "@/components/ats/command-center/JourneyTab";
 import { HealthTab } from "@/components/ats/command-center/HealthTab";
 import { BMIBenchmarkTab } from "@/components/ats/command-center/BMIBenchmarkTab";
+import { InsightsTab } from "@/components/ats/command-center/InsightsTab";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import BranchActivityReportTab from "@/pages/ats/BranchActivityReportTab";
 import { ProvenanceBar } from "@/components/analytics/analytics-kit";
 
@@ -71,8 +73,12 @@ type CommandCenterData = {
 
 const periods = ["ALL", "FTD", "WTD", "MTD"];
 const TAB_IDS = ["Cover", "Dashboard", "Trends", "Rejections", "Recruiters", "Sourcing", "Live Queue", "Branch Activity", "Journey", "Health", "BMI"];
+/** Insights is backed by org-wide cached aggregates, so it is limited to the roles that see every candidate (matches DASH_AGG_ROLES in ats.routes.ts). */
+const INSIGHTS_ROLES = ["super_admin", "admin", "hr", "manager", "ceo"] as const;
 
 export default function NativeATSFullParityCommandCenter() {
+  const { hasAnyRole } = useWorkforceAccess();
+  const tabIds = hasAnyRole(...INSIGHTS_ROLES) ? [...TAB_IDS, "Insights"] : TAB_IDS;
   const [data, setData] = useState<CommandCenterData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -291,7 +297,7 @@ export default function NativeATSFullParityCommandCenter() {
         <Tabs value={tab} onValueChange={setTab}>
           <div className="overflow-x-auto">
             <TabsList className="flex h-auto w-max gap-0.5 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-              {TAB_IDS.map((t) => (
+              {tabIds.map((t) => (
                 <TabsTrigger
                   key={t}
                   value={t}
@@ -389,6 +395,13 @@ export default function NativeATSFullParityCommandCenter() {
           <TabsContent value="BMI" className="mt-4">
             <BMIBenchmarkTab />
           </TabsContent>
+
+          {/* Insights: trends, movers, anomalies, interview quality, with drill-down */}
+          {tabIds.includes("Insights") && (
+            <TabsContent value="Insights" className="mt-4">
+              <InsightsTab />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </DashboardLayout>

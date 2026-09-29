@@ -112,6 +112,48 @@ export function isTransientMigrationError(error: unknown): boolean {
   );
 }
 
+/**
+ * True only for a migration whose ENTIRE effect is adding indexes (ALTER TABLE ... ADD INDEX/KEY,
+ * CREATE INDEX, plus the PREPARE/EXECUTE guard idiom). Anything else — a column, a table, a data
+ * change, a drop — returns false, so it can never be mistaken for "safe to defer".
+ *
+ * Why this exists (2026-09-30 outage): migration 1918 added 19 indexes, including on `employees`.
+ * A long report held a shared metadata lock, the ALTER queued behind it, every other query on the
+ * table queued behind the ALTER, and the ALTER finally hit ER_LOCK_WAIT_TIMEOUT. The runner then
+ * recorded the migration as failed and, in production, refused to start the server: a
+ * performance index took the whole site down (~30+ minutes of 502). An index is never a startup
+ * dependency, so a lock timeout on one must be deferred to the next boot instead.
+ */
+export function isIndexOnlyMigrationSql(sql: string): boolean {
+  const stripped = sql
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ")
+    .replace(/#[^\n]*/g, " ")
+    .toLowerCase();
+  if (!/\b(add\s+(unique\s+)?(index|key)|create\s+(unique\s+)?index)\b/.test(stripped)) return false;
+  // Anything that changes data, structure other than an index, or removes something disqualifies it.
+  if (
+    /\b(drop|delete|update|insert|truncate|replace|rename|grant|revoke|modify|change|call)\b/.test(stripped) ||
+    /\badd\s+(column|constraint|foreign|primary|fulltext|spatial|check)\b/.test(stripped) ||
+    /\bcreate\s+(table|temporary|trigger|view|procedure|function|event|database|schema)\b/.test(stripped) ||
+    /\bforeign\s+key\b/.test(stripped)
+  ) {
+    return false;
+  }
+  // Every ALTER TABLE clause (raw or inside a PREPARE string) must be ADD INDEX/KEY, ALGORITHM or LOCK.
+  const alterRe = /alter\s+table\s+`?[\w.]+`?\s+([^;'"]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = alterRe.exec(stripped)) !== null) {
+    const clauses = m[1].replace(/\([^)]*\)/g, "()").split(",");
+    for (const raw of clauses) {
+      const c = raw.trim();
+      if (!c) continue;
+      if (!/^(add\s+(unique\s+)?(index|key)\b|algorithm\s*=|lock\s*=)/.test(c)) return false;
+    }
+  }
+  return true;
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function resolveSqlDir(): string {
@@ -1193,6 +1235,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1916_onfido_utilization_static_values.sql", // Registered 2026-09-30. Seven nullable fixed_* columns on onfido_utilization_daily_input so WFM can bulk-upload the Utilization calculated columns as static values instead of formulas; NULL falls back to the on-screen calculation. Purely additive ALTER ADD COLUMN.
   "migrations/1917_onfido_manpower_plan_total_queue.sql", // Registered 2026-09-30. Appends TOTAL to the onfido_manpower_plan.process_queue ENUM so one company-wide approved HC (181) can be entered; additive ENUM extension, existing rows untouched.
   "migrations/1918_operations_command_indexes.sql", // Registered 2026-09-30. Operations Command dashboard: additive information_schema-guarded indexes (employees joining/exit dates, attendance date+branch/process and a covering attendance scan index, exit_request, kpi_daily_actual, break_daily_summary, employee_warning, pip_record, job_requisition, wfm_attendance_session, wfm_slot_requirement, process_metric_employee_actual). No data changes.
+  "migrations/1919_ats_dashboard_indexes.sql", // Registered 2026-09-30. ATS dashboard indexes (covering aggregate index incl. record_type/candidate_code, recruiter and channel drill-down indexes, queue arrival). Additive online CREATE INDEX, each guarded by an information_schema check.
 ];
 
 export type MigrationHealth = {
@@ -2018,8 +2061,22 @@ export async function runPendingMigrations(
         } else {
           const endTime = new Date();
           const durationMs = endTime.getTime() - startTime.getTime();
-          const message =
+          const rawMessage =
             error instanceof Error ? error.message : String(error);
+          // An index-only migration that could not get its lock is DEFERRED, not fatal: the
+          // row is still written with success = 0 so the next boot retries it, but it must not
+          // refuse to start production (see isIndexOnlyMigrationSql for the 2026-09-30 outage).
+          let deferIndexOnly = false;
+          if (isTransientMigrationError(error)) {
+            try {
+              deferIndexOnly = isIndexOnlyMigrationSql(fs.readFileSync(filePath, "utf8"));
+            } catch {
+              deferIndexOnly = false;
+            }
+          }
+          const message = deferIndexOnly
+            ? `DEFERRED (lock contention on an index-only migration; retried on next boot): ${rawMessage}`
+            : rawMessage;
           // Record failed migration attempt
           const conn2 = await openMigrationConnection(connConfig);
           try {
@@ -2046,8 +2103,16 @@ export async function runPendingMigrations(
           } finally {
             await conn2.end();
           }
-          migrationHealth.failed.push({ filename: file, error: message });
-          console.error(`[migration] FAILED: ${file} â€" ${message}`);
+          if (deferIndexOnly) {
+            migrationHealth.skipped.push(file);
+            console.warn(
+              `[migration] DEFERRED: ${file} — lock contention on an index-only migration; ` +
+                `the server will start and this is retried on the next boot. ${rawMessage}`,
+            );
+          } else {
+            migrationHealth.failed.push({ filename: file, error: message });
+            console.error(`[migration] FAILED: ${file} â€" ${message}`);
+          }
         }
       } finally {
         await conn.end();

@@ -4,6 +4,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./process-operations.service.js";
 import { getFeedHealth } from "./feed-health.service.js";
 import { getPortfolio } from "./portfolio.service.js";
+import { getBusinessDatapoints } from "./business-datapoints.service.js";
+import { getMetricDayAnalystGrid } from "./metric-day-grid.service.js";
 
 /**
  * Process Operations HTTP surface.
@@ -56,6 +58,21 @@ router.get("/portfolio", requireAuth, requireRole(...VIEWER_ROLES), h(async (req
 router.get("/feeds", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const allowed = await svc.readableProcessIds(req.authUser!.id);
   res.json({ success: true, data: await getFeedHealth(allowed) });
+}));
+
+/** Metric by person and by team leader for each recent day (employee-attributed metrics only). */
+router.get("/:processId/metric/:metricKey/day-analyst-grid", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const days = Number(req.query.days ?? 10);
+  const data = await getMetricDayAnalystGrid(req.authUser!.id, String(req.params.processId), String(req.params.metricKey), Number.isFinite(days) ? days : 10);
+  if (!data) return res.status(404).json({ success: false, error: "Process not found or not in your access" });
+  res.json({ success: true, data });
+}));
+
+/** Sales / revenue / payment-mix / RTO / funnel datapoints from the process's sales systems (read-only, cached 5 min). */
+router.get("/:processId/business-datapoints", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getBusinessDatapoints(req.authUser!.id, String(req.params.processId), readPeriod(req));
+  if (!data) return res.status(404).json({ success: false, error: "Process not found or not in your access" });
+  res.json({ success: true, data });
 }));
 
 /**

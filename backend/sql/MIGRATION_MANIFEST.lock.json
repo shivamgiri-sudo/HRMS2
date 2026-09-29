@@ -937,7 +937,8 @@
     "migrations/1910_bla_bli_blu_sales_dashboard.sql",
     "migrations/1916_onfido_utilization_static_values.sql",
     "migrations/1917_onfido_manpower_plan_total_queue.sql",
-    "migrations/1918_operations_command_indexes.sql"
+    "migrations/1918_operations_command_indexes.sql",
+    "migrations/1919_ats_dashboard_indexes.sql"
   ],
   "approvedDeletions": [
     {
@@ -1163,7 +1164,8 @@
     "migrations/1910_bla_bli_blu_sales_dashboard.sql",
     "migrations/1916_onfido_utilization_static_values.sql",
     "migrations/1917_onfido_manpower_plan_total_queue.sql",
-    "migrations/1918_operations_command_indexes.sql"
+    "migrations/1918_operations_command_indexes.sql",
+    "migrations/1919_ats_dashboard_indexes.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

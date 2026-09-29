@@ -180,6 +180,8 @@ function startServer() {
     setTimeout(() => { void import("./modules/process-operations/feed-health.service.js").then((m) => m.startFeedHealthCacheWarmer()); }, 200_000).unref();
     // The Onfido Overview and Analyst reports take 20-26s cold; keep them in the response cache so the dashboard's first load is instant.
     setTimeout(() => { void import("./modules/onfido-process/onfido-cache-warmer.js").then((m) => m.startOnfidoCacheWarmer()); }, 240_000).unref();
+    // ATS dashboards aggregate ~40k wide rows (15-20s cold); warm the cache after boot so the first visit is instant.
+    setTimeout(() => { void import("./modules/ats/dashboard.warm.js").then((m) => m.warmAtsDashboards()); }, 260_000).unref();
     // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to
     // avoid the race where nginx sends a request on a reused connection at the exact
     // moment Node is closing it (produces a spurious 502).
