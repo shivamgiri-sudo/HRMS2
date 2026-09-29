@@ -252,3 +252,21 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - **Unit tests** `backend/tests/ops-command.test.ts` (13) + `ops-command.export.test.ts` (2): all pass. One test caught a real bug (`backfill_need` ignored the mandate gap) — fixed.
 - **Frontend bundle** `vite build` succeeds (OperationsDashboard chunk emitted).
 - **Still not done:** deploy to production and applying migration 1915 (server access blocked by the permission system); a login-gated run with a real JWT.
+
+---
+
+## 2026-09-30 — Process Operations KPI Metrics redesign (KPI Command Deck, metric drill-down, Voice of the Customer hub, All Processes)
+
+**Method:** Real backend route (`process-operations.routes.ts`, incl. the new `/portfolio`) served from a temporary harness against the **production database, read-only** (every non-SELECT statement rejected in code; 0 blocked, 0 attempted). Dev-only demo token for auth (no real user's login used). Real frontend page `ProcessOperationsPage` in Vite, with `DashboardLayout` stubbed. Driven with Chrome DevTools MCP (visible) and headless Chrome via Playwright. Harness files deleted afterwards.
+
+| Area | Result |
+|---|---|
+| KPI Command Deck (health ring, feed-stopped banner, needs-attention charts, rows / tiles / day matrix, search, filters) | Renders with live figures. Bella-Vita: 5 on target, 9 below, 32 without target; feed newest 2026-09-10 (20 days old) |
+| All 45 processes with metrics, desktop 1500px and phone 390px | 88 of 90 page-loads clean on the first full pass; the 2 misses (HOUSING_COM, HUMAN_RESOURCES) rendered fine when loaded individually (load timeouts under sweep). 0 console/page errors |
+| Phone layout | Found and fixed page-level horizontal overflow in 35 of 45 (legacy Executive Brief / Action Board fixed grids, sticky header). Rechecked: scrollWidth == viewport |
+| All Processes view (`?view=portfolio`) | 45 processes, 682 metrics, average health 46%, all 45 feeds stopped (20–21 days), 479 metrics without a target |
+| Metric drill-down popup | Width 840px of 1500px (56%). Hero stats, day-by-day chart with target / 7-day average / volume, weekday pattern, distribution, calendar, findings, readings table with gap and volume columns. Call quality: below target on 9 of 9 days |
+| Voice of the Customer hub | One full-width hub with 4 tabs (Overview, Scenarios, Risk & signals, Repeat & fraud); every tab opened and rendered live content (120 audited calls that day). One "Voice of the Customer" heading; the duplicate "Customer risk flags" chart and 6 scattered panels removed |
+| Misleading indicators | "100% HEALTHY" for a process with zero targets now reads "NO TARGETS SET"; green pulsing LIVE pill now amber "DATA 20d OLD" when the feed is stale |
+
+**Not verified:** a real production login / role scoping (harness used a demo super-admin token); dark mode; the summary-tile popup (CEO strip) was widened by CSS but my automated click on it did not open it, so its width was not measured; the `/portfolio` endpoint has no unit test (no DB in tests), only live-data checks.
