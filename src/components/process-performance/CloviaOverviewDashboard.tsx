@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner, DashboardExportMenu, formatShortDate, KPI_TONES, type KpiTone, type ExportSlide } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
 import { DetailDrawer, type DrillTarget } from "./CloviaReportKit";
 
@@ -214,6 +216,17 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
   const [msgMode, setMsgMode] = useState<"daily" | "weekly">("daily");
   const [showAllAgents, setShowAllAgents] = useState(false);
 
+  // Excel-style sort + filter for the Top Performing Agents table below. Hooks must run every render (unconditionally),
+  // so this is computed here rather than after the early returns further down that guard on `data`/`rows` being loaded.
+  const agentRowsAll = useMemo(() => (showAllAgents ? data?.agents ?? [] : (data?.agents ?? []).slice(0, 5)), [data, showAllAgents]);
+  const AGENT_FILTER_COLS: Array<FilterColumn<AgentMix>> = [
+    { key: "agent", get: (a) => a.agent }, { key: "inbound", get: (a) => a.inbound }, { key: "email", get: (a) => a.email },
+    { key: "chat", get: (a) => a.chat }, { key: "outbound", get: (a) => a.outbound }, { key: "total", get: (a) => a.total }, { key: "quality", get: (a) => a.quality },
+  ];
+  const agentColGetter = (a: AgentMix, key: string) => AGENT_FILTER_COLS.find((c) => c.key === key)?.get(a);
+  const agentFilters = useColumnFilters(agentRowsAll, AGENT_FILTER_COLS);
+  const { sorted: sortedAgentRows, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: agentToggleSort } = useSortableRows(agentFilters.filtered, agentColGetter);
+
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
@@ -286,7 +299,6 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
       return { x: msgMode === "daily" ? formatShortDate(k) : k.replace(/\s*\(.*\)/, ""), emails: e ? Number(e.assigned) : undefined, chats: c ? Number(c.chats) : undefined };
     });
   })();
-  const agentRows = showAllAgents ? data.agents : data.agents.slice(0, 5);
   const latestNote = `Inbound is live through ${ddmm(data.inbound?.daily.length ? String(data.inbound.daily[data.inbound.daily.length - 1].date) : null)}. Uploaded data — Outbound ${ddmm(data.latest.outbound)}, Email ${ddmm(data.latest.email)}, Chat ${ddmm(data.latest.chat)}, Survey ${ddmm(data.latest.csat)} (the latest date on file for each; none of it is estimated).`;
 
   const S = {
@@ -507,22 +519,36 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
         <div className="lg:col-span-2">
           <Card title="Top Performing Agents" icon={Trophy} tone="amber"
             footnote="Ranked by contacts handled across the four channels (units differ; they are counts of contacts). Click an agent for their per-channel detail."
-            action={data.agents.length > 5 ? (
-              <button type="button" onClick={() => setShowAllAgents((v) => !v)} className="rounded-lg bg-white/70 px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-white hover:text-slate-700">
-                {showAllAgents ? "Show top 5" : `Show all ${data.agents.length}`}
-              </button>
-            ) : undefined}>
+            action={
+              <div className="flex items-center gap-2">
+                {agentFilters.activeCount > 0 && (
+                  <button type="button" onClick={agentFilters.clearAll} className="rounded-lg bg-white/70 px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-white hover:text-slate-700">
+                    Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+                  </button>
+                )}
+                {data.agents.length > 5 && (
+                  <button type="button" onClick={() => setShowAllAgents((v) => !v)} className="rounded-lg bg-white/70 px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-white hover:text-slate-700">
+                    {showAllAgents ? "Show top 5" : `Show all ${data.agents.length}`}
+                  </button>
+                )}
+              </div>
+            }>
             <div className="max-h-[300px] overflow-auto">
               <table className="w-full text-center text-xs">
                 <thead>
                   <tr className="sticky top-0 z-10 bg-slate-800 text-[10px] font-bold uppercase tracking-wide text-white">
-                    <th className="rounded-l-md px-2 py-1.5 font-bold text-white">#</th><th className="px-2 py-1.5 text-left font-bold text-white">Agent</th>
-                    <th className="px-2 py-1.5 font-bold text-white">Inbound</th><th className="px-2 py-1.5 font-bold text-white">Email</th><th className="px-2 py-1.5 font-bold text-white">Chat</th>
-                    <th className="px-2 py-1.5 font-bold text-white">Outbound</th><th className="px-2 py-1.5 font-bold text-white">Total</th><th className="rounded-r-md px-2 py-1.5 font-bold text-white">Quality</th>
+                    <th className="rounded-l-md px-2 py-1.5 font-bold text-white">#</th>
+                    <FilterSortTh label="Agent" columnKey="agent" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 text-left font-bold text-white" />
+                    <FilterSortTh label="Inbound" columnKey="inbound" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
+                    <FilterSortTh label="Email" columnKey="email" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
+                    <FilterSortTh label="Chat" columnKey="chat" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
+                    <FilterSortTh label="Outbound" columnKey="outbound" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
+                    <FilterSortTh label="Total" columnKey="total" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
+                    <FilterSortTh label="Quality" columnKey="quality" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="rounded-r-md px-2 py-1.5 font-bold text-white" />
                   </tr>
                 </thead>
                 <tbody>
-                  {agentRows.map((a, i) => (
+                  {sortedAgentRows.map((a, i) => (
                     <tr key={a.empId} role="button" tabIndex={0} onClick={() => setAgentDrill({ kind: "agent", key: a.empId })} onKeyDown={(e) => { if (e.key === "Enter") setAgentDrill({ kind: "agent", key: a.empId }); }}
                       className={`cursor-pointer transition-colors hover:bg-rose-50 ${i % 2 === 1 ? "bg-slate-50/70" : "bg-white"}`}>
                       <td className="px-2 py-1.5 text-slate-400">{i + 1}</td>
@@ -533,7 +559,7 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
                       <td className={`px-2 py-1.5 font-semibold ${a.quality === null ? "text-slate-300" : a.quality >= 90 ? "text-emerald-600" : "text-amber-600"}`}>{a.quality === null ? "—" : `${a.quality}%`}</td>
                     </tr>
                   ))}
-                  {agentRows.length === 0 && <tr><td colSpan={8} className="py-6 text-center text-slate-400">No agent activity in this range.</td></tr>}
+                  {sortedAgentRows.length === 0 && <tr><td colSpan={8} className="py-6 text-center text-slate-400">{agentRowsAll.length === 0 ? "No agent activity in this range." : "No agents match the current filters."}</td></tr>}
                 </tbody>
               </table>
             </div>

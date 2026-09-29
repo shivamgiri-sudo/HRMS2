@@ -3,6 +3,8 @@ import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Respons
 import { X, Loader2 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatINR, formatShortDate } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 const TOOLTIP_PROPS = {
   contentStyle: { fontSize: 12, borderRadius: 10, border: "1px solid #334155", background: "#0f172a", boxShadow: "0 8px 24px rgba(15,23,42,0.4)", padding: "8px 12px" },
@@ -29,6 +31,49 @@ const avgHms = (hours: number, days: number): string => {
   return `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
 };
 const avgSec = (hours: number, days: number): number | null => (days > 0 ? Math.round((hours / days) * 3600) : null);
+
+type DailyRow = AgentDetail["daily"][number];
+interface WeeklyRow {
+  key: string; label: string; saleCount: number; revenue: number; codCount: number; paidCount: number;
+  rtoCount: number; loginHours: number; breakHours: number; talkHours: number; attendanceDays: number; rtoPct: number;
+}
+interface PeriodCol<T> { key: string; label: string; get: (r: T) => string | number | null; cell: (r: T) => string; className: string | ((r: T) => string) }
+const colClass = <T,>(c: PeriodCol<T>, r: T): string => (typeof c.className === "function" ? c.className(r) : c.className);
+const NUM_TD = "px-3 py-2 text-slate-600";
+const DAY_COLS: Array<PeriodCol<DailyRow>> = [
+  { key: "period", label: "Date", get: (d) => d.date, cell: (d) => formatShortDate(d.date), className: "px-3 py-2 font-medium text-slate-700" },
+  { key: "saleCount", label: "Sale Count", get: (d) => d.saleCount, cell: (d) => String(d.saleCount), className: NUM_TD },
+  { key: "revenue", label: "Revenue", get: (d) => d.revenue, cell: (d) => formatINR(d.revenue), className: "px-3 py-2 font-semibold text-slate-800" },
+  { key: "cod", label: "COD", get: (d) => d.codCount, cell: (d) => String(d.codCount), className: "px-3 py-2 text-amber-600" },
+  { key: "paid", label: "Paid", get: (d) => d.paidCount, cell: (d) => String(d.paidCount), className: "px-3 py-2 text-emerald-600" },
+  {
+    key: "rtoPct", label: "RTO%", get: (d) => (d.saleCount > 0 ? Math.round((d.rtoCount / d.saleCount) * 10000) / 100 : null),
+    cell: (d) => (d.saleCount > 0 ? `${Math.round((d.rtoCount / d.saleCount) * 10000) / 100}%` : "—"),
+    className: (d) => `px-3 py-2 font-semibold ${d.saleCount > 0 && d.rtoCount / d.saleCount > 0.1 ? "text-red-600" : "text-slate-600"}`,
+  },
+  { key: "loginHours", label: "Login Hrs", get: (d) => d.loginHours, cell: (d) => String(d.loginHours), className: NUM_TD },
+  { key: "breakHours", label: "Break Hrs", get: (d) => d.breakHours, cell: (d) => String(d.breakHours), className: NUM_TD },
+  { key: "talkHours", label: "Talk Hrs", get: (d) => d.talkHours, cell: (d) => String(d.talkHours), className: NUM_TD },
+  { key: "avgLogin", label: "Avg Login", get: (d) => avgSec(d.loginHours, d.attendanceDays), cell: (d) => avgHms(d.loginHours, d.attendanceDays), className: NUM_TD },
+  { key: "avgTalk", label: "Avg Talk", get: (d) => avgSec(d.talkHours, d.attendanceDays), cell: (d) => avgHms(d.talkHours, d.attendanceDays), className: "px-3 py-2 font-semibold text-indigo-700" },
+];
+const WEEK_COLS: Array<PeriodCol<WeeklyRow>> = [
+  { key: "period", label: "Week", get: (w) => w.label, cell: (w) => w.label, className: "px-3 py-2 font-medium text-slate-700" },
+  { key: "saleCount", label: "Sale Count", get: (w) => w.saleCount, cell: (w) => String(w.saleCount), className: NUM_TD },
+  { key: "revenue", label: "Revenue", get: (w) => w.revenue, cell: (w) => formatINR(w.revenue), className: "px-3 py-2 font-semibold text-slate-800" },
+  { key: "cod", label: "COD", get: (w) => w.codCount, cell: (w) => String(w.codCount), className: "px-3 py-2 text-amber-600" },
+  { key: "paid", label: "Paid", get: (w) => w.paidCount, cell: (w) => String(w.paidCount), className: "px-3 py-2 text-emerald-600" },
+  { key: "rtoPct", label: "RTO%", get: (w) => w.rtoPct, cell: (w) => `${w.rtoPct}%`, className: (w) => `px-3 py-2 font-semibold ${w.rtoPct > 10 ? "text-red-600" : "text-slate-600"}` },
+  { key: "loginHours", label: "Login Hrs", get: (w) => Math.round(w.loginHours * 100) / 100, cell: (w) => String(Math.round(w.loginHours * 100) / 100), className: NUM_TD },
+  { key: "breakHours", label: "Break Hrs", get: (w) => Math.round(w.breakHours * 100) / 100, cell: (w) => String(Math.round(w.breakHours * 100) / 100), className: NUM_TD },
+  { key: "talkHours", label: "Talk Hrs", get: (w) => Math.round(w.talkHours * 100) / 100, cell: (w) => String(Math.round(w.talkHours * 100) / 100), className: NUM_TD },
+  { key: "avgLogin", label: "Avg Login", get: (w) => avgSec(w.loginHours, w.attendanceDays), cell: (w) => avgHms(w.loginHours, w.attendanceDays), className: NUM_TD },
+  { key: "avgTalk", label: "Avg Talk", get: (w) => avgSec(w.talkHours, w.attendanceDays), cell: (w) => avgHms(w.talkHours, w.attendanceDays), className: "px-3 py-2 font-semibold text-indigo-700" },
+];
+const DAY_FILTER_COLS: Array<FilterColumn<DailyRow>> = DAY_COLS.map((c) => ({ key: c.key, get: c.get }));
+const dayColGetter = (r: DailyRow, key: string) => DAY_COLS.find((c) => c.key === key)?.get(r);
+const WEEK_FILTER_COLS: Array<FilterColumn<WeeklyRow>> = WEEK_COLS.map((c) => ({ key: c.key, get: c.get }));
+const weekColGetter = (r: WeeklyRow, key: string) => WEEK_COLS.find((c) => c.key === key)?.get(r);
 
 /** Same "day-of-month 1-7 -> W-1, 8-14 -> W-2, ..." convention this app's
  * other week-wise views already use (HousingOwnerDashboard, satyaReportModel). */
@@ -110,6 +155,12 @@ export function BellavitaAgentDetailDrawer({
   }, [data]);
 
   const rows = period === "day" ? data?.daily ?? [] : weeklyRows;
+
+  const dayFilters = useColumnFilters(data?.daily ?? [], DAY_FILTER_COLS);
+  const { sorted: sortedDaily, sortKey: daySortKey, sortDir: daySortDir, toggleSort: toggleDaySort } = useSortableRows(dayFilters.filtered, dayColGetter);
+  const weekFilters = useColumnFilters(weeklyRows, WEEK_FILTER_COLS);
+  const { sorted: sortedWeekly, sortKey: weekSortKey, sortDir: weekSortDir, toggleSort: toggleWeekSort } = useSortableRows(weekFilters.filtered, weekColGetter);
+  const periodFilters = period === "day" ? dayFilters : weekFilters;
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Agent date-wise and week-wise performance">
@@ -201,56 +252,48 @@ export function BellavitaAgentDetailDrawer({
                         <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sale Count" stroke="#e11d48" strokeWidth={2} dot={{ r: period === "day" ? 2 : 3 }} />
                       </ComposedChart>
                     </ResponsiveContainer>
+                    {periodFilters.activeCount > 0 && (
+                      <div className="flex justify-end">
+                        <button type="button" onClick={periodFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                          Clear {periodFilters.activeCount} filter{periodFilters.activeCount > 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    )}
                     <div className="overflow-x-auto rounded-xl border border-slate-100">
                       <table className="w-full text-center text-xs">
-                        <thead>
-                          <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                            <th className="px-3 py-2 font-semibold">{period === "day" ? "Date" : "Week"}</th>
-                            <th className="px-3 py-2 font-semibold">Sale Count</th>
-                            <th className="px-3 py-2 font-semibold">Revenue</th>
-                            <th className="px-3 py-2 font-semibold">COD</th>
-                            <th className="px-3 py-2 font-semibold">Paid</th>
-                            <th className="px-3 py-2 font-semibold">RTO%</th>
-                            <th className="px-3 py-2 font-semibold">Login Hrs</th>
-                            <th className="px-3 py-2 font-semibold">Break Hrs</th>
-                            <th className="px-3 py-2 font-semibold">Talk Hrs</th>
-                            <th className="px-3 py-2 font-semibold">Avg Login</th>
-                            <th className="px-3 py-2 font-semibold">Avg Talk</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {period === "day" ? data.daily.map((d) => (
-                            <tr key={d.date} className="border-t border-slate-50">
-                              <td className="px-3 py-2 font-medium text-slate-700">{formatShortDate(d.date)}</td>
-                              <td className="px-3 py-2 text-slate-600">{d.saleCount}</td>
-                              <td className="px-3 py-2 font-semibold text-slate-800">{formatINR(d.revenue)}</td>
-                              <td className="px-3 py-2 text-amber-600">{d.codCount}</td>
-                              <td className="px-3 py-2 text-emerald-600">{d.paidCount}</td>
-                              <td className={`px-3 py-2 font-semibold ${d.saleCount > 0 && d.rtoCount / d.saleCount > 0.1 ? "text-red-600" : "text-slate-600"}`}>
-                                {d.saleCount > 0 ? `${Math.round((d.rtoCount / d.saleCount) * 10000) / 100}%` : "—"}
-                              </td>
-                              <td className="px-3 py-2 text-slate-600">{d.loginHours}</td>
-                              <td className="px-3 py-2 text-slate-600">{d.breakHours}</td>
-                              <td className="px-3 py-2 text-slate-600">{d.talkHours}</td>
-                              <td className="px-3 py-2 text-slate-600">{avgHms(d.loginHours, d.attendanceDays)}</td>
-                              <td className="px-3 py-2 font-semibold text-indigo-700">{avgHms(d.talkHours, d.attendanceDays)}</td>
-                            </tr>
-                          )) : weeklyRows.map((w) => (
-                            <tr key={w.key} className="border-t border-slate-50">
-                              <td className="px-3 py-2 font-medium text-slate-700">{w.label}</td>
-                              <td className="px-3 py-2 text-slate-600">{w.saleCount}</td>
-                              <td className="px-3 py-2 font-semibold text-slate-800">{formatINR(w.revenue)}</td>
-                              <td className="px-3 py-2 text-amber-600">{w.codCount}</td>
-                              <td className="px-3 py-2 text-emerald-600">{w.paidCount}</td>
-                              <td className={`px-3 py-2 font-semibold ${w.rtoPct > 10 ? "text-red-600" : "text-slate-600"}`}>{w.rtoPct}%</td>
-                              <td className="px-3 py-2 text-slate-600">{Math.round(w.loginHours * 100) / 100}</td>
-                              <td className="px-3 py-2 text-slate-600">{Math.round(w.breakHours * 100) / 100}</td>
-                              <td className="px-3 py-2 text-slate-600">{Math.round(w.talkHours * 100) / 100}</td>
-                              <td className="px-3 py-2 text-slate-600">{avgHms(w.loginHours, w.attendanceDays)}</td>
-                              <td className="px-3 py-2 font-semibold text-indigo-700">{avgHms(w.talkHours, w.attendanceDays)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
+                        {period === "day" ? (
+                          <>
+                            <thead>
+                              <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+                                {DAY_COLS.map((c) => <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="px-3 py-2 font-semibold" />)}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sortedDaily.map((d) => (
+                                <tr key={d.date} className="border-t border-slate-50">
+                                  {DAY_COLS.map((c) => <td key={c.key} className={colClass(c, d)}>{c.cell(d)}</td>)}
+                                </tr>
+                              ))}
+                              {sortedDaily.length === 0 && <tr><td colSpan={DAY_COLS.length} className="py-6 text-center text-slate-400">No dates match the current filters.</td></tr>}
+                            </tbody>
+                          </>
+                        ) : (
+                          <>
+                            <thead>
+                              <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+                                {WEEK_COLS.map((c) => <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={weekSortKey} sortDir={weekSortDir} onSort={toggleWeekSort} filters={weekFilters} className="px-3 py-2 font-semibold" />)}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sortedWeekly.map((w) => (
+                                <tr key={w.key} className="border-t border-slate-50">
+                                  {WEEK_COLS.map((c) => <td key={c.key} className={colClass(c, w)}>{c.cell(w)}</td>)}
+                                </tr>
+                              ))}
+                              {sortedWeekly.length === 0 && <tr><td colSpan={WEEK_COLS.length} className="py-6 text-center text-slate-400">No weeks match the current filters.</td></tr>}
+                            </tbody>
+                          </>
+                        )}
                       </table>
                     </div>
                   </>

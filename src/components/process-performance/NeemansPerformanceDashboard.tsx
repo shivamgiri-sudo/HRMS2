@@ -13,6 +13,8 @@ import {
 import { ComboTrend, Donut, RankBars, fmtPct } from "./NeemansCharts";
 import { NeemansOverviewTab } from "./NeemansOverviewTab";
 import type { NeemansDashboardData } from "./neemansPerformanceTypes";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Neemans' combined dashboard -- Sale, Allocation, Chat, APR (productivity),
@@ -48,6 +50,131 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "chat", label: "Chat" },
   { key: "productivity", label: "APR" },
 ];
+
+/** Row types for the per-row tables below, lifted straight off the API response shape. */
+type SaleTlRow = NeemansDashboardData["sale"]["byTl"][number];
+type OrderStatusRow = NeemansDashboardData["sale"]["orderStatusBreakdown"][number];
+type SaleAgentRow = NeemansDashboardData["sale"]["agents"][number];
+type AllocAgentRow = NeemansDashboardData["allocation"]["agents"][number];
+type ChatLobRow = NeemansDashboardData["chat"]["byLob"][number];
+type ChatChannelRow = NeemansDashboardData["chat"]["channelBreakdown"][number];
+type ChatAgentRow = NeemansDashboardData["chat"]["agents"][number];
+type ProdLobRow = NeemansDashboardData["productivity"]["lobBreakdown"][number];
+type ProdAgentRow = NeemansDashboardData["productivity"]["agents"][number];
+
+/** Header-only column definition for an Excel-style sortable/filterable table
+ * whose <tbody> is already hand-written below -- `get` is what sort/filter
+ * operate on, `className` is copied verbatim from the plain <th> it replaces. */
+interface HeadCol<T> {
+  key: string;
+  label: string;
+  get: (r: T) => string | number | null;
+  className: string;
+}
+function filterColsOf<T>(cols: Array<HeadCol<T>>): Array<FilterColumn<T>> {
+  return cols.map((c) => ({ key: c.key, get: c.get }));
+}
+function colGetterOf<T>(cols: Array<HeadCol<T>>) {
+  return (r: T, key: string) => cols.find((c) => c.key === key)?.get(r) ?? null;
+}
+
+const SALE_TL_COLS: Array<HeadCol<SaleTlRow>> = [
+  { key: "tlName", label: "TL Name", get: (r) => r.tlName, className: "py-2 pr-3 font-semibold" },
+  { key: "saleCount", label: "Sale Count", get: (r) => r.saleCount, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "revenue", label: "Revenue", get: (r) => r.revenue, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "rtoPct", label: "RTO %", get: (r) => r.rtoPct, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "target", label: "Target", get: (r) => r.target, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "achievementPct", label: "Achievement %", get: (r) => r.achievementPct, className: "py-2 pr-0 text-right font-semibold" },
+];
+const SALE_TL_FILTER_COLS = filterColsOf(SALE_TL_COLS);
+const saleTlColGetter = colGetterOf(SALE_TL_COLS);
+
+const ORDER_STATUS_COLS: Array<HeadCol<OrderStatusRow>> = [
+  { key: "status", label: "Status", get: (r) => r.status, className: "py-2 pr-3 font-semibold" },
+  { key: "count", label: "Orders", get: (r) => r.count, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "revenue", label: "Revenue", get: (r) => r.revenue, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "pct", label: "Share", get: (r) => r.pct, className: "py-2 pr-0 text-right font-semibold" },
+];
+const ORDER_STATUS_FILTER_COLS = filterColsOf(ORDER_STATUS_COLS);
+const orderStatusColGetter = colGetterOf(ORDER_STATUS_COLS);
+
+const SALE_AGENT_COLS: Array<HeadCol<SaleAgentRow>> = [
+  { key: "agent", label: "Agent", get: (r) => r.name, className: "py-2 pr-3 font-semibold" },
+  { key: "tl", label: "TL", get: (r) => r.tlName, className: "py-2 pr-3 font-semibold" },
+  { key: "saleCount", label: "Sale Count", get: (r) => r.saleCount, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "revenue", label: "Revenue", get: (r) => r.revenue, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "rtoPct", label: "RTO %", get: (r) => r.rtoPct, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "prepaidPct", label: "Prepaid %", get: (r) => r.prepaidPct, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "target", label: "Target", get: (r) => r.target, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "achievementPct", label: "Achievement %", get: (r) => r.achievementPct, className: "py-2 pr-0 text-right font-semibold" },
+];
+const SALE_AGENT_FILTER_COLS = filterColsOf(SALE_AGENT_COLS);
+const saleAgentColGetter = colGetterOf(SALE_AGENT_COLS);
+
+const ALLOC_AGENT_COLS: Array<HeadCol<AllocAgentRow>> = [
+  { key: "agent", label: "Agent", get: (r) => r.agent, className: "py-2 pr-3 font-semibold" },
+  { key: "allocation", label: "Allocation", get: (r) => r.allocation, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "connected", label: "Connected", get: (r) => r.connected, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "connectedPct", label: "Connected %", get: (r) => r.connectedPct, className: "py-2 pr-0 text-right font-semibold" },
+];
+const ALLOC_AGENT_FILTER_COLS = filterColsOf(ALLOC_AGENT_COLS);
+const allocAgentColGetter = colGetterOf(ALLOC_AGENT_COLS);
+
+const CHAT_LOB_COLS: Array<HeadCol<ChatLobRow>> = [
+  { key: "lob", label: "LOB", get: (r) => r.lob, className: "py-2 pr-3 font-semibold" },
+  { key: "tickets", label: "Tickets", get: (r) => r.tickets, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "resolvedPct", label: "Resolved %", get: (r) => r.resolvedPct, className: "py-2 pr-0 text-right font-semibold" },
+];
+const CHAT_LOB_FILTER_COLS = filterColsOf(CHAT_LOB_COLS);
+const chatLobColGetter = colGetterOf(CHAT_LOB_COLS);
+
+const CHAT_CHANNEL_COLS: Array<HeadCol<ChatChannelRow>> = [
+  { key: "channel", label: "Channel", get: (r) => r.channel, className: "py-2 pr-3 font-semibold" },
+  { key: "tickets", label: "Tickets", get: (r) => r.tickets, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "resolvedPct", label: "Resolved %", get: (r) => r.resolvedPct, className: "py-2 pr-0 text-right font-semibold" },
+];
+const CHAT_CHANNEL_FILTER_COLS = filterColsOf(CHAT_CHANNEL_COLS);
+const chatChannelColGetter = colGetterOf(CHAT_CHANNEL_COLS);
+
+const CHAT_AGENT_COLS: Array<HeadCol<ChatAgentRow>> = [
+  { key: "agent", label: "Agent", get: (r) => r.agent, className: "py-2 pr-3 font-semibold" },
+  { key: "tickets", label: "Tickets", get: (r) => r.tickets, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "resolvedPct", label: "Resolved %", get: (r) => r.resolvedPct, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "avgCsat", label: "Avg CSAT", get: (r) => r.avgCsat, className: "py-2 pr-0 text-right font-semibold" },
+];
+const CHAT_AGENT_FILTER_COLS = filterColsOf(CHAT_AGENT_COLS);
+const chatAgentColGetter = colGetterOf(CHAT_AGENT_COLS);
+
+const PROD_LOB_COLS: Array<HeadCol<ProdLobRow>> = [
+  { key: "lob", label: "LOB", get: (r) => r.lob, className: "py-2 pr-3 font-semibold" },
+  { key: "calls", label: "Calls", get: (r) => r.calls, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "agents", label: "Agents", get: (r) => r.agents, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "avgOccupancyPct", label: "Avg Occupancy %", get: (r) => r.avgOccupancyPct, className: "py-2 pr-0 text-right font-semibold" },
+];
+const PROD_LOB_FILTER_COLS = filterColsOf(PROD_LOB_COLS);
+const prodLobColGetter = colGetterOf(PROD_LOB_COLS);
+
+const PROD_AGENT_COLS: Array<HeadCol<ProdAgentRow>> = [
+  { key: "agent", label: "Agent", get: (r) => r.name, className: "py-2 pr-3 font-semibold" },
+  { key: "calls", label: "Calls", get: (r) => r.calls, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "loginTimeSec", label: "Login Time", get: (r) => r.loginTimeSec, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "talkTimeSec", label: "Talk Time", get: (r) => r.talkTimeSec, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "occupancyPct", label: "Occupancy %", get: (r) => r.occupancyPct, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "attendanceDays", label: "Attendance Days", get: (r) => r.attendanceDays, className: "py-2 pr-0 text-right font-semibold" },
+];
+const PROD_AGENT_FILTER_COLS = filterColsOf(PROD_AGENT_COLS);
+const prodAgentColGetter = colGetterOf(PROD_AGENT_COLS);
+
+/** Small "Clear N filter(s)" pill, shown next to a table's title/search row
+ * whenever any column filter on that table is active. */
+function ClearFiltersButton({ count, onClear }: { count: number; onClear: () => void }) {
+  if (count <= 0) return null;
+  return (
+    <button type="button" onClick={onClear} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+      Clear {count} filter{count > 1 ? "s" : ""}
+    </button>
+  );
+}
 
 export function NeemansPerformanceDashboard() {
   const [data, setData] = useState<NeemansDashboardData | null>(null);
@@ -106,6 +233,42 @@ export function NeemansPerformanceDashboard() {
     if (!q) return rows;
     return rows.filter((a) => a.name.toLowerCase().includes(q) || a.empId.toLowerCase().includes(q));
   }, [data, prodSearch]);
+
+  // Excel-style column sort/filter for every per-row table on this page. Each
+  // table gets its own independent filter+sort state; search boxes (above)
+  // narrow the rows first, column filters/sort apply on top, matching the
+  // BellavitaAgentPerformance pattern.
+  const saleTlRows = useMemo(() => data?.sale.byTl ?? [], [data]);
+  const saleTlFilters = useColumnFilters(saleTlRows, SALE_TL_FILTER_COLS);
+  const { sorted: sortedSaleTl, sortKey: saleTlSortKey, sortDir: saleTlSortDir, toggleSort: toggleSaleTlSort } = useSortableRows(saleTlFilters.filtered, saleTlColGetter);
+
+  const orderStatusRows = useMemo(() => data?.sale.orderStatusBreakdown ?? [], [data]);
+  const orderStatusFilters = useColumnFilters(orderStatusRows, ORDER_STATUS_FILTER_COLS);
+  const { sorted: sortedOrderStatus, sortKey: orderStatusSortKey, sortDir: orderStatusSortDir, toggleSort: toggleOrderStatusSort } = useSortableRows(orderStatusFilters.filtered, orderStatusColGetter);
+
+  const saleAgentFilters = useColumnFilters(filteredSaleAgents, SALE_AGENT_FILTER_COLS);
+  const { sorted: sortedSaleAgents, sortKey: saleAgentSortKey, sortDir: saleAgentSortDir, toggleSort: toggleSaleAgentSort } = useSortableRows(saleAgentFilters.filtered, saleAgentColGetter);
+
+  const allocAgentFilters = useColumnFilters(filteredAllocAgents, ALLOC_AGENT_FILTER_COLS);
+  const { sorted: sortedAllocAgents, sortKey: allocAgentSortKey, sortDir: allocAgentSortDir, toggleSort: toggleAllocAgentSort } = useSortableRows(allocAgentFilters.filtered, allocAgentColGetter);
+
+  const chatLobRows = useMemo(() => data?.chat.byLob ?? [], [data]);
+  const chatLobFilters = useColumnFilters(chatLobRows, CHAT_LOB_FILTER_COLS);
+  const { sorted: sortedChatLob, sortKey: chatLobSortKey, sortDir: chatLobSortDir, toggleSort: toggleChatLobSort } = useSortableRows(chatLobFilters.filtered, chatLobColGetter);
+
+  const chatChannelRows = useMemo(() => data?.chat.channelBreakdown ?? [], [data]);
+  const chatChannelFilters = useColumnFilters(chatChannelRows, CHAT_CHANNEL_FILTER_COLS);
+  const { sorted: sortedChatChannel, sortKey: chatChannelSortKey, sortDir: chatChannelSortDir, toggleSort: toggleChatChannelSort } = useSortableRows(chatChannelFilters.filtered, chatChannelColGetter);
+
+  const chatAgentFilters = useColumnFilters(filteredChatAgents, CHAT_AGENT_FILTER_COLS);
+  const { sorted: sortedChatAgents, sortKey: chatAgentSortKey, sortDir: chatAgentSortDir, toggleSort: toggleChatAgentSort } = useSortableRows(chatAgentFilters.filtered, chatAgentColGetter);
+
+  const prodLobRows = useMemo(() => data?.productivity.lobBreakdown ?? [], [data]);
+  const prodLobFilters = useColumnFilters(prodLobRows, PROD_LOB_FILTER_COLS);
+  const { sorted: sortedProdLob, sortKey: prodLobSortKey, sortDir: prodLobSortDir, toggleSort: toggleProdLobSort } = useSortableRows(prodLobFilters.filtered, prodLobColGetter);
+
+  const prodAgentFilters = useColumnFilters(filteredProdAgents, PROD_AGENT_FILTER_COLS);
+  const { sorted: sortedProdAgents, sortKey: prodAgentSortKey, sortDir: prodAgentSortDir, toggleSort: toggleProdAgentSort } = useSortableRows(prodAgentFilters.filtered, prodAgentColGetter);
 
   /** Export slides for "Download Snap"/"Download Excel" — one per tab,
    * built from the same data already rendered on screen, not re-fetched. */
@@ -381,21 +544,18 @@ export function NeemansPerformanceDashboard() {
           <RankBars data={sale.byTl.map((t) => ({ name: t.tlName, value: t.revenue }))} valueFormat={formatINR} />
         </SectionCard>
 
-        <SectionCard icon={Users} title="TL-wise Summary" tone="violet">
+        <SectionCard icon={Users} title="TL-wise Summary" tone="violet" action={<ClearFiltersButton count={saleTlFilters.activeCount} onClear={saleTlFilters.clearAll} />}>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">TL Name</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Revenue</th>
-                  <th className="py-2 pr-3 text-right font-semibold">RTO %</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Target</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Achievement %</th>
+                  {SALE_TL_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={saleTlSortKey} sortDir={saleTlSortDir} onSort={toggleSaleTlSort} filters={saleTlFilters} className={c.className} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {sale.byTl.map((r) => (
+                {sortedSaleTl.map((r) => (
                   <tr key={r.tlName} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-violet-50/40">
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{r.tlName}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{r.saleCount}</td>
@@ -405,8 +565,8 @@ export function NeemansPerformanceDashboard() {
                     <td className={`py-2.5 pr-0 text-right font-semibold ${attainmentClass(r.achievementPct)}`}>{r.achievementPct}%</td>
                   </tr>
                 ))}
-                {sale.byTl.length === 0 && (
-                  <tr><td colSpan={6} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                {sortedSaleTl.length === 0 && (
+                  <tr><td colSpan={6} className="py-6 text-center text-slate-400">{sale.byTl.length === 0 ? "No data for this period." : "No rows match the filters."}</td></tr>
                 )}
               </tbody>
             </table>
@@ -416,19 +576,19 @@ export function NeemansPerformanceDashboard() {
         <SectionCard
           icon={ListTree} title="Order Status Breakdown" tone="teal"
           footnote="neemans_sale_raw.current_status — the shipment/fulfilment status (Delivered/RTO/Dispatched/Cancelled/Unfulfilled/...), not the same as the payment-status or RTO% cards above."
+          action={<ClearFiltersButton count={orderStatusFilters.activeCount} onClear={orderStatusFilters.clearAll} />}
         >
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Status</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Orders</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Revenue</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Share</th>
+                  {ORDER_STATUS_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={orderStatusSortKey} sortDir={orderStatusSortDir} onSort={toggleOrderStatusSort} filters={orderStatusFilters} className={c.className} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {sale.orderStatusBreakdown.map((r) => (
+                {sortedOrderStatus.map((r) => (
                   <tr key={r.status} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-teal-50/40">
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{r.status}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{r.count.toLocaleString("en-IN")}</td>
@@ -436,8 +596,8 @@ export function NeemansPerformanceDashboard() {
                     <td className="py-2.5 pr-0 text-right text-slate-600">{r.pct}%</td>
                   </tr>
                 ))}
-                {sale.orderStatusBreakdown.length === 0 && (
-                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                {sortedOrderStatus.length === 0 && (
+                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">{sale.orderStatusBreakdown.length === 0 ? "No data for this period." : "No rows match the filters."}</td></tr>
                 )}
               </tbody>
             </table>
@@ -452,26 +612,22 @@ export function NeemansPerformanceDashboard() {
                 className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm transition-colors focus:border-violet-400 focus:outline-none" />
             </div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500">
-              <ListFilter className="h-3 w-3" />{filteredSaleAgents.length} of {sale.agents.length} agents
+              <ListFilter className="h-3 w-3" />{sortedSaleAgents.length} of {sale.agents.length} agents
             </span>
+            <ClearFiltersButton count={saleAgentFilters.activeCount} onClear={saleAgentFilters.clearAll} />
           </div>
           <SectionCard icon={Trophy} title="Agent-wise Sale Performance" tone="amber">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="py-2 pr-3 font-semibold">Agent</th>
-                    <th className="py-2 pr-3 font-semibold">TL</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Revenue</th>
-                    <th className="py-2 pr-3 text-right font-semibold">RTO %</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Prepaid %</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Target</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Achievement %</th>
+                    {SALE_AGENT_COLS.map((c) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={saleAgentSortKey} sortDir={saleAgentSortDir} onSort={toggleSaleAgentSort} filters={saleAgentFilters} className={c.className} />
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredSaleAgents.map((a) => (
+                  {sortedSaleAgents.map((a) => (
                     <tr key={a.empId} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-amber-50/40">
                       <td className="py-2.5 pr-3">
                         <div className="font-medium text-slate-700">{a.name}</div>
@@ -486,8 +642,8 @@ export function NeemansPerformanceDashboard() {
                       <td className={`py-2.5 pr-0 text-right font-semibold ${attainmentClass(a.achievementPct)}`}>{a.achievementPct}%</td>
                     </tr>
                   ))}
-                  {filteredSaleAgents.length === 0 && (
-                    <tr><td colSpan={8} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
+                  {sortedSaleAgents.length === 0 && (
+                    <tr><td colSpan={8} className="py-6 text-center text-slate-400">No agents match the search / filters.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -555,8 +711,9 @@ export function NeemansPerformanceDashboard() {
                 className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm transition-colors focus:border-violet-400 focus:outline-none" />
             </div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500">
-              <ListFilter className="h-3 w-3" />{filteredAllocAgents.length} of {allocation.agents.length} agents
+              <ListFilter className="h-3 w-3" />{sortedAllocAgents.length} of {allocation.agents.length} agents
             </span>
+            <ClearFiltersButton count={allocAgentFilters.activeCount} onClear={allocAgentFilters.clearAll} />
           </div>
           <SectionCard
             icon={Users} title="Agent-wise Allocation" tone="violet"
@@ -566,14 +723,13 @@ export function NeemansPerformanceDashboard() {
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="py-2 pr-3 font-semibold">Agent</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Allocation</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Connected</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Connected %</th>
+                    {ALLOC_AGENT_COLS.map((c) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={allocAgentSortKey} sortDir={allocAgentSortDir} onSort={toggleAllocAgentSort} filters={allocAgentFilters} className={c.className} />
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAllocAgents.map((a) => (
+                  {sortedAllocAgents.map((a) => (
                     <tr key={a.agent} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-violet-50/40">
                       <td className="py-2.5 pr-3 font-medium text-slate-700">{a.agent}</td>
                       <td className="py-2.5 pr-3 text-right text-slate-600">{a.allocation.toLocaleString("en-IN")}</td>
@@ -581,8 +737,8 @@ export function NeemansPerformanceDashboard() {
                       <td className="py-2.5 pr-0 text-right font-semibold text-slate-800">{a.connectedPct}%</td>
                     </tr>
                   ))}
-                  {filteredAllocAgents.length === 0 && (
-                    <tr><td colSpan={4} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
+                  {sortedAllocAgents.length === 0 && (
+                    <tr><td colSpan={4} className="py-6 text-center text-slate-400">No agents match the search / filters.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -631,26 +787,26 @@ export function NeemansPerformanceDashboard() {
           </SectionCard>
         </div>
 
-        <SectionCard icon={Layers} title="LOB-wise Tickets" tone="indigo">
+        <SectionCard icon={Layers} title="LOB-wise Tickets" tone="indigo" action={<ClearFiltersButton count={chatLobFilters.activeCount} onClear={chatLobFilters.clearAll} />}>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">LOB</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Tickets</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Resolved %</th>
+                  {CHAT_LOB_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={chatLobSortKey} sortDir={chatLobSortDir} onSort={toggleChatLobSort} filters={chatLobFilters} className={c.className} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {chat.byLob.map((r) => (
+                {sortedChatLob.map((r) => (
                   <tr key={r.lob} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40">
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{r.lob}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{r.tickets}</td>
                     <td className={`py-2.5 pr-0 text-right font-semibold ${resolvedClass(r.resolvedPct)}`}>{r.resolvedPct}%</td>
                   </tr>
                 ))}
-                {chat.byLob.length === 0 && (
-                  <tr><td colSpan={3} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                {sortedChatLob.length === 0 && (
+                  <tr><td colSpan={3} className="py-6 text-center text-slate-400">{chat.byLob.length === 0 ? "No data for this period." : "No rows match the filters."}</td></tr>
                 )}
               </tbody>
             </table>
@@ -660,26 +816,27 @@ export function NeemansPerformanceDashboard() {
         <SectionCard
           icon={Layers} title="Channel-wise Tickets" tone="sky"
           footnote="neemans_chat.inbox_name — the actual inbox (WhatsApp, Instagram, Facebook, Email), a finer grain than the LOB view above."
+          action={<ClearFiltersButton count={chatChannelFilters.activeCount} onClear={chatChannelFilters.clearAll} />}
         >
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Channel</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Tickets</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Resolved %</th>
+                  {CHAT_CHANNEL_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={chatChannelSortKey} sortDir={chatChannelSortDir} onSort={toggleChatChannelSort} filters={chatChannelFilters} className={c.className} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {chat.channelBreakdown.map((r) => (
+                {sortedChatChannel.map((r) => (
                   <tr key={r.channel} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-sky-50/40">
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{r.channel}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{r.tickets}</td>
                     <td className={`py-2.5 pr-0 text-right font-semibold ${resolvedClass(r.resolvedPct)}`}>{r.resolvedPct}%</td>
                   </tr>
                 ))}
-                {chat.channelBreakdown.length === 0 && (
-                  <tr><td colSpan={3} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                {sortedChatChannel.length === 0 && (
+                  <tr><td colSpan={3} className="py-6 text-center text-slate-400">{chat.channelBreakdown.length === 0 ? "No data for this period." : "No rows match the filters."}</td></tr>
                 )}
               </tbody>
             </table>
@@ -687,24 +844,26 @@ export function NeemansPerformanceDashboard() {
         </SectionCard>
 
         <div className="space-y-3">
-          <div className="relative w-full">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input type="text" value={chatSearch} onChange={(e) => setChatSearch(e.target.value)} placeholder="Search agent..."
-              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm transition-colors focus:border-violet-400 focus:outline-none" />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="relative w-full max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input type="text" value={chatSearch} onChange={(e) => setChatSearch(e.target.value)} placeholder="Search agent..."
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm transition-colors focus:border-violet-400 focus:outline-none" />
+            </div>
+            <ClearFiltersButton count={chatAgentFilters.activeCount} onClear={chatAgentFilters.clearAll} />
           </div>
           <SectionCard icon={Users} title="Agent-wise Chat Performance" tone="violet">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="py-2 pr-3 font-semibold">Agent</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Tickets</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Resolved %</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Avg CSAT</th>
+                    {CHAT_AGENT_COLS.map((c) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={chatAgentSortKey} sortDir={chatAgentSortDir} onSort={toggleChatAgentSort} filters={chatAgentFilters} className={c.className} />
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredChatAgents.map((a) => (
+                  {sortedChatAgents.map((a) => (
                     <tr key={`${a.empId}-${a.agent}`} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-violet-50/40">
                       <td className="py-2.5 pr-3">
                         <div className="font-medium text-slate-700">{a.agent}</div>
@@ -715,8 +874,8 @@ export function NeemansPerformanceDashboard() {
                       <td className="py-2.5 pr-0 text-right text-slate-600">{a.avgCsat || "—"}</td>
                     </tr>
                   ))}
-                  {filteredChatAgents.length === 0 && (
-                    <tr><td colSpan={4} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
+                  {sortedChatAgents.length === 0 && (
+                    <tr><td colSpan={4} className="py-6 text-center text-slate-400">No agents match the search / filters.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -761,19 +920,19 @@ export function NeemansPerformanceDashboard() {
         <SectionCard
           icon={Layers} title="LOB-wise Productivity" tone="indigo"
           footnote="neemans_apr.lob — currently only Cart-process APR files have ever been uploaded to this table (for any month), so this shows one row today. Chat/Inbound/Email/Social Media rows will appear here automatically once their APR exports are uploaded."
+          action={<ClearFiltersButton count={prodLobFilters.activeCount} onClear={prodLobFilters.clearAll} />}
         >
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">LOB</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Calls</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Agents</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Avg Occupancy %</th>
+                  {PROD_LOB_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={prodLobSortKey} sortDir={prodLobSortDir} onSort={toggleProdLobSort} filters={prodLobFilters} className={c.className} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {productivity.lobBreakdown.map((r) => (
+                {sortedProdLob.map((r) => (
                   <tr key={r.lob} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40">
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{r.lob}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{r.calls.toLocaleString("en-IN")}</td>
@@ -781,8 +940,8 @@ export function NeemansPerformanceDashboard() {
                     <td className="py-2.5 pr-0 text-right font-semibold text-slate-800">{r.avgOccupancyPct}%</td>
                   </tr>
                 ))}
-                {productivity.lobBreakdown.length === 0 && (
-                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                {sortedProdLob.length === 0 && (
+                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">{productivity.lobBreakdown.length === 0 ? "No data for this period." : "No rows match the filters."}</td></tr>
                 )}
               </tbody>
             </table>
@@ -797,24 +956,22 @@ export function NeemansPerformanceDashboard() {
                 className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm transition-colors focus:border-violet-400 focus:outline-none" />
             </div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500">
-              <ListFilter className="h-3 w-3" />{filteredProdAgents.length} of {productivity.agents.length} agents
+              <ListFilter className="h-3 w-3" />{sortedProdAgents.length} of {productivity.agents.length} agents
             </span>
+            <ClearFiltersButton count={prodAgentFilters.activeCount} onClear={prodAgentFilters.clearAll} />
           </div>
           <SectionCard icon={Users} title="Agent-wise Productivity" tone="violet">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="py-2 pr-3 font-semibold">Agent</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Calls</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Login Time</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Talk Time</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Occupancy %</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Attendance Days</th>
+                    {PROD_AGENT_COLS.map((c) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={prodAgentSortKey} sortDir={prodAgentSortDir} onSort={toggleProdAgentSort} filters={prodAgentFilters} className={c.className} />
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredProdAgents.map((a) => (
+                  {sortedProdAgents.map((a) => (
                     <tr key={a.empId} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-violet-50/40">
                       <td className="py-2.5 pr-3">
                         <div className="font-medium text-slate-700">{a.name}</div>
@@ -827,8 +984,8 @@ export function NeemansPerformanceDashboard() {
                       <td className="py-2.5 pr-0 text-right text-slate-600">{a.attendanceDays}</td>
                     </tr>
                   ))}
-                  {filteredProdAgents.length === 0 && (
-                    <tr><td colSpan={6} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
+                  {sortedProdAgents.length === 0 && (
+                    <tr><td colSpan={6} className="py-6 text-center text-slate-400">No agents match the search / filters.</td></tr>
                   )}
                 </tbody>
               </table>

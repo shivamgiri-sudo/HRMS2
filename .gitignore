@@ -153,3 +153,13 @@ privacy-inventory-findings.json
 # Re-screen / reconcile runners write rollback snapshots and shortlist CSVs (candidate names + phones)
 # here. PII: never commit.
 /backend/.deploy-backups/
+# uploader/ -- ad hoc data-load scripts (see uploader/upload_housing_premium_cdr.py).
+# Downloaded CDR exports carry real customer/call data and callerdesk.env holds a
+# live third-party login -- neither belongs in this public repo's history.
+/uploader/downloads/
+/uploader/callerdesk.env
+/uploader/db.env
+/uploader/logs/
+/uploader/google_service_account.json
+/uploader/sale_sheet_checkpoint.json
+/uploader/__pycache__/

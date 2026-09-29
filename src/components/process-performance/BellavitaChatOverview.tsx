@@ -15,6 +15,8 @@ import {
   PeriodSection, PeriodModeToggle, DrawerExcelButton, type PeriodWeek, type PeriodRow, type PeriodViewMode, type DrawerSheet,
 } from "./DashboardKit";
 import { TOOLTIP_PROPS, fmtDate, fmtN, fmtShortDay } from "./lpCallShared";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Bellavita Chat "Overview" -- rebuilt 2026-09-23 (explicit "remove
@@ -400,38 +402,62 @@ function QrcSection({ data, onOpenDetails }: { data: OverviewData; onOpenDetails
   );
 }
 
+interface TopAgentCol { key: string; label: string; get: (r: TopAgentRow) => string | number | null; cell: (r: TopAgentRow) => ReactNode; className: string }
+/** Column set for Top Agents by Performance -- Sales/Revenue/Conv% only exist when data.salesAvailable. */
+function topAgentCols(salesAvailable: boolean): TopAgentCol[] {
+  const cols: TopAgentCol[] = [
+    { key: "agent", label: "Agent", get: (r) => r.agent, cell: (r) => r.agent, className: "py-1.5 pr-2 font-medium text-rose-700 underline-offset-2 hover:underline" },
+    { key: "lob", label: "LOB", get: (r) => r.lobs, cell: (r) => r.lobs || "—", className: "py-1.5 pr-2 text-slate-600" },
+    { key: "overall", label: "Chat Volume", get: (r) => r.overall, cell: (r) => fmtN(r.overall), className: "py-1.5 pr-2 text-right text-slate-600" },
+    { key: "unique", label: "Unique", get: (r) => r.unique, cell: (r) => fmtN(r.unique), className: "py-1.5 pr-2 text-right text-slate-600" },
+  ];
+  if (salesAvailable) {
+    cols.push(
+      { key: "saleCount", label: "Sales", get: (r) => r.saleCount, cell: (r) => (r.saleCount !== null ? fmtN(r.saleCount) : "—"), className: "py-1.5 pr-2 text-right text-slate-600" },
+      { key: "revenue", label: "Revenue", get: (r) => r.revenue, cell: (r) => (r.revenue !== null ? formatINR(r.revenue) : "—"), className: "py-1.5 pr-2 text-right font-semibold text-amber-700" },
+      { key: "conversionPct", label: "Conv%", get: (r) => r.conversionPct, cell: (r) => (r.conversionPct !== null ? `${r.conversionPct}%` : "—"), className: "py-1.5 pr-2 text-right font-semibold text-emerald-600" },
+    );
+  }
+  cols.push({ key: "frtPct", label: "FRT%", get: (r) => r.frtPct, cell: (r) => `${r.frtPct}%`, className: "py-1.5 pr-0 text-right text-slate-600" });
+  return cols;
+}
+
 /** Top Agents by Performance -- shared table, both layouts. */
 function TopAgentsTable({ data, onAgentClick }: { data: OverviewData; onAgentClick: (a: TopAgentRow) => void }) {
+  const cols = useMemo(() => topAgentCols(data.salesAvailable), [data.salesAvailable]);
+  const filterCols = useMemo<Array<FilterColumn<TopAgentRow>>>(() => cols.map((c) => ({ key: c.key, get: c.get })), [cols]);
+  const colGetter = useCallback((r: TopAgentRow, key: string) => cols.find((c) => c.key === key)?.get(r), [cols]);
+  const filters = useColumnFilters(data.topAgents, filterCols);
+  const { sorted: filteredAgents, sortKey, sortDir, toggleSort } = useSortableRows(filters.filtered, colGetter);
+
   return (
     <SectionCard icon={Users} title="Top Agents by Performance" tone="rose" footnote="Sales/Revenue/Conversion% are bb_sale's combined 'Chat'-campaign figures joined by emp_id -- real per agent, same caveat as PTP Performance above.">
+      {filters.activeCount > 0 && (
+        <div className="mb-2 flex justify-end">
+          <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+          </button>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[520px] text-left text-[11px]">
           <thead><tr className="border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-400">
             <th className="py-1.5 pr-2 font-semibold">#</th>
-            <th className="py-1.5 pr-2 font-semibold">Agent</th>
-            <th className="py-1.5 pr-2 font-semibold">LOB</th>
-            <th className="py-1.5 pr-2 text-right font-semibold">Chat Volume</th>
-            <th className="py-1.5 pr-2 text-right font-semibold">Unique</th>
-            {data.salesAvailable && <th className="py-1.5 pr-2 text-right font-semibold">Sales</th>}
-            {data.salesAvailable && <th className="py-1.5 pr-2 text-right font-semibold">Revenue</th>}
-            {data.salesAvailable && <th className="py-1.5 pr-2 text-right font-semibold">Conv%</th>}
-            <th className="py-1.5 pr-0 text-right font-semibold">FRT%</th>
+            {cols.map((c) => (
+              <FilterSortTh
+                key={c.key} label={c.label} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={filters}
+                className={`py-1.5 pr-2 font-semibold ${c.key !== "agent" && c.key !== "lob" ? "text-right" : ""}`}
+              />
+            ))}
           </tr></thead>
           <tbody>
-            {data.topAgents.map((a, i) => (
+            {filteredAgents.map((a, i) => (
               <tr key={`${a.empId}-${a.agent}`} onClick={() => onAgentClick(a)} role="button" tabIndex={0} className="cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-rose-50/50">
                 <td className="py-1.5 pr-2 text-slate-400">{i + 1}</td>
-                <td className="py-1.5 pr-2 font-medium text-rose-700 underline-offset-2 hover:underline">{a.agent}</td>
-                <td className="py-1.5 pr-2 text-slate-600">{a.lobs || "—"}</td>
-                <td className="py-1.5 pr-2 text-right text-slate-600">{fmtN(a.overall)}</td>
-                <td className="py-1.5 pr-2 text-right text-slate-600">{fmtN(a.unique)}</td>
-                {data.salesAvailable && <td className="py-1.5 pr-2 text-right text-slate-600">{a.saleCount !== null ? fmtN(a.saleCount) : "—"}</td>}
-                {data.salesAvailable && <td className="py-1.5 pr-2 text-right font-semibold text-amber-700">{a.revenue !== null ? formatINR(a.revenue) : "—"}</td>}
-                {data.salesAvailable && <td className="py-1.5 pr-2 text-right font-semibold text-emerald-600">{a.conversionPct !== null ? `${a.conversionPct}%` : "—"}</td>}
-                <td className="py-1.5 pr-0 text-right text-slate-600">{a.frtPct}%</td>
+                {cols.map((c) => <td key={c.key} className={c.className}>{c.cell(a)}</td>)}
               </tr>
             ))}
-            {data.topAgents.length === 0 && <tr><td colSpan={9} className="py-6 text-center text-slate-400">No agents for this period.</td></tr>}
+            {filteredAgents.length === 0 && <tr><td colSpan={cols.length + 1} className="py-6 text-center text-slate-400">{data.topAgents.length === 0 ? "No agents for this period." : "No agents match the filters."}</td></tr>}
           </tbody>
         </table>
       </div>

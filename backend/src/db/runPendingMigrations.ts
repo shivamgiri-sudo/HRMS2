@@ -678,7 +678,7 @@ const MIGRATION_MANIFEST: string[] = [
   // being LABELLED in the way that made users read it as cost-centre headcount â€" which is
   // the confusion the rename exists to remove.
   //
-  // âš  Adding it here means the rename applies on the next restart. That is the intent, but
+  // âš  Adding it here means the rename applies on the next restart. That is the intent, but
   // it is a user-visible label change: "Call Centre Headcount" -> "Call Centre (Dialer)
   // Headcount". Name only â€" report_code, query_key, category and permissions are untouched,
   // so every link, saved filter and role grant keeps working, and no row is deleted.
@@ -1188,6 +1188,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1906_attendance_data_fixes.sql", // Registered 2026-09-29. Corrects process_name/cost_centre mismatches for several employees (MAS62122, MAS62918, etc). Data-fix only.
   "migrations/1907_skill_roadmap_fk_fix.sql", // Registered 2026-09-29. Aligns skill roadmap table collations to utf8mb4_unicode_ci and adds missing FK constraints. Additive.
   "migrations/1908_backfill_esi_docs_vault.sql", // Registered 2026-09-29. Backfills existing esi-docs bank passbooks into document_vault_inventory so the files.routes vault auth layer can serve them. Additive INSERT IGNORE.
+  "migrations/449_pre_cdr_daily_summary.sql", // Registered 2026-09-29 with the tausif-mis merge. db_masmis.pre_cdr_daily_summary is read/written by pre-cdr-bulk.service and housing-premium-dashboard.service and did not exist in production (checked live). CREATE TABLE IF NOT EXISTS + idempotent upsert backfill from Pre_cdr (~215k rows). Its prerequisite 448 (Pre_cdr.report_date_iso) is already live, applied by hand, so 448 and the other tausif-mis SQL files are listed in knownUnlisted instead of here.
   "migrations/1909_performance_indexes.sql", // Registered 2026-09-29. Adds missing composite indexes on work_inbox_item (entity resolution, dedup, user-action list), employee_biometric_enrollment (active filter), and exit_request (status+lwd). Fixes full-table-scan on 120k-row work_inbox_item for every resolveItems() call.
   "migrations/1910_bla_bli_blu_sales_dashboard.sql", // Registered 2026-09-29. BLA/BLI/BLU (Bellavita Cart ABC / Inbound / Upgrade) Sales Dashboard: bla_dash_received upload and bla_dash_target config (Overall Sales is read from the existing bla_bli_blu_overall_sales_raw). Additive: new tables only.
   "migrations/1916_onfido_utilization_static_values.sql", // Registered 2026-09-30. Seven nullable fixed_* columns on onfido_utilization_daily_input so WFM can bulk-upload the Utilization calculated columns as static values instead of formulas; NULL falls back to the on-screen calculation. Purely additive ALTER ADD COLUMN.

@@ -10,6 +10,8 @@ import { deleteBatchRowsChunked } from "./batch-row-status.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
+import { tpzAllowsUploadType } from "../tpz-access/tpz-access.middleware.js";
+import { getUploadCoverage } from "./upload-coverage.service.js";
 import { dispatchImport, assertGatedUploader, assertDepartmentStructureUploader, assertEmployeeLobUploader } from "./bulk-dispatch.js";
 import { ONFIDO_REPORT_CONFIGS } from "./onfido-report-configs.js";
 import {
@@ -59,7 +61,8 @@ router.get("/templates", requireRole(...HUB_ROLES), h(async (req: AuthenticatedR
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM upload_template_master WHERE active_status = 1 ORDER BY upload_type_code ASC"
     );
-    res.json({ success: true, data: filterTemplatesForCaller(req, rows).map(withConfigTemplate) });
+    // TPZ Process grants (modules/tpz-access): a narrowed or grant-only user sees only the TPZ upload types they may use.
+    res.json({ success: true, data: filterTemplatesForCaller(req, rows).filter((r) => tpzAllowsUploadType(req, String(r.upload_type_code))).map(withConfigTemplate) });
   } catch (err: unknown) {
     // Table may not exist yet â€” return empty array gracefully
     if (typeof err === "object" && err !== null) {
@@ -71,6 +74,18 @@ router.get("/templates", requireRole(...HUB_ROLES), h(async (req: AuthenticatedR
     }
     throw err;
   }
+}));
+
+/**
+ * GET /coverage?codes=A,B[&refresh=1] -- "data uploaded till <date>" per upload type: the latest data date present in the type's
+ * target table (see upload-coverage.service.ts), so the uploader knows where to continue from. Narrowed for TPZ grants like the
+ * template list.
+ */
+router.get("/coverage", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const codes = String(req.query.codes ?? "").split(",").map((c) => c.trim()).filter(Boolean).slice(0, 60)
+    .filter((c) => tpzAllowsUploadType(req, c));
+  const data = await getUploadCoverage(codes, req.query.refresh === "1");
+  res.json({ success: true, data });
 }));
 
 /**
@@ -97,6 +112,7 @@ const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
   "OWNER_AGENT_DETAILS_MASMIS", "OWNER_CDR_MASMIS", "OWNER_SALE_MASMIS",
   "PRE_AGENT_DETAILS_MASMIS", "PRE_CDR_MASMIS", "PRE_SALE_MASMIS",
   "SATYA_ALLOCATION_MASMIS", "SATYA_CDR_MASMIS",
+  "DALMIA_DD_RAW", "DALMIA_OUTBOUND_RAW", "DALMIA_APR", "DALMIA_AFTER_HOUR",
 ];
 
 router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), denyLobOnly, h(async (req: AuthenticatedRequest, res: Response) => {
@@ -117,7 +133,9 @@ router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_ad
     .split(",")
     .map((c) => c.trim())
     .filter((c) => PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES.includes(c));
-  const typeCodes = requestedCodes.length ? requestedCodes : PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES;
+  // Narrowed / grant-only TPZ users are counted only over the upload types they may use.
+  const typeCodes = (requestedCodes.length ? requestedCodes : PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES).filter((c) => tpzAllowsUploadType(req, c));
+  if (typeCodes.length === 0) return res.json({ success: true, data: { totalFilesUploaded: 0, activeUsers: 0 } });
 
   const typeCodePlaceholders = typeCodes.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(

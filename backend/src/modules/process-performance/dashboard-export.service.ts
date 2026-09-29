@@ -106,6 +106,34 @@ function safeSheetName(name: string, used: Set<string>): string {
   return out;
 }
 
+/**
+ * Builds the (pre-safeSheetName) raw-sheet name "Raw - <prefix> - <source sheet>". Excel hard-caps a
+ * sheet name at 31 characters, and a plain slice(0, 31) cuts whatever falls at that position --
+ * usually the SOURCE table name at the end, since the prefix (a whole dashboard title, e.g. "Sale
+ * Performance") comes first. For Housing Owner's MIS bundle that truncated "Raw - Sale Performance -
+ * owner_sale" / "...Owner_cdr" / "...owner_agent_details" down to the identical 31-char prefix "Raw -
+ * Sale Performance - owner", so safeSheetName's own de-dupe counter was all that told the three raw
+ * sheets apart ("...Owne 2", "...Owne 3") -- meaningless, indistinguishable tab names.
+ *
+ * The source table name is what actually distinguishes one raw sheet from another in the same
+ * bundle, so it is never truncated while the prefix still fits; the PREFIX is shrunk first, and only
+ * as an absolute last resort (a table name alone longer than 25 characters) does the source name give
+ * up its own tail -- at which point it is different from every other table name in the registry
+ * anyway, so a plain safeSheetName numeric suffix is an honest fallback, not a disguise for a
+ * collision.
+ */
+function buildRawSheetName(prefix: string | undefined, srcSheet: string): string {
+  const MAX = 31;
+  const core = `Raw - ${srcSheet}`;
+  if (!prefix) return core;
+  const full = `Raw - ${prefix} - ${srcSheet}`;
+  if (full.length <= MAX) return full;
+  const fixedLen = `Raw -  - ${srcSheet}`.length; // "Raw - " + " - " + the source name, prefix omitted
+  const room = MAX - fixedLen;
+  if (room >= 3) return `Raw - ${prefix.slice(0, room)} - ${srcSheet}`;
+  return core.length <= MAX ? core : core.slice(0, MAX);
+}
+
 function widthFor(lengths: number[]): number {
   const longest = lengths.reduce((m, l) => Math.max(m, l), 0);
   return Math.min(42, Math.max(10, longest + 3));
@@ -423,14 +451,18 @@ export async function appendDashboardToWorkbook(
 ): Promise<RawSheetResult[]> {
   const slides = req.slides.length > 0 ? req.slides : [{ title: "Report" }];
   for (const slide of slides) {
-    const name = sheetPrefix ? `${sheetPrefix} — ${slide.title}` : slide.title;
+    // Skip the redundant "<prefix> — <same text>" when the slide's own title already IS the section
+    // title (every single-slide builder returns a title matching its registry entry, e.g. Housing
+    // Owner's entry "Overview" -> slide "Overview") -- this used to produce tabs literally named
+    // "Overview — Overview" / "Sale Performance — Sale Performance".
+    const samePrefix = sheetPrefix && sheetPrefix.trim().toLowerCase() === slide.title.trim().toLowerCase();
+    const name = sheetPrefix && !samePrefix ? `${sheetPrefix} — ${slide.title}` : (sheetPrefix ?? slide.title);
     writeSummarySheet(wb, slide, safeSheetName(name, used), req.reportTitle, req.subtitle);
   }
 
   const raw: RawSheetResult[] = [];
   for (const src of RAW_SOURCES[req.dashboard] ?? []) {
-    const rawName = sheetPrefix ? `Raw - ${sheetPrefix} - ${src.sheet}` : `Raw - ${src.sheet}`;
-    const sheetName = safeSheetName(rawName, used);
+    const sheetName = safeSheetName(buildRawSheetName(sheetPrefix, src.sheet), used);
     const sourceLabel = src.kind === "masmis" ? `db_masmis.${(src as MasmisRawSource).table}` : "dialer_db";
     if (Date.now() > deadline) {
       raw.push({

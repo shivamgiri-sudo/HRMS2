@@ -1,9 +1,12 @@
 import type { Server } from "http";
 import { app } from "./app.js";
 import { env } from "./config/env.js";
-import { db } from "./db/mysql.js";
+import { db, setSessionMaxExecutionTime } from "./db/mysql.js";
 import { runPendingMigrations, verifySchemaVersion } from "./db/runPendingMigrations.js";
 import { checkRequiredTables, REQUIRED_TABLES } from "./db/schema-presence-check.js";
+
+// API process only (hrms2-workers never loads server.ts): cap SELECTs at 5 min. 0 disables.
+setSessionMaxExecutionTime(Number(process.env.DB_API_MAX_EXECUTION_MS ?? 300_000));
 
 // MIGRATION GOVERNANCE: When enabled, API startup only verifies schema version
 // instead of running migrations. Use `npm run migrate` to apply migrations separately.

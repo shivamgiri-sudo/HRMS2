@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, ChevronRight, Search } from "lucide-react";
+import { ChevronRight, Search } from "lucide-react";
+import { useColumnFilters, FilterSortTh, type FilterColumn } from "./ColumnFilterHeader";
 
 /** Number with a thin proportional bar behind it -- a non-judgemental way to
  * colour a column (relative to the column's own max) without inventing
@@ -57,17 +58,25 @@ export function DataTable<T>({
   const [sort, setSort] = useState(defaultSort ?? null);
   const hasTotal = columns.some((c) => c.total !== undefined);
 
+  // Excel-style column filters: only columns with a `sort` getter expose a raw,
+  // comparable value to build a filter list from (matching the sort behaviour).
+  const filterCols: Array<FilterColumn<T>> = useMemo(
+    () => columns.filter((c) => c.sort).map((c) => ({ key: c.key, get: c.sort as (row: T) => number | string })),
+    [columns],
+  );
+  const filters = useColumnFilters(rows, filterCols);
+
   const sorted = useMemo(() => {
-    if (!sort) return rows;
+    if (!sort) return filters.filtered;
     const col = columns.find((c) => c.key === sort.key);
-    if (!col?.sort) return rows;
+    if (!col?.sort) return filters.filtered;
     const get = col.sort;
-    return [...rows].sort((a, b) => {
+    return [...filters.filtered].sort((a, b) => {
       const av = get(a), bv = get(b);
       const cmp = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [rows, columns, sort]);
+  }, [filters.filtered, columns, sort]);
 
   const toggle = (c: Col<T>) => {
     if (!c.sort) return;
@@ -76,20 +85,30 @@ export function DataTable<T>({
 
   return (
     <div className="overflow-auto" style={maxHeight ? { maxHeight } : undefined}>
+      {filters.activeCount > 0 && (
+        <div className="flex justify-end pb-1.5">
+          <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+          </button>
+        </div>
+      )}
       <table className="w-full text-left text-xs">
         <thead className="sticky top-0 z-10 bg-white">
           <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-            {columns.map((c) => (
-              <th
-                key={c.key} onClick={() => toggle(c)}
-                className={`whitespace-nowrap py-2 pr-3 font-semibold ${c.align === "right" ? "text-right" : ""} ${c.sort ? "cursor-pointer select-none hover:text-slate-600" : ""}`}
-              >
-                <span className="inline-flex items-center gap-1">
+            {columns.map((c) =>
+              c.sort ? (
+                <FilterSortTh
+                  key={c.key} label={c.label} columnKey={c.key}
+                  sortKey={sort?.key ?? null} sortDir={sort?.dir ?? "asc"} onSort={() => toggle(c)}
+                  filters={filters}
+                  className={`whitespace-nowrap py-2 pr-3 font-semibold ${c.align === "right" ? "text-right" : ""} cursor-pointer select-none hover:text-slate-600`}
+                />
+              ) : (
+                <th key={c.key} className={`whitespace-nowrap py-2 pr-3 font-semibold ${c.align === "right" ? "text-right" : ""}`}>
                   {c.label}
-                  {sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
-                </span>
-              </th>
-            ))}
+                </th>
+              ),
+            )}
             {onRowClick && <th className="w-4" />}
           </tr>
         </thead>
@@ -107,7 +126,7 @@ export function DataTable<T>({
             </tr>
           ))}
           {sorted.length === 0 && (
-            <tr><td colSpan={columns.length + (onRowClick ? 1 : 0)} className="py-8 text-center text-slate-400">{empty}</td></tr>
+            <tr><td colSpan={columns.length + (onRowClick ? 1 : 0)} className="py-8 text-center text-slate-400">{rows.length === 0 ? empty : "No rows match the filters."}</td></tr>
           )}
         </tbody>
         {hasTotal && sorted.length > 0 && (

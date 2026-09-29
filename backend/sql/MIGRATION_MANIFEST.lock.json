@@ -1351,6 +1351,27 @@
     "review_only_cleanup_test_demo_hrms2.sql",
     "revoke_salary_revision_employee_grant.sql",
     "setup-dialer-kpi-metrics.sql",
-    "verify_ats_fix.sql"
+    "verify_ats_fix.sql",
+    "1765_appreciate_health_aw_uploaders.sql",
+    "1766_housing_owner_premium_new_tables.sql",
+    "1767_housing_owner_premium_uploaders.sql",
+    "1768_clovia_new_tables.sql",
+    "1769_clovia_uploaders.sql",
+    "1770_birlanu_satya_new_tables.sql",
+    "1771_birlanu_satya_uploaders.sql",
+    "1772_lp_feedback_onboarding_new_tables.sql",
+    "1773_lp_feedback_onboarding_uploaders.sql",
+    "1774_gnc_chat_new_table.sql",
+    "1775_gnc_chat_uploader.sql",
+    "1776_neemans_chat_new_table.sql",
+    "1777_neemans_chat_uploader.sql",
+    "1778_gnc_sale_order_id_unique.sql",
+    "1779_appreciate_chat_new_table.sql",
+    "1780_appreciate_chat_uploader.sql",
+    "1781_dalmia_apr_raw.sql",
+    "1782_tpz_access.sql",
+    "1870_gnc_lob_target.sql",
+    "1871_bb_chat_template_new_table_columns.sql",
+    "1874_process_details_page_access.sql"
   ]
 }

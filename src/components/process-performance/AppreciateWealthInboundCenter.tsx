@@ -7,6 +7,8 @@ import type { DrawerTarget } from "./AppreciateWealthDrawer";
 import {
   TOOLTIP_PROPS, fmtClock, fmtNum, fmtPctVal, deltaOf, CcShell, CcHeader, CcPanel, CcTile, CoverageNote, rateTint,
 } from "./AwControlKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Appreciate Wealth -- "Inbound Call Performance" slide, live from
@@ -56,6 +58,22 @@ const GRID_ROWS: GridRow[] = [
   { label: "AHT", get: (k) => (k.answered ? fmtClock(k.ahtS) : "—"), bold: true },
 ];
 
+/** "Inbound Call KPIs (Daily Details)" table header/sort/filter columns -- one row per date. */
+const DAILY_COLS: Array<{ key: string; label: string; get: (d: Day) => string | number | null }> = [
+  { key: "date", label: "Date", get: (d) => d.date },
+  { key: "offered", label: "Call Offered", get: (d) => (d.offered > 0 ? d.offered : null) },
+  { key: "answered", label: "Call Answered", get: (d) => (d.offered > 0 ? d.answered : null) },
+  { key: "alPct", label: "AL %", get: (d) => (d.offered > 0 ? d.alPct : null) },
+  { key: "abn", label: "Abn Calls", get: (d) => (d.offered > 0 ? d.abn : null) },
+  { key: "abnPct", label: "Abn %", get: (d) => (d.offered > 0 ? d.abnPct : null) },
+  { key: "uniqueCalls", label: "Unique Calls", get: (d) => (d.offered > 0 ? d.uniqueCalls : null) },
+  { key: "repeatCalls", label: "Repeat Calls", get: (d) => (d.offered > 0 ? d.repeatCalls : null) },
+  { key: "avgTalkS", label: "Avg. Talk Time", get: (d) => (d.answered ? d.avgTalkS : null) },
+  { key: "ahtS", label: "AHT", get: (d) => (d.answered ? d.ahtS : null) },
+];
+const DAILY_FILTER_COLS: Array<FilterColumn<Day>> = DAILY_COLS.map((c) => ({ key: c.key, get: c.get }));
+const dailyColGetter = (d: Day, key: string) => DAILY_COLS.find((c) => c.key === key)?.get(d);
+
 export function AppreciateWealthInboundCenter({ from, to, onOpen }: { from: string; to: string; onOpen: (t: DrawerTarget) => void }) {
   const [mode, setMode] = useState<Mode>("range");
   const [anchor, setAnchor] = useState<string | null>(null);
@@ -83,6 +101,9 @@ export function AppreciateWealthInboundCenter({ from, to, onOpen }: { from: stri
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [win.f, win.t]);
+
+  const dailyFilters = useColumnFilters(data?.daily ?? [], DAILY_FILTER_COLS);
+  const { sorted: dailySorted, sortKey: dailySortKey, sortDir: dailySortDir, toggleSort: toggleDailySort } = useSortableRows(dailyFilters.filtered, dailyColGetter);
 
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -204,11 +225,20 @@ export function AppreciateWealthInboundCenter({ from, to, onOpen }: { from: stri
         </CcPanel>
 
         <CcPanel title="Inbound Call KPIs (Daily Details)" icon={CalendarDays}>
+          {dailyFilters.activeCount > 0 && (
+            <div className="mb-1 flex justify-end">
+              <button type="button" onClick={dailyFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {dailyFilters.activeCount} filter{dailyFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            </div>
+          )}
           <div className="max-h-[430px] overflow-auto rounded-lg border border-slate-200">
             <table className="w-full text-center text-[11px]">
-              <thead><tr className="sticky top-0 bg-indigo-950 text-white">{["Date", "Call Offered", "Call Answered", "AL %", "Abn Calls", "Abn %", "Unique Calls", "Repeat Calls", "Avg. Talk Time", "AHT"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-bold">{h}</th>)}</tr></thead>
+              <thead><tr className="sticky top-0 bg-indigo-950 text-white">{DAILY_COLS.map((c) => (
+                <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="whitespace-nowrap px-2 py-1.5 font-bold" />
+              ))}</tr></thead>
               <tbody>
-                {data.daily.map((d) => {
+                {dailySorted.map((d) => {
                   const has = d.offered > 0;
                   return (
                     <tr key={d.date} onClick={() => openDay(d.date, d.date, fullDay(d.date))} className="cursor-pointer border-t border-slate-100 bg-white hover:bg-indigo-50">
@@ -222,7 +252,7 @@ export function AppreciateWealthInboundCenter({ from, to, onOpen }: { from: stri
                     </tr>
                   );
                 })}
-                {data.daily.length === 0 && <tr><td colSpan={10} className="py-4 text-slate-400">No inbound calls in this range.</td></tr>}
+                {dailySorted.length === 0 && <tr><td colSpan={10} className="py-4 text-slate-400">{data.daily.length === 0 ? "No inbound calls in this range." : "No days match the filters."}</td></tr>}
               </tbody>
             </table>
           </div>

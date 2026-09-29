@@ -4,6 +4,8 @@ import { hrmsApi, getHrmsApiErrorStatus, type HrmsEnvelope } from "@/lib/hrmsApi
 import { ChevronRight, ChevronDown, Loader2 } from "lucide-react";
 import KpiCellDetail from "./KpiCellDetail";
 import { formatValue } from "./formatValue";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Process → manager → agent, one KPI cell layout at every depth.
@@ -196,6 +198,19 @@ export default function ProcessPerformanceTable({ query }: { query: PerfQuery })
   const [expanded, setExpanded] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ row: PerformanceRow; section: SectionValue } | null>(null);
 
+  // Excel-style sort + filter for the process rows -- hooks must run every render, so this is computed before the
+  // early returns below. Sections vary by tenant/scope, so filter/sort columns are built from whatever this response
+  // carries (assumes every row shares the same section keys, which this table's own rendering already assumes).
+  const rawRows = data?.data ?? [];
+  const rawSections = rawRows[0]?.sections ?? [];
+  const rowColGetter = (r: PerformanceRow, key: string): number | string | null => (key === "name" ? r.name : r.sections.find((s) => s.key === key)?.value ?? null);
+  const ROW_FILTER_COLS: Array<FilterColumn<PerformanceRow>> = [
+    { key: "name", get: (r) => r.name },
+    ...rawSections.map((s) => ({ key: s.key, get: (r: PerformanceRow) => rowColGetter(r, s.key) })),
+  ];
+  const rowFilters = useColumnFilters(rawRows, ROW_FILTER_COLS);
+  const { sorted: sortedRows, sortKey: rowSortKey, sortDir: rowSortDir, toggleSort: toggleRowSort } = useSortableRows(rowFilters.filtered, rowColGetter);
+
   if (isLoading) return <div className="p-6 text-sm text-slate-500">Loading process performance…</div>;
 
   if (error) {
@@ -229,22 +244,34 @@ export default function ProcessPerformanceTable({ query }: { query: PerfQuery })
 
   return (
     <>
+      {rowFilters.activeCount > 0 && (
+        <div className="mb-2 flex justify-end">
+          <button type="button" onClick={rowFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {rowFilters.activeCount} filter{rowFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        </div>
+      )}
       <div className="overflow-x-auto rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-gradient-to-r from-blue-700 to-indigo-700">
-              <th className="sticky left-0 z-10 bg-blue-700 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-white">
-                Process
-              </th>
+              <FilterSortTh
+                label="Process" columnKey="name" sortKey={rowSortKey} sortDir={rowSortDir} onSort={toggleRowSort} filters={rowFilters}
+                sticky className="z-10 bg-blue-700 px-3 py-2.5 text-left text-[11px] uppercase tracking-wider text-white"
+              />
               {sections.map((s) => (
-                <th key={s.key} className="px-2 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-white whitespace-nowrap">
-                  {s.label}
-                </th>
+                <FilterSortTh
+                  key={s.key} label={s.label} columnKey={s.key} sortKey={rowSortKey} sortDir={rowSortDir} onSort={toggleRowSort} filters={rowFilters}
+                  className="px-2 py-2.5 text-right text-[11px] uppercase tracking-wider text-white"
+                />
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {rows.map((r) => {
+            {sortedRows.length === 0 && (
+              <tr><td colSpan={sections.length + 1} className="px-3 py-6 text-center text-slate-400">No processes match the current filters.</td></tr>
+            )}
+            {sortedRows.map((r) => {
               const open = expanded === r.id;
               return (
                 <Fragment key={r.id}>

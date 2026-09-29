@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Trophy, Search, ListFilter, Bot, MousePointerClick, Users, IndianRupee, ShoppingCart, PhoneCall, Info } from "lucide-react";
 import { Spinner, KpiCard, SectionCard, DashboardExportMenu, formatINR, type ExportSlide } from "./DashboardKit";
 import { BellavitaCartAgentDrawer } from "./BellavitaCartAgentDrawer";
 import type { CartColumn } from "./BellavitaCartSnapshot";
 import { fmtDate, fmtN, secToHms } from "./lpCallShared";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Agent Performance for Abandoned Cart, laid out like the reference sheet:
@@ -47,6 +49,60 @@ const GROUPS = [
 const TH = "whitespace-nowrap border-b border-l border-white/60 px-3 py-2 text-[11px] font-bold";
 const TD = "whitespace-nowrap border-b border-l border-slate-100 px-3 py-2";
 
+interface AgentCol { key: string; label: string; get: (r: AgentRow) => string | number | null; cell: (r: AgentRow) => ReactNode; className: string }
+
+function buildFixedCols(maxRevenue: number): AgentCol[] {
+  return [
+    { key: "empId", label: "Emp Id", get: (r) => r.empId, cell: (r) => r.empId, className: `${TD} font-medium text-slate-500` },
+    { key: "name", label: "Agent Name", get: (r) => r.name, cell: (r) => r.name, className: `${TD} text-left font-semibold text-slate-800` },
+    { key: "doj", label: "DOJ", get: (r) => r.doj, cell: (r) => (r.doj ? fmtDate(r.doj) : "—"), className: TD },
+    { key: "tenure", label: "Tenure", get: (r) => r.tenureDays, cell: (r) => r.tenureDays ?? "—", className: TD },
+    { key: "bucket", label: "Bucket", get: (r) => r.bucket, cell: (r) => r.bucket ?? "—", className: TD },
+    { key: "status", label: "Status", get: (r) => r.status, cell: (r) => <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_STYLE[r.status]}`}>{r.status}</span>, className: TD },
+    { key: "tl", label: "TL Name", get: (r) => r.tl, cell: (r) => r.tl || "—", className: TD },
+    { key: "saleMade", label: "Sale Made", get: (r) => r.saleMade, cell: (r) => fmtN(r.saleMade), className: `${TD} font-semibold text-slate-800` },
+    { key: "cod", label: "COD", get: (r) => r.cod, cell: (r) => r.cod, className: TD },
+    { key: "paid", label: "Paid", get: (r) => r.paid, cell: (r) => r.paid, className: TD },
+    { key: "rto", label: "RTO", get: (r) => r.rto, cell: (r) => r.rto, className: TD },
+    { key: "codPct", label: "COD %", get: (r) => r.codPct, cell: (r) => `${r.codPct}%`, className: TD },
+    { key: "paidPct", label: "Paid %", get: (r) => r.paidPct, cell: (r) => `${r.paidPct}%`, className: TD },
+    { key: "rtoAmount", label: "RTO Amount", get: (r) => r.rtoAmount, cell: (r) => formatINR(r.rtoAmount), className: TD },
+    {
+      key: "revenue", label: "Revenue", get: (r) => r.revenue,
+      cell: (r) => (
+        <div className="flex items-center gap-2">
+          <span>{formatINR(r.revenue)}</span>
+          <span className="hidden h-1.5 w-14 overflow-hidden rounded-full bg-white/70 md:block"><span className="block h-full rounded-full bg-emerald-500" style={{ width: `${(r.revenue / maxRevenue) * 100}%` }} /></span>
+        </div>
+      ),
+      className: `${TD} bg-[#f4b183]/40 font-bold text-slate-900`,
+    },
+    { key: "rtoPct", label: "RTO %", get: (r) => r.rtoPct, cell: (r) => `${r.rtoPct}%`, className: TD },
+    { key: "avgSalePerDay", label: "Sales/day", get: (r) => r.avgSalePerDay, cell: (r) => r.avgSalePerDay, className: TD },
+    { key: "calls", label: "Answered", get: (r) => r.calls, cell: (r) => fmtN(r.calls), className: TD },
+    { key: "avgLogin", label: "Avg Login", get: (r) => (r.attendanceDays ? r.avgLoginSec : null), cell: (r) => (r.attendanceDays ? secToHms(r.avgLoginSec) : "—"), className: TD },
+    { key: "avgNetLogin", label: "Avg Net Login", get: (r) => (r.attendanceDays ? r.avgNetLoginSec : null), cell: (r) => (r.attendanceDays ? secToHms(r.avgNetLoginSec) : "—"), className: TD },
+    { key: "avgBreak", label: "Avg Break", get: (r) => (r.attendanceDays ? r.avgBreakSec : null), cell: (r) => (r.attendanceDays ? secToHms(r.avgBreakSec) : "—"), className: TD },
+    { key: "avgTalk", label: "Avg Talk", get: (r) => (r.attendanceDays ? r.avgTalkSec : null), cell: (r) => (r.attendanceDays ? secToHms(r.avgTalkSec) : "—"), className: TD },
+    { key: "avgDispo", label: "Avg Dispo", get: (r) => (r.attendanceDays ? r.avgDispoSec : null), cell: (r) => (r.attendanceDays ? secToHms(r.avgDispoSec) : "—"), className: TD },
+    { key: "acht", label: "ACHT", get: (r) => (r.attendanceDays ? r.acht : null), cell: (r) => (r.attendanceDays ? r.acht : "—"), className: TD },
+    { key: "occupancy", label: "Occup %", get: (r) => (r.attendanceDays ? r.occupancyPct : null), cell: (r) => (r.attendanceDays ? `${r.occupancyPct}%` : "—"), className: TD },
+    { key: "attendance", label: "Att. days", get: (r) => r.attendanceDays || null, cell: (r) => r.attendanceDays || "—", className: TD },
+    { key: "allocation", label: "Total Allocation", get: (r) => r.allocation, cell: (r) => fmtN(r.allocation), className: `${TD} bg-[#8fd6c4]/25` },
+    { key: "connectedPct", label: "Connected %", get: (r) => r.connectedPct, cell: (r) => `${r.connectedPct}%`, className: `${TD} bg-[#8fd6c4]/25` },
+    { key: "convPct", label: "Conv %", get: (r) => r.convPct, cell: (r) => `${r.convPct}%`, className: `${TD} bg-[#8fd6c4]/25 font-semibold` },
+  ];
+}
+
+function buildPeriodCols(columns: CartColumn[]): AgentCol[] {
+  return columns.map((c) => ({
+    key: `period:${c.key}`, label: c.label,
+    get: (r: AgentRow) => r.byPeriod[c.key]?.revenue ?? null,
+    cell: (r: AgentRow) => (r.byPeriod[c.key]?.revenue ? formatINR(r.byPeriod[c.key].revenue) : "—"),
+    className: `${TD} ${c.kind === "mtd" ? "bg-[#f4b183]/40 font-bold" : c.kind === "week" ? "bg-[#fbe5d6]/60" : "bg-[#deebf7]/60"}`,
+  }));
+}
+
 export function BellavitaCartAgents({
   apiPath, from, to,
 }: { apiPath: string; from: string; to: string }) {
@@ -80,6 +136,15 @@ export function BellavitaCartAgents({
 
   const top = useMemo(() => (data?.agents ?? []).filter((a) => a.saleMade > 0).slice(0, 3), [data]);
   const maxRevenue = Math.max(1, ...(data?.agents ?? []).map((a) => a.revenue));
+
+  // Excel-style: every header sorts (click) and filters (funnel icon), layered on top of the search/status quick filter above.
+  const fixedCols = useMemo(() => buildFixedCols(maxRevenue), [maxRevenue]);
+  const periodCols = useMemo(() => buildPeriodCols(data?.columns ?? []), [data?.columns]);
+  const allCols = useMemo(() => [...fixedCols, ...periodCols], [fixedCols, periodCols]);
+  const colFilterCols: Array<FilterColumn<AgentRow>> = useMemo(() => allCols.map((c) => ({ key: c.key, get: c.get })), [allCols]);
+  const colFilters = useColumnFilters(rows, colFilterCols);
+  const colGetter = useCallback((r: AgentRow, key: string) => allCols.find((c) => c.key === key)?.get(r), [allCols]);
+  const { sorted: sortedRows, sortKey, sortDir, toggleSort } = useSortableRows(colFilters.filtered, colGetter);
 
   const exportSlides = useMemo<ExportSlide[]>(() => {
     if (!data) return [];
@@ -206,7 +271,13 @@ export function BellavitaCartAgents({
       </div>
 
       <SectionCard icon={Users} title="Agent-wise Abandon Cart" tone="rose"
-        footnote="Times are averages per agent per day. Occupancy = (talk + dispo time) / net login time. Sales are unique orders; COD/Paid/RTO count those orders. Revenue by period is on the right.">
+        footnote="Times are averages per agent per day. Occupancy = (talk + dispo time) / net login time. Sales are unique orders; COD/Paid/RTO count those orders. Revenue by period is on the right."
+        action={colFilters.activeCount > 0 ? (
+          <button type="button" onClick={colFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {colFilters.activeCount} filter{colFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="border-collapse text-center text-xs tabular-nums">
             <thead>
@@ -215,63 +286,26 @@ export function BellavitaCartAgents({
                 <th colSpan={data.columns.length} className="border-b border-l border-white/60 bg-[#7030a0] px-3 py-2 text-sm font-bold text-white">Revenue by period</th>
               </tr>
               <tr className="bg-slate-50 text-slate-600">
-                {["Emp Id", "Agent Name", "DOJ", "Tenure", "Bucket", "Status", "TL Name",
-                  "Sale Made", "COD", "Paid", "RTO", "COD %", "Paid %", "RTO Amount", "Revenue", "RTO %", "Sales/day",
-                  "Answered", "Avg Login", "Avg Net Login", "Avg Break", "Avg Talk", "Avg Dispo", "ACHT", "Occup %", "Att. days",
-                  "Total Allocation", "Connected %", "Conv %"].map((h) => <th key={h} className={TH}>{h}</th>)}
-                {data.columns.map((c) => <th key={c.key} className={`${TH} bg-[#e4d3f0] text-slate-800`}>{c.label}</th>)}
+                {fixedCols.map((c) => (
+                  <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={colFilters} className={TH} />
+                ))}
+                {periodCols.map((c) => (
+                  <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={colFilters} className={`${TH} bg-[#e4d3f0] text-slate-800`} />
+                ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((a) => (
+              {sortedRows.map((a) => (
                 <tr
                   key={a.empId} role="button" tabIndex={0} aria-label={`Open ${a.name}`} onClick={() => setOpen(a.empId)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(a.empId); } }}
                   className="cursor-pointer bg-white transition-colors hover:bg-fuchsia-50/50 focus:bg-fuchsia-50/60 focus:outline-none"
                 >
-                  <td className={`${TD} font-medium text-slate-500`}>{a.empId}</td>
-                  <td className={`${TD} text-left font-semibold text-slate-800`}>{a.name}</td>
-                  <td className={TD}>{a.doj ? fmtDate(a.doj) : "—"}</td>
-                  <td className={TD}>{a.tenureDays ?? "—"}</td>
-                  <td className={TD}>{a.bucket ?? "—"}</td>
-                  <td className={TD}><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_STYLE[a.status]}`}>{a.status}</span></td>
-                  <td className={TD}>{a.tl || "—"}</td>
-                  <td className={`${TD} font-semibold text-slate-800`}>{fmtN(a.saleMade)}</td>
-                  <td className={TD}>{a.cod}</td>
-                  <td className={TD}>{a.paid}</td>
-                  <td className={TD}>{a.rto}</td>
-                  <td className={TD}>{a.codPct}%</td>
-                  <td className={TD}>{a.paidPct}%</td>
-                  <td className={TD}>{formatINR(a.rtoAmount)}</td>
-                  <td className={`${TD} bg-[#f4b183]/40 font-bold text-slate-900`}>
-                    <div className="flex items-center gap-2">
-                      <span>{formatINR(a.revenue)}</span>
-                      <span className="hidden h-1.5 w-14 overflow-hidden rounded-full bg-white/70 md:block"><span className="block h-full rounded-full bg-emerald-500" style={{ width: `${(a.revenue / maxRevenue) * 100}%` }} /></span>
-                    </div>
-                  </td>
-                  <td className={TD}>{a.rtoPct}%</td>
-                  <td className={TD}>{a.avgSalePerDay}</td>
-                  <td className={TD}>{fmtN(a.calls)}</td>
-                  <td className={TD}>{a.attendanceDays ? secToHms(a.avgLoginSec) : "—"}</td>
-                  <td className={TD}>{a.attendanceDays ? secToHms(a.avgNetLoginSec) : "—"}</td>
-                  <td className={TD}>{a.attendanceDays ? secToHms(a.avgBreakSec) : "—"}</td>
-                  <td className={TD}>{a.attendanceDays ? secToHms(a.avgTalkSec) : "—"}</td>
-                  <td className={TD}>{a.attendanceDays ? secToHms(a.avgDispoSec) : "—"}</td>
-                  <td className={TD}>{a.attendanceDays ? a.acht : "—"}</td>
-                  <td className={TD}>{a.attendanceDays ? `${a.occupancyPct}%` : "—"}</td>
-                  <td className={TD}>{a.attendanceDays || "—"}</td>
-                  <td className={`${TD} bg-[#8fd6c4]/25`}>{fmtN(a.allocation)}</td>
-                  <td className={`${TD} bg-[#8fd6c4]/25`}>{a.connectedPct}%</td>
-                  <td className={`${TD} bg-[#8fd6c4]/25 font-semibold`}>{a.convPct}%</td>
-                  {data.columns.map((c) => (
-                    <td key={c.key} className={`${TD} ${c.kind === "mtd" ? "bg-[#f4b183]/40 font-bold" : c.kind === "week" ? "bg-[#fbe5d6]/60" : "bg-[#deebf7]/60"}`}>
-                      {a.byPeriod[c.key]?.revenue ? formatINR(a.byPeriod[c.key].revenue) : "—"}
-                    </td>
-                  ))}
+                  {allCols.map((c) => <td key={c.key} className={c.className}>{c.cell(a)}</td>)}
                 </tr>
               ))}
-              {rows.length === 0 && (
-                <tr><td colSpan={29 + data.columns.length} className="py-8 text-center text-slate-400">No agents match this filter.</td></tr>
+              {sortedRows.length === 0 && (
+                <tr><td colSpan={29 + data.columns.length} className="py-8 text-center text-slate-400">{rows.length === 0 ? "No agents match this filter." : "No agents match the column filters."}</td></tr>
               )}
             </tbody>
           </table>

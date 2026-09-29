@@ -11,6 +11,8 @@ import {
   Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
   currentMonthRange, formatINR, formatShortDate, formatDDMMYYYY, type ExportSlide,
 } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 interface CartRecord {
   id: number;
@@ -52,6 +54,42 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "agents", label: "Agent-wise" },
   { key: "records", label: "Records" },
 ];
+
+type DispositionRow = DashboardData["dispositionBreakdown"][number];
+type CartAgentRow = DashboardData["agentPerformance"][number];
+
+interface HeaderCol<T> extends FilterColumn<T> {
+  label: string;
+  className: string;
+}
+
+const DISPOSITION_COLS: Array<HeaderCol<DispositionRow>> = [
+  { key: "disposition", label: "Disposition", get: (r) => r.disposition, className: "py-2 pr-3 font-semibold" },
+  { key: "count", label: "Count", get: (r) => r.count, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "value", label: "Value", get: (r) => r.value, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "pct", label: "Share", get: (r) => r.pct, className: "py-2 pr-0 text-right font-semibold" },
+];
+const dispositionColGetter = (r: DispositionRow, key: string) => DISPOSITION_COLS.find((c) => c.key === key)?.get(r);
+
+const CART_AGENT_COLS: Array<HeaderCol<CartAgentRow>> = [
+  { key: "agent", label: "Agent", get: (r) => r.agent, className: "py-2 pr-3 font-semibold" },
+  { key: "cartCount", label: "Carts Handled", get: (r) => r.cartCount, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "cartValue", label: "Cart Value", get: (r) => r.cartValue, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "topDisposition", label: "Top Disposition", get: (r) => r.topDisposition, className: "py-2 pr-0 font-semibold" },
+];
+const cartAgentColGetter = (r: CartAgentRow, key: string) => CART_AGENT_COLS.find((c) => c.key === key)?.get(r);
+
+const RECORD_COLS: Array<HeaderCol<CartRecord>> = [
+  { key: "cartId", label: "Cart ID", get: (r) => r.cartId, className: "py-2 pr-3 font-semibold" },
+  { key: "callDate", label: "Call Date", get: (r) => r.callDate, className: "py-2 pr-3 font-semibold" },
+  { key: "customerName", label: "Customer", get: (r) => r.customerName, className: "py-2 pr-3 font-semibold" },
+  { key: "phoneNumber", label: "Phone", get: (r) => r.phoneNumber, className: "py-2 pr-3 font-semibold" },
+  { key: "amount", label: "Amount", get: (r) => r.amount, className: "py-2 pr-3 text-right font-semibold" },
+  { key: "agent", label: "Agent", get: (r) => r.agent, className: "py-2 pr-3 font-semibold" },
+  { key: "disposition", label: "Disposition", get: (r) => r.disposition, className: "py-2 pr-3 font-semibold" },
+  { key: "status", label: "Status", get: (r) => r.status, className: "py-2 pr-0 font-semibold" },
+];
+const recordColGetter = (r: CartRecord, key: string) => RECORD_COLS.find((c) => c.key === key)?.get(r);
 
 /** Deterministic color coding for open-ended categorical values (disposition,
  * status, sub-disposition) -- since db_masmis.neemans_cart currently holds 0
@@ -157,6 +195,20 @@ export function NeemansCartDashboard() {
       r.disposition.toLowerCase().includes(q) ||
       r.status.toLowerCase().includes(q));
   }, [data, recordSearch]);
+
+  // Excel-style: every header sorts (click) and filters (funnel icon); filters AND together, then the sort applies.
+  const dispositionRows = useMemo(() => data?.dispositionBreakdown ?? [], [data]);
+  const dispositionFilters = useColumnFilters(dispositionRows, DISPOSITION_COLS);
+  const { sorted: sortedDisposition, sortKey: dispositionSortKey, sortDir: dispositionSortDir, toggleSort: toggleDispositionSort } =
+    useSortableRows(dispositionFilters.filtered, dispositionColGetter);
+
+  const cartAgentFilters = useColumnFilters(filteredAgents, CART_AGENT_COLS);
+  const { sorted: sortedCartAgents, sortKey: cartAgentSortKey, sortDir: cartAgentSortDir, toggleSort: toggleCartAgentSort } =
+    useSortableRows(cartAgentFilters.filtered, cartAgentColGetter);
+
+  const recordFilters = useColumnFilters(filteredRecords, RECORD_COLS);
+  const { sorted: sortedRecords, sortKey: recordSortKey, sortDir: recordSortDir, toggleSort: toggleRecordSort } =
+    useSortableRows(recordFilters.filtered, recordColGetter);
 
   /** Export slides for "Download Snap"/"Download Excel" — one per tab, each
    * mirroring exactly what that tab renders below (same fields, same
@@ -287,18 +339,24 @@ export function NeemansCartDashboard() {
       {/* Disposition + Status breakdown */}
       <div className="grid gap-4 lg:grid-cols-2">
         <SectionCard icon={Layers} title="Disposition-wise Breakdown" tone="teal">
+          {dispositionFilters.activeCount > 0 && (
+            <div className="mb-2 flex justify-end">
+              <button type="button" onClick={dispositionFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {dispositionFilters.activeCount} filter{dispositionFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Disposition</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Count</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Value</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Share</th>
+                  {DISPOSITION_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={dispositionSortKey} sortDir={dispositionSortDir} onSort={toggleDispositionSort} filters={dispositionFilters} className={c.className} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {data.dispositionBreakdown.map((d) => (
+                {sortedDisposition.map((d) => (
                   <tr key={d.disposition} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-teal-50/40">
                     <td className="py-2.5 pr-3"><Badge label={d.disposition} /></td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{d.count.toLocaleString("en-IN")}</td>
@@ -306,8 +364,8 @@ export function NeemansCartDashboard() {
                     <td className="py-2.5 pr-0 text-right font-semibold text-slate-800">{d.pct}%</td>
                   </tr>
                 ))}
-                {data.dispositionBreakdown.length === 0 && (
-                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                {sortedDisposition.length === 0 && (
+                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">{data.dispositionBreakdown.length === 0 ? "No data for this period." : "No dispositions match the filters."}</td></tr>
                 )}
               </tbody>
             </table>
@@ -352,6 +410,11 @@ export function NeemansCartDashboard() {
           <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500">
             <ListFilter className="h-3 w-3" />{filteredAgents.length} of {data.agentPerformance.length} agents
           </span>
+          {cartAgentFilters.activeCount > 0 && (
+            <button type="button" onClick={cartAgentFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {cartAgentFilters.activeCount} filter{cartAgentFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          )}
         </div>
 
         <SectionCard icon={Users} title="Agent-wise Cart Handling" tone="violet">
@@ -359,14 +422,13 @@ export function NeemansCartDashboard() {
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Agent</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Carts Handled</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Cart Value</th>
-                  <th className="py-2 pr-0 font-semibold">Top Disposition</th>
+                  {CART_AGENT_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={cartAgentSortKey} sortDir={cartAgentSortDir} onSort={toggleCartAgentSort} filters={cartAgentFilters} className={c.className} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredAgents.map((a) => (
+                {sortedCartAgents.map((a) => (
                   <tr key={a.agent} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-violet-50/40">
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{a.agent}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{a.cartCount.toLocaleString("en-IN")}</td>
@@ -374,7 +436,7 @@ export function NeemansCartDashboard() {
                     <td className="py-2.5 pr-0"><Badge label={a.topDisposition} /></td>
                   </tr>
                 ))}
-                {filteredAgents.length === 0 && (
+                {sortedCartAgents.length === 0 && (
                   <tr><td colSpan={4} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
                 )}
               </tbody>
@@ -400,6 +462,11 @@ export function NeemansCartDashboard() {
           <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500">
             <ListFilter className="h-3 w-3" />{filteredRecords.length} of {data.records.length} shown
           </span>
+          {recordFilters.activeCount > 0 && (
+            <button type="button" onClick={recordFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {recordFilters.activeCount} filter{recordFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          )}
         </div>
 
         <SectionCard
@@ -416,18 +483,13 @@ export function NeemansCartDashboard() {
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Cart ID</th>
-                  <th className="py-2 pr-3 font-semibold">Call Date</th>
-                  <th className="py-2 pr-3 font-semibold">Customer</th>
-                  <th className="py-2 pr-3 font-semibold">Phone</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Amount</th>
-                  <th className="py-2 pr-3 font-semibold">Agent</th>
-                  <th className="py-2 pr-3 font-semibold">Disposition</th>
-                  <th className="py-2 pr-0 font-semibold">Status</th>
+                  {RECORD_COLS.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={recordSortKey} sortDir={recordSortDir} onSort={toggleRecordSort} filters={recordFilters} className={c.className} />
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredRecords.map((r) => (
+                {sortedRecords.map((r) => (
                   <tr key={r.id} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-violet-50/40">
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{r.cartId}</td>
                     <td className="py-2.5 pr-3 text-slate-500">{formatDDMMYYYY(r.callDate)}</td>
@@ -439,7 +501,7 @@ export function NeemansCartDashboard() {
                     <td className="py-2.5 pr-0"><Badge label={r.status} /></td>
                   </tr>
                 ))}
-                {filteredRecords.length === 0 && (
+                {sortedRecords.length === 0 && (
                   <tr><td colSpan={8} className="py-6 text-center text-slate-400">No cart records match this search.</td></tr>
                 )}
               </tbody>
