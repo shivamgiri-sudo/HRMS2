@@ -83,6 +83,10 @@ export interface PayslipData {
     taxable: number;
     reason?: string | null;
   }>;
+  bank_name?: string | null;
+  /** Financial-year-to-date total per component_code, summed across finalized
+   *  runs from the FY's April up to and including this payslip's run_month. */
+  ytd?: Record<string, number>;
 }
 
 export const payslipService = {
@@ -95,7 +99,7 @@ export const payslipService = {
     runId: string,
     employeeId: string,
     generatedBy: string,
-    req?: Request
+    req?: Request,
   ): Promise<PayslipData> {
     // Fetch the prep line
     const [lineRows] = await db.execute<RowDataPacket[]>(
@@ -104,7 +108,7 @@ export const payslipService = {
          JOIN salary_prep_run  spr ON spr.id = spl.run_id
         WHERE spl.run_id = ? AND spl.employee_id = ?
         LIMIT 1`,
-      [runId, employeeId]
+      [runId, employeeId],
     );
     const line = (lineRows as any[])[0];
     if (!line) {
@@ -129,7 +133,7 @@ export const payslipService = {
          generated_at = CURRENT_TIMESTAMP,
          generated_by = VALUES(generated_by),
          acknowledged_at = NULL`,
-      [id, line.id, employeeId, line.run_month, payslipRef, generatedBy]
+      [id, line.id, employeeId, line.run_month, payslipRef, generatedBy],
     );
 
     void logSensitiveAction({
@@ -217,6 +221,7 @@ export const payslipService = {
               -- and the full number still exists solely in /payment-file.
               ebd_pay.account_number      AS pay_account_raw,
               ebd_pay.account_number_enc  AS pay_account_enc,
+              ebd_pay.bank_name,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
               d.designation_name  AS designation,
               dept.dept_name      AS department,
@@ -255,27 +260,39 @@ export const payslipService = {
           AND ebd_pay.active_status = 1
         WHERE spl.employee_id = ? AND spl.run_id = ?
         LIMIT 1`,
-      [employeeId, runId]
+      [employeeId, runId],
     );
     const rec = (rows as PayslipData[])[0];
     if (rec) {
       // Mask the PAID account here rather than in SQL: employee_bank_detail.account_number is
       // varbinary and about a third of rows hold ciphertext, so RIGHT() on it in SQL prints
       // garbage. resolveAccountNumberWithConflict handles both encodings.
-      const raw = (rec as unknown as { pay_account_raw?: Buffer | string | null }).pay_account_raw ?? null;
-      const enc = (rec as unknown as { pay_account_enc?: string | null }).pay_account_enc ?? null;
+      const raw =
+        (rec as unknown as { pay_account_raw?: Buffer | string | null })
+          .pay_account_raw ?? null;
+      const enc =
+        (rec as unknown as { pay_account_enc?: string | null })
+          .pay_account_enc ?? null;
       let masked: string | null = null;
       if (raw || enc) {
-        const resolved = resolveAccountNumberWithConflict({ account_number: raw, account_number_enc: enc });
+        const resolved = resolveAccountNumberWithConflict({
+          account_number: raw,
+          account_number_enc: enc,
+        });
         const value = String(resolved?.resolved ?? "").trim();
         if (value.length >= 4) masked = `XXXX${value.slice(-4)}`;
       }
-      (rec as unknown as { bank_account_masked: string | null }).bank_account_masked = masked;
+      (
+        rec as unknown as { bank_account_masked: string | null }
+      ).bank_account_masked = masked;
       delete (rec as unknown as Record<string, unknown>).pay_account_raw;
       delete (rec as unknown as Record<string, unknown>).pay_account_enc;
     }
     if (!rec) throw new Error("Payslip not found");
-    (rec as any).pan_number = resolvePii((rec as any).pan_number_encrypted, (rec as any).pan_number).value;
+    (rec as any).pan_number = resolvePii(
+      (rec as any).pan_number_encrypted,
+      (rec as any).pan_number,
+    ).value;
     delete (rec as any).pan_number_encrypted;
 
     // paid_working_days / eligible_weekoff_days / final_payable_days were never
@@ -292,25 +309,31 @@ export const payslipService = {
     const storedPaidDays = Number((rec as any).paid_working_days ?? 0);
     const storedWeekoffDays = Number((rec as any).eligible_weekoff_days ?? 0);
     const storedPayableDays = Number((rec as any).final_payable_days ?? 0);
-    if (storedPaidDays === 0 && storedWeekoffDays === 0 && storedPayableDays === 0
-        && (workingDays > 0 || presentDays > 0)) {
+    if (
+      storedPaidDays === 0 &&
+      storedWeekoffDays === 0 &&
+      storedPayableDays === 0 &&
+      (workingDays > 0 || presentDays > 0)
+    ) {
       const derivedWeekoffDays = Math.max(calendarDays - workingDays, 0);
       // present_days + leave_days is the same fallback the payroll engine itself uses
       // for paidBase (payrollCalculate.service.ts), but present_days can already run
       // past the calendar length on this legacy attendance data (e.g. 31 present + 2
       // leave in a 30-day month) — clamped to calendarDays so the tile never shows more
       // paid/payable days than the month it is describing actually has.
-      const derivedPaidDays = calendarDays > 0
-        ? Math.min(presentDays + leaveDays, calendarDays)
-        : presentDays + leaveDays;
+      const derivedPaidDays =
+        calendarDays > 0
+          ? Math.min(presentDays + leaveDays, calendarDays)
+          : presentDays + leaveDays;
       (rec as any).paid_working_days = derivedPaidDays;
       (rec as any).eligible_weekoff_days = derivedWeekoffDays;
       // Holidays are not separable from weekoffs in this legacy data — no column
       // isolates them — so leave null (renders as "—") rather than guessing a split.
       (rec as any).eligible_holiday_days = null;
-      (rec as any).final_payable_days = calendarDays > 0
-        ? Math.min(derivedPaidDays + derivedWeekoffDays, calendarDays)
-        : derivedPaidDays + derivedWeekoffDays;
+      (rec as any).final_payable_days =
+        calendarDays > 0
+          ? Math.min(derivedPaidDays + derivedWeekoffDays, calendarDays)
+          : derivedPaidDays + derivedWeekoffDays;
     }
 
     const [components] = await db.execute<RowDataPacket[]>(
@@ -318,14 +341,14 @@ export const payslipService = {
          FROM salary_prep_line_component
         WHERE line_id = ?
         ORDER BY component_type, component_code`,
-      [rec.prep_line_id]
+      [rec.prep_line_id],
     );
     // Deduplicate by component_code+type — DB may contain duplicate rows from
     // recalculations run before the unique key was applied
     const seenComponents = new Set<string>();
     rec.components = (components as any[])
-      .filter(c => {
-        const k = `${c.component_code}:${(c.component_type ?? '').toLowerCase()}`;
+      .filter((c) => {
+        const k = `${c.component_code}:${(c.component_type ?? "").toLowerCase()}`;
         if (seenComponents.has(k)) return false;
         seenComponents.add(k);
         return true;
@@ -335,17 +358,75 @@ export const payslipService = {
         amount: Number(component.amount ?? 0),
         taxable: Number(component.taxable ?? 0),
       }));
-    rec.earnings = rec.components
-      .filter((component) => (component.component_type || "").toLowerCase() === "earning")
-    rec.deductions = rec.components
-      .filter((component) => (component.component_type || "").toLowerCase() === "deduction")
+    rec.earnings = rec.components.filter(
+      (component) =>
+        (component.component_type || "").toLowerCase() === "earning",
+    );
+    rec.deductions = rec.components.filter(
+      (component) =>
+        (component.component_type || "").toLowerCase() === "deduction",
+    );
     // component_type is enum('earning','deduction','employer_cost'). The third
     // member was dropped here, so employer PF, employer ESI and EPF admin charges
     // — real money the company pays on the employee's behalf, and the largest
     // single omission from the payslip — reached no UI at all.
-    rec.employer_costs = rec.components
-      .filter((component) => (component.component_type || "").toLowerCase() === "employer_cost")
+    rec.employer_costs = rec.components.filter(
+      (component) =>
+        (component.component_type || "").toLowerCase() === "employer_cost",
+    );
+
+    if (rec.run_month) {
+      rec.ytd = await this.getYtdComponents(employeeId, rec.run_month);
+    }
+
     return rec;
+  },
+
+  /**
+   * Financial-year-to-date total per component_code for one employee, summed
+   * across finalized runs from the FY's April up to and including
+   * `uptoRunMonth` (inclusive). Mirrors the canonical-row dedup pattern in
+   * form16-data.service.ts's actualsForYear() so a corrected/re-run month is
+   * not double-counted, extended to component-level (component_code +
+   * component_type) instead of the flat salary_prep_line columns.
+   */
+  async getYtdComponents(
+    employeeId: string,
+    uptoRunMonth: string,
+  ): Promise<Record<string, number>> {
+    const [yr, mo] = uptoRunMonth.split("-").map(Number);
+    const fyStart = mo >= 4 ? yr : yr - 1;
+    const fyFirstMonth = `${fyStart}-04`;
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT component_code, COALESCE(SUM(amount), 0) AS amount
+         FROM (
+           SELECT splc.component_code, splc.amount,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY spr.run_month, splc.component_code, splc.component_type
+                    ORDER BY FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
+                             spr.created_at DESC
+                  ) AS rn
+             FROM salary_prep_line spl
+             JOIN salary_prep_run spr ON spr.id = spl.run_id
+             JOIN salary_prep_line_component splc ON splc.line_id = spl.id
+            WHERE spl.employee_id = ?
+              AND spr.run_month BETWEEN ? AND ?
+              AND spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed')
+              AND spl.status NOT IN ('excluded', 'blocked')
+         ) canonical
+        WHERE canonical.rn = 1
+        GROUP BY component_code`,
+      [employeeId, fyFirstMonth, uptoRunMonth],
+    );
+    const ytd: Record<string, number> = {};
+    for (const row of rows as Array<{
+      component_code: string;
+      amount: number;
+    }>) {
+      ytd[row.component_code] = Number(row.amount ?? 0);
+    }
+    return ytd;
   },
 
   /**
@@ -354,7 +435,7 @@ export const payslipService = {
    */
   async acknowledgePayslip(
     payslipId: string,
-    requestingEmployeeId: string
+    requestingEmployeeId: string,
   ): Promise<PayslipData> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT sp.*, spl.run_id
@@ -364,20 +445,22 @@ export const payslipService = {
             = CONVERT(sp.prep_line_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
         WHERE sp.id = ?
         LIMIT 1`,
-      [payslipId]
+      [payslipId],
     );
     const rec = (rows as any[])[0];
     if (!rec) throw new Error("Payslip not found");
 
     if (rec.employee_id !== requestingEmployeeId) {
-      const err: any = new Error("Forbidden: you may only acknowledge your own payslip");
+      const err: any = new Error(
+        "Forbidden: you may only acknowledge your own payslip",
+      );
       err.statusCode = 403;
       throw err;
     }
 
     await db.execute(
       "UPDATE salary_payslip SET acknowledged_at = NOW() WHERE id = ?",
-      [payslipId]
+      [payslipId],
     );
 
     const payslip = await this.getPayslip(rec.employee_id, rec.run_id);

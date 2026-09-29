@@ -54,6 +54,16 @@ export interface MasCallnetPayslipV2FormatData {
   otherDed: number;
   netSalary: number;
   netSalaryWords: string;
+  /** Financial-year-to-date total per line item, aligned to the same slots as
+   *  the current-month amounts above. Omit a key (or the whole object) when
+   *  the figure is not available — the column then prints "-" rather than a
+   *  fabricated number. */
+  ytd?: Partial<{
+    basic: number; hra: number; conv: number; pa: number; ma: number; sa: number;
+    oa: number; arrear: number; bonus: number; incentive: number;
+    pf: number; esic: number; tds: number; lwpDeduction: number; loan: number;
+    adDed: number; otherDed: number;
+  }>;
 }
 
 const formatINR = (amount: number): string =>
@@ -165,31 +175,44 @@ export async function generateMasCallnetPayslipV2Format(data: MasCallnetPayslipV
   currentY = (doc as any).lastAutoTable.finalY + 3;
 
   // ── EARNINGS / DEDUCTIONS — one row per component, side by side ────────────
-  type Line = [string, number];
+  // YTD column shows "-" rather than 0.00 when the caller has no figure for
+  // that line, so an absent YTD reads as "not available", not "zero paid".
+  type Line = [string, number, number | undefined];
+  const ytd = data.ytd ?? {};
   const earnings: Line[] = [
-    ["Basic", data.basic],
-    ["House Rent Allowance", data.hra],
-    ["Conveyance Allowance", data.conv],
-    ["Personal Allowance", data.pa],
-    ["Medical Allowance", data.ma],
-    ["Special Allowance", data.sa],
-    ["Other Allowance", data.oa],
-    ["Arrear", data.arrear],
-    ["Bonus", data.bonus],
-    ["Incentive", data.incentive],
+    ["Basic", data.basic, ytd.basic],
+    ["House Rent Allowance", data.hra, ytd.hra],
+    ["Conveyance Allowance", data.conv, ytd.conv],
+    ["Personal Allowance", data.pa, ytd.pa],
+    ["Medical Allowance", data.ma, ytd.ma],
+    ["Special Allowance", data.sa, ytd.sa],
+    ["Other Allowance", data.oa, ytd.oa],
+    ["Arrear", data.arrear, ytd.arrear],
+    ["Bonus", data.bonus, ytd.bonus],
+    ["Incentive", data.incentive, ytd.incentive],
   ].filter(([, amt]) => amt !== 0) as Line[];
   const deductions: Line[] = [
-    ["Ee PF Contribution", data.pf],
-    ["ESIC", data.esic],
-    ["Income Tax (TDS)", data.tds],
-    ["LWP Deduction", data.lwpDeduction],
-    ["Loan Recovery", data.loan],
-    ["Advance Deduction", data.adDed],
-    ["Other Deduction", data.otherDed],
+    ["Ee PF Contribution", data.pf, ytd.pf],
+    ["ESIC", data.esic, ytd.esic],
+    ["Income Tax (TDS)", data.tds, ytd.tds],
+    ["LWP Deduction", data.lwpDeduction, ytd.lwpDeduction],
+    ["Loan Recovery", data.loan, ytd.loan],
+    ["Advance Deduction", data.adDed, ytd.adDed],
+    ["Other Deduction", data.otherDed, ytd.otherDed],
   ].filter(([, amt]) => amt !== 0) as Line[];
 
   const totalEarnings = earnings.reduce((t, [, a]) => t + a, 0);
   const totalDeductions = deductions.reduce((t, [, a]) => t + a, 0);
+  const hasEarningsYtd = earnings.some(([, , y]) => y !== undefined);
+  const hasDeductionsYtd = deductions.some(([, , y]) => y !== undefined);
+  const totalEarningsYtd = hasEarningsYtd
+    ? earnings.reduce((t, [, , y]) => t + (y ?? 0), 0)
+    : undefined;
+  const totalDeductionsYtd = hasDeductionsYtd
+    ? deductions.reduce((t, [, , y]) => t + (y ?? 0), 0)
+    : undefined;
+
+  const ytdCell = (y: number | undefined) => (y === undefined ? "-" : formatINR(y));
 
   const rowCount = Math.max(earnings.length, deductions.length, 1);
   const body: any[] = [];
@@ -197,15 +220,19 @@ export async function generateMasCallnetPayslipV2Format(data: MasCallnetPayslipV
     body.push([
       earnings[i]?.[0] ?? "",
       earnings[i] ? formatINR(earnings[i][1]) : "",
+      earnings[i] ? ytdCell(earnings[i][2]) : "",
       deductions[i]?.[0] ?? "",
       deductions[i] ? formatINR(deductions[i][1]) : "",
+      deductions[i] ? ytdCell(deductions[i][2]) : "",
     ]);
   }
   body.push([
     { content: "Total Earnings", styles: { fontStyle: "bold" as const, fillColor: MCN_LIGHT_BLUE } },
     { content: formatINR(totalEarnings), styles: { fontStyle: "bold" as const, fillColor: MCN_LIGHT_BLUE, halign: "right" as const } },
+    { content: ytdCell(totalEarningsYtd), styles: { fontStyle: "bold" as const, fillColor: MCN_LIGHT_BLUE, halign: "right" as const } },
     { content: "Total Deductions", styles: { fontStyle: "bold" as const, fillColor: [255, 235, 235] as [number, number, number] } },
     { content: formatINR(totalDeductions), styles: { fontStyle: "bold" as const, fillColor: [255, 235, 235] as [number, number, number], halign: "right" as const } },
+    { content: ytdCell(totalDeductionsYtd), styles: { fontStyle: "bold" as const, fillColor: [255, 235, 235] as [number, number, number], halign: "right" as const } },
   ]);
 
   autoTable(doc, {
@@ -213,26 +240,30 @@ export async function generateMasCallnetPayslipV2Format(data: MasCallnetPayslipV
     head: [[
       { content: "Earnings", styles: { fontStyle: "bold" as const, fillColor: MCN_NAVY, textColor: WHITE as [number, number, number] } },
       { content: "Amount (Rs.)", styles: { fontStyle: "bold" as const, fillColor: MCN_NAVY, textColor: WHITE as [number, number, number], halign: "right" as const } },
+      { content: "YTD (Rs.)", styles: { fontStyle: "bold" as const, fillColor: MCN_NAVY, textColor: WHITE as [number, number, number], halign: "right" as const } },
       { content: "Deductions", styles: { fontStyle: "bold" as const, fillColor: MCN_RED, textColor: WHITE as [number, number, number] } },
       { content: "Amount (Rs.)", styles: { fontStyle: "bold" as const, fillColor: MCN_RED, textColor: WHITE as [number, number, number], halign: "right" as const } },
+      { content: "YTD (Rs.)", styles: { fontStyle: "bold" as const, fillColor: MCN_RED, textColor: WHITE as [number, number, number], halign: "right" as const } },
     ]],
     body,
     theme: "grid",
     margin: TABLE_MARGIN,
     styles: {
-      fontSize: 8.5,
-      cellPadding: 1.6,
+      fontSize: 7.5,
+      cellPadding: 1.4,
       lineColor: [200, 200, 200] as [number, number, number],
       lineWidth: 0.1,
       textColor: BLACK,
       valign: "middle",
     },
-    // 55 + 38 + 55 + 38 = 186 = CONTENT_W
+    // 41 + 26 + 26 + 41 + 26 + 26 = 186 = CONTENT_W
     columnStyles: {
-      0: { cellWidth: 55 },
-      1: { cellWidth: 38, halign: "right" },
-      2: { cellWidth: 55 },
-      3: { cellWidth: 38, halign: "right" },
+      0: { cellWidth: 41 },
+      1: { cellWidth: 26, halign: "right" },
+      2: { cellWidth: 26, halign: "right" },
+      3: { cellWidth: 41 },
+      4: { cellWidth: 26, halign: "right" },
+      5: { cellWidth: 26, halign: "right" },
     },
   });
 
@@ -255,7 +286,9 @@ export async function generateMasCallnetPayslipV2Format(data: MasCallnetPayslipV
   doc.setFontSize(9);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...MCN_NAVY);
-  doc.text(`(Rupees ${data.netSalaryWords} Only)`, MARGIN_X, currentY);
+  // netSalaryWords (numberToWords()) already ends in "Only" — appending it again
+  // here previously printed "... Only Only)".
+  doc.text(`(Rupees ${data.netSalaryWords})`, MARGIN_X, currentY);
   currentY += 8;
 
   doc.setFontSize(7.5);
