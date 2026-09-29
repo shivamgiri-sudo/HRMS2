@@ -270,3 +270,18 @@ Verified on production data via the localhost preview API + Playwright (zero con
 | Misleading indicators | "100% HEALTHY" for a process with zero targets now reads "NO TARGETS SET"; green pulsing LIVE pill now amber "DATA 20d OLD" when the feed is stale |
 
 **Not verified:** a real production login / role scoping (harness used a demo super-admin token); dark mode; the summary-tile popup (CEO strip) was widened by CSS but my automated click on it did not open it, so its width was not measured; the `/portfolio` endpoint has no unit test (no DB in tests), only live-data checks.
+
+---
+
+## 2026-09-30 — Business datapoints for every Process Performance V2 company, day-by-day people/team-leader drill-down, Operating % fix
+
+**Method:** Same as the entry above (real backend routes + production database read-only through a temporary harness that rejected every non-SELECT, demo-token auth, Chrome DevTools MCP + headless Chrome; harness removed afterwards). Dialler-based sources and the P&L calculation could not run from the harness (no dialler credentials; the calculation exceeds a remote link's limit), so those were verified on the production server itself by running the deployed service code read-only.
+
+| Area | Result |
+|---|---|
+| Business datapoints (14 processes) | Live: Housing Owner ₹32.1L / 845 sales; Housing Premium ₹23.5L; Appreciate Wealth ₹26.2L; Lawyer Panel 57,744 + 37,055 calls; Bella-Vita turnover ₹42.83L, 4,727 sales, ₹906 AOV, 65.5% prepaid, 13.6% RTO, identical to the TPZ Overall Dashboard; Bla Bli Blu falls back to its last upload month (Aug). Inbound (server): Bella-Vita 18,219 offered / AL 90.2% / SL 79.4%; Clovia 98.3%; Exicom 96.7%; Viega 94.7%; DU Bangladesh 91.0%; Dalmia fractions x100 confirmed |
+| Presentation | Headline strip (max 4, each figure shown once), sparklines, themed collapsible sections, funnels, durations as 3m 36s, partial-failure note |
+| Day-by-day drill-down | Bella-Vita shrinkage by team leader: Pooja Sidhi's team 23.5% vs 10% target, red most days; quality by person/team leader loads (slow: ~160s remote) |
+| Operating % / revenue blank | Root cause found on the server: one P&L query (salary-assignment lookup, correlated subquery) ran >160s so the org-wide calculation never finished. Rewritten to one pass (identical on 13/14 processes compared; the 14th differed only by an arbitrary tie the new tie-break now reproduces). Calculation now 77s cold. After it completes: Bella-Vita revenue ₹17.46L, Operating % 35.5% (Aug payroll, labelled); Neemans ₹7.02L, 3.3% |
+
+**Not verified:** a real production login / per-role scoping; that the app's own 60s-after-start warm-up populates the cache (verified with an equivalent cold-then-warm run in a separate process); Housing Owner Operating % (no payroll rows for Aug or Sep, a genuine data gap); Satya Retail (no process record); dark mode.
