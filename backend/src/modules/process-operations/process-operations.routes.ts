@@ -3,6 +3,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./process-operations.service.js";
 import { getFeedHealth } from "./feed-health.service.js";
+import { getPortfolio } from "./portfolio.service.js";
 
 /**
  * Process Operations HTTP surface.
@@ -40,6 +41,11 @@ function readPeriod(req: AuthenticatedRequest): ReportPeriodParam {
 
 router.get("/processes", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   res.json({ success: true, data: await svc.listProcesses(req.authUser!.id) });
+}));
+
+/** All-process comparison (health, freshness, worst miss). Before /:processId for the same shadowing reason as /feeds. */
+router.get("/portfolio", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  res.json({ success: true, data: await getPortfolio(req.authUser!.id) });
 }));
 
 /**

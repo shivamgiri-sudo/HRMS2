@@ -12,6 +12,9 @@ import {
 } from "./NativeSalesDashboard";
 import { HousingDashboardEmbed } from "./NativeHousingDashboards";
 import BlaBliBluSalesDashboard from "./BlaBliBluSalesDashboard";
+import { KpiCommandDeck } from "@/components/process-operations/KpiCommandDeck";
+import { ProcessPortfolio } from "@/components/process-operations/ProcessPortfolio";
+import { MetricDrillOverview } from "@/components/process-operations/MetricDrillOverview";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { MasmisUploaderGrid } from "@/components/process-operations/MasmisUploader";
 
@@ -191,7 +194,7 @@ import {
 } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart,
-  PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ReferenceLine,
+  Pie, PieChart, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ReferenceLine,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
@@ -809,13 +812,15 @@ function GasExecutiveBrief({ processName, headcount, metrics, metricsWithData, s
   health?: ProcessBusinessHealth;
 }) {
   const totalTargeted = failCount + passCount;
-  const scorePct = totalTargeted > 0 ? Math.round((passCount / totalTargeted) * 100) : (metricsWithData > 0 ? Math.round((metricsWithData / metrics) * 100) : 0);
-  const status = scorePct >= 80 ? { label: "HEALTHY", bg: "rgba(69,212,154,.16)", color: "#7ff0bb", border: "rgba(95,226,169,.22)" }
+  // With no targeted metric there is nothing to score; the old fallback (share of metrics that merely HAVE data) printed "100% HEALTHY" for processes with zero targets.
+  const scorePct = totalTargeted > 0 ? Math.round((passCount / totalTargeted) * 100) : 0;
+  const status = totalTargeted === 0 ? { label: "NO TARGETS SET", bg: "rgba(148,163,184,.18)", color: "#cbd5e1", border: "rgba(203,213,225,.24)" }
+    : scorePct >= 80 ? { label: "HEALTHY", bg: "rgba(69,212,154,.16)", color: "#7ff0bb", border: "rgba(95,226,169,.22)" }
     : scorePct >= 55 ? { label: "WATCH", bg: "rgba(232,155,25,.16)", color: "#ffd283", border: "rgba(255,203,106,.24)" }
     : { label: "CRITICAL", bg: "rgba(229,72,77,.18)", color: "#ffb4b7", border: "rgba(255,153,157,.24)" };
   const narrative = totalTargeted > 0
     ? `${passCount} of ${totalTargeted} targeted metrics are on track.${failCount > 0 ? ` ${failCount} metric${failCount === 1 ? "" : "s"} missing target.` : " All targeted metrics passing."}`
-    : `${metricsWithData} of ${metrics} metrics have data.${staleCount > 0 ? ` ${staleCount} may be stale.` : ""}`;
+    : `${metricsWithData} of ${metrics} metrics have data, but none has a target, so pass or fail cannot be judged.${staleCount > 0 ? ` ${staleCount} may be stale.` : ""}`;
   const fmtLakhBrief = (v: number | null): string => {
     if (v === null) return "—";
     const abs = Math.abs(v); const sign = v < 0 ? "-" : "";
@@ -845,7 +850,7 @@ function GasExecutiveBrief({ processName, headcount, metrics, metricsWithData, s
             <p style={{ margin: "7px 0 0", color: "#d2e5ee", lineHeight: 1.45, fontSize: 11.5, fontWeight: 600, maxWidth: 500 }}>{narrative}</p>
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7 }}>
+        <div className="grid grid-cols-2 gap-[7px] sm:grid-cols-4">
           <GasSignal name="Headcount" value={String(headcount)}
             note={bh?.headcount?.mandatedHc ? `of ${bh.headcount.mandatedHc} mandate` : "active agents"} />
           <GasSignal name="Quality" value={totalTargeted > 0 ? `${scorePct}%` : "—"}
@@ -1383,217 +1388,197 @@ const CLAP_META: Record<ClapVoiceOfCustomer["clapBreakdown"][number]["clap"], { 
  * data are the same ones already proven live in the sibling Mydashboards
  * project; this reads the same upstream db_audit source, never a copy of it.
  */
+type ClapName = ClapVoiceOfCustomer["clapBreakdown"][number]["clap"];
+
+function VocQuoteColumn({ tone, quotes, openCall }: {
+  tone: "good" | "bad"; quotes: VocQuote[]; openCall: (c: { employeeCode: string; callDate: string }) => void;
+}) {
+  const good = tone === "good";
+  return (
+    <div>
+      <p className={`mb-2 text-xs font-extrabold uppercase tracking-wide ${good ? "text-emerald-600" : "text-rose-600"}`}>
+        {good ? "What went well" : "What went wrong"} <span className="font-semibold text-slate-400">· {quotes.length}</span>
+      </p>
+      {quotes.length ? (
+        <div className="max-h-[26rem] space-y-2 overflow-y-auto pr-1">
+          {quotes.map((q, i) => (
+            <button key={i} type="button" onClick={() => q.hasTranscript && openCall({ employeeCode: q.employeeCode, callDate: q.callDate })}
+              disabled={!q.hasTranscript}
+              title={q.hasTranscript ? "Open this call's full transcript, recording and customer mobile number" : "No transcript recorded for this call"}
+              className={`w-full rounded-xl border px-4 py-3 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset disabled:cursor-not-allowed ${
+                good ? "border-emerald-100 bg-emerald-50/70 hover:bg-emerald-100/70 focus-visible:ring-emerald-500 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+                     : "border-rose-100 bg-rose-50/70 hover:bg-rose-100/70 focus-visible:ring-rose-500 dark:border-rose-900/50 dark:bg-rose-950/20"}`}>
+              <p className="text-sm leading-relaxed text-slate-800 dark:text-slate-100">“{q.quote}”</p>
+              <p className="mt-1.5 flex items-center gap-1 text-xs text-slate-500">
+                {q.employeeName} ({q.employeeCode}) · {q.callDate.slice(0, 10)}
+                {q.hasTranscript && <ChevronRight size={12} className="shrink-0 text-slate-400" />}
+              </p>
+            </button>
+          ))}
+        </div>
+      ) : <p className="text-xs italic text-slate-400">None recorded for this category this period.</p>}
+    </div>
+  );
+}
+
+/**
+ * Overview tab of the Voice of the Customer hub. One control drives everything: the root-cause
+ * donut (Customer / Logistic / Agent / Product) selects the category whose scenarios and verbatim
+ * quotes appear beside it. Replaces a bar + legend + button row that showed the same split three times.
+ */
 function VoiceOfCustomerPanel({ processId, period }: { processId: string; period: ReportPeriod }) {
   const { data, isLoading } = useQuery({
     queryKey: ["process-operations", "voice-of-customer", processId, period],
     queryFn: () => hrmsApi.get<HrmsEnvelope<ClapVoiceOfCustomer>>(
       `/api/process-operations/${processId}/voice-of-customer?period=${period}`),
   });
-  const [category, setCategory] = useState<"agent" | "logistic" | "product">("agent");
+  const { data: hmData } = useQuery({
+    queryKey: ["process-operations", "clap-heatmap", processId],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<ClapDailyHeatmap>>(`/api/process-operations/${processId}/voice-of-customer/heatmap`),
+  });
+  const [picked, setSelected] = useState<ClapName | null>(null);
   const voc = data?.data;
   const { openCall, drawer } = useCallDetailDrawer(processId);
 
   if (isLoading || !voc) {
-    return (
-      <ChartCard variant="classic" title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
-        <div className="flex items-center gap-2 text-xs text-slate-500 px-3 py-4">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading what customers actually said…
-        </div>
-      </ChartCard>
-    );
+    return <div className="flex items-center gap-2 px-2 py-10 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading what customers actually said…</div>;
   }
   if (!voc.available || !voc.clapBreakdown.length) {
-    return (
-      <ChartCard variant="classic" title="Voice of the Customer" subtitle="Real root-cause split and verbatim quotes from audited calls">
-        <p className="text-xs text-slate-400 italic px-3 py-4">
-          {voc.reason ?? "Not available for this process."}
-        </p>
-      </ChartCard>
-    );
+    return <p className="px-2 py-10 text-sm italic text-slate-400">{voc.reason ?? "Not available for this process."}</p>;
   }
 
-  const quotesForCategory = voc.quotes[category];
+  const order: ClapName[] = ["Agent", "Product", "Logistic", "Customer"];
+  const slices = order.map((c) => voc.clapBreakdown.find((x) => x.clap === c) ?? { clap: c, count: 0, pct: 0 });
+  const top = [...slices].sort((a, b) => b.count - a.count)[0];
+  const selected: ClapName = picked ?? top.clap; // default to the biggest cause, not an arbitrary first one
+  const hasQuotes = selected !== "Customer";
+  const quoteKey = selected.toLowerCase() as "agent" | "logistic" | "product";
+  const sel = slices.find((x) => x.clap === selected);
+  const days = (hmData?.data?.available ? hmData.data.days : []).map((d) => ({ date: d.date.slice(5), ...d.counts }));
+
   return (
-    <ChartCard variant="classic" title="Voice of the Customer"
-      subtitle={`${voc.totalAuditedCalls.toLocaleString("en-IN")} audited call${voc.totalAuditedCalls === 1 ? "" : "s"} — what's actually behind them, not just a score`}>
-      <div className="px-3">
-        {/* CLAP breakdown -- real root cause, not agent quality alone. Segments
-            for Agent/Logistic/Product double as the category selector below
-            (the same setCategory() the buttons already call) -- Customer has
-            no quotes bucket (see the category selector comment) so stays a
-            plain, non-interactive segment rather than a dead click target. */}
-        <div className="flex h-6 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
-          {voc.clapBreakdown.map((c) => {
-            const clickable = c.clap === "Agent" || c.clap === "Logistic" || c.clap === "Product";
-            const segCategory = c.clap.toLowerCase() as "agent" | "logistic" | "product";
-            return clickable ? (
-              <button key={c.clap} type="button" onClick={() => setCategory(segCategory)}
-                title={`${c.clap}: ${c.pct}% (${c.count} calls) — click to see quotes`}
-                className="cursor-pointer transition-opacity hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
-                style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
-            ) : (
-              <div key={c.clap} title={`${c.clap}: ${c.pct}% (${c.count} calls)`}
-                style={{ width: `${c.pct}%`, background: CLAP_META[c.clap].color }} />
-            );
-          })}
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
-          {voc.clapBreakdown.map((c) => {
-            const Icon = CLAP_META[c.clap].icon;
-            return (
-              <span key={c.clap} className="inline-flex items-center gap-1 text-[12px] font-semibold text-slate-600 dark:text-slate-300">
-                <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: CLAP_META[c.clap].color }} />
-                {c.clap} {c.pct}%
-              </span>
-            );
-          })}
-        </div>
-        <p className="text-[11.5px] text-slate-400 mt-1.5">
-          Every audited call classified by its real recorded scenario — Agent means the call turned on
-          agent behaviour itself (needs improvement, hold procedure, fraud complaint), not just "someone
-          called." Customer/Product/Logistic mean the root issue lay elsewhere.
-        </p>
+    <div className="space-y-5">
+      <p className="text-sm text-slate-600 dark:text-slate-300">
+        <b>{voc.totalAuditedCalls.toLocaleString("en-IN")}</b> audited call{voc.totalAuditedCalls === 1 ? "" : "s"}
+        {voc.periodFrom ? ` (${formatPeriodRange(voc.periodFrom, voc.periodTo) ?? voc.periodFrom})` : ""}. The biggest root cause is
+        <b style={{ color: CLAP_META[top.clap].color }}> {top.clap} ({top.pct}%)</b>. Select a cause to see its scenarios and what customers and agents actually said.
+      </p>
 
-        <ClapHeatmapRow processId={processId} />
-
-        {/* Category selector -- only Agent/Logistic/Product carry verbatim quotes */}
-        <div className="flex gap-1.5 mt-3">
-          {(["agent", "logistic", "product"] as const).map((cat) => {
-            const meta = CLAP_META[(cat.charAt(0).toUpperCase() + cat.slice(1)) as ClapVoiceOfCustomer["clapBreakdown"][number]["clap"]];
-            const Icon = meta.icon;
-            const n = voc.quotes[cat].positive.length + voc.quotes[cat].negative.length;
-            return (
-              <button key={cat} type="button" onClick={() => setCategory(cat)}
-                className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-semibold border transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
-                  category === cat ? "text-white" : "text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"}`}
-                style={category === cat ? { background: meta.color, borderColor: meta.color } : undefined}>
-                <Icon className="h-3 w-3 shrink-0" />
-                {cat[0].toUpperCase() + cat.slice(1)} {n > 0 && <span className="opacity-80">({n})</span>}
-              </button>
-            );
-          })}
-        </div>
-
-        <ScenarioBreakdownRow processId={processId} period={period} category={category} />
-
-        <div className="grid sm:grid-cols-2 gap-3 mt-2.5 mb-1">
-          <div>
-            <p className="text-[12px] font-bold uppercase tracking-wide text-emerald-600 mb-1.5">What went well</p>
-            {quotesForCategory.positive.length ? (
-              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                {quotesForCategory.positive.map((q, i) => (
-                  <button key={i} type="button"
-                    onClick={() => q.hasTranscript && openCall({ employeeCode: q.employeeCode, callDate: q.callDate })}
-                    disabled={!q.hasTranscript}
-                    title={q.hasTranscript ? "Open this call's full transcript, recording and customer mobile number" : "No transcript recorded for this call"}
-                    className="w-full text-left rounded-lg bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/50 px-3 py-2 cursor-pointer disabled:cursor-not-allowed hover:bg-emerald-100/70 dark:hover:bg-emerald-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500">
-                    <p className="text-[13px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
-                    <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-                      {q.employeeName} ({q.employeeCode}) · {q.callDate.slice(0, 10)}
-                      {q.hasTranscript && <ChevronRight size={11} className="text-slate-300 shrink-0" />}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            ) : <p className="text-[12px] text-slate-400 italic">No positive quotes recorded for this category this period.</p>}
+      <div className="grid gap-5 lg:grid-cols-[minmax(260px,.9fr)_minmax(0,1.3fr)]">
+        <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+          <p className="mb-1 text-xs font-extrabold uppercase tracking-wide text-slate-500">Root cause of every audited call</p>
+          <div className="relative h-56" role="img" aria-label={`Root-cause split: ${slices.map((x) => `${x.clap} ${x.pct}%`).join(", ")}`}>
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={slices} dataKey="count" nameKey="clap" innerRadius={62} outerRadius={92} paddingAngle={2} stroke="none"
+                  onClick={(e: { clap?: ClapName }) => e?.clap && setSelected(e.clap)}>
+                  {slices.map((x) => <Cell key={x.clap} fill={CLAP_META[x.clap].color} opacity={selected === x.clap ? 1 : 0.45} style={{ cursor: "pointer", outline: "none" }} />)}
+                </Pie>
+                <Tooltip formatter={(v: number, n: string) => [`${v} calls`, n]} contentStyle={{ borderRadius: 10, fontSize: 13 }} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-3xl font-black tabular-nums text-slate-900 dark:text-slate-100">{sel?.pct ?? 0}%</span>
+              <span className="text-xs font-semibold text-slate-500">{selected}</span>
+            </div>
           </div>
-          <div>
-            <p className="text-[12px] font-bold uppercase tracking-wide text-red-600 mb-1.5">What went wrong</p>
-            {quotesForCategory.negative.length ? (
-              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                {quotesForCategory.negative.map((q, i) => (
-                  <button key={i} type="button"
-                    onClick={() => q.hasTranscript && openCall({ employeeCode: q.employeeCode, callDate: q.callDate })}
-                    disabled={!q.hasTranscript}
-                    title={q.hasTranscript ? "Open this call's full transcript, recording and customer mobile number" : "No transcript recorded for this call"}
-                    className="w-full text-left rounded-lg bg-red-50/70 dark:bg-red-950/20 border border-red-100 dark:border-red-900/50 px-3 py-2 cursor-pointer disabled:cursor-not-allowed hover:bg-red-100/70 dark:hover:bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500">
-                    <p className="text-[13px] text-slate-700 dark:text-slate-200 leading-snug">"{q.quote}"</p>
-                    <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-                      {q.employeeName} ({q.employeeCode}) · {q.callDate.slice(0, 10)}
-                      {q.hasTranscript && <ChevronRight size={11} className="text-slate-300 shrink-0" />}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            ) : <p className="text-[12px] text-slate-400 italic">No negative quotes recorded for this category this period.</p>}
+          <div className="mt-1 grid grid-cols-2 gap-2" role="group" aria-label="Select a root cause">
+            {slices.map((x) => {
+              const Icon = CLAP_META[x.clap].icon;
+              return (
+                <button key={x.clap} type="button" aria-pressed={selected === x.clap} onClick={() => setSelected(x.clap)}
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition focus:outline-none focus-visible:ring-2 ${
+                    selected === x.clap ? "border-transparent text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}
+                  style={selected === x.clap ? { background: CLAP_META[x.clap].color } : undefined}>
+                  <Icon className="h-4 w-4 shrink-0" style={selected === x.clap ? undefined : { color: CLAP_META[x.clap].color }} />
+                  <span className="min-w-0"><span className="block">{x.clap}</span><span className="block text-xs font-normal opacity-80">{x.count} call{x.count === 1 ? "" : "s"} · {x.pct}%</span></span>
+                </button>
+              );
+            })}
           </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 p-4 dark:border-slate-800">
+          <p className="mb-1 text-xs font-extrabold uppercase tracking-wide text-slate-500">Last 14 days, calls per root cause</p>
+          {days.length >= 3 ? (
+            <div className="h-72" role="img" aria-label="Stacked bars of audited calls per day by root cause">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={days} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={{ borderRadius: 10, fontSize: 13 }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  {order.map((c) => <Bar key={c} dataKey={c} stackId="clap" fill={CLAP_META[c].color} opacity={selected === c ? 1 : 0.5} maxBarSize={34} />)}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : <p className="py-16 text-center text-xs text-slate-400">Fewer than 3 days of audited calls, so there is no daily pattern to draw yet.</p>}
         </div>
       </div>
+
+      {hasQuotes ? <ScenarioBreakdownRow processId={processId} period={period} category={quoteKey} />
+        : <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600 dark:bg-slate-800/50 dark:text-slate-300">“Customer” calls have no agent or logistics fault to quote. Pick Agent, Product or Logistic to read what was said.</p>}
+
+      {hasQuotes && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <VocQuoteColumn tone="good" quotes={voc.quotes[quoteKey].positive} openCall={openCall} />
+          <VocQuoteColumn tone="bad" quotes={voc.quotes[quoteKey].negative} openCall={openCall} />
+        </div>
+      )}
       {drawer}
-    </ChartCard>
+    </div>
   );
 }
 
+type VocTab = "overview" | "scenarios" | "risk" | "repeat";
 /**
- * Day x CLAP-category heat-cell matrix (Mydashboards' pivot-table idiom) --
- * which days actually carried a spike of Agent/Logistic/Product/Customer-
- * attributed calls, not just the period-aggregated share the bar above
- * shows. Always the real last 14 days (see the backend function for why
- * this ignores the page's period selector). No charting library: a plain
- * grid of cells whose background alpha is value/max, same technique
- * Mydashboards' own heatBg() uses.
+ * The one place customer voice lives. It replaces six panels that were scattered across three zones and
+ * repeated each other (root-cause split shown 3 ways, customer-risk flags in 4 places, scenario share
+ * in 2). Each tab mounts only when opened, so the page no longer fires all of these queries on load.
  */
-function ClapHeatmapRow({ processId }: { processId: string }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ["process-operations", "clap-heatmap", processId],
-    queryFn: () => hrmsApi.get<HrmsEnvelope<ClapDailyHeatmap>>(
-      `/api/process-operations/${processId}/voice-of-customer/heatmap`),
-  });
-  const hm = data?.data;
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center gap-1.5 text-[9.5px] text-slate-400 mt-2">
-        <Loader2 className="h-2.5 w-2.5 animate-spin" />Loading the 14-day pattern…
-      </div>
-    );
-  }
-  if (!hm?.available || hm.days.length < 3) {
-    return null; // Not enough days to call it a "pattern" -- quietly skip rather than show a near-empty grid.
-  }
-
-  const CATS: Array<ClapVoiceOfCustomer["clapBreakdown"][number]["clap"]> = ["Agent", "Product", "Logistic", "Customer"];
-  const maxByCat: Record<string, number> = {};
-  for (const cat of CATS) maxByCat[cat] = Math.max(1, ...hm.days.map((d) => d.counts[cat]));
-
+function VoiceOfCustomerHub({ processId, period }: { processId: string; period: ReportPeriod }) {
+  const [tab, setTab] = useState<VocTab>("overview");
+  const tabs: Array<{ k: VocTab; label: string; sub: string }> = [
+    { k: "overview", label: "Overview", sub: "root cause and quotes" },
+    { k: "scenarios", label: "Scenarios", sub: "what the calls were about" },
+    { k: "risk", label: "Risk & signals", sub: "threats, scams, language" },
+    { k: "repeat", label: "Repeat & fraud", sub: "repeat callers, fraud" },
+  ];
   return (
-    <div className="mt-2.5">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1">
-        Last 14 days by category — darker means more calls that day, not worse
-      </p>
-      <div className="overflow-x-auto">
-        <table className="text-[11px] border-collapse">
-          <thead>
-            <tr>
-              <th className="text-left pr-2 py-0.5 font-semibold text-slate-400"> </th>
-              {hm.days.map((d) => (
-                <th key={d.date} className="px-1 py-0.5 font-normal text-slate-400 whitespace-nowrap" title={d.date}>
-                  {d.date.slice(5)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {CATS.map((cat) => (
-              <tr key={cat}>
-                <td className="text-right pr-2 py-0.5 font-semibold text-slate-500 whitespace-nowrap">{cat}</td>
-                {hm.days.map((d) => {
-                  const n = d.counts[cat];
-                  const alpha = n === 0 ? 0 : Math.min(0.9, 0.15 + (n / maxByCat[cat]) * 0.75);
-                  return (
-                    <td key={d.date} title={`${cat} · ${d.date}: ${n} call${n === 1 ? "" : "s"}`}
-                      className="w-6 h-5 text-center tabular-nums"
-                      style={{ background: alpha ? `${CLAP_META[cat].color}${Math.round(alpha * 255).toString(16).padStart(2, "0")}` : undefined }}>
-                      {n > 0 ? n : ""}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <LivePanel title="Voice of the Customer" sub="one home for what customers said">
+      <div role="tablist" aria-label="Voice of the Customer sections" className="mb-4 flex flex-wrap gap-2">
+        {tabs.map((t) => (
+          <button key={t.k} role="tab" type="button" aria-selected={tab === t.k} onClick={() => setTab(t.k)}
+            className={`rounded-xl border px-4 py-2 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+              tab === t.k ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"}`}>
+            <span className="block text-sm font-bold">{t.label}</span>
+            <span className={`block text-xs ${tab === t.k ? "text-slate-300" : "text-slate-500"}`}>{t.sub}</span>
+          </button>
+        ))}
       </div>
-    </div>
+      <div role="tabpanel">
+        {tab === "overview" && <VoiceOfCustomerPanel processId={processId} period={period} />}
+        {tab === "scenarios" && (
+          <div className="grid gap-4 xl:grid-cols-2">
+            <ScenarioDistributionPanel processId={processId} period={period} />
+            <DayWiseScenarioAuditPanel processId={processId} period={period} />
+          </div>
+        )}
+        {tab === "risk" && (
+          <div className="grid gap-4 xl:grid-cols-2">
+            <CustomerRiskCardsPanel processId={processId} period={period} />
+            <CriticalSignalsPanel processId={processId} period={period} />
+          </div>
+        )}
+        {tab === "repeat" && (
+          <div className="grid gap-4 xl:grid-cols-2">
+            <RepeatAnalysisPanel processId={processId} period={period} />
+            <FraudCallPanel processId={processId} period={period} />
+          </div>
+        )}
+      </div>
+    </LivePanel>
   );
 }
 
@@ -2473,39 +2458,39 @@ function ScenarioBreakdownRow({ processId, period, category }: {
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-2">
-        <Loader2 className="h-3 w-3 animate-spin" />Loading which scenarios make up this share…
+      <div className="flex items-center gap-2 text-sm text-slate-400 mt-2">
+        <Loader2 className="h-4 w-4 animate-spin" />Loading which scenarios make up this share…
       </div>
     );
   }
   if (!sb?.available || !sb.scenarios.length) {
     return (
-      <p className="text-[10px] text-slate-400 italic mt-2">
+      <p className="text-sm text-slate-400 italic mt-2">
         {sb?.reason ?? "No scenario breakdown available for this category."}
       </p>
     );
   }
 
   return (
-    <div className="mt-2.5 rounded-lg border border-slate-200 dark:border-slate-800 px-2.5 py-2 bg-slate-50/50 dark:bg-slate-800/30">
-      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 mb-1.5">
+    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 px-4 py-3 bg-slate-50/50 dark:bg-slate-800/30">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1.5">
         Which real scenarios make up {clap} — {sb.total} call{sb.total === 1 ? "" : "s"} — click one for the real calls
       </p>
-      <div className="space-y-1">
-        {sb.scenarios.slice(0, 6).map((s) => {
+      <div className="space-y-1.5">
+        {sb.scenarios.slice(0, 10).map((s) => {
           const open = expandedScenario === s.scenario;
           return (
             <Fragment key={s.scenario}>
               <button type="button" onClick={() => setExpandedScenario(open ? null : s.scenario)}
-                className="w-full flex items-center gap-2 cursor-pointer rounded hover:bg-white dark:hover:bg-slate-900/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 py-0.5">
-                <ChevronRight size={10} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
-                <span className="text-[10px] text-slate-600 dark:text-slate-300 w-28 shrink-0 truncate text-left" title={s.scenario}>
+                className="w-full flex items-center gap-2 cursor-pointer rounded hover:bg-white dark:hover:bg-slate-900/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 py-1">
+                <ChevronRight size={13} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
+                <span className="text-sm text-slate-600 dark:text-slate-300 w-44 shrink-0 truncate text-left" title={s.scenario}>
                   {s.scenario}
                 </span>
-                <div className="flex-1 h-3.5 rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                <div className="flex-1 h-5 rounded bg-slate-100 dark:bg-slate-800 overflow-hidden">
                   <div className="h-full rounded" style={{ width: `${Math.max(2, s.pct)}%`, background: CLAP_META[clap].color }} />
                 </div>
-                <span className="text-[9.5px] tabular-nums text-slate-500 w-14 shrink-0 text-right">
+                <span className="text-xs tabular-nums text-slate-500 w-20 shrink-0 text-right">
                   {s.count} ({s.pct}%)
                 </span>
               </button>
@@ -2608,7 +2593,7 @@ function CallDetailDrawer({ processId, employeeCode, callDate, onClose }: {
 
   return (
     <Sheet open={true} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-full sm:max-w-[63rem] p-0 overflow-y-auto">
+      <SheetContent side="right" className="w-full sm:w-[max(56vw,48rem)] sm:max-w-[96vw] p-0 overflow-y-auto">
         <div className="px-5 py-4 bg-gradient-to-br from-slate-800 to-slate-900 text-white">
           <div className="flex items-start justify-between gap-2">
             <div>
@@ -4303,15 +4288,15 @@ function SummaryTileDrillDrawer({ metricKey, health, passCount, failCount, onClo
 
   return (
     <Sheet open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-full max-w-sm p-0 overflow-y-auto border-l-0 shadow-2xl">
+      <SheetContent side="right" className="w-full sm:w-[max(50vw,40rem)] sm:max-w-[96vw] p-0 overflow-y-auto border-l-0 shadow-2xl">
         {/* Header */}
         <div style={{ background: headerGrad, padding: "18px 20px 16px" }}>
           <div className="flex items-start justify-between gap-2">
             <div>
-              <p style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".45px", fontWeight: 900, color: "rgba(255,255,255,.75)", marginBottom: 4 }}>Depth Analysis</p>
-              <p style={{ fontSize: 18, fontWeight: 900, color: "#fff", lineHeight: 1.2 }}>{entry.title}</p>
-              <p style={{ fontSize: 22, fontWeight: 950, color: "#fff", marginTop: 4, lineHeight: 1 }}>{entry.value}</p>
-              {entry.target && <p style={{ fontSize: 9, color: "rgba(255,255,255,.7)", marginTop: 3, fontWeight: 700 }}>Target: {entry.target}</p>}
+              <p style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".45px", fontWeight: 900, color: "rgba(255,255,255,.75)", marginBottom: 4 }}>Depth Analysis</p>
+              <p style={{ fontSize: 22, fontWeight: 900, color: "#fff", lineHeight: 1.2 }}>{entry.title}</p>
+              <p style={{ fontSize: 34, fontWeight: 950, color: "#fff", marginTop: 4, lineHeight: 1 }}>{entry.value}</p>
+              {entry.target && <p style={{ fontSize: 11, color: "rgba(255,255,255,.7)", marginTop: 3, fontWeight: 700 }}>Target: {entry.target}</p>}
             </div>
             <div className="flex flex-col items-end gap-2 shrink-0">
               <button onClick={onClose} style={{ background: "rgba(255,255,255,.15)", border: "none", borderRadius: 8, padding: "4px 6px", cursor: "pointer", color: "#fff" }}><X size={14} /></button>
@@ -4325,24 +4310,24 @@ function SummaryTileDrillDrawer({ metricKey, health, passCount, failCount, onClo
           <div style={{ background: bannerCol.bg, border: `1px solid ${bannerCol.border}`, borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
             <BannerIcon size={14} style={{ color: bannerCol.text, flexShrink: 0 }} />
             <div>
-              <p style={{ fontSize: 10, fontWeight: 900, color: bannerCol.text, textTransform: "uppercase", letterSpacing: ".4px" }}>{bannerCol.label}</p>
-              <p style={{ fontSize: 11, color: bannerCol.text, marginTop: 2, opacity: 0.85, lineHeight: 1.4 }}>{entry.trendLabel}</p>
+              <p style={{ fontSize: 12, fontWeight: 900, color: bannerCol.text, textTransform: "uppercase", letterSpacing: ".4px" }}>{bannerCol.label}</p>
+              <p style={{ fontSize: 13, color: bannerCol.text, marginTop: 2, opacity: 0.85, lineHeight: 1.4 }}>{entry.trendLabel}</p>
             </div>
           </div>
           {/* Analysis */}
           <div>
-            <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".45px", color: "#64748b", marginBottom: 6 }}>Analysis</p>
-            <p style={{ fontSize: 12, color: "#334155", lineHeight: 1.65 }}>{entry.analysis}</p>
+            <p style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".45px", color: "#64748b", marginBottom: 6 }}>Analysis</p>
+            <p style={{ fontSize: 14, color: "#334155", lineHeight: 1.65 }}>{entry.analysis}</p>
           </div>
           {/* Action items */}
           {entry.actions.length > 0 && (
             <div>
-              <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".45px", color: "#64748b", marginBottom: 6 }}>Action Items</p>
+              <p style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".45px", color: "#64748b", marginBottom: 6 }}>Action Items</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {entry.actions.map((a, i) => (
                   <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
-                    <span style={{ background: "#f59e0b", color: "#fff", borderRadius: "50%", width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 900, flexShrink: 0, marginTop: 1 }}>{i + 1}</span>
-                    <p style={{ fontSize: 11, color: "#92400e", lineHeight: 1.5 }}>{a}</p>
+                    <span style={{ background: "#f59e0b", color: "#fff", borderRadius: "50%", width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 900, flexShrink: 0, marginTop: 1 }}>{i + 1}</span>
+                    <p style={{ fontSize: 13, color: "#92400e", lineHeight: 1.5 }}>{a}</p>
                   </div>
                 ))}
               </div>
@@ -4351,10 +4336,10 @@ function SummaryTileDrillDrawer({ metricKey, health, passCount, failCount, onClo
           {/* Related metrics */}
           {entry.related.length > 0 && (
             <div>
-              <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".45px", color: "#64748b", marginBottom: 6 }}>Related Metrics</p>
+              <p style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".45px", color: "#64748b", marginBottom: 6 }}>Related Metrics</p>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {entry.related.map((r) => (
-                  <span key={r} style={{ background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: 999, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#475569" }}>{r}</span>
+                  <span key={r} style={{ background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 700, color: "#475569" }}>{r}</span>
                 ))}
               </div>
             </div>
@@ -4408,7 +4393,7 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
   );
   return (
     <Sheet open={Boolean(metricKey)} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-full sm:max-w-[63rem] p-0 overflow-y-auto">
+      <SheetContent side="right" className="w-full sm:w-[max(56vw,48rem)] sm:max-w-[96vw] p-0 overflow-y-auto">
         <div className="sticky top-0 z-10 px-5 py-3 flex items-start gap-3" style={{ background: NAVY }}>
           <div className="min-w-0">
             <h2 className="text-sm font-bold text-white truncate">{d?.metricName ?? metricKey}</h2>
@@ -4432,9 +4417,10 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
           </div>
         ) : (
           <div className="p-5 space-y-5">
-            <DrilldownTrendChart
-              readings={d.readings} unit={d.unit}
-              targetValue={d.definition?.targetValue ?? null} direction={d.direction} />
+            <MetricDrillOverview
+              name={d.metricName} unit={d.unit} direction={d.direction}
+              target={d.definition?.targetValue ?? null} readings={d.readings}
+              basis={d.period === "trend" ? "trend window" : (PERIODS.find((p) => p.key === d.period)?.label ?? d.period)} />
 
             <section>
               <Label>Every reading, newest first — click a day for the individual records behind it</Label>
@@ -4445,6 +4431,8 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                       <tr>
                         <th className="text-left px-2 py-1.5 font-semibold">Date</th>
                         <th className="text-right px-2 py-1.5 font-semibold">Value</th>
+                        <th className="text-right px-2 py-1.5 font-semibold">Vs target</th>
+                        <th className="text-right px-2 py-1.5 font-semibold">Volume</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -4469,9 +4457,19 @@ function DrilldownDrawer({ processId, metricKey, period, onClose }: {
                               x.value === null ? "text-slate-400 italic font-normal" : "text-slate-900 dark:text-slate-100"}`}>
                               {x.value === null ? "no data" : formatValue(x.value, d.unit)}
                             </td>
+                            {(() => {
+                              const t = d.definition?.targetValue ?? null;
+                              if (x.value === null || t === null || !d.direction) return <td className="px-2 py-1.5 text-right text-slate-400">—</td>;
+                              const short = d.direction === "higher_is_better" ? t - x.value : x.value - t;
+                              return <td className={`px-2 py-1.5 text-right tabular-nums font-semibold ${short > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                                {short > 0 ? `${formatValue(Math.abs(short), d.unit)} short` : `${formatValue(Math.abs(short), d.unit)} ahead`}</td>;
+                            })()}
+                            <td className="px-2 py-1.5 text-right tabular-nums text-slate-500">
+                              {x.numerator !== null && x.denominator !== null ? `${Math.round(x.numerator).toLocaleString("en-IN")} / ${x.denominator.toLocaleString("en-IN")}` : "—"}
+                            </td>
                           </tr>
                           {expandedDate === x.date && metricKey && (
-                            <RawRowsPanel processId={processId} metricKey={metricKey} date={x.date} columnCount={2} />
+                            <RawRowsPanel processId={processId} metricKey={metricKey} date={x.date} columnCount={4} />
                           )}
                         </Fragment>
                       ))}
@@ -5090,9 +5088,9 @@ export default function ProcessOperationsPage() {
   const [summaryDrill, setSummaryDrill] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportPeriod>("trend");
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
-  const [view, setView] = useState<"kpi" | "live" | "sales">(() => {
+  const [view, setView] = useState<"kpi" | "live" | "sales" | "portfolio">(() => {
     const v = searchParams.get("view");
-    return v === "live" || v === "sales" ? v : "kpi";
+    return v === "live" || v === "sales" || v === "portfolio" ? v : "kpi";
   });
   // Active section key for overview strip highlighting + scroll-to
   const [activeSectionKey, setActiveSectionKey] = useState<string | null>(null);
@@ -5189,7 +5187,6 @@ export default function ProcessOperationsPage() {
     conv ? <FunnelSnapshot key="fs" metrics={conv.metrics} /> : null,
     conv ? <FunnelChart key="f" metrics={conv.metrics} /> : null,
     qual ? <QualityRadar key="q" metrics={qual.metrics} /> : null,
-    risk ? <RiskBars key="r" metrics={risk.metrics} /> : null,
   ].filter(Boolean);
 
   // ── Derived data for the GAS executive brief (reuse allMetrics) ───────────
@@ -5234,7 +5231,7 @@ export default function ProcessOperationsPage() {
       <div style={{ minHeight: "100vh", background: "radial-gradient(circle at 5% 2%,rgba(47,111,237,.09),transparent 24%),radial-gradient(circle at 96% 3%,rgba(15,159,143,.07),transparent 25%),linear-gradient(180deg,#f1f5fa 0,#f7f9fc 310px,#f4f7fa 100%)" }}>
 
         {/* ── Sticky shell: accent line + topbar ─────────────────────────── */}
-        <div style={{ position: "sticky", top: 0, zIndex: 100, background: "#fff", boxShadow: "0 5px 22px rgba(10,34,55,.12)" }}>
+        <div className="md:sticky md:top-0" style={{ zIndex: 100, background: "#fff", boxShadow: "0 5px 22px rgba(10,34,55,.12)" }}>
           {/* Rainbow accent line */}
           <div style={{ height: 4, background: GAS_ACCENT }} />
 
@@ -5312,6 +5309,10 @@ export default function ProcessOperationsPage() {
               </div>
               {/* View toggle: KPI Metrics / Sales Dashboard / Live Dashboard */}
               <div style={{ display: "inline-flex", borderRadius: 10, background: "rgba(255,255,255,.10)", padding: 3, alignSelf: "flex-end" }}>
+                <button type="button" onClick={() => setView("portfolio")} aria-pressed={view === "portfolio"}
+                  style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "portfolio" ? "#fff" : "transparent", color: view === "portfolio" ? "#183b59" : "#d0e8f5", boxShadow: view === "portfolio" ? "0 3px 8px rgba(0,0,0,.15)" : "none" }}>
+                  All Processes
+                </button>
                 <button type="button" onClick={() => setView("kpi")}
                   style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "kpi" ? "#fff" : "transparent", color: view === "kpi" ? "#183b59" : "#d0e8f5", boxShadow: view === "kpi" ? "0 3px 8px rgba(0,0,0,.15)" : "none" }}>
                   KPI Metrics
@@ -5327,11 +5328,18 @@ export default function ProcessOperationsPage() {
                   {isOnfidoProcess(currentProcess?.processName) ? "Onfido Dashboard" : "Live Dashboard"}
                 </button>
               </div>
-              {/* Live pill */}
-              <div style={{ height: 34, padding: "0 12px", border: "1px solid rgba(255,255,255,.19)", borderRadius: 999, background: "rgba(255,255,255,.09)", display: "flex", alignItems: "center", gap: 8, color: "#e9f8f4", fontWeight: 850, fontSize: 11, whiteSpace: "nowrap", alignSelf: "flex-end" }}>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#45e59b", boxShadow: "0 0 0 5px rgba(69,229,155,.13)", animation: "pulse 2.2s ease-in-out infinite" }} />
-                LIVE
-              </div>
+              {/* Freshness pill: green + pulsing only while the selected process is actually reporting; otherwise amber with the real age. */}
+              {(() => {
+                const age = currentProcess?.staleDays ?? null;
+                const stale = age !== null && age > (ops?.staleAfterDays ?? 3);
+                return (
+                  <div title={stale ? "The newest reading for this process is old. Numbers on this page describe that day, not today." : "This process is reporting"}
+                    style={{ height: 34, padding: "0 12px", border: "1px solid rgba(255,255,255,.19)", borderRadius: 999, background: stale ? "rgba(245,158,11,.22)" : "rgba(255,255,255,.09)", display: "flex", alignItems: "center", gap: 8, color: stale ? "#fde68a" : "#e9f8f4", fontWeight: 850, fontSize: 11, whiteSpace: "nowrap", alignSelf: "flex-end" }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: stale ? "#f59e0b" : "#45e59b", boxShadow: stale ? "none" : "0 0 0 5px rgba(69,229,155,.13)", animation: stale ? "none" : "pulse 2.2s ease-in-out infinite" }} />
+                    {stale ? `DATA ${age}d OLD` : "LIVE"}
+                  </div>
+                );
+              })()}
               {/* Add reading button */}
               <button type="button" onClick={() => setManualEntryOpen(true)}
                 title="Type in today's number for a metric no automated feed reaches"
@@ -5358,6 +5366,9 @@ export default function ProcessOperationsPage() {
             </div>
           ) : processes.length === 0 ? (
             <div className="rounded-2xl border bg-white p-6 text-sm text-slate-500 shadow-sm">No process in your access is currently reporting a metric.</div>
+          ) : view === "portfolio" ? (
+            /* ── All-process comparison: pick any process to open its KPI Metrics ── */
+            <ProcessPortfolio onSelect={(id) => { setActive(id); setView("kpi"); }} />
           ) : !current ? (
             <div className="rounded-2xl border bg-white p-6 text-sm text-slate-500 shadow-sm">Select a process above to view its metrics.</div>
           ) : view === "sales" && currentProcess ? (
@@ -5452,7 +5463,7 @@ export default function ProcessOperationsPage() {
 
               {/* ── Row 1: Executive Brief + Action Board ─────────────────── */}
               {ops && currentProcess && (
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.1fr) minmax(0,.9fr)", gap: 14, alignItems: "stretch" }}>
+                <div className="grid grid-cols-1 items-stretch gap-[14px] lg:grid-cols-[minmax(0,1.1fr)_minmax(0,.9fr)]">
                   <GasExecutiveBrief
                     processName={currentProcess.processName}
                     headcount={ops.headcount}
@@ -5465,23 +5476,6 @@ export default function ProcessOperationsPage() {
                     health={healthForBoard?.data}
                   />
                   <GasActionBoard items={actionItems} />
-                </div>
-              )}
-
-              {/* ── Section nav — sticky below topbar for instant KPI jumping ── */}
-              {ops && ops.sections.length > 0 && (
-                <div style={{ position: "sticky", top: 72, zIndex: 90, background: "#f1f5fa", paddingTop: 4, paddingBottom: 6, marginLeft: -20, marginRight: -20, paddingLeft: 20, paddingRight: 20, borderBottom: "1px solid #dce4ed", boxShadow: "0 4px 12px rgba(16,35,57,.06)" }}>
-                  <SectionOverviewStrip
-                    sections={ops.sections}
-                    ungrouped={ops.ungrouped}
-                    staleAfterDays={ops.staleAfterDays}
-                    activeSectionKey={activeSectionKey}
-                    onSectionClick={(key) => {
-                      setActiveSectionKey(prev => prev === key ? null : key);
-                      const el = sectionRefs.current[key];
-                      if (el) { setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }
-                    }}
-                  />
                 </div>
               )}
 
@@ -5506,14 +5500,34 @@ export default function ProcessOperationsPage() {
                     </div>
                   )}
 
+                  {/* ── KPI Command Deck: the metrics this view is named for, first, with health,
+                      freshness, worst-first ranking and rows / tiles / day-matrix views. ── */}
+                  <KpiCommandDeck
+                    sections={ops.sections}
+                    ungrouped={ops.ungrouped}
+                    staleAfterDays={ops.staleAfterDays}
+                    period={period}
+                    periodLabel={periodLabel}
+                    processName={currentProcess?.processName ?? ops.processName}
+                    onDrill={setDrill}
+                  />
+
+                  <div className="flex items-center gap-3 py-1">
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2 select-none">
+                      Business &amp; Root-Cause Analysis
+                    </span>
+                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+                  </div>
+
                   {/* ── ZONE 1-3: Business Context, Root Cause, Quality Overview, Voice of
                       Customer (CEO reads first) — 2-column grid, same density fix as Zones 4-5 ── */}
                   <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
                     {current && <LivePanel title="Business Health"><BusinessHealthPanel processId={current} onOpen={setSummaryDrill} /></LivePanel>}
                     {current && <LivePanel title="Root Cause vs. Workforce"><WorkforceCorrelationPanel processId={current} period={period} /></LivePanel>}
-                    {current && ops && <LivePanel title="Performance Distribution"><ProcessCardInsightsPanel processId={current} ops={ops} onDrill={setDrill} /></LivePanel>}
-                    {current && <LivePanel title="Voice of Customer"><VoiceOfCustomerPanel processId={current} period={period} /></LivePanel>}
                   </div>
+
+                  {current && <VoiceOfCustomerHub processId={current} period={period} />}
 
                   {/* Conversion funnel + quality trend charts */}
                   {charts.length > 0 && (
@@ -5537,8 +5551,6 @@ export default function ProcessOperationsPage() {
                   {current && (
                     <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
                       <LivePanel title="Fatal Calls Analysis"><FatalCallsPanel processId={current} period={period} /></LivePanel>
-                      <LivePanel title="Critical Signals"><CriticalSignalsPanel processId={current} period={period} /></LivePanel>
-                      <LivePanel title="Customer Risk"><CustomerRiskCardsPanel processId={current} period={period} /></LivePanel>
                       <LivePanel title="Agent Audit Summary"><AgentAuditSummaryPanel processId={current} period={period} /></LivePanel>
                       <LivePanel title="Score Components"><ScoreComponentsPanel processId={current} period={period} /></LivePanel>
                       <LivePanel title="ACHT Categorization"><AchtCategorizationPanel processId={current} period={period} /></LivePanel>
@@ -5557,38 +5569,8 @@ export default function ProcessOperationsPage() {
 
                   {/* ── ZONE 5: Analyst Drill-Downs (QA / Process analysts) ─── */}
                   {current && (
-                    <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
-                      <LivePanel title="Fatal Analysis"><FatalAnalysisPanel processId={current} period={period} /></LivePanel>
-                      <LivePanel title="Scenario Distribution"><ScenarioDistributionPanel processId={current} period={period} /></LivePanel>
-                      <LivePanel title="Day-wise Scenario Audit"><DayWiseScenarioAuditPanel processId={current} period={period} /></LivePanel>
-                      <LivePanel title="Repeat Analysis"><RepeatAnalysisPanel processId={current} period={period} /></LivePanel>
-                      <LivePanel title="Fraud Call Detection"><FraudCallPanel processId={current} period={period} /></LivePanel>
-                    </div>
+                    <LivePanel title="Fatal Analysis"><FatalAnalysisPanel processId={current} period={period} /></LivePanel>
                   )}
-
-                  {/* ── KPI Sections header ──────────────────────────────── */}
-                  <div className="flex items-center gap-3 py-1">
-                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2 select-none">
-                      KPI Metric Sections
-                    </span>
-                    <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
-                  </div>
-
-                  {/* ── Enhanced metric sections ──────────────────────────── */}
-                  {[...ops.sections, ...(ops.ungrouped.length
-                    ? [{ key: "other", title: "Other metrics", blurb: "Wired for this process but not yet placed in a section.", metrics: ops.ungrouped }]
-                    : [])].map((s) => (
-                    <EnhancedSectionBlock
-                      key={s.key}
-                      s={s as Section & { key: string }}
-                      staleAfterDays={ops.staleAfterDays}
-                      period={period}
-                      onOpenDrill={setDrill}
-                      isActive={activeSectionKey === s.key}
-                      onRef={(el) => { sectionRefs.current[s.key] = el; }}
-                    />
-                  ))}
                 </div>
               )}
             </div>
