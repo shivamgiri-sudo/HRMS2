@@ -13,7 +13,7 @@ import {
   type ExitStageKey,
 } from "@/components/exit/ExitStagePipeline";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
-import { KpiTile, NOC_ELIGIBLE_STATUSES, Pill, statusFlow, type CenterData } from "./shared";
+import { exitTypeBadgeClass, KpiTile, NOC_ELIGIBLE_STATUSES, Pill, reasonLabel, statusFlow, type CenterData } from "./shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Overview Tab
@@ -206,6 +206,7 @@ export function OverviewTab({
                   "Branch / Process",
                   "LWD",
                   "Status",
+                  "Reason",
                   "Health",
                   "Clearance",
                   "Risk",

@@ -72,7 +72,9 @@ export const ALLOWED_EXIT_TRANSITIONS: Record<string, string[]> = {
   rejected: [],
   revoked: [],
   withdrawn: [],
-  exited: [],
+  // Involuntary exits land here directly (no notice period served). Allow
+  // clearance_pending so F&F can still be processed after the employee is gone.
+  exited: ["clearance_pending"],
 };
 
 /** Shared by handleExitStatusUpdate below and resignation.routes.ts's status-writing endpoints
@@ -451,6 +453,7 @@ async function handleExitStatusUpdate(req: any, res: any) {
     "manager_review",
     "accepted",
     "notice_serving",
+    "clearance_pending",
     "exited",
     "revoked",
     "withdrawn",

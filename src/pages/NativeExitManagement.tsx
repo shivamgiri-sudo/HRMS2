@@ -976,8 +976,15 @@ export default function NativeExitManagement() {
                 </select>
               </div>
 
+              {form.exitType === "involuntary" && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <strong>Involuntary exit</strong> — will be marked as <strong>Exited</strong> immediately from the date entered below. No notice period will be served and no manager approval is required.
+                </div>
+              )}
               <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Proposed Last Working Day</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                  {form.exitType === "involuntary" ? "Last Working Date (Confirmed)" : "Proposed Last Working Day"}
+                </label>
                 <input type="date" value={form.lastWorkingDayProposed} onChange={(e) => setForm({ ...form, lastWorkingDayProposed: e.target.value })} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" />
               </div>
               <div>

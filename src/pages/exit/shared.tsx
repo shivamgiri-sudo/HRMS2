@@ -59,6 +59,35 @@ export type FullFinalCalc = {
   is_ff_provisional: number;
 };
 
+export const REASON_CATEGORIES: Array<{ code: string; label: string }> = [
+  { code: "better_opportunity",         label: "Better Opportunity" },
+  { code: "career_growth",              label: "Career Growth" },
+  { code: "compensation",               label: "Compensation Dissatisfaction" },
+  { code: "relocation",                 label: "Relocation" },
+  { code: "health_personal",            label: "Health / Personal Reasons" },
+  { code: "family_reasons",             label: "Family Reasons" },
+  { code: "higher_education",           label: "Higher Education" },
+  { code: "work_environment",           label: "Work Environment" },
+  { code: "dissatisfaction_management", label: "Management Dissatisfaction" },
+  { code: "entrepreneurship",           label: "Entrepreneurship" },
+  { code: "performance_action",         label: "Performance Action (Involuntary)" },
+  { code: "termination_misconduct",     label: "Termination — Misconduct" },
+  { code: "absconding",                 label: "Absconding" },
+  { code: "contract_end",               label: "Contract End" },
+  { code: "other",                      label: "Other" },
+];
+
+export function reasonLabel(code?: string | null): string {
+  if (!code) return "—";
+  return REASON_CATEGORIES.find((r) => r.code === code)?.label ?? code.replace(/_/g, " ");
+}
+
+export function exitTypeBadgeClass(exitType?: string): string {
+  return exitType?.toLowerCase() === "involuntary"
+    ? "bg-red-100 text-red-700"
+    : "bg-emerald-100 text-emerald-700";
+}
+
 export const statusFlow = [
   "submitted",
   "manager_review",

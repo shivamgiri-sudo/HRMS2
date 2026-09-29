@@ -7,7 +7,10 @@ import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
-import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
+import {
+  createDefaultClearanceTasks,
+  createExitHealthSnapshot,
+} from "./exit-intelligence.service.js";
 import {
   notifyResignationSubmitted,
   notifyResignationDecision,
@@ -29,10 +32,15 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 const mailer = nodemailer.createTransport({
   host: env.SMTP_HOST,
   port: env.SMTP_PORT,
-  auth: env.SMTP_USER ? { user: env.SMTP_USER, pass: env.SMTP_PASS } : undefined,
+  auth: env.SMTP_USER
+    ? { user: env.SMTP_USER, pass: env.SMTP_PASS }
+    : undefined,
 });
 
-async function notifyManagerOfResignation(employeeId: string, exitRequestId: string) {
+async function notifyManagerOfResignation(
+  employeeId: string,
+  exitRequestId: string,
+) {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.first_name, e.last_name, e.email AS emp_email,
@@ -40,7 +48,7 @@ async function notifyManagerOfResignation(employeeId: string, exitRequestId: str
          FROM employees e
          LEFT JOIN employees m ON m.id = e.reporting_manager_id
         WHERE e.id = ? LIMIT 1`,
-      [employeeId]
+      [employeeId],
     );
     const emp = (rows as RowDataPacket[])[0];
     if (!emp?.mgr_email) return; // no manager email — skip silently
@@ -49,13 +57,13 @@ async function notifyManagerOfResignation(employeeId: string, exitRequestId: str
       from: `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM}>`,
       to: emp.mgr_email,
       subject: `Resignation Notice — ${emp.first_name} ${emp.last_name}`,
-      html: `<p>Dear ${emp.mgr_first ?? 'Manager'},</p>
+      html: `<p>Dear ${emp.mgr_first ?? "Manager"},</p>
              <p><strong>${emp.first_name} ${emp.last_name}</strong> has submitted a resignation request.</p>
              <p>Please log in to HRMS to review and action this request.</p>
              <p style="color:#888;font-size:12px">Exit Request ID: ${exitRequestId}</p>`,
     });
   } catch (err) {
-    logger.error({ err }, '[exit] manager notification email failed');
+    logger.error({ err }, "[exit] manager notification email failed");
   }
 }
 
@@ -87,7 +95,9 @@ async function notifyNoticePeriodOverride(
        FROM employees e WHERE e.id = ? LIMIT 1`,
     [employeeId],
   );
-  const emp = rows[0] as { employee_name?: string; employee_code?: string; branch_id?: string } | undefined;
+  const emp = rows[0] as
+    | { employee_name?: string; employee_code?: string; branch_id?: string }
+    | undefined;
   const who = emp?.employee_name ?? emp?.employee_code ?? employeeId;
 
   const description =
@@ -97,11 +107,24 @@ async function notifyNoticePeriodOverride(
     `this employee is paid.`;
 
   // Same event, three audiences, three item types — see the note above on dedup.
-  const targets: Array<{ itemType: string; role: string; moduleCode: string }> = [
-    { itemType: "NOTICE_PERIOD_OVERRIDE_OPS", role: "process_manager", moduleCode: "exit" },
-    { itemType: "NOTICE_PERIOD_OVERRIDE_OPS_HEAD", role: "operations_head", moduleCode: "exit" },
-    { itemType: "NOTICE_PERIOD_OVERRIDE_PAYROLL", role: "payroll", moduleCode: "payroll" },
-  ];
+  const targets: Array<{ itemType: string; role: string; moduleCode: string }> =
+    [
+      {
+        itemType: "NOTICE_PERIOD_OVERRIDE_OPS",
+        role: "process_manager",
+        moduleCode: "exit",
+      },
+      {
+        itemType: "NOTICE_PERIOD_OVERRIDE_OPS_HEAD",
+        role: "operations_head",
+        moduleCode: "exit",
+      },
+      {
+        itemType: "NOTICE_PERIOD_OVERRIDE_PAYROLL",
+        role: "payroll",
+        moduleCode: "payroll",
+      },
+    ];
 
   for (const t of targets) {
     try {
@@ -117,7 +140,10 @@ async function notifyNoticePeriodOverride(
       });
     } catch (err) {
       // One unreachable audience must not stop the others being told.
-      logger.warn({ err, itemType: t.itemType, exitRequestId }, '[exit] notice-override alert not raised');
+      logger.warn(
+        { err, itemType: t.itemType, exitRequestId },
+        "[exit] notice-override alert not raised",
+      );
     }
   }
 
@@ -144,22 +170,27 @@ async function notifyNoticePeriodOverride(
  * as a generic 500 and the caller would have no way to tell "someone else already
  * actioned this" from "the server broke".
  */
-function exitStateChanged(message: string): Error & { statusCode: number; code: string } {
-  return Object.assign(new Error(message), { statusCode: 409, code: "EXIT_STATE_CHANGED" });
+function exitStateChanged(
+  message: string,
+): Error & { statusCode: number; code: string } {
+  return Object.assign(new Error(message), {
+    statusCode: 409,
+    code: "EXIT_STATE_CHANGED",
+  });
 }
 
 const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  submitted:     ['notice_active', 'returned', 'revoked'],
-  returned:      ['submitted', 'revoked'],
-  notice_active: ['exited', 'revoked'],
-  terminated:    ['exited'],
-  exited:        ['closed'],
+  submitted: ["notice_active", "returned", "revoked"],
+  returned: ["submitted", "revoked"],
+  notice_active: ["exited", "revoked"],
+  terminated: ["exited"],
+  exited: ["closed"],
   // Legacy compat paths
-  draft:          ['submitted'],
-  manager_review: ['notice_active', 'returned', 'accepted'],
-  hr_review:      ['accepted', 'rejected'],
-  accepted:       ['notice_serving', 'notice_active'],
-  notice_serving: ['exited', 'notice_active'],
+  draft: ["submitted"],
+  manager_review: ["notice_active", "returned", "accepted"],
+  hr_review: ["accepted", "rejected"],
+  accepted: ["notice_serving", "notice_active"],
+  notice_serving: ["exited", "notice_active"],
 };
 
 export async function transitionExitStatus(
@@ -170,78 +201,96 @@ export async function transitionExitStatus(
     reason?: string;
     lwdOverride?: string;
     lwdOverrideReason?: string;
-  } = {}
+  } = {},
 ): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_id, status, exit_type, exit_sub_type FROM exit_request WHERE id = ? LIMIT 1`,
-    [exitRequestId]
+    [exitRequestId],
   );
   const rec = rows[0] as any;
-  if (!rec) throw Object.assign(new Error('Exit request not found'), { statusCode: 404 });
+  if (!rec)
+    throw Object.assign(new Error("Exit request not found"), {
+      statusCode: 404,
+    });
 
   const allowed = ALLOWED_TRANSITIONS[rec.status] ?? [];
   if (!allowed.includes(newStatus)) {
     throw Object.assign(
       new Error(`Cannot transition from ${rec.status} to ${newStatus}`),
-      { statusCode: 409, code: 'invalid_transition' }
+      { statusCode: 409, code: "invalid_transition" },
     );
   }
 
-  const updates: string[] = ['status = ?', 'updated_at = NOW()'];
+  const updates: string[] = ["status = ?", "updated_at = NOW()"];
   const params: unknown[] = [newStatus];
 
-  if (newStatus === 'returned' && opts.reason) {
-    updates.push('return_reason = ?');
+  if (newStatus === "returned" && opts.reason) {
+    updates.push("return_reason = ?");
     params.push(opts.reason);
-    updates.push('manager_actioned_at = NOW()');
+    updates.push("manager_actioned_at = NOW()");
   }
-  if (newStatus === 'notice_active') {
-    updates.push('manager_actioned_at = NOW()');
+  if (newStatus === "notice_active") {
+    updates.push("manager_actioned_at = NOW()");
     if (opts.lwdOverride) {
-      updates.push('lwd_override = ?');
+      updates.push("lwd_override = ?");
       params.push(opts.lwdOverride);
       if (opts.lwdOverrideReason) {
-        updates.push('lwd_override_reason = ?');
+        updates.push("lwd_override_reason = ?");
         params.push(opts.lwdOverrideReason);
       }
     }
   }
-  if (newStatus === 'exited') {
-    updates.push('exit_confirmed_at = NOW()');
+  if (newStatus === "exited") {
+    updates.push("exit_confirmed_at = NOW()");
   }
-  if (newStatus === 'revoked') {
-    updates.push('revoked_at = NOW()', 'revoke_reason = ?', 'revoked_by = ?');
+  if (newStatus === "revoked") {
+    updates.push("revoked_at = NOW()", "revoke_reason = ?", "revoked_by = ?");
     params.push(opts.reason ?? null, actor.userId);
   }
 
   params.push(exitRequestId);
-  await db.execute(`UPDATE exit_request SET ${updates.join(', ')} WHERE id = ?`, params);
+  await db.execute(
+    `UPDATE exit_request SET ${updates.join(", ")} WHERE id = ?`,
+    params,
+  );
 
   // Write approval log
   await db.execute(
     `INSERT INTO exit_approval_log
        (id, exit_request_id, stage, action, action_by, action_by_role, discussion_remarks, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-    [randomUUID(), exitRequestId, newStatus, newStatus, actor.userId, actor.userRole, opts.reason ?? null]
+    [
+      randomUUID(),
+      exitRequestId,
+      newStatus,
+      newStatus,
+      actor.userId,
+      actor.userRole,
+      opts.reason ?? null,
+    ],
   );
 
   // Auto-generate clearance tasks when entering active notice
-  if (newStatus === 'notice_active' || newStatus === 'terminated') {
+  if (newStatus === "notice_active" || newStatus === "terminated") {
     await createDefaultClearanceTasks(exitRequestId, rec.employee_id);
   }
 
   // Fire notifications (non-blocking)
   setImmediate(() => {
-    if (newStatus === 'submitted') {
+    if (newStatus === "submitted") {
       notifyResignationSubmittedToManager(exitRequestId).catch(() => {});
-    } else if (newStatus === 'notice_active') {
-      notifyManagerDecision(exitRequestId, 'approved').catch(() => {});
-    } else if (newStatus === 'returned') {
-      notifyManagerDecision(exitRequestId, 'returned', opts.reason).catch(() => {});
-    } else if (newStatus === 'exited' && actor.userId === 'system') {
+    } else if (newStatus === "notice_active") {
+      notifyManagerDecision(exitRequestId, "approved").catch(() => {});
+    } else if (newStatus === "returned") {
+      notifyManagerDecision(exitRequestId, "returned", opts.reason).catch(
+        () => {},
+      );
+    } else if (newStatus === "exited" && actor.userId === "system") {
       notifyAutoExited(exitRequestId).catch(() => {});
-    } else if (newStatus === 'revoked') {
-      notifyResignationRevoked(exitRequestId, opts.reason ?? '').catch(() => {});
+    } else if (newStatus === "revoked") {
+      notifyResignationRevoked(exitRequestId, opts.reason ?? "").catch(
+        () => {},
+      );
     }
   });
 }
@@ -256,17 +305,32 @@ export const exitService = {
     page: number;
     limit: number;
   }): Promise<PaginatedResult<ExitRequest>> {
-    const { page, limit, status, employeeId, branchId, processId, search } = filters;
+    const { page, limit, status, employeeId, branchId, processId, search } =
+      filters;
     const offset = (page - 1) * limit;
     const conds: string[] = [];
     const params: unknown[] = [];
 
-    if (employeeId) { conds.push("er.employee_id = ?"); params.push(employeeId); }
-    if (status)     { conds.push("er.status = ?");      params.push(normalizeStatus(status)); }
-    if (branchId)   { conds.push("e.branch_id = ?");    params.push(branchId); }
-    if (processId)  { conds.push("e.process_id = ?");   params.push(processId); }
+    if (employeeId) {
+      conds.push("er.employee_id = ?");
+      params.push(employeeId);
+    }
+    if (status) {
+      conds.push("er.status = ?");
+      params.push(normalizeStatus(status));
+    }
+    if (branchId) {
+      conds.push("e.branch_id = ?");
+      params.push(branchId);
+    }
+    if (processId) {
+      conds.push("e.process_id = ?");
+      params.push(processId);
+    }
     if (search) {
-      conds.push("(e.employee_code LIKE ? OR e.full_name LIKE ? OR er.resignation_reason LIKE ? OR er.exit_reason_category LIKE ?)");
+      conds.push(
+        "(e.employee_code LIKE ? OR e.full_name LIKE ? OR er.resignation_reason LIKE ? OR er.exit_reason_category LIKE ?)",
+      );
       const q = `%${search}%`;
       params.push(q, q, q, q);
     }
@@ -322,11 +386,11 @@ export const exitService = {
          ${where}
         ORDER BY er.created_at DESC
         LIMIT ${limit} OFFSET ${offset}`,
-      params
+      params,
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM exit_request er LEFT JOIN employees e ON e.id = er.employee_id ${where}`,
-      params
+      params,
     );
 
     return {
@@ -349,7 +413,7 @@ export const exitService = {
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN process_master p ON p.id = e.process_id
         WHERE er.id = ? LIMIT 1`,
-      [id]
+      [id],
     );
     const rec = (rows as ExitRequest[])[0];
     if (!rec) throw new Error("Exit request not found");
@@ -382,15 +446,18 @@ export const exitService = {
        */
       initiatedBy?: "employee" | "manager" | "hr";
     },
-    userId: string
+    userId: string,
   ): Promise<ExitRequest> {
     const [openRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM exit_request
         WHERE employee_id = ? AND status NOT IN ('rejected','revoked','exited')
         LIMIT 1`,
-      [input.employeeId]
+      [input.employeeId],
     );
-    if (openRows.length) throw new Error("An active exit request already exists for this employee");
+    if (openRows.length)
+      throw new Error(
+        "An active exit request already exists for this employee",
+      );
 
     /**
      * Notice period at creation.
@@ -414,7 +481,9 @@ export const exitService = {
     const noticePeriodDays =
       input.noticePeriodDays ??
       (String(input.exitType).trim().toLowerCase() === "voluntary"
-        ? Number(await getPolicyValue("exit", "notice", "default_notice_days", "30")) || 30
+        ? Number(
+            await getPolicyValue("exit", "notice", "default_notice_days", "30"),
+          ) || 30
         : 0);
 
     /**
@@ -432,10 +501,25 @@ export const exitService = {
      * stopped being employed.
      */
     const isAbsconding = ["absconding", "abandonment"].includes(
-      String(input.exitSubType ?? "").trim().toLowerCase()
+      String(input.exitSubType ?? "")
+        .trim()
+        .toLowerCase(),
     );
     const abscondingSince = input.abscondingSince ?? null;
-    const effectiveExitDate = isAbsconding && abscondingSince ? abscondingSince : input.exitDate;
+    const effectiveExitDate =
+      isAbsconding && abscondingSince ? abscondingSince : input.exitDate;
+
+    // Involuntary exits (termination, absconding, contract_end, abandonment) skip the
+    // manager-approval and notice-serving stages entirely. The employee has already left or
+    // is being removed — asking a manager to "approve" a termination they initiated, or
+    // waiting for a notice period that will never be served, only adds friction with no
+    // compliance benefit. The exit lands at 'exited' immediately with the selected date
+    // confirmed as the last working day.
+    const isInvoluntary =
+      String(input.exitType ?? "")
+        .trim()
+        .toLowerCase() === "involuntary";
+    const initialStatus = isInvoluntary ? "exited" : "submitted";
 
     const id = randomUUID();
     // submitted_at is written here, and NOT left to a stage transition.
@@ -461,9 +545,10 @@ export const exitService = {
     await db.execute(
       `INSERT INTO exit_request
          (id, employee_id, initiated_by, initiated_by_user_id, exit_type, exit_sub_type,
-          exit_reason_category, absconding_since, last_working_day_proposed, resignation_reason,
+          exit_reason_category, absconding_since, last_working_day_proposed,
+          last_working_day_confirmed, resignation_reason,
           notice_period_days, status, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         id,
         input.employeeId,
@@ -478,24 +563,70 @@ export const exitService = {
         input.exitReasonCategory ?? null,
         abscondingSince,
         effectiveExitDate,
+        // Involuntary exits land at 'exited' immediately — the date HR selected IS the
+        // confirmed last working day, no manager confirmation step needed.
+        isInvoluntary ? (effectiveExitDate ?? null) : null,
         input.reason ?? null,
         noticePeriodDays,
-        "submitted",
-      ]
+        initialStatus,
+      ],
     );
 
     await createExitHealthSnapshot(id).catch((err: unknown) => {
-      logger.error({ err, exitRequestId: id }, '[exit] Health snapshot creation failed');
+      logger.error(
+        { err, exitRequestId: id },
+        "[exit] Health snapshot creation failed",
+      );
       return null;
     });
+
+    if (isInvoluntary) {
+      // Involuntary exits are immediately at 'exited' — create clearance tasks now so
+      // HR can run asset recovery, IT deprovisioning, and F&F without a separate trigger.
+      await createDefaultClearanceTasks(id, input.employeeId).catch(
+        (err: unknown) => {
+          logger.error(
+            { err, exitRequestId: id },
+            "[exit] Involuntary auto-clearance task creation failed",
+          );
+        },
+      );
+      await logSensitiveAction({
+        actor_user_id: userId,
+        action_type: "EXIT_INVOLUNTARY_AUTO_EXITED",
+        module_key: "exit",
+        entity_type: "exit_request",
+        entity_id: id,
+        metadata: {
+          exitType: input.exitType,
+          exitSubType: input.exitSubType,
+          effectiveExitDate,
+          note: "Auto-exited on creation — no notice period or manager approval required for involuntary exits",
+        },
+      }).catch(() => {});
+      void notifyAutoExited(id).catch((err: unknown) => {
+        logger.error(
+          { err, exitRequestId: id },
+          "[exit] Involuntary auto-exit notification failed",
+        );
+      });
+      // Skip manager resignation notification for involuntary exits — there is no
+      // resignation to review. Return early from side-effects below.
+      return this.getExitRequest(id);
+    }
 
     // Fire-and-forget: notify manager of resignation.
     // Strangler: the gateway reports delivered only once resignation_submitted is
     // live; until then the legacy mailer still covers it. Never a double send.
     void notifyResignationSubmitted(id)
-      .then((delivered) => (delivered ? null : notifyManagerOfResignation(input.employeeId, id)))
+      .then((delivered) =>
+        delivered ? null : notifyManagerOfResignation(input.employeeId, id),
+      )
       .catch((err: unknown) => {
-        logger.error({ err, exitRequestId: id }, '[exit] Manager notification failed');
+        logger.error(
+          { err, exitRequestId: id },
+          "[exit] Manager notification failed",
+        );
         return null;
       });
 
@@ -503,12 +634,18 @@ export const exitService = {
     try {
       const [empRow] = await db.execute<RowDataPacket[]>(
         `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, mobile, personal_phone
-         FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+         FROM employees WHERE id = ? LIMIT 1`,
+        [input.employeeId],
       );
-      const emp = (empRow[0] as any);
+      const emp = empRow[0] as any;
       const phone = emp?.mobile ?? emp?.personal_phone ?? null;
-      if (phone) sendSMS(phone, 'separation_initiated', { name: emp.name }).catch(() => {});
-    } catch { /* non-fatal */ }
+      if (phone)
+        sendSMS(phone, "separation_initiated", { name: emp.name }).catch(
+          () => {},
+        );
+    } catch {
+      /* non-fatal */
+    }
 
     // Registry-backed Action Centre item (RESIGNATION_PENDING_REVIEW). Gated on
     // exitSubType 'resignation' (the schema default — see exit.validation.ts) so
@@ -519,11 +656,18 @@ export const exitService = {
       try {
         const [empRow2] = await db.execute<RowDataPacket[]>(
           `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, branch_id
-           FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+           FROM employees WHERE id = ? LIMIT 1`,
+          [input.employeeId],
         );
-        const emp2 = (empRow2[0] as any);
-        await triggerResignationPendingReview(id, emp2?.name ?? input.employeeId, emp2?.branch_id ?? undefined);
-      } catch { /* non-fatal */ }
+        const emp2 = empRow2[0] as any;
+        await triggerResignationPendingReview(
+          id,
+          emp2?.name ?? input.employeeId,
+          emp2?.branch_id ?? undefined,
+        );
+      } catch {
+        /* non-fatal */
+      }
     }
 
     return this.getExitRequest(id);
@@ -557,7 +701,7 @@ export const exitService = {
     noticeTerms?: {
       lastWorkingDayConfirmed?: string | null;
       noticePeriodDays?: number | null;
-    }
+    },
   ): Promise<ExitRequest> {
     const existing = await this.getExitRequest(id);
     const nextStatus = normalizeStatus(status);
@@ -584,15 +728,20 @@ export const exitService = {
     // 'terminated' / 'absconded' / 'offboarded', all dead branches guarding a state nothing
     // could produce. Derived from the exit itself now; see exitEmploymentStatus.ts for why
     // the mapper and the activation guard's exclusion list must stay in one place.
-    const nextEmploymentStatus = employmentStatusForExit(exitRecord.exit_type, exitRecord.exit_sub_type);
+    const nextEmploymentStatus = employmentStatusForExit(
+      exitRecord.exit_type,
+      exitRecord.exit_sub_type,
+    );
 
     // Notice terms supplied on this call, normalised. A blank string is not a date.
     const confirmedLwdInput =
-      typeof noticeTerms?.lastWorkingDayConfirmed === "string" && noticeTerms.lastWorkingDayConfirmed.trim()
+      typeof noticeTerms?.lastWorkingDayConfirmed === "string" &&
+      noticeTerms.lastWorkingDayConfirmed.trim()
         ? noticeTerms.lastWorkingDayConfirmed.trim().slice(0, 10)
         : null;
     const noticeDaysInput =
-      noticeTerms?.noticePeriodDays === null || noticeTerms?.noticePeriodDays === undefined
+      noticeTerms?.noticePeriodDays === null ||
+      noticeTerms?.noticePeriodDays === undefined
         ? null
         : Number(noticeTerms.noticePeriodDays);
 
@@ -642,7 +791,11 @@ export const exitService = {
       noticeSet.push(`last_working_day_confirmed = ?`);
       noticeParams.push(confirmedLwdInput);
     }
-    if (noticeDaysInput !== null && Number.isFinite(noticeDaysInput) && noticeDaysInput > 0) {
+    if (
+      noticeDaysInput !== null &&
+      Number.isFinite(noticeDaysInput) &&
+      noticeDaysInput > 0
+    ) {
       noticeSet.push(`notice_period_days = ?`);
       noticeParams.push(Math.trunc(noticeDaysInput));
       // Both assignments repeat NOTICE_ANCHOR rather than one reading the other's result.
@@ -651,7 +804,7 @@ export const exitService = {
       // order-dependent. Repeating the expression makes it identical either way.
       noticeSet.push(`notice_start_date = ${NOTICE_ANCHOR}`);
       noticeSet.push(
-        `notice_end_date = COALESCE(?, DATE_ADD(${NOTICE_ANCHOR}, INTERVAL ? DAY))`
+        `notice_end_date = COALESCE(?, DATE_ADD(${NOTICE_ANCHOR}, INTERVAL ? DAY))`,
       );
       noticeParams.push(confirmedLwdInput, Math.trunc(noticeDaysInput));
     }
@@ -679,32 +832,37 @@ export const exitService = {
 
       const [lockedRows] = await conn.execute<RowDataPacket[]>(
         `SELECT status FROM exit_request WHERE id = ? FOR UPDATE`,
-        [id]
+        [id],
       );
       const locked = lockedRows[0];
       if (!locked) throw exitStateChanged("Exit request no longer exists");
 
       const lockedStatus = String(locked.status);
-      if (expectedStatus && normalizeStatus(expectedStatus) !== normalizeStatus(lockedStatus)) {
+      if (
+        expectedStatus &&
+        normalizeStatus(expectedStatus) !== normalizeStatus(lockedStatus)
+      ) {
         throw exitStateChanged(
-          `Exit request changed to '${normalizeStatus(lockedStatus)}' while this action was in flight`
+          `Exit request changed to '${normalizeStatus(lockedStatus)}' while this action was in flight`,
         );
       }
 
       const [statusResult] = await conn.execute<ResultSetHeader>(
         `UPDATE exit_request SET status = ?${tsClause}${noticeClause}, updated_at = NOW()
           WHERE id = ? AND status = ?`,
-        [nextStatus, ...noticeParams, id, lockedStatus]
+        [nextStatus, ...noticeParams, id, lockedStatus],
       );
       // Never report success on a transition that did not happen.
       if (statusResult.affectedRows !== 1) {
-        throw exitStateChanged("Exit request status changed before this update could be applied");
+        throw exitStateChanged(
+          "Exit request status changed before this update could be applied",
+        );
       }
 
       await conn.execute(
         `INSERT INTO exit_approval_log (id, exit_request_id, stage, action, action_by, discussion_remarks)
          VALUES (UUID(), ?, ?, ?, ?, ?)`,
-        [id, nextStatus, "status_update", userId, remarks]
+        [id, nextStatus, "status_update", userId, remarks],
       );
 
       if (nextStatus === "exited") {
@@ -714,10 +872,12 @@ export const exitService = {
         const [employeeResult] = await conn.execute<ResultSetHeader>(
           `UPDATE employees SET active_status = 0, employment_status = ?, date_of_exit = ?, updated_at = NOW()
             WHERE id = ?`,
-          [nextEmploymentStatus, lastWorkingDay, employeeIdForExit]
+          [nextEmploymentStatus, lastWorkingDay, employeeIdForExit],
         );
         if (employeeResult.affectedRows !== 1) {
-          throw exitStateChanged("Employee record could not be deactivated for this exit");
+          throw exitStateChanged(
+            "Employee record could not be deactivated for this exit",
+          );
         }
       }
 
@@ -748,14 +908,19 @@ export const exitService = {
       const previousNoticeDays = Number(exitRecord.notice_period_days ?? 0);
       const newNoticeDays = Math.trunc(noticeDaysInput);
       if (newNoticeDays !== previousNoticeDays) {
-        void notifyNoticePeriodOverride(id, employeeIdForExit, previousNoticeDays, newNoticeDays, userId)
-          .catch((err: unknown) => {
-            logger.error(
-              { err, exitRequestId: id, previousNoticeDays, newNoticeDays },
-              '[exit] Notice-period override alert failed',
-            );
-            return null;
-          });
+        void notifyNoticePeriodOverride(
+          id,
+          employeeIdForExit,
+          previousNoticeDays,
+          newNoticeDays,
+          userId,
+        ).catch((err: unknown) => {
+          logger.error(
+            { err, exitRequestId: id, previousNoticeDays, newNoticeDays },
+            "[exit] Notice-period override alert failed",
+          );
+          return null;
+        });
       }
     }
 
@@ -763,9 +928,13 @@ export const exitService = {
     // intermediate review stages are internal queue movements.
     setImmediate(() => {
       const decision =
-        nextStatus === "accepted" ? "accepted" :
-        nextStatus === "rejected" ? "rejected" :
-        nextStatus === "revoked"  ? "revoked"  : null;
+        nextStatus === "accepted"
+          ? "accepted"
+          : nextStatus === "rejected"
+            ? "rejected"
+            : nextStatus === "revoked"
+              ? "revoked"
+              : null;
       if (decision) void notifyResignationDecision(id, decision);
     });
 
@@ -784,17 +953,27 @@ export const exitService = {
     // from the request body unconditionally, regardless of nextStatus, so a revoke call that
     // happens to carry a stale/leftover LWD value must not spin up a clearance chain for a
     // resignation that never happened.
-    const isReversalOutcome = ["revoked", "rejected", "cancelled", "withdrawn"].includes(nextStatus);
+    const isReversalOutcome = [
+      "revoked",
+      "rejected",
+      "cancelled",
+      "withdrawn",
+    ].includes(nextStatus);
     if (confirmedLwdInput && !isReversalOutcome) {
       const [dueRows] = await db.execute<RowDataPacket[]>(
         `SELECT 1 FROM exit_request WHERE id = ? AND last_working_day_confirmed <= CURDATE()`,
-        [id]
+        [id],
       );
       if (dueRows[0]) {
-        await createDefaultClearanceTasks(id, employeeIdForExit).catch((err: unknown) => {
-          logger.error({ err, exitRequestId: id }, '[exit] Clearance task creation failed');
-          return null;
-        });
+        await createDefaultClearanceTasks(id, employeeIdForExit).catch(
+          (err: unknown) => {
+            logger.error(
+              { err, exitRequestId: id },
+              "[exit] Clearance task creation failed",
+            );
+            return null;
+          },
+        );
       }
     }
 
@@ -819,28 +998,41 @@ export const exitService = {
       // browser is valid for up to 24h after active_status goes to 0, and
       // requireAuth had no reason to reject it. Revoke here so the exit takes
       // effect at the same moment the record says it did.
-      const revoked = await revokeSessionsForEmployee(employeeId, 'employee_exit');
-      if (revoked.refreshTokensRevoked > 0 || revoked.deviceSessionsRevoked > 0) {
+      const revoked = await revokeSessionsForEmployee(
+        employeeId,
+        "employee_exit",
+      );
+      if (
+        revoked.refreshTokensRevoked > 0 ||
+        revoked.deviceSessionsRevoked > 0
+      ) {
         logger.info(
           { exitRequestId: id, employeeId, ...revoked },
-          '[exit] Live sessions revoked for exited employee'
+          "[exit] Live sessions revoked for exited employee",
         );
       }
 
       // Create a pending F&F record so payroll team is alerted to process settlement
-      await db.execute(
-        `INSERT IGNORE INTO full_final_calculation
+      await db
+        .execute(
+          `INSERT IGNORE INTO full_final_calculation
            (id, exit_request_id, employee_id, calculation_date,
             notice_period_days, notice_shortfall_days, notice_recovery,
             earned_leave_encashment, gratuity_amount, salary_hold,
             advances_recovery, net_payable, status, is_ff_provisional, prepared_by)
          VALUES (UUID(), ?, ?, CURDATE(), 0, 0, 0, 0, 0, 0, 0, 0, 'draft', 1, ?)`,
-        [id, employeeId, userId]
-      ).catch(async (err: unknown) => {
-        logger.warn({ err }, '[exit] F&F record creation failed');
-        // Post-commit: the exit stands, so this becomes payroll's work rather than a log line.
-        await recordExitFollowUpFailure('FF_DRAFT_CREATION', id, employeeId, err);
-      });
+          [id, employeeId, userId],
+        )
+        .catch(async (err: unknown) => {
+          logger.warn({ err }, "[exit] F&F record creation failed");
+          // Post-commit: the exit stands, so this becomes payroll's work rather than a log line.
+          await recordExitFollowUpFailure(
+            "FF_DRAFT_CREATION",
+            id,
+            employeeId,
+            err,
+          );
+        });
 
       // Nullify reporting_manager_id for direct reports so they are not orphaned
       //
@@ -850,28 +1042,40 @@ export const exitService = {
       // still have people pointing at them (counted 2026-08-27). Without an effective-dated
       // row written FIRST, the departing manager's team history becomes unattributable the
       // moment this UPDATE runs — their attrition and shrinkage record simply disappears.
-      const [orphanRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM employees WHERE reporting_manager_id = ? AND active_status = 1`,
-        [employeeId]
-      ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      const [orphanRows] = await db
+        .execute<RowDataPacket[]>(
+          `SELECT id FROM employees WHERE reporting_manager_id = ? AND active_status = 1`,
+          [employeeId],
+        )
+        .catch(() => [[]] as unknown as [RowDataPacket[]]);
       for (const row of orphanRows as RowDataPacket[]) {
         await recordManagerChange({
           employeeId: String((row as { id: unknown }).id),
           newManagerId: null,
           changedBy: userId ?? null,
-          reason: 'Reporting manager exited — team pending re-parent',
+          reason: "Reporting manager exited — team pending re-parent",
         });
       }
 
-      await db.execute(
-        `UPDATE employees
+      await db
+        .execute(
+          `UPDATE employees
             SET reporting_manager_id = NULL, updated_at = NOW()
           WHERE reporting_manager_id = ? AND active_status = 1`,
-        [employeeId]
-      ).catch(async (err: unknown) => {
-        logger.warn({ err, employeeId }, '[exit] Direct-report RM nullification failed');
-        await recordExitFollowUpFailure('DIRECT_REPORT_REPARENT', id, employeeId, err);
-      });
+          [employeeId],
+        )
+        .catch(async (err: unknown) => {
+          logger.warn(
+            { err, employeeId },
+            "[exit] Direct-report RM nullification failed",
+          );
+          await recordExitFollowUpFailure(
+            "DIRECT_REPORT_REPARENT",
+            id,
+            employeeId,
+            err,
+          );
+        });
 
       // Withdraw LMS access and future leave, and count kit still out on loan.
       //
@@ -881,39 +1085,59 @@ export const exitService = {
       // let the exit report success. Every exit silently skipped its own
       // cleanup; 60 people who have left are still active LMS learners because
       // of it. Failures now surface instead of being swallowed.
-      const deprovision = await deprovisionEmployeeAccess(employeeId, 'employee_exit');
+      const deprovision = await deprovisionEmployeeAccess(
+        employeeId,
+        "employee_exit",
+      );
       logger.info(
         { exitRequestId: id, employeeId, ...deprovision },
-        '[exit] Deprovisioning complete'
+        "[exit] Deprovisioning complete",
       );
       if (deprovision.failures.length > 0) {
         logger.error(
           { exitRequestId: id, employeeId, failures: deprovision.failures },
-          '[exit] Deprovisioning steps failed — access may persist'
+          "[exit] Deprovisioning steps failed — access may persist",
         );
         // "Failures surface" previously meant this log line only. Access persisting after an
         // exit is a security outcome, so it has to become work somebody is holding.
-        await recordExitFollowUpFailure('ACCESS_DEPROVISION', id, employeeId, deprovision.failures);
+        await recordExitFollowUpFailure(
+          "ACCESS_DEPROVISION",
+          id,
+          employeeId,
+          deprovision.failures,
+        );
       }
 
       // Fire IT exit provisioning tasks — fire-and-forget, must not throw
-      import('../it-provisioning/it-provisioning.service.js').then(({ dispatchExitProvisioningTasks }) => {
-        dispatchExitProvisioningTasks({
-          employeeId:     exitRec.employee_id,
-          employeeCode:   exitRec.employee_code  ?? '',
-          employeeName:   exitRec.employee_name  ?? exitRec.employee_id,
-          branchId:       exitRec.branch_id      ?? null,
-          lastWorkingDay: exitRec.last_working_day_proposed ?? null,
-          exitRequestId:  id,
-          actorUserId:    userId,
-        }).catch((err: unknown) => {
-          logger.error({ err }, '[it-provisioning] exit dispatch failed');
-          void recordExitFollowUpFailure('IT_DEPROVISION_DISPATCH', id, employeeId, err);
+      import("../it-provisioning/it-provisioning.service.js")
+        .then(({ dispatchExitProvisioningTasks }) => {
+          dispatchExitProvisioningTasks({
+            employeeId: exitRec.employee_id,
+            employeeCode: exitRec.employee_code ?? "",
+            employeeName: exitRec.employee_name ?? exitRec.employee_id,
+            branchId: exitRec.branch_id ?? null,
+            lastWorkingDay: exitRec.last_working_day_proposed ?? null,
+            exitRequestId: id,
+            actorUserId: userId,
+          }).catch((err: unknown) => {
+            logger.error({ err }, "[it-provisioning] exit dispatch failed");
+            void recordExitFollowUpFailure(
+              "IT_DEPROVISION_DISPATCH",
+              id,
+              employeeId,
+              err,
+            );
+          });
+        })
+        .catch((err: unknown) => {
+          logger.error({ err }, "[it-provisioning] module load failed");
+          void recordExitFollowUpFailure(
+            "IT_DEPROVISION_DISPATCH",
+            id,
+            employeeId,
+            err,
+          );
         });
-      }).catch((err: unknown) => {
-        logger.error({ err }, '[it-provisioning] module load failed');
-        void recordExitFollowUpFailure('IT_DEPROVISION_DISPATCH', id, employeeId, err);
-      });
     }
 
     return this.getExitRequest(id);
@@ -921,7 +1145,7 @@ export const exitService = {
 
   async getExitStats(): Promise<ExitStats & Record<string, number>> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT status, COUNT(*) AS cnt FROM exit_request GROUP BY status`
+      `SELECT status, COUNT(*) AS cnt FROM exit_request GROUP BY status`,
     );
 
     const counts: Record<string, number> = {};
@@ -930,12 +1154,26 @@ export const exitService = {
     }
 
     const statuses = [
-      "draft", "submitted", "manager_review", "hr_review", "admin_review",
-      "accepted", "rejected", "revoked", "notice_serving", "exited",
+      "draft",
+      "submitted",
+      "manager_review",
+      "hr_review",
+      "admin_review",
+      "accepted",
+      "rejected",
+      "revoked",
+      "notice_serving",
+      "exited",
     ];
-    const detailed = Object.fromEntries(statuses.map((s) => [s, counts[s] ?? 0])) as Record<string, number>;
+    const detailed = Object.fromEntries(
+      statuses.map((s) => [s, counts[s] ?? 0]),
+    ) as Record<string, number>;
     const total = Object.values(detailed).reduce((a, b) => a + b, 0);
-    const pending = (detailed.submitted ?? 0) + (detailed.manager_review ?? 0) + (detailed.hr_review ?? 0) + (detailed.admin_review ?? 0);
+    const pending =
+      (detailed.submitted ?? 0) +
+      (detailed.manager_review ?? 0) +
+      (detailed.hr_review ?? 0) +
+      (detailed.admin_review ?? 0);
     const completed = detailed.exited ?? 0;
 
     return {

@@ -20,7 +20,7 @@ import {
   NOC_STATUS_COLORS,
   NOC_STATUS_LABELS,
 } from "@/lib/exitClearance";
-import type { ExitRow } from "./shared";
+import { exitTypeBadgeClass, reasonLabel, type ExitRow } from "./shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Exit Task Board Tab — master tracking view: every active exit with its clearance
@@ -130,6 +130,16 @@ export function ExitTaskBoardTab({
                         <Badge variant="outline" className="capitalize">
                           {r.status.replace(/_/g, " ")}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${exitTypeBadgeClass(r.exit_type)}`}
+                        >
+                          {r.exit_type ?? "—"}
+                        </span>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {reasonLabel(r.exit_reason_category)}
+                        </p>
                       </TableCell>
                       <TableCell>
                         <span
