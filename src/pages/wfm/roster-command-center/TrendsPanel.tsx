@@ -24,7 +24,7 @@ import {
   Bar,
   BarChart,
 } from "recharts";
-import { CalendarClock, ChevronRight, Send, TrendingDown, TrendingUp, Users, X } from "lucide-react";
+import { CalendarClock, ChevronLeft, ChevronRight, Send, TrendingDown, TrendingUp, Users, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   AXIS_TICK,
@@ -496,8 +496,20 @@ interface MemberMtdRow {
   lateRatePct: number;
 }
 
+interface DailyRow {
+  date: string;
+  dayOfWeek: string;
+  assignmentType: string;
+  shiftStart: string | null;
+  shiftEnd: string | null;
+  status: string;
+  clockIn: string | null;
+  lateByMinutes: number | null;
+}
+
 function TeamShrinkageSection({ filters }: { filters: Filters }) {
   const [drawerProcess, setDrawerProcess] = useState<ProcessShrinkageRow | null>(null);
+  const [drawerAnalyst, setDrawerAnalyst] = useState<MemberMtdRow | null>(null);
 
   const processQ = useQuery({
     queryKey: ["process-shrinkage-mtd", filters.from, filters.to, filters.branchId, filters.processId],
@@ -528,6 +540,24 @@ function TeamShrinkageSection({ filters }: { filters: Filters }) {
         `/api/roster-analytics/process-member-mtd?${params}`,
       );
       return res.members ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const dailyQ = useQuery({
+    queryKey: ["member-daily", drawerAnalyst?.employeeId, filters.from, filters.to],
+    enabled: !!drawerAnalyst,
+    queryFn: async () => {
+      if (!drawerAnalyst) return [];
+      const params = new URLSearchParams({
+        employeeId: drawerAnalyst.employeeId,
+        fromDate: filters.from,
+        toDate: filters.to,
+      });
+      const res = await hrmsApi.get<{ days: DailyRow[] }>(
+        `/api/roster-analytics/member-daily?${params}`,
+      );
+      return res.days ?? [];
     },
     staleTime: 5 * 60_000,
   });
@@ -612,77 +642,166 @@ function TeamShrinkageSection({ filters }: { filters: Filters }) {
         <>
           <div
             className="fixed inset-0 z-40 bg-black/30"
-            onClick={() => setDrawerProcess(null)}
+            onClick={() => { setDrawerProcess(null); setDrawerAnalyst(null); }}
           />
           <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col bg-white shadow-2xl">
+            {/* Header — changes based on drill depth */}
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Team Shrinkage — Analyst View</p>
-                <p className="text-base font-semibold text-slate-900">{drawerProcess.processName}</p>
-                <p className="text-[11px] text-slate-500">{filters.from} → {filters.to}</p>
-              </div>
+              {drawerAnalyst ? (
+                <div className="flex items-center gap-3 min-w-0">
+                  <button
+                    onClick={() => setDrawerAnalyst(null)}
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    Back
+                  </button>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Day-wise Attendance</p>
+                    <p className="truncate text-base font-semibold text-slate-900">{drawerAnalyst.employeeName}</p>
+                    <p className="text-[11px] text-slate-500">{drawerAnalyst.employeeCode} · {filters.from} → {filters.to}</p>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Team Shrinkage — Analyst View</p>
+                  <p className="text-base font-semibold text-slate-900">{drawerProcess.processName}</p>
+                  <p className="text-[11px] text-slate-500">{filters.from} → {filters.to}</p>
+                </div>
+              )}
               <button
-                onClick={() => setDrawerProcess(null)}
-                className="rounded-md p-1.5 hover:bg-slate-100 transition-colors"
+                onClick={() => { setDrawerProcess(null); setDrawerAnalyst(null); }}
+                className="rounded-md p-1.5 hover:bg-slate-100 transition-colors ml-2 shrink-0"
               >
                 <X className="h-4 w-4 text-slate-500" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 py-4">
-              <p className="mb-3 text-[10px] font-bold uppercase tracking-wide text-slate-400">Process summary</p>
-              <div className="mb-4 grid grid-cols-3 gap-2 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
-                <div><span className="text-slate-400">Rostered</span><br /><span className="font-semibold tabular-nums">{num(drawerProcess.rostered)}</span></div>
-                <div><span className="text-slate-400">Present</span><br /><span className="font-semibold tabular-nums text-emerald-600">{num(drawerProcess.present)}</span></div>
-                <div><span className="text-slate-400">Shrinkage</span><br /><span className={`font-semibold tabular-nums ${shrinkageColor(drawerProcess.shrinkagePct)}`}>{pct(drawerProcess.shrinkagePct)}</span></div>
-                <div><span className="text-slate-400">Late</span><br /><span className="font-semibold tabular-nums text-amber-600">{num(drawerProcess.late)}</span></div>
-                <div><span className="text-slate-400">Absent</span><br /><span className="font-semibold tabular-nums text-rose-500">{num(drawerProcess.absent)}</span></div>
-                <div><span className="text-slate-400">On Leave</span><br /><span className="font-semibold tabular-nums text-blue-500">{num(drawerProcess.onLeave)}</span></div>
-              </div>
-
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Per-analyst detail</p>
-              {memberQ.isLoading ? (
-                <ChartSkeleton height={200} />
-              ) : (memberQ.data ?? []).length === 0 ? (
-                <EmptyState label="No analyst data found" height={120} />
+              {drawerAnalyst ? (
+                /* Day-wise breakdown for selected analyst */
+                <>
+                  <p className="mb-3 text-[10px] font-bold uppercase tracking-wide text-slate-400">Day-by-day attendance</p>
+                  {dailyQ.isLoading ? (
+                    <ChartSkeleton height={300} />
+                  ) : (dailyQ.data ?? []).length === 0 ? (
+                    <EmptyState label="No roster data found for this analyst" height={150} />
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-100 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                            <th className="py-2 pr-3">Date</th>
+                            <th className="py-2 pr-3">Day</th>
+                            <th className="py-2 pr-3">Shift</th>
+                            <th className="py-2 pr-3">Clock In</th>
+                            <th className="py-2 pr-3">Status</th>
+                            <th className="py-2 text-right">Late By</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(dailyQ.data ?? []).map((d) => {
+                            const statusColor =
+                              d.status === "On Time" ? "text-emerald-600 bg-emerald-50" :
+                              d.status === "Late" ? "text-amber-700 bg-amber-50" :
+                              d.status === "Absent" ? "text-rose-600 bg-rose-50" :
+                              d.status === "On Leave" ? "text-blue-600 bg-blue-50" :
+                              d.status === "Upcoming" ? "text-slate-400 bg-slate-50" :
+                              "text-slate-500 bg-slate-50";
+                            const [y, m, dy] = d.date.split("-");
+                            const displayDate = `${dy}/${m}/${y}`;
+                            const shiftLabel = d.shiftStart && d.shiftEnd
+                              ? `${d.shiftStart}–${d.shiftEnd}`
+                              : d.assignmentType === "WEEK_OFF" ? "Week Off"
+                              : d.assignmentType === "LEAVE" ? "Leave"
+                              : d.assignmentType === "HOLIDAY" ? "Holiday"
+                              : "—";
+                            return (
+                              <tr key={d.date} className="border-b border-slate-50">
+                                <td className="py-1.5 pr-3 tabular-nums text-slate-700">{displayDate}</td>
+                                <td className="py-1.5 pr-3 text-slate-500">{d.dayOfWeek}</td>
+                                <td className="py-1.5 pr-3 tabular-nums text-slate-600">{shiftLabel}</td>
+                                <td className="py-1.5 pr-3 tabular-nums text-slate-700">{d.clockIn ?? "—"}</td>
+                                <td className="py-1.5 pr-3">
+                                  <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusColor}`}>
+                                    {d.status}
+                                  </span>
+                                </td>
+                                <td className="py-1.5 text-right tabular-nums text-slate-500">
+                                  {d.lateByMinutes != null && d.lateByMinutes > 0 ? `${d.lateByMinutes}m` : "—"}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-100 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                        <th className="py-2 pr-3">Analyst</th>
-                        <th className="py-2 pr-3">Branch</th>
-                        <th className="py-2 pr-2 text-right">Rostered</th>
-                        <th className="py-2 pr-2 text-right">Present</th>
-                        <th className="py-2 pr-2 text-right">Late</th>
-                        <th className="py-2 pr-2 text-right">Absent</th>
-                        <th className="py-2 pr-2 text-right">Leave</th>
-                        <th className="py-2 pr-2 text-right">Shrink %</th>
-                        <th className="py-2 pr-2 text-right">Late %</th>
-                        <th className="py-2 text-right">Avg Late</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(memberQ.data ?? []).map((m) => (
-                        <tr key={m.employeeId} className="border-b border-slate-50">
-                          <td className="py-1.5 pr-3">
-                            <span className="font-medium text-slate-800">{m.employeeName}</span>
-                            <span className="ml-1 text-slate-400">({m.employeeCode})</span>
-                          </td>
-                          <td className="py-1.5 pr-3 text-slate-500">{m.branchName ?? "—"}</td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums text-slate-600">{m.rostered}</td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums text-emerald-600">{m.present}</td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums text-amber-600">{m.late}</td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums text-rose-500">{m.absent}</td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums text-blue-500">{m.leaveDays}</td>
-                          <td className={`py-1.5 pr-2 text-right tabular-nums ${shrinkageColor(m.shrinkagePct)}`}>{pct(m.shrinkagePct)}</td>
-                          <td className="py-1.5 pr-2 text-right tabular-nums text-slate-600">{pct(m.lateRatePct)}</td>
-                          <td className="py-1.5 text-right tabular-nums text-slate-500">{m.avgLateMinutes > 0 ? `${m.avgLateMinutes}m` : "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                /* Process-level analyst list */
+                <>
+                  <p className="mb-3 text-[10px] font-bold uppercase tracking-wide text-slate-400">Process summary</p>
+                  <div className="mb-4 grid grid-cols-3 gap-2 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
+                    <div><span className="text-slate-400">Rostered</span><br /><span className="font-semibold tabular-nums">{num(drawerProcess.rostered)}</span></div>
+                    <div><span className="text-slate-400">Present</span><br /><span className="font-semibold tabular-nums text-emerald-600">{num(drawerProcess.present)}</span></div>
+                    <div><span className="text-slate-400">Shrinkage</span><br /><span className={`font-semibold tabular-nums ${shrinkageColor(drawerProcess.shrinkagePct)}`}>{pct(drawerProcess.shrinkagePct)}</span></div>
+                    <div><span className="text-slate-400">Late</span><br /><span className="font-semibold tabular-nums text-amber-600">{num(drawerProcess.late)}</span></div>
+                    <div><span className="text-slate-400">Absent</span><br /><span className="font-semibold tabular-nums text-rose-500">{num(drawerProcess.absent)}</span></div>
+                    <div><span className="text-slate-400">On Leave</span><br /><span className="font-semibold tabular-nums text-blue-500">{num(drawerProcess.onLeave)}</span></div>
+                  </div>
+
+                  <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Per-analyst detail — click a row to see day-wise breakdown</p>
+                  {memberQ.isLoading ? (
+                    <ChartSkeleton height={200} />
+                  ) : (memberQ.data ?? []).length === 0 ? (
+                    <EmptyState label="No analyst data found" height={120} />
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-100 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                            <th className="py-2 pr-3">Analyst</th>
+                            <th className="py-2 pr-3">Branch</th>
+                            <th className="py-2 pr-2 text-right">Rostered</th>
+                            <th className="py-2 pr-2 text-right">Present</th>
+                            <th className="py-2 pr-2 text-right">Late</th>
+                            <th className="py-2 pr-2 text-right">Absent</th>
+                            <th className="py-2 pr-2 text-right">Leave</th>
+                            <th className="py-2 pr-2 text-right">Shrink %</th>
+                            <th className="py-2 pr-2 text-right">Late %</th>
+                            <th className="py-2 text-right">Avg Late</th>
+                            <th className="py-2" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(memberQ.data ?? []).map((m) => (
+                            <tr
+                              key={m.employeeId}
+                              className="cursor-pointer border-b border-slate-50 hover:bg-slate-50 transition-colors"
+                              onClick={() => setDrawerAnalyst(m)}
+                            >
+                              <td className="py-1.5 pr-3">
+                                <span className="font-medium text-slate-800">{m.employeeName}</span>
+                                <span className="ml-1 text-slate-400">({m.employeeCode})</span>
+                              </td>
+                              <td className="py-1.5 pr-3 text-slate-500">{m.branchName ?? "—"}</td>
+                              <td className="py-1.5 pr-2 text-right tabular-nums text-slate-600">{m.rostered}</td>
+                              <td className="py-1.5 pr-2 text-right tabular-nums text-emerald-600">{m.present}</td>
+                              <td className="py-1.5 pr-2 text-right tabular-nums text-amber-600">{m.late}</td>
+                              <td className="py-1.5 pr-2 text-right tabular-nums text-rose-500">{m.absent}</td>
+                              <td className="py-1.5 pr-2 text-right tabular-nums text-blue-500">{m.leaveDays}</td>
+                              <td className={`py-1.5 pr-2 text-right tabular-nums ${shrinkageColor(m.shrinkagePct)}`}>{pct(m.shrinkagePct)}</td>
+                              <td className="py-1.5 pr-2 text-right tabular-nums text-slate-600">{pct(m.lateRatePct)}</td>
+                              <td className="py-1.5 text-right tabular-nums text-slate-500">{m.avgLateMinutes > 0 ? `${m.avgLateMinutes}m` : "—"}</td>
+                              <td className="py-1.5 pl-1"><ChevronRight className="h-3.5 w-3.5 text-slate-300" /></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

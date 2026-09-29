@@ -1607,4 +1607,310 @@ router.get(
   },
 );
 
+/**
+ * GET /api/roster-analytics/member-daily
+ * Day-by-day attendance breakdown for a single employee over a date range.
+ */
+router.get(
+  "/member-daily",
+  requireRole(...ANALYTICS_ROLES, "manager", "process_manager"),
+  async (req, res) => {
+    try {
+      const { db } = await import("../../db/mysql.js");
+      const now = new Date();
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      const today = todayLocalDateStr();
+      const employeeId = req.query.employeeId ? String(req.query.employeeId) : null;
+      const fromDate = req.query.fromDate ? String(req.query.fromDate) : monthStart;
+      const toDate = req.query.toDate ? String(req.query.toDate) : today;
+
+      if (!employeeId) {
+        res.status(400).json({ error: "employeeId is required" });
+        return;
+      }
+
+      const [empRows] = await db.execute<any[]>(
+        `SELECT id, employee_code,
+           COALESCE(NULLIF(full_name,''), CONCAT(first_name,' ',COALESCE(last_name,''))) AS employee_name
+         FROM employees WHERE id = ? LIMIT 1`,
+        [employeeId],
+      );
+      if (!(empRows as any[]).length) {
+        res.status(404).json({ error: "Employee not found" });
+        return;
+      }
+      const emp = (empRows as any[])[0];
+
+      const [rows] = await db.execute<any[]>(
+        `SELECT
+           DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS date,
+           DAYNAME(ra.roster_date) AS day_name,
+           ra.assignment_type,
+           COALESCE(ra.shift_start_time, wsm.start_time) AS shift_start,
+           COALESCE(ra.shift_end_time, wsm.end_time) AS shift_end,
+           TIME_FORMAT(COALESCE(bal.first_punch_in, att.clock_in_time), '%H:%i') AS clock_in,
+           att.late_mark,
+           att.late_by_minutes
+         FROM wfm_roster_assignment ra
+         LEFT JOIN wfm_shift_master wsm ON wsm.id = ra.shift_id
+         LEFT JOIN attendance_daily_record att
+                ON att.employee_id = ra.employee_id AND att.record_date = ra.roster_date
+         LEFT JOIN biometric_attendance_log bal
+                ON bal.employee_id = ra.employee_id AND bal.punch_date = ra.roster_date
+         WHERE ra.employee_id = ?
+           AND ra.roster_date BETWEEN ? AND ?
+           AND ${realRoster("ra")}
+         ORDER BY ra.roster_date`,
+        [employeeId, fromDate, toDate],
+      );
+
+      const days = (rows as any[]).map((r) => {
+        const aType = String(r.assignment_type ?? "REGULAR");
+        const clockIn = r.clock_in ? String(r.clock_in) : null;
+        const isUpcoming = String(r.date) > today;
+        let status: string;
+        if (aType === "WEEK_OFF") status = "Week Off";
+        else if (aType === "HOLIDAY") status = "Holiday";
+        else if (aType === "LEAVE") status = "On Leave";
+        else if (isUpcoming) status = "Upcoming";
+        else if (!clockIn) status = "Absent";
+        else if (Number(r.late_mark) === 1) status = "Late";
+        else status = "On Time";
+
+        return {
+          date: String(r.date),
+          dayOfWeek: String(r.day_name).slice(0, 3),
+          assignmentType: aType,
+          shiftStart: r.shift_start ? String(r.shift_start) : null,
+          shiftEnd: r.shift_end ? String(r.shift_end) : null,
+          status,
+          clockIn,
+          lateByMinutes:
+            r.late_by_minutes != null ? Number(r.late_by_minutes) : null,
+        };
+      });
+
+      res.json({
+        employeeId,
+        employeeName: String(emp.employee_name),
+        employeeCode: String(emp.employee_code),
+        from: fromDate,
+        to: toDate,
+        days,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] member-daily error:", msg);
+      res.status(500).json({ error: `Failed to get member daily: ${msg}` });
+    }
+  },
+);
+
+/**
+ * GET /api/roster-analytics/member-daily
+ * Day-by-day attendance breakdown for a single employee over a date range.
+ * Used for the analyst drill-down in Team Shrinkage tab.
+ */
+router.get(
+  "/member-daily",
+  requireRole(...ANALYTICS_ROLES, "manager", "process_manager"),
+  async (req, res) => {
+    try {
+      const { db } = await import("../../db/mysql.js");
+      const now = new Date();
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      const today = todayLocalDateStr();
+      const employeeId = req.query.employeeId
+        ? String(req.query.employeeId)
+        : null;
+      const fromDate = req.query.fromDate
+        ? String(req.query.fromDate)
+        : monthStart;
+      const toDate = req.query.toDate ? String(req.query.toDate) : today;
+
+      if (!employeeId) {
+        res.status(400).json({ error: "employeeId is required" });
+        return;
+      }
+
+      const [empRows] = await db.execute<any[]>(
+        `SELECT id, employee_code,
+           COALESCE(NULLIF(full_name,''), CONCAT(first_name,' ',COALESCE(last_name,''))) AS employee_name
+         FROM employees WHERE id = ? LIMIT 1`,
+        [employeeId],
+      );
+      if (!(empRows as any[]).length) {
+        res.status(404).json({ error: "Employee not found" });
+        return;
+      }
+      const emp = (empRows as any[])[0];
+
+      const [rows] = await db.execute<any[]>(
+        `SELECT
+           DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS date,
+           DAYNAME(ra.roster_date) AS day_name,
+           ra.assignment_type,
+           COALESCE(ra.shift_start_time, wsm.start_time) AS shift_start,
+           COALESCE(ra.shift_end_time, wsm.end_time) AS shift_end,
+           TIME_FORMAT(COALESCE(bal.first_punch_in, att.clock_in_time), '%H:%i') AS clock_in,
+           att.late_mark,
+           att.late_by_minutes
+         FROM wfm_roster_assignment ra
+         LEFT JOIN wfm_shift_master wsm ON wsm.id = ra.shift_id
+         LEFT JOIN attendance_daily_record att
+                ON att.employee_id = ra.employee_id AND att.record_date = ra.roster_date
+         LEFT JOIN biometric_attendance_log bal
+                ON bal.employee_id = ra.employee_id AND bal.punch_date = ra.roster_date
+         WHERE ra.employee_id = ?
+           AND ra.roster_date BETWEEN ? AND ?
+           AND ${realRoster("ra")}
+         ORDER BY ra.roster_date`,
+        [employeeId, fromDate, toDate],
+      );
+
+      const days = (rows as any[]).map((r) => {
+        const aType = String(r.assignment_type ?? "REGULAR");
+        const clockIn = r.clock_in ? String(r.clock_in) : null;
+        const isUpcoming = String(r.date) > today;
+        let status: string;
+        if (aType === "WEEK_OFF") status = "Week Off";
+        else if (aType === "HOLIDAY") status = "Holiday";
+        else if (aType === "LEAVE") status = "On Leave";
+        else if (isUpcoming) status = "Upcoming";
+        else if (!clockIn) status = "Absent";
+        else if (Number(r.late_mark) === 1) status = "Late";
+        else status = "On Time";
+
+        return {
+          date: String(r.date),
+          dayOfWeek: String(r.day_name ?? "").slice(0, 3),
+          assignmentType: aType,
+          shiftStart: r.shift_start ? String(r.shift_start) : null,
+          shiftEnd: r.shift_end ? String(r.shift_end) : null,
+          status,
+          clockIn,
+          lateByMinutes:
+            r.late_by_minutes != null ? Number(r.late_by_minutes) : null,
+        };
+      });
+
+      res.json({
+        employeeId,
+        employeeName: String(emp.employee_name),
+        employeeCode: String(emp.employee_code),
+        from: fromDate,
+        to: toDate,
+        days,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] member-daily error:", msg);
+      res.status(500).json({ error: `Failed to get member daily: ${msg}` });
+    }
+  },
+);
+
+/**
+ * GET /api/roster-analytics/member-daily
+ * Day-by-day attendance breakdown for a single employee over a date range.
+ */
+router.get(
+  "/member-daily",
+  requireRole(...ANALYTICS_ROLES, "manager", "process_manager"),
+  async (req, res) => {
+    try {
+      const { db } = await import("../../db/mysql.js");
+      const now = new Date();
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      const today = todayLocalDateStr();
+      const employeeId = req.query.employeeId
+        ? String(req.query.employeeId)
+        : null;
+      const fromDate = req.query.fromDate
+        ? String(req.query.fromDate)
+        : monthStart;
+      const toDate = req.query.toDate ? String(req.query.toDate) : today;
+
+      if (!employeeId) {
+        res.status(400).json({ error: "employeeId is required" });
+        return;
+      }
+
+      const [empRows] = await db.execute<any[]>(
+        `SELECT id, employee_code,
+           COALESCE(NULLIF(full_name,''), CONCAT(first_name,' ',COALESCE(last_name,''))) AS employee_name
+         FROM employees WHERE id = ? LIMIT 1`,
+        [employeeId],
+      );
+      if (!(empRows as any[]).length) {
+        res.status(404).json({ error: "Employee not found" });
+        return;
+      }
+      const emp = (empRows as any[])[0];
+
+      const [rows] = await db.execute<any[]>(
+        `SELECT
+           DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS date,
+           DAYNAME(ra.roster_date) AS day_name,
+           ra.assignment_type,
+           COALESCE(ra.shift_start_time, wsm.start_time) AS shift_start,
+           COALESCE(ra.shift_end_time, wsm.end_time) AS shift_end,
+           TIME_FORMAT(COALESCE(bal.first_punch_in, att.clock_in_time), '%H:%i') AS clock_in,
+           att.late_mark,
+           att.late_by_minutes
+         FROM wfm_roster_assignment ra
+         LEFT JOIN wfm_shift_master wsm ON wsm.id = ra.shift_id
+         LEFT JOIN attendance_daily_record att
+                ON att.employee_id = ra.employee_id AND att.record_date = ra.roster_date
+         LEFT JOIN biometric_attendance_log bal
+                ON bal.employee_id = ra.employee_id AND bal.punch_date = ra.roster_date
+         WHERE ra.employee_id = ?
+           AND ra.roster_date BETWEEN ? AND ?
+           AND ${realRoster("ra")}
+         ORDER BY ra.roster_date`,
+        [employeeId, fromDate, toDate],
+      );
+
+      const days = (rows as any[]).map((r) => {
+        const aType = String(r.assignment_type ?? "REGULAR");
+        const clockIn = r.clock_in ? String(r.clock_in) : null;
+        const isUpcoming = String(r.date) > today;
+        let status: string;
+        if (aType === "WEEK_OFF") status = "Week Off";
+        else if (aType === "HOLIDAY") status = "Holiday";
+        else if (aType === "LEAVE") status = "On Leave";
+        else if (isUpcoming) status = "Upcoming";
+        else if (!clockIn) status = "Absent";
+        else if (Number(r.late_mark) === 1) status = "Late";
+        else status = "On Time";
+
+        return {
+          date: String(r.date),
+          dayOfWeek: String(r.day_name ?? "").slice(0, 3),
+          assignmentType: aType,
+          shiftStart: r.shift_start ? String(r.shift_start) : null,
+          shiftEnd: r.shift_end ? String(r.shift_end) : null,
+          status,
+          clockIn,
+          lateByMinutes:
+            r.late_by_minutes != null ? Number(r.late_by_minutes) : null,
+        };
+      });
+
+      res.json({
+        employeeId,
+        employeeName: String(emp.employee_name),
+        employeeCode: String(emp.employee_code),
+        from: fromDate,
+        to: toDate,
+        days,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] member-daily error:", msg);
+      res.status(500).json({ error: `Failed to get member daily: ${msg}` });
+    }
+  },
+);
+
 export const rosterAnalyticsRouter = router;
