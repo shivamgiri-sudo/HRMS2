@@ -32,10 +32,17 @@ Safety:
   - Rows missing CALLER (the one required column, same rule the app's
     importer enforces) are skipped and reported, never inserted with a
     guessed value.
-  - Also writes one mas_hrms.upload_batch header row and one
-    db_masmis.upload_log row, in the same shape the app's own importer
-    writes them, so this upload shows up in the Uploader page's "Recent
-    Uploads" list exactly like one done through the UI.
+  - Also writes one mas_hrms.upload_batch header row, one upload_batch_row
+    per source row (raw_data = the row exactly as read from the file, same
+    shape the app's own /batches/:id/rows staging step would have produced),
+    and one db_masmis.upload_log row -- all in the same shape the app's own
+    importer writes them, so this upload shows up in the Uploader page's
+    "Recent Uploads" list AND its "Download"/"Download Failed Rows" buttons
+    both work, exactly like an upload done through the UI. (A first version
+    of this script skipped upload_batch_row entirely -- the direct-to-table
+    insert doesn't need it -- which silently broke both download buttons for
+    every python-imported batch, discovered live when they returned "No
+    rows are stored for this upload" instead of a file.)
   - Credentials are read only from backend/.env, never hardcoded here.
 
 Usage:
@@ -44,6 +51,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import time
@@ -84,7 +92,15 @@ COLUMN_MAP: list[tuple[str, str, str]] = [
     ("talk_time", "Talk Time", "time"),
     ("tl", "TL", "text"),
 ]
-DB_COLUMNS = [c[0] for c in COLUMN_MAP] + ["uploaded_by", "upload_batch_id"]
+DB_COLUMNS: list[str] = []
+for _db_col, _src, _kind in COLUMN_MAP:
+    DB_COLUMNS.append(_db_col)
+    if _db_col == "report_date":
+        # Migration 448: real indexed DATE column, backfilled from report_date so date-range
+        # dashboard queries stop doing a full-table STR_TO_DATE scan. Populated here too so
+        # rows from this script (including the daily automation) never fall behind it.
+        DB_COLUMNS.append("report_date_iso")
+DB_COLUMNS += ["uploaded_by", "upload_batch_id"]
 INSERT_SQL = (
     f"INSERT INTO {TARGET_TABLE} ({', '.join(DB_COLUMNS)}) "
     f"VALUES ({', '.join(['%s'] * len(DB_COLUMNS))})"
@@ -125,6 +141,46 @@ def load_db_config() -> dict[str, Any]:
 
 def connect(cfg: dict[str, Any]) -> pymysql.connections.Connection:
     return pymysql.connect(**cfg)
+
+
+def refresh_daily_summary(cfg: dict[str, Any], iso_dates: set[date]) -> None:
+    """Keeps db_masmis.pre_cdr_daily_summary (migration 449, the Housing Premium Overview
+    tab's precomputed day x TL rollup) in sync after an insert -- recomputes the summary
+    rows for exactly the dates this run touched, from Pre_cdr's current state. Cheap: only
+    re-aggregates these few dates, not the whole table. Self-correcting even for a re-import
+    of an already-covered date -- always overwrites from the real current data, never adds.
+
+    Migration 449 has not been run against production yet (the Overview tab was reverted
+    to read raw Pre_cdr directly until it is -- see housing-premium-dashboard.service.ts),
+    so this table may not exist. Never let that fail a real import that already succeeded:
+    this is a courtesy sync, not part of the insert's own correctness."""
+    if not iso_dates:
+        return
+    conn = connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            placeholders = ", ".join(["%s"] * len(iso_dates))
+            cur.execute(
+                f"""
+                INSERT INTO db_masmis.pre_cdr_daily_summary
+                    (report_date_iso, tl_name, connected, not_connected, unique_connected, present_count, talk_seconds, row_count)
+                SELECT report_date_iso, COALESCE(NULLIF(tl_name, ''), ''),
+                       SUM(status = 'Answered'), SUM(status = 'No Answered'),
+                       SUM(status = 'Answered' AND unique_count = '1'), SUM(call_count = '1'),
+                       SUM(talk_duration + 0), COUNT(*)
+                FROM db_masmis.Pre_cdr
+                WHERE report_date_iso IN ({placeholders})
+                GROUP BY report_date_iso, tl_name
+                ON DUPLICATE KEY UPDATE
+                    connected = VALUES(connected), not_connected = VALUES(not_connected),
+                    unique_connected = VALUES(unique_connected), present_count = VALUES(present_count),
+                    talk_seconds = VALUES(talk_seconds), row_count = VALUES(row_count)
+                """,
+                sorted(iso_dates),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # --------------------------------- formatting --------------------------------- #
@@ -189,6 +245,26 @@ def fmt_time(v: Any) -> str | None:
     return s or None
 
 
+def to_iso_date(v: Any) -> date | None:
+    """Real date object for report_date_iso (migration 448) -- mirrors fmt_date_only's own
+    parsing but returns a date the DB driver can bind directly, not the 'M/D/YY' display string."""
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    s = str(v).strip()
+    if not s:
+        return None
+    for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 FORMATTERS = {"text": clean_text, "number": clean_number, "date": fmt_date_only, "datetime": fmt_datetime, "time": fmt_time}
 
 
@@ -217,6 +293,43 @@ def build_row_values(record: dict[str, Any]) -> list[str | None]:
     return [FORMATTERS[kind](record.get(source_header)) for _db_col, source_header, kind in COLUMN_MAP]
 
 
+def write_staged_rows(
+    cfg: dict[str, Any],
+    batch_id: str,
+    staged: list[tuple[int, dict[str, Any], str, str | None]],
+    chunk_size: int = 1000,
+) -> None:
+    """Writes one upload_batch_row per source row -- raw_data/normalized_data
+    are the record exactly as read from the file (keyed by the same source
+    headers COLUMN_MAP looks up), matching the shape the app's own
+    /batches/:id/rows staging endpoint would have produced. Without this,
+    the Uploader page's "Download"/"Download Failed Rows" buttons find zero
+    staged rows for a python-imported batch and report "No rows are stored
+    for this upload" -- confirmed live, this is not hypothetical."""
+    if not staged:
+        return
+    conn = connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            for i in range(0, len(staged), chunk_size):
+                chunk = staged[i : i + chunk_size]
+                cur.executemany(
+                    """INSERT INTO upload_batch_row
+                         (id, upload_batch_id, row_no, raw_data, normalized_data, row_status, error_messages, created_at)
+                       VALUES (UUID(), %s, %s, %s, %s, %s, %s, %s)""",
+                    [
+                        (
+                            batch_id, row_no, json.dumps(rec, default=str), json.dumps(rec, default=str),
+                            status, json.dumps([err]) if err else None, datetime.now(),
+                        )
+                        for row_no, rec, status, err in chunk
+                    ],
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ------------------------------------ main ------------------------------------ #
 
 def main() -> None:
@@ -237,18 +350,26 @@ def main() -> None:
     print(f"  {len(records)} data row(s) read in {time.time() - t0:.1f}s")
 
     skipped: list[int] = []
+    skipped_records: list[tuple[int, dict[str, Any]]] = []
     rows: list[list[str | None]] = []
+    row_meta: list[tuple[int, dict[str, Any]]] = []  # (row_no, raw record) parallel to `rows`
     dates_seen: set[str] = set()
     for i, rec in enumerate(records, start=2):  # row 2 = first data row (row 1 is the header)
         caller = clean_text(rec.get("CALLER"))
         if not caller:
             skipped.append(i)
+            skipped_records.append((i, rec))
             continue
         values = build_row_values(rec)
-        rows.append(values)
-        rd = values[COLUMN_MAP.index(next(c for c in COLUMN_MAP if c[0] == "report_date"))]
+        report_date_pos = [c[0] for c in COLUMN_MAP].index("report_date")
+        rd = values[report_date_pos]
         if rd:
             dates_seen.add(rd)
+        values.insert(report_date_pos + 1, to_iso_date(rec.get("Date")))
+        rows.append(values)
+        row_meta.append((i, rec))
+
+    iso_dates_seen: set[date] = {r[report_date_pos + 1] for r in rows if r[report_date_pos + 1]} if rows else set()
 
     print(f"  {len(rows)} row(s) valid, {len(skipped)} skipped (missing CALLER)")
     if skipped:
@@ -284,10 +405,14 @@ def main() -> None:
     batch_id = str(uuid.uuid4())
     batch_no = f"BATCH-{int(time.time() * 1000)}"
     chunks = [rows[i : i + args.chunk_size] for i in range(0, len(rows), args.chunk_size)]
+    meta_chunks = [row_meta[i : i + args.chunk_size] for i in range(0, len(row_meta), args.chunk_size)]
     print(f"\nInserting {len(rows)} row(s) in {len(chunks)} chunk(s) of up to {args.chunk_size}, {args.workers} worker(s)...")
 
     inserted = 0
     errors: list[str] = []
+    staged_status: list[tuple[int, dict[str, Any], str, str | None]] = []  # (row_no, record, status, error)
+    for row_no, rec in skipped_records:
+        staged_status.append((row_no, rec, "error", f'Row {row_no}: "CALLER" is required'))
     t1 = time.time()
 
     def insert_chunk_once(chunk: list[list[str | None]]) -> tuple[int, str | None]:
@@ -340,12 +465,20 @@ def main() -> None:
         return 0
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = [pool.submit(insert_chunk, c) for c in chunks]
-        for done, fut in enumerate(as_completed(futures), start=1):
+        future_to_idx = {pool.submit(insert_chunk, c): idx for idx, c in enumerate(chunks)}
+        for done, fut in enumerate(as_completed(future_to_idx), start=1):
+            idx = future_to_idx[fut]
+            chunk_meta = meta_chunks[idx]
             try:
-                inserted += fut.result()
+                result = fut.result()
+                inserted += result
+                status = "imported" if result > 0 else "error"
+                err = None if result > 0 else (errors[-1] if errors else "insert failed")
             except Exception as exc:  # noqa: BLE001 -- last-resort net; insert_chunk itself shouldn't raise
                 errors.append(str(exc))
+                status, err = "error", str(exc)
+            for row_no, rec in chunk_meta:
+                staged_status.append((row_no, rec, status, err))
             print(f"  chunk {done}/{len(chunks)} done -- {inserted}/{len(rows)} rows inserted", end="\r")
     print()
 
@@ -381,6 +514,20 @@ def main() -> None:
         print(f"Recorded upload_batch {batch_no} ({batch_id}) -- will show in the Uploader page's Recent Uploads.")
     finally:
         batch_conn.close()
+
+    print(f"Staging {len(staged_status)} upload_batch_row record(s) so this batch is downloadable from the Uploader page...")
+    write_staged_rows(cfg, batch_id, staged_status)
+
+    if inserted > 0:
+        try:
+            print(f"Refreshing pre_cdr_daily_summary for {len(iso_dates_seen)} date(s)...")
+            refresh_daily_summary(cfg, iso_dates_seen)
+        except pymysql.err.ProgrammingError as exc:
+            # 1146 = table doesn't exist -- migration 449 hasn't run yet. The real import
+            # above already succeeded and committed; never let this courtesy step undo that.
+            print(f"  (skipped: pre_cdr_daily_summary not set up yet -- {exc})")
+
+    print("Done.")
 
 
 if __name__ == "__main__":

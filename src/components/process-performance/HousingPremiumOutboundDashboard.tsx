@@ -197,6 +197,12 @@ export function HousingPremiumOutboundDashboard({
   const [tableGran, setTableGran] = useState<"day" | "week">("week");
   const [drill, setDrill] = useState<HpDrillTarget | null>(null);
 
+  // CDR (Pre_cdr, real per-call records) is the heaviest data source behind this tab, but
+  // the cap now lives backend-side (getHousingPremiumOverview -- last 5 days of CDR,
+  // regardless of the requested range), covering every caller of /overview uniformly
+  // (this tab AND the separate Overview tab, which used to skip this component's own
+  // now-removed frontend-only clamp entirely). Sale still uses the plain from/to here, so
+  // this tab's month-to-date Sale figures render for the full selected range as intended.
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError("");
@@ -329,14 +335,20 @@ export function HousingPremiumOutboundDashboard({
       )}
       {empty && <p className="rounded-xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-400">No data for this selection in the chosen range.</p>}
 
-      {/* KPI rows */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      {/* KPI rows -- ROW1 has 6 tiles, ROW2 has 7 (currency values like Revenue Achieved
+          need real room, e.g. "₹5,63,xxx"); both used to force every tile into one single
+          row via grid-cols matching the exact count, however narrow that made each tile at
+          common desktop widths -- confirmed live, that truncated both the label and the
+          value down to "Revenue Achie…" / "₹5,63,…", unreadable. Wrapping onto 2 rows until
+          the screen is wide enough (2xl, 1536px+) for a real one-row fit keeps every tile's
+          content actually legible instead of just technically present. */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
         {ROW1.map((k) => {
           const m = METRIC_BY_KEY.get(k)!;
           return <MetricTile key={k} m={m} value={v[k]} delta={deltaFor(m, v, pv)} showPrev={k === "totalCalls"} onClick={() => openMetric(k)} />;
         })}
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-7">
         {ROW2.map((k) => {
           const m = METRIC_BY_KEY.get(k)!;
           return <MetricTile key={k} m={m} value={v[k]} delta={deltaFor(m, v, pv)} showPrev={k === "revenue"} onClick={() => openMetric(k)} />;
@@ -600,7 +612,7 @@ export function HousingPremiumOutboundDashboard({
 
       {drill && (
         <HousingPremiumDrilldownDrawer
-          target={drill} columns={columns} values={values} byTl={data.byTl} scopeLabel={scopeLabel}
+          target={drill} scopeLabel={scopeLabel}
           agentScope={agent !== "all" ? agent : null} from={from} to={to}
           onDrill={setDrill} onOpenAgent={onOpenAgent} onClose={() => setDrill(null)}
         />
