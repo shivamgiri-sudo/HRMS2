@@ -1184,10 +1184,10 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1903_noc_case_override_document.sql", // Registered 2026-09-27. Adds noc_case.override_document_path + override_document_original_name so a Payroll Head override can attach a scanned/photographed paper NOC instead of waiting on the full digital signatory chain. Both nullable; a reason-only override keeps working unchanged. information_schema-guarded, purely additive.
   "1903_process_manual_agent.sql", // Registered 2026-09-28. Agents added by hand on Process Details page (Housing Owner, Housing Premium) without re-uploading the roster. Additive new table.
   "1904_process_details_page_access.sql", // Registered 2026-09-28. Page codes for Process Details (Targets) pages for Access Control grants. Additive seed rows.
-  "1905_employee_attrition_fields.sql", // Registered 2026-09-29. Adds attrition_date, attrition_reason, attrition_reason_notes to employees. Additive; ALGORITHM=INSTANT.
-  "1906_attendance_data_fixes.sql", // Registered 2026-09-29. Corrects process_name/cost_centre mismatches for several employees (MAS62122, MAS62918, etc). Data-fix only.
-  "1907_skill_roadmap_fk_fix.sql", // Registered 2026-09-29. Aligns skill roadmap table collations to utf8mb4_unicode_ci and adds missing FK constraints. Additive.
-  "1908_backfill_esi_docs_vault.sql", // Registered 2026-09-29. Backfills existing esi-docs bank passbooks into document_vault_inventory so the files.routes vault auth layer can serve them. Additive INSERT IGNORE.
+  "migrations/1905_employee_attrition_fields.sql", // Registered 2026-09-29. Adds attrition_date, attrition_reason, attrition_reason_notes to employees. Additive; ALGORITHM=INSTANT.
+  "migrations/1906_attendance_data_fixes.sql", // Registered 2026-09-29. Corrects process_name/cost_centre mismatches for several employees (MAS62122, MAS62918, etc). Data-fix only.
+  "migrations/1907_skill_roadmap_fk_fix.sql", // Registered 2026-09-29. Aligns skill roadmap table collations to utf8mb4_unicode_ci and adds missing FK constraints. Additive.
+  "migrations/1908_backfill_esi_docs_vault.sql", // Registered 2026-09-29. Backfills existing esi-docs bank passbooks into document_vault_inventory so the files.routes vault auth layer can serve them. Additive INSERT IGNORE.
 ];
 
 export type MigrationHealth = {
