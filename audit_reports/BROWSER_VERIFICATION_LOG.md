@@ -4,6 +4,29 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-09-30 — LIVE production verification (https://mcnhrms.teammas.in, deploy of `bfe2d20`)
+
+**Method:** logged in as a real Manager user in headless Playwright Chromium; Process Operations -> Onfido; GET-only (no uploads, no saves). Session cookies deleted afterwards; credentials not stored.
+
+| Tab | Live result |
+|---|---|
+| Overview | 0 failed API calls; 39 quality cells coloured; **Capacity Builder (LOB Wise) shows figures**: Doc Check 127 active (33 in NHT), ENCORD 5, POA 38 |
+| Analyst Performance | 1,560 coloured cells; Excel export downloaded and is valid XML with `showGridLines="0"` (270 rows) |
+| Utilization | "Bulk upload (CSV)" present and **enabled** for this role; 31 daily rows |
+| Quality | 1,167 coloured cells |
+| Trends, Client & Document | load, no failed calls |
+| Audit Sampling | **loads real data (3,005 rows, API 0.1 s)**, every Error % cell coloured, no "Conditional formatting" line, single Export (Excel) button |
+| Stack Ranking | **Analyst 316 rows, TL 23, AM 8 all load** (was "Failed to load stack ranking data."), quality cells coloured |
+| Alerts, Outliers & Actions | load, no failed calls |
+| POA (Internal/External) | 18 tables; pastel + solid green/amber/red fills present |
+| Console / page errors | None; no 4xx/5xx on any onfido-process call |
+
+**Observations (not bugs):** Approved HC is blank on Overview and in Capacity Builder ("Approved HC has not been entered"), so Buffer % and Shortfall show "-" until WFM enters it via "Manage approved HC". Audit Sampling renders 3,005 rows in one table (slow to paint on a weak machine; a page cap would help).
+
+**Not verified live:** a real Utilization bulk-upload save with the calculated columns (would write production data; verified against a throwaway DB and in the browser with a mocked API instead), and migration 1916 status (Utilization page loads fine after deploy, which reads the new columns only on upload).
+
+---
+
 ## 2026-09-30 (later) — Utilization: uploaded static values instead of formulas
 
 **Method:** temporary Vite harness (mocked API, canEdit=true), headless Playwright Chromium, real CSV file upload; harness removed. SQL run against a throwaway `mysql:8` container (migration 1845 + new 1916, then the exact upsert/select statements taken from the service source).
