@@ -18,7 +18,7 @@ import OnfidoAnalystReport from "./OnfidoAnalystReport";
 import OnfidoNameMapping from "./OnfidoNameMapping";
 import OnfidoHero from "./OnfidoHero";
 import OnfidoUtilizationReport from "./OnfidoUtilizationReport";
-import { fmtDdMmmYy, formatBucketTick, shiftDays } from "./onfidoReportShared";
+import { fmtDdMmmYy, formatBucketTick, qualityPctStyle, shiftDays } from "./onfidoReportShared";
 import { downloadCsv } from "@/lib/safeCsv";
 import "./onfido-central-theme.css";
 
@@ -4559,8 +4559,7 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
 
   const filtered = rows.filter((r) => (!clientFilter || r.client === clientFilter) && (!docTypeFilter || r.documentType === docTypeFilter));
 
-  const errC = (v: number | null) =>
-    v === null ? undefined : v > 1 ? ({ background: "var(--red)", color: "#fff" } as React.CSSProperties) : v > 0.75 ? ({ background: "var(--orange)", color: "#fff" } as React.CSSProperties) : ({ background: "var(--green)", color: "#fff" } as React.CSSProperties);
+  const errC = (v: number | null) => qualityPctStyle(v);
 
   const exportCsv = () => {
     downloadCsv(
@@ -4678,11 +4677,7 @@ function StackRankingView({ range, tlFilter, amFilter }: { range: DateRange; tlF
 
   const rows = q.data?.data ?? [];
 
-  const errC = (v: number | null) =>
-    v === null ? undefined
-      : v > 1 ? ({ background: "var(--red)", color: "#fff" } as React.CSSProperties)
-      : v > 0.75 ? ({ background: "var(--orange)", color: "#fff" } as React.CSSProperties)
-      : ({ background: "var(--green)", color: "#fff" } as React.CSSProperties);
+  const errC = (v: number | null) => qualityPctStyle(v);
   const QUALITY_PCT_KEYS = new Set(["intErrPct", "extErrPct", "crePct"]);
 
   const WEIGHTS_AM_TL = [

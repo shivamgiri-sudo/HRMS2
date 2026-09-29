@@ -4,6 +4,21 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-09-29 (later) — Quality-% colour contrast (ui-ux-pro-max review)
+
+**Method:** temporary Vite harness with mocked API, headless Playwright Chromium; computed WCAG contrast from the rendered cell colours; harness removed afterwards.
+
+| Page | Green / Amber / Red cell text contrast |
+|---|---|
+| Analyst Performance | 5.02 / 8.26 / 6.47 (all >= 4.5 AA) |
+| Audit Sampling | 5.02 / 8.26 / 6.47 |
+
+**Why:** previous fills were white text on #f59e0b (2.15:1) and #16a34a (3.3:1). Now dark green + white, amber + near-black, dark red + white. Shared `qualityPctStyle()` also used by Stack Ranking. Console errors: none.
+
+**Not verified:** live site; Quality tab and POA tables still colour the *text* with `--green/--orange/--red` on white (not re-measured).
+
+---
+
 ## 2026-09-29 (later) — Analyst Performance quality-% colouring
 
 **Method:** Vite dev + temporary harness with mocked `/analyst-report` (3 analysts at 0.5%, 0.9%, 2.0% error), headless Playwright Chromium; harness removed afterwards.

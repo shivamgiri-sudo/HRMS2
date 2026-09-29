@@ -293,9 +293,14 @@ export function matrixIsEmpty(m: Matrix | null | undefined): boolean {
   return !m || m.buckets.length === 0 || m.rows.every((r) => r.values.every((v) => v === null));
 }
 
-/** Quality error-% fill: green <= 0.75, amber > 0.75 to 1, red > 1 (client rule, all quality parameters). */
+/**
+ * Quality error-% fill: green <= 0.75, amber > 0.75 to 1, red > 1 (client rule, all quality parameters).
+ * Fills are picked for WCAG AA text contrast (>= 4.5:1): white on dark green 5.0, white on dark red 6.5,
+ * near-black on amber 8.3. The old white-on-amber was 2.2:1.
+ */
 export function qualityPctStyle(pct: number | null | undefined): CSSProperties | undefined {
   if (pct === null || pct === undefined) return undefined;
-  const bg = pct > 1 ? "var(--red)" : pct > 0.75 ? "var(--orange)" : "var(--green)";
-  return { background: bg, color: "#fff", fontWeight: 700 };
+  if (pct > 1) return { background: "#b91c1c", color: "#fff", fontWeight: 700 };
+  if (pct > 0.75) return { background: "#f59e0b", color: "#111827", fontWeight: 700 };
+  return { background: "#15803d", color: "#fff", fontWeight: 700 };
 }
