@@ -11,7 +11,7 @@ import {
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { BellavitaAgentPerformance } from "./BellavitaAgentPerformance";
+import { BellavitaAgentPerformance, avgHms, type AgentRow } from "./BellavitaAgentPerformance";
 import { BellavitaSaleDateLobMatrix } from "./BellavitaSaleDateLobMatrix";
 import { DashboardExportMenu, PeriodSection, type ExportSlide, type PeriodWeek, type PeriodRow } from "./DashboardKit";
 import { useSortableRows } from "./useSortableRows";
@@ -230,23 +230,34 @@ interface CartHeadline { totalCarts: number; workableCases: number; abandonCartS
  * level threshold (20s for Bellavita, a pattern-A project). */
 interface InboundHeadline { offered: number; answered: number; abandonPct: number; slPct: number }
 
-type DrillEntity = { kind: "lob"; value: string } | { kind: "agent"; value: string; label: string };
+type DrillEntity = { kind: "lob"; value: string } | { kind: "agent"; value: string; label: string } | { kind: "overall" };
 
 /**
- * Right-side drill-down for one LOB-wise Performance row OR one Top
- * Performers agent row: that entity's own summary + date-wise AND week-wise
- * Sale Count/Revenue/COD/Paid/RTO tables. Fetches its own independent copy
- * of the dashboard endpoint scoped to this one LOB or agent (never reuses
- * the calling table's already-loaded row), same convention this app already
- * uses elsewhere (see AppreciateWealthDrawer.tsx).
+ * Right-side drill-down for one LOB-wise Performance row, one Top Performers
+ * agent row, OR the "Sale Performance" headline group itself: that entity's
+ * own summary + date-wise AND week-wise Sale Count/Revenue/COD/Paid/RTO
+ * tables. For "lob"/"agent" it fetches its own independent copy of the
+ * dashboard endpoint scoped to that one LOB/agent (never reuses the calling
+ * table's already-loaded row), same convention this app already uses
+ * elsewhere (see AppreciateWealthDrawer.tsx). For "overall" there is no
+ * separate slice to fetch -- the headline group IS the page's own already-
+ * loaded `data` (same from/to/lobFilter already on screen) -- so it reuses
+ * `overallData` directly instead of firing a redundant, guaranteed-identical
+ * request.
  */
-function EntityDrillDrawer({ entity, from, to, onClose }: { entity: DrillEntity | null; from: string; to: string; onClose: () => void }) {
+function EntityDrillDrawer({
+  entity, from, to, onClose, overallData, lobFilter,
+}: { entity: DrillEntity | null; from: string; to: string; onClose: () => void; overallData: DashboardData | null; lobFilter: string }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!entity) return;
+    if (entity.kind === "overall") {
+      setError(""); setLoading(false); setData(overallData);
+      return;
+    }
     let cancelled = false;
     setData(null); setError(""); setLoading(true);
     const param = entity.kind === "lob" ? `lob=${encodeURIComponent(entity.value)}` : `empId=${encodeURIComponent(entity.value)}`;
@@ -255,15 +266,26 @@ function EntityDrillDrawer({ entity, from, to, onClose }: { entity: DrillEntity 
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load this detail."); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [entity, from, to]);
+  }, [entity, from, to, overallData]);
 
   // Achievement % only makes sense for a LOB entity against that LOB's own
   // monthly target (bellavita_sale has no per-agent target anywhere in this
   // app) -- lobRevenue comes back lob-filtered to this one entry when
   // entity.kind is "lob" (the backend's lob=? filter), so [0] is this LOB's row.
+  // "overall" sums each date's target across every LOB in dailyTargets --
+  // identical to DateWiseSaleChart's own targetByDate above, so this drawer's
+  // Achi% column never drifts from that chart's "Target vs Achi%" view.
   const targetByDate = useMemo(() => {
-    const rows = entity?.kind === "lob" ? (data?.dailyTargets?.[entity.value] ?? null) : null;
-    return rows ? new Map(rows.map((r) => [r.date, r.target])) : null;
+    if (entity?.kind === "lob") {
+      const rows = data?.dailyTargets?.[entity.value] ?? null;
+      return rows ? new Map(rows.map((r) => [r.date, r.target])) : null;
+    }
+    if (entity?.kind === "overall" && data?.dailyTargets) {
+      const m = new Map<string, number>();
+      for (const rows of Object.values(data.dailyTargets)) for (const r of rows) m.set(r.date, (m.get(r.date) ?? 0) + r.target);
+      return m.size > 0 ? m : null;
+    }
+    return null;
   }, [entity, data]);
   // Days after today (or a LOB with no target rule) have no entry -> no Achi%.
   const dayTarget = useCallback((date: string) => (targetByDate ? (targetByDate.get(date) ?? null) : null), [targetByDate]);
@@ -295,8 +317,8 @@ function EntityDrillDrawer({ entity, from, to, onClose }: { entity: DrillEntity 
     }));
   }, [data, dayTarget]);
 
-  const title = entity?.kind === "lob" ? entity.value : entity?.kind === "agent" ? entity.label : "";
-  const badge = entity?.kind === "lob" ? "LOB" : "Agent";
+  const title = entity?.kind === "lob" ? entity.value : entity?.kind === "agent" ? entity.label : lobFilter === "All" ? "All LOBs" : lobFilter;
+  const badge = entity?.kind === "lob" ? "LOB" : entity?.kind === "agent" ? "Agent" : "Overall";
 
   return (
     <Sheet open={!!entity} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -307,7 +329,8 @@ function EntityDrillDrawer({ entity, from, to, onClose }: { entity: DrillEntity 
             <SheetTitle className="text-base font-bold text-slate-800">{title}</SheetTitle>
           </div>
           <SheetDescription className="text-[11px] text-slate-400">
-            {from} to {to} · Week-wise and date-wise performance{entity?.kind === "agent" ? " for this agent only" : " for this LOB only"}.
+            {from} to {to} · Week-wise and date-wise performance
+            {entity?.kind === "agent" ? " for this agent only" : entity?.kind === "lob" ? " for this LOB only" : " across all Sale Performance."}
           </SheetDescription>
         </SheetHeader>
 
@@ -519,6 +542,12 @@ function SaleDashboardSlide({
    * Performers -- opens the week-wise/date-wise drill-down drawer for just
    * that one LOB or agent (null = drawer closed). */
   const [drawerEntity, setDrawerEntity] = useState<DrillEntity | null>(null);
+  /** Full per-agent roster for the "Agent-wise Performance" sheet in this tab's
+   * own "Download All Views" export -- the Agent Performance tab (BellavitaAgentPerformance)
+   * is a separate component with its own separate export button, so without this
+   * fetch here too, "Download All Views" on the Overview tab never included a full
+   * agent sheet (only the small "Top Performers" table above). */
+  const [agentRows, setAgentRows] = useState<AgentRow[] | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -583,6 +612,18 @@ function SaleDashboardSlide({
     return () => { cancelled = true; };
   }, [from, to]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const lobParam = lobFilter !== "All" ? `&lob=${encodeURIComponent(lobFilter)}` : "";
+    hrmsApi
+      .get<{ success: boolean; data: AgentRow[] }>(
+        `/api/process-performance/bellavita-agent-performance?from=${from}&to=${to}${lobParam}`,
+      )
+      .then((res) => { if (!cancelled) setAgentRows(res.data); })
+      .catch(() => { if (!cancelled) setAgentRows(null); });
+    return () => { cancelled = true; };
+  }, [from, to, lobFilter]);
+
   const exportSlides = useMemo<ExportSlide[]>(() => {
     if (!data) return [];
     return [{
@@ -623,8 +664,21 @@ function SaleDashboardSlide({
           rows: data.topRtoStates.map((s) => [s.state, s.saleCount, `${s.rtoPct}%`]),
         },
       ],
-    }];
-  }, [data]);
+    },
+    ...(agentRows && agentRows.length > 0 ? [{
+      title: "Agent-wise Performance",
+      tables: [{
+        title: "Agent-wise Performance",
+        columns: ["Agent", "Emp ID", "TL", "LOB", "Tenure", "Attendance", "Avg Login", "Avg Break", "Avg Talk", "ACHT", "Sale", "Zecpe", "Website", "Draft Order", "COD%", "Paid%", "RTO%", "Revenue", "Avg Sale"],
+        rows: agentRows.map((r) => [
+          r.empName, r.empId, r.teamLeader, r.lob, r.tenureDays ?? "—", r.attendanceDays,
+          avgHms(r.loginHours, r.attendanceDays), avgHms(r.breakHours, r.attendanceDays), avgHms(r.talkHours, r.attendanceDays), `${r.achtSeconds}s`, r.saleCount, r.zecpeCount, r.websiteCount, r.draftOrderCount,
+          `${r.codPct}%`, `${r.paidPct}%`, `${r.rtoPct}%`, formatINR(r.revenue), formatINR(r.avgSale),
+        ]),
+      }],
+    }] : []),
+    ];
+  }, [data, agentRows]);
 
   // Hands the parent shell a ready Export button so it can render it in the
   // merged toolbar row -- re-runs whenever what it would export changes, and
@@ -695,7 +749,10 @@ function SaleDashboardSlide({
           group's own LOB -- picking "Repeat" hides all three, "Chat" hides
           Cart+Inbound, etc., same as the LOB-wise Performance table below
           only having a row for the LOB actually selected. */}
-      <KpiGroup label="Sale Performance" tone="text-rose-500" cols="grid-cols-3 sm:grid-cols-4 lg:grid-cols-8">
+      <KpiGroup
+        label="Sale Performance" tone="text-rose-500" cols="grid-cols-3 sm:grid-cols-4 lg:grid-cols-8"
+        onOpen={() => setDrawerEntity({ kind: "overall" })}
+      >
         <KpiCard icon={IndianRupee} label="Gross Revenue" value={formatINR(headline.turnover)} tone="bg-rose-50 text-rose-600" />
         <KpiCard icon={ShoppingBag} label="Sale Count" value={headline.saleCount.toLocaleString("en-IN")} tone="bg-sky-50 text-sky-600" />
         <KpiCard icon={TrendingUp} label="AOV" value={formatINR(headline.aov)} tone="bg-violet-50 text-violet-600" />
@@ -967,7 +1024,7 @@ function SaleDashboardSlide({
         </div>
       </div>
 
-      <EntityDrillDrawer entity={drawerEntity} from={from} to={to} onClose={() => setDrawerEntity(null)} />
+      <EntityDrillDrawer entity={drawerEntity} from={from} to={to} onClose={() => setDrawerEntity(null)} overallData={data} lobFilter={lobFilter} />
     </div>
   );
 }

@@ -4,6 +4,8 @@ import { X, Loader2 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatINR } from "./DashboardKit";
 import { TOOLTIP_PROPS, fmtDate, fmtN, fmtShortDay, secToHms } from "./lpCallShared";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 interface Detail {
   empId: string; name: string; from: string; to: string;
@@ -12,6 +14,24 @@ interface Detail {
   subDispositions: Array<{ label: string; count: number }>;
   orders: Array<{ orderId: string; date: string; amount: number; payment: string; rto: boolean; rows: number }>;
 }
+type DailyRow = Detail["daily"][number];
+type OrderRow = Detail["orders"][number];
+
+const DAILY_FILTER_COLS: Array<FilterColumn<DailyRow>> = [
+  { key: "date", get: (r) => r.date }, { key: "allocation", get: (r) => r.allocation }, { key: "connected", get: (r) => r.connected },
+  { key: "sales", get: (r) => r.sales }, { key: "revenue", get: (r) => r.revenue },
+  { key: "login", get: (r) => r.loginSec || null }, { key: "talk", get: (r) => r.talkSec || null },
+];
+const dailyColGetter = (r: DailyRow, key: string): string | number | null | undefined => {
+  const c = DAILY_FILTER_COLS.find((x) => x.key === key); return c ? c.get(r) : undefined;
+};
+const ORDER_FILTER_COLS: Array<FilterColumn<OrderRow>> = [
+  { key: "orderId", get: (r) => r.orderId }, { key: "date", get: (r) => r.date }, { key: "amount", get: (r) => r.amount },
+  { key: "payment", get: (r) => r.payment || "—" }, { key: "rows", get: (r) => r.rows },
+];
+const orderColGetter = (r: OrderRow, key: string): string | number | null | undefined => {
+  const c = ORDER_FILTER_COLS.find((x) => x.key === key); return c ? c.get(r) : undefined;
+};
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -58,6 +78,11 @@ export function BellavitaCartAgentDrawer({
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load the agent detail."); });
     return () => { cancelled = true; };
   }, [apiPath, empId, from, to]);
+
+  const dailyFilters = useColumnFilters(data?.daily ?? [], DAILY_FILTER_COLS);
+  const { sorted: sortedDaily, sortKey: dailySortKey, sortDir: dailySortDir, toggleSort: toggleDailySort } = useSortableRows(dailyFilters.filtered, dailyColGetter);
+  const orderFilters = useColumnFilters(data?.orders ?? [], ORDER_FILTER_COLS);
+  const { sorted: sortedOrders, sortKey: orderSortKey, sortDir: orderSortDir, toggleSort: toggleOrderSort } = useSortableRows(orderFilters.filtered, orderColGetter);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Agent detail">
@@ -110,21 +135,28 @@ export function BellavitaCartAgentDrawer({
                         <Line yAxisId="r" type="monotone" dataKey="sales" name="Sales" stroke="#e11d48" strokeWidth={2} dot={{ r: 2 }} />
                       </ComposedChart>
                     </ResponsiveContainer>
+                    {dailyFilters.activeCount > 0 && (
+                      <div className="flex justify-end">
+                        <button type="button" onClick={dailyFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                          Clear {dailyFilters.activeCount} filter{dailyFilters.activeCount > 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    )}
                     <div className="overflow-x-auto rounded-xl border border-slate-100">
                       <table className="w-full text-left text-xs">
                         <thead>
                           <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                            <th className="px-3 py-2 font-semibold">Date</th>
-                            <th className="px-3 py-2 text-right font-semibold">Alloc.</th>
-                            <th className="px-3 py-2 text-right font-semibold">Connected</th>
-                            <th className="px-3 py-2 text-right font-semibold">Sales</th>
-                            <th className="px-3 py-2 text-right font-semibold">Revenue</th>
-                            <th className="px-3 py-2 text-right font-semibold">Login</th>
-                            <th className="px-3 py-2 text-right font-semibold">Talk</th>
+                            <FilterSortTh label="Date" columnKey="date" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Alloc." columnKey="allocation" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 text-right font-semibold" />
+                            <FilterSortTh label="Connected" columnKey="connected" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 text-right font-semibold" />
+                            <FilterSortTh label="Sales" columnKey="sales" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 text-right font-semibold" />
+                            <FilterSortTh label="Revenue" columnKey="revenue" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 text-right font-semibold" />
+                            <FilterSortTh label="Login" columnKey="login" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 text-right font-semibold" />
+                            <FilterSortTh label="Talk" columnKey="talk" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 text-right font-semibold" />
                           </tr>
                         </thead>
                         <tbody>
-                          {data.daily.map((d) => (
+                          {sortedDaily.map((d) => (
                             <tr key={d.date} className="border-t border-slate-50">
                               <td className="px-3 py-2 font-medium text-slate-700">{fmtDate(d.date)}</td>
                               <td className="px-3 py-2 text-right text-slate-600">{fmtN(d.allocation)}</td>
@@ -135,6 +167,7 @@ export function BellavitaCartAgentDrawer({
                               <td className="px-3 py-2 text-right text-slate-600">{d.talkSec ? secToHms(d.talkSec) : "—"}</td>
                             </tr>
                           ))}
+                          {sortedDaily.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">No dates match the current filters.</td></tr>}
                         </tbody>
                       </table>
                     </div>
@@ -165,33 +198,43 @@ export function BellavitaCartAgentDrawer({
 
               <Section title={`Sale orders (latest ${data.orders.length})`}>
                 {data.orders.length === 0 ? <None /> : (
-                  <div className="overflow-x-auto rounded-xl border border-slate-100">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                          <th className="px-3 py-2 font-semibold">Order id</th>
-                          <th className="px-3 py-2 font-semibold">Date</th>
-                          <th className="px-3 py-2 text-right font-semibold">Amount</th>
-                          <th className="px-3 py-2 font-semibold">Payment</th>
-                          <th className="px-3 py-2 text-right font-semibold">Rows</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.orders.map((o) => (
-                          <tr key={o.orderId} className="border-t border-slate-50">
-                            <td className="px-3 py-2 font-medium text-slate-700">{o.orderId}</td>
-                            <td className="px-3 py-2 text-slate-600">{fmtDate(o.date)}</td>
-                            <td className="px-3 py-2 text-right text-slate-600">{formatINR(o.amount)}</td>
-                            <td className="px-3 py-2">
-                              <span className="uppercase text-slate-600">{o.payment || "—"}</span>
-                              {o.rto && <span className="ml-1.5 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">RTO</span>}
-                            </td>
-                            <td className="px-3 py-2 text-right text-slate-500">{o.rows}</td>
+                  <>
+                    {orderFilters.activeCount > 0 && (
+                      <div className="mb-2 flex justify-end">
+                        <button type="button" onClick={orderFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                          Clear {orderFilters.activeCount} filter{orderFilters.activeCount > 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    )}
+                    <div className="overflow-x-auto rounded-xl border border-slate-100">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+                            <FilterSortTh label="Order id" columnKey="orderId" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} filters={orderFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Date" columnKey="date" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} filters={orderFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Amount" columnKey="amount" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} filters={orderFilters} className="px-3 py-2 text-right font-semibold" />
+                            <FilterSortTh label="Payment" columnKey="payment" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} filters={orderFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Rows" columnKey="rows" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} filters={orderFilters} className="px-3 py-2 text-right font-semibold" />
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {sortedOrders.map((o) => (
+                            <tr key={o.orderId} className="border-t border-slate-50">
+                              <td className="px-3 py-2 font-medium text-slate-700">{o.orderId}</td>
+                              <td className="px-3 py-2 text-slate-600">{fmtDate(o.date)}</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{formatINR(o.amount)}</td>
+                              <td className="px-3 py-2">
+                                <span className="uppercase text-slate-600">{o.payment || "—"}</span>
+                                {o.rto && <span className="ml-1.5 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">RTO</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right text-slate-500">{o.rows}</td>
+                            </tr>
+                          ))}
+                          {sortedOrders.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">No orders match the current filters.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </Section>
             </>

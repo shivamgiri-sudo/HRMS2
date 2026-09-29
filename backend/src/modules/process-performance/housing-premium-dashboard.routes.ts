@@ -6,6 +6,7 @@ import {
   getHousingPremiumSlotWise, getHousingPremiumTqMqBqAgents, getHousingPremiumTqMqBqTl,
   getHousingPremiumTeamDetails, getHousingPremiumValidation, getHousingPremiumAgentDetail,
 } from "./housing-premium-dashboard.service.js";
+import { mountProcessTargetRoutes } from "./process-targets.routes.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -71,5 +72,7 @@ router.get("/housing-premium-dashboard/agent-detail", requireRole(...VIEWER_ROLE
   if (!data) return res.status(404).json({ success: false, error: "No records for this agent in the chosen date range" });
   res.json({ success: true, data });
 }));
+
+mountProcessTargetRoutes(router, { base: "/housing-premium-targets", process: "housing_premium", wrap: h as never });
 
 export { router as housingPremiumDashboardRouter };

@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Target } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { SectionCard, TableExcelIconButton, formatINR, localDateStr } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Abandon Cart "Date-wise Target" table -- fully automatic (backend: bellavita-auto-targets.shared.ts):
@@ -54,6 +56,23 @@ export function BellavitaCartTargetTable({ from, to }: { from: string; to: strin
     };
   }, [rows, today]);
 
+  // Excel-style: header sorts (click) and filters (funnel icon). Actual Revenue / Achi % report
+  // as blank for a still-future date, same as their "—" cell display, so they sort/filter that way too.
+  interface HeaderCol { key: string; label: string; get: (r: TargetRow) => string | number | null }
+  const headerCols = useMemo<HeaderCol[]>(() => [
+    { key: "date", label: "Date", get: (r) => r.date },
+    { key: "convTgtPct", label: "Conv Tgt", get: (r) => r.convTgtPct },
+    { key: "allocation", label: "Allocation", get: (r) => r.allocation },
+    { key: "saleTarget", label: "Sale Target", get: (r) => r.saleTarget },
+    { key: "revenueTarget", label: "Revenue Target", get: (r) => r.revenueTarget },
+    { key: "actualRevenue", label: "Actual Revenue", get: (r) => (r.date > today ? null : r.actualRevenue) },
+    { key: "achievementPct", label: "Achi %", get: (r) => (r.date > today ? null : r.achievementPct) },
+  ], [today]);
+  const filterCols = useMemo<Array<FilterColumn<TargetRow>>>(() => headerCols.map((c) => ({ key: c.key, get: c.get })), [headerCols]);
+  const colGetter = useCallback((r: TargetRow, key: string) => headerCols.find((c) => c.key === key)?.get(r), [headerCols]);
+  const filters = useColumnFilters(rows ?? [], filterCols);
+  const { sorted: sortedRows, sortKey, sortDir, toggleSort } = useSortableRows(filters.filtered, colGetter);
+
   const sheets = () => [{
     name: "Date-wise Target",
     columns: ["Date", "Conv Tgt %", "Allocation", "Sale Target", "Revenue Target", "Actual Revenue", "Achi %"],
@@ -69,12 +88,21 @@ export function BellavitaCartTargetTable({ from, to }: { from: string; to: strin
       >
         {error && <p className="rounded-xl border border-red-100 bg-red-50 p-3 text-xs text-red-700">{error}</p>}
         {!rows && !error && <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>}
+        {rows && filters.activeCount > 0 && (
+          <div className="mb-2 flex justify-end">
+            <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+            </button>
+          </div>
+        )}
         {rows && (
           <div className="max-h-[30rem] overflow-auto rounded-xl border border-slate-200">
             <table className="w-full min-w-[640px] border-collapse text-center text-xs">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-800 text-[10px] font-bold uppercase tracking-wide text-white">
-                  {["Date", "Conv Tgt", "Allocation", "Sale Target", "Revenue Target", "Actual Revenue", "Achi %"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2">{h}</th>)}
+                  {headerCols.map((c) => (
+                    <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={filters} className="whitespace-nowrap px-3 py-2" />
+                  ))}
                 </tr>
                 <tr className="bg-slate-100 text-[11px] font-bold text-slate-800">
                   <th className="px-3 py-1.5 text-left">Total (to today)</th>

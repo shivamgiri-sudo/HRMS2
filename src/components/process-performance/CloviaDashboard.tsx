@@ -8,6 +8,8 @@ import {
   CalendarDays, TrendingUp, Repeat, LayoutDashboard, Headset, Grid3x3, PhoneOutgoing,
 } from "lucide-react";
 import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 import { CloviaLobSlide } from "./CloviaLobSlide";
 import { CloviaInboundSlide } from "./CloviaInboundSlide";
 import { CloviaOverviewDashboard } from "./CloviaOverviewDashboard";
@@ -83,10 +85,13 @@ function KpiCard({
   );
 }
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+function SectionCard({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-      <p className="mb-3 text-sm font-semibold text-slate-700">{title}</p>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-slate-700">{title}</p>
+        {action}
+      </div>
       {children}
     </div>
   );
@@ -160,6 +165,31 @@ function InboundSlide({ from, to, onData }: { from: string; to: string; onData?:
     return { offered, answered, sl_pct: offered ? Math.round((slotRows.reduce((s, r) => s + (r.sl_pct * r.offered) / 100, 0) / offered) * 10000) / 100 : 0 };
   }, [slotRows]);
 
+  // Excel-style sort + filter for the Date-wise, Slot-wise and Agent-wise tables -- hooks must run every render, so
+  // these are computed before the early returns further down.
+  const TREND_FILTER_COLS: Array<FilterColumn<TrendRow>> = [
+    { key: "date", get: (r) => r.date }, { key: "offered", get: (r) => r.offered }, { key: "answered", get: (r) => r.answered },
+    { key: "slPct", get: (r) => (r.answered ? Math.round((r.sl_num / r.answered) * 10000) / 100 : 0) }, { key: "acht", get: (r) => r.acht },
+  ];
+  const trendColGetter = (r: TrendRow, key: string) => TREND_FILTER_COLS.find((c) => c.key === key)?.get(r);
+  const trendFilters = useColumnFilters(trend ?? [], TREND_FILTER_COLS);
+  const { sorted: sortedTrend, sortKey: trendSortKey, sortDir: trendSortDir, toggleSort: toggleTrendSort } = useSortableRows(trendFilters.filtered, trendColGetter);
+
+  const SLOT_FILTER_COLS: Array<FilterColumn<HourlyByDateRow>> = [
+    { key: "hour", get: (r) => r.hour }, { key: "offered", get: (r) => r.offered }, { key: "sl_pct", get: (r) => r.sl_pct }, { key: "acht", get: (r) => r.acht },
+  ];
+  const slotColGetter = (r: HourlyByDateRow, key: string) => SLOT_FILTER_COLS.find((c) => c.key === key)?.get(r);
+  const slotFilters = useColumnFilters(slotRows, SLOT_FILTER_COLS);
+  const { sorted: sortedSlots, sortKey: slotSortKey, sortDir: slotSortDir, toggleSort: toggleSlotSort } = useSortableRows(slotFilters.filtered, slotColGetter);
+
+  const AGENT_FILTER_COLS: Array<FilterColumn<AgentRow>> = [
+    { key: "agentName", get: (a) => a.agentName }, { key: "offered", get: (a) => a.offered }, { key: "answered", get: (a) => a.answered },
+    { key: "sl_pct", get: (a) => a.sl_pct }, { key: "acht", get: (a) => a.acht }, { key: "repeat_pct", get: (a) => a.repeat_pct },
+  ];
+  const agentColGetter = (a: AgentRow, key: string) => AGENT_FILTER_COLS.find((c) => c.key === key)?.get(a);
+  const agentFilters = useColumnFilters(agents ?? [], AGENT_FILTER_COLS);
+  const { sorted: sortedAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
+
   if (loading && !summary) return <Spinner />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!summary) return null;
@@ -179,7 +209,14 @@ function InboundSlide({ from, to, onData }: { from: string; to: string; onData?:
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm lg:col-span-2">
-          <p className="mb-3 text-sm font-semibold text-slate-700">Date-wise Call Performance</p>
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-700">Date-wise Call Performance</p>
+            {trendFilters.activeCount > 0 && (
+              <button type="button" onClick={trendFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {trendFilters.activeCount} filter{trendFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            )}
+          </div>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={trend ?? []} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -195,15 +232,15 @@ function InboundSlide({ from, to, onData }: { from: string; to: string; onData?:
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Date</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Offered</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Answered</th>
-                  <th className="py-2 pr-3 text-right font-semibold">SL%</th>
-                  <th className="py-2 pr-0 text-right font-semibold">ACHT</th>
+                  <FilterSortTh label="Date" columnKey="date" sortKey={trendSortKey} sortDir={trendSortDir} onSort={toggleTrendSort} filters={trendFilters} className="py-2 pr-3 font-semibold" />
+                  <FilterSortTh label="Offered" columnKey="offered" sortKey={trendSortKey} sortDir={trendSortDir} onSort={toggleTrendSort} filters={trendFilters} className="py-2 pr-3 text-right font-semibold" />
+                  <FilterSortTh label="Answered" columnKey="answered" sortKey={trendSortKey} sortDir={trendSortDir} onSort={toggleTrendSort} filters={trendFilters} className="py-2 pr-3 text-right font-semibold" />
+                  <FilterSortTh label="SL%" columnKey="slPct" sortKey={trendSortKey} sortDir={trendSortDir} onSort={toggleTrendSort} filters={trendFilters} className="py-2 pr-3 text-right font-semibold" />
+                  <FilterSortTh label="ACHT" columnKey="acht" sortKey={trendSortKey} sortDir={trendSortDir} onSort={toggleTrendSort} filters={trendFilters} className="py-2 pr-0 text-right font-semibold" />
                 </tr>
               </thead>
               <tbody>
-                {(trend ?? []).map((r) => {
+                {sortedTrend.map((r) => {
                   const slPct = r.answered ? Math.round((r.sl_num / r.answered) * 10000) / 100 : 0;
                   return (
                     <tr key={r.date} className="border-b border-slate-50 last:border-0">
@@ -215,8 +252,8 @@ function InboundSlide({ from, to, onData }: { from: string; to: string; onData?:
                     </tr>
                   );
                 })}
-                {(trend ?? []).length === 0 && (
-                  <tr><td colSpan={5} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                {sortedTrend.length === 0 && (
+                  <tr><td colSpan={5} className="py-6 text-center text-slate-400">{(trend ?? []).length === 0 ? "No data for this period." : "No dates match the current filters."}</td></tr>
                 )}
               </tbody>
             </table>
@@ -224,8 +261,15 @@ function InboundSlide({ from, to, onData }: { from: string; to: string; onData?:
         </div>
 
         <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-700">Slot-wise Performance</p>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-slate-700">Slot-wise Performance</p>
+              {slotFilters.activeCount > 0 && (
+                <button type="button" onClick={slotFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                  Clear {slotFilters.activeCount}
+                </button>
+              )}
+            </div>
             <select
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
@@ -238,14 +282,14 @@ function InboundSlide({ from, to, onData }: { from: string; to: string; onData?:
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Hour</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Offered</th>
-                  <th className="py-2 pr-3 text-right font-semibold">SL%</th>
-                  <th className="py-2 pr-0 text-right font-semibold">ACHT</th>
+                  <FilterSortTh label="Hour" columnKey="hour" sortKey={slotSortKey} sortDir={slotSortDir} onSort={toggleSlotSort} filters={slotFilters} className="py-2 pr-3 font-semibold" />
+                  <FilterSortTh label="Offered" columnKey="offered" sortKey={slotSortKey} sortDir={slotSortDir} onSort={toggleSlotSort} filters={slotFilters} className="py-2 pr-3 text-right font-semibold" />
+                  <FilterSortTh label="SL%" columnKey="sl_pct" sortKey={slotSortKey} sortDir={slotSortDir} onSort={toggleSlotSort} filters={slotFilters} className="py-2 pr-3 text-right font-semibold" />
+                  <FilterSortTh label="ACHT" columnKey="acht" sortKey={slotSortKey} sortDir={slotSortDir} onSort={toggleSlotSort} filters={slotFilters} className="py-2 pr-0 text-right font-semibold" />
                 </tr>
               </thead>
               <tbody>
-                {slotRows.map((r) => (
+                {sortedSlots.map((r) => (
                   <tr key={r.hour} className="border-b border-slate-50 last:border-0">
                     <td className="py-1.5 pr-3 text-slate-700">{String(r.hour).padStart(2, "0")}:00</td>
                     <td className="py-1.5 pr-3 text-right text-slate-600">{r.offered}</td>
@@ -253,8 +297,8 @@ function InboundSlide({ from, to, onData }: { from: string; to: string; onData?:
                     <td className="py-1.5 pr-0 text-right text-slate-600">{formatSecs(r.acht)}</td>
                   </tr>
                 ))}
-                {slotRows.length === 0 && (
-                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">No data.</td></tr>
+                {sortedSlots.length === 0 && (
+                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">{slotRows.length === 0 ? "No data." : "No slots match the current filters."}</td></tr>
                 )}
               </tbody>
               {slotRows.length > 0 && (
@@ -315,21 +359,28 @@ function InboundSlide({ from, to, onData }: { from: string; to: string; onData?:
         </div>
       </div>
 
-      <SectionCard title={`Agent-wise Performance (${(agents ?? []).length} agents)`}>
+      <SectionCard
+        title={`Agent-wise Performance (${(agents ?? []).length} agents)`}
+        action={agentFilters.activeCount > 0 ? (
+          <button type="button" onClick={agentFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">Agent</th>
-                <th className="py-2 pr-3 text-right font-semibold">Offered</th>
-                <th className="py-2 pr-3 text-right font-semibold">Answered</th>
-                <th className="py-2 pr-3 text-right font-semibold">SL%</th>
-                <th className="py-2 pr-3 text-right font-semibold">ACHT</th>
-                <th className="py-2 pr-0 text-right font-semibold">Repeat%</th>
+                <FilterSortTh label="Agent" columnKey="agentName" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Offered" columnKey="offered" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Answered" columnKey="answered" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="SL%" columnKey="sl_pct" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="ACHT" columnKey="acht" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Repeat%" columnKey="repeat_pct" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-0 text-right font-semibold" />
               </tr>
             </thead>
             <tbody>
-              {(agents ?? []).map((a) => (
+              {sortedAgents.map((a) => (
                 <tr key={a.agentId} className="border-b border-slate-50 last:border-0">
                   <td className="py-2 pr-3">
                     <div className="font-medium text-slate-700">{a.agentName}</div>
@@ -342,8 +393,8 @@ function InboundSlide({ from, to, onData }: { from: string; to: string; onData?:
                   <td className="py-2 pr-0 text-right text-slate-600">{a.repeat_pct}%</td>
                 </tr>
               ))}
-              {(agents ?? []).length === 0 && (
-                <tr><td colSpan={6} className="py-6 text-center text-slate-400">No agent data for this period.</td></tr>
+              {sortedAgents.length === 0 && (
+                <tr><td colSpan={6} className="py-6 text-center text-slate-400">{(agents ?? []).length === 0 ? "No agent data for this period." : "No agents match the current filters."}</td></tr>
               )}
             </tbody>
           </table>

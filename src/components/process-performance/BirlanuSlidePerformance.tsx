@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ComposedChart, Bar, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { Users, PhoneCall, UserCheck, Filter, BadgeCheck, Handshake, Target, TrendingUp, Truck, IndianRupee, LineChart, Table2, PieChart as PieIcon, Lightbulb, Trophy } from "lucide-react";
 import type { BirlanuMis, PerfMonth } from "./birlanuTypes";
@@ -5,6 +6,8 @@ import {
   BCard, DetailsBtn, Empty, Funnel, Insights, Kpi, LegendList, Th, TOOLTIP_STYLE, delta, int, lacs, pct1, pct2, ppDelta,
   type DrawerCol, type DrawerSeries, type DrawerSpec,
 } from "./BirlanuKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Slide 1 -- Business Performance. Logic = the workbook's "Performance Dashboard" sheet:
@@ -23,8 +26,49 @@ const COLS_ALL: DrawerCol[] = [
 ];
 const s = (key: string, label: string, color: string, type: "bar" | "line" = "bar", axis: "left" | "right" = "left"): DrawerSeries => ({ key, label, color, type, axis });
 
+/* ------------------------------ table columns ------------------------------ */
+interface SnapCol { key: string; label: string; get: (m: PerfMonth) => string | number | null; cell: (m: PerfMonth) => ReactNode; td: string; th: string }
+const SNAP_TH_BASE = "whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white";
+const CLOSER_KEYS = new Set(["lcCloser", "elcoCloserPct", "volMtCloser", "valueLacsCloser"]);
+const snapTh = (key: string, first: boolean) => `${SNAP_TH_BASE} ${first ? "rounded-l-md text-left" : ""} ${CLOSER_KEYS.has(key) ? "bg-[#123a7a]" : ""} ${key === "valueLacsCloser" ? "rounded-r-md" : ""}`.replace(/\s+/g, " ").trim();
+const SNAP_COLS: SnapCol[] = [
+  { key: "month", label: "Month", get: (m) => m.month, cell: (m) => m.month, td: "px-2 py-1.5 text-left font-semibold text-[#0b2a5b]", th: snapTh("month", true) },
+  { key: "status", label: "Status", get: () => "Active", cell: () => <span className="inline-flex items-center gap-1 text-[10px] text-slate-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Active</span>, td: "px-2 py-1.5", th: snapTh("status", false) },
+  { key: "enquiries", label: "Enquiries Received", get: (m) => m.enquiries, cell: (m) => int(m.enquiries), td: "px-2 py-1.5", th: snapTh("enquiries", false) },
+  { key: "connected", label: "Leads Connected", get: (m) => m.connected, cell: (m) => int(m.connected), td: "px-2 py-1.5", th: snapTh("connected", false) },
+  { key: "connectPct", label: "Connect %", get: (m) => m.connectPct, cell: (m) => pct1(m.connectPct), td: "px-2 py-1.5", th: snapTh("connectPct", false) },
+  { key: "validated", label: "Leads Validated", get: (m) => m.validated, cell: (m) => int(m.validated), td: "px-2 py-1.5", th: snapTh("validated", false) },
+  { key: "elvaPct", label: "ELCV %", get: (m) => m.elvaPct, cell: (m) => pct1(m.elvaPct), td: "px-2 py-1.5", th: snapTh("elvaPct", false) },
+  { key: "qualified", label: "Leads Qualified", get: (m) => m.qualified, cell: (m) => int(m.qualified), td: "px-2 py-1.5", th: snapTh("qualified", false) },
+  { key: "elqPct", label: "ELCQ %", get: (m) => m.elqPct, cell: (m) => pct1(m.elqPct), td: "px-2 py-1.5", th: snapTh("elqPct", false) },
+  { key: "converted", label: "Leads Converted", get: (m) => m.converted, cell: (m) => int(m.converted), td: "px-2 py-1.5 font-semibold", th: snapTh("converted", false) },
+  { key: "elcoPct", label: "ELCO %", get: (m) => m.elcoPct, cell: (m) => pct2(m.elcoPct), td: "px-2 py-1.5", th: snapTh("elcoPct", false) },
+  { key: "volMt", label: "Vol (MT)", get: (m) => m.volMt, cell: (m) => int(m.volMt), td: "px-2 py-1.5", th: snapTh("volMt", false) },
+  { key: "valueLacs", label: "Value (₹ Lacs)", get: (m) => m.valueLacs, cell: (m) => lacs(m.valueLacs), td: "px-2 py-1.5 font-semibold text-emerald-700", th: snapTh("valueLacs", false) },
+  { key: "lcCloser", label: "LC (Closer Date)", get: (m) => m.lcCloser, cell: (m) => int(m.lcCloser), td: "px-2 py-1.5", th: snapTh("lcCloser", false) },
+  { key: "elcoCloserPct", label: "ELCO % (Closer)", get: (m) => m.elcoCloserPct, cell: (m) => pct2(m.elcoCloserPct), td: "px-2 py-1.5", th: snapTh("elcoCloserPct", false) },
+  { key: "volMtCloser", label: "Vol (MT) (Closer)", get: (m) => m.volMtCloser, cell: (m) => int(m.volMtCloser), td: "px-2 py-1.5", th: snapTh("volMtCloser", false) },
+  { key: "valueLacsCloser", label: "Value (Lacs) (Closer)", get: (m) => m.valueLacsCloser, cell: (m) => lacs(m.valueLacsCloser), td: "px-2 py-1.5", th: snapTh("valueLacsCloser", false) },
+];
+const SNAP_FILTER_COLS: Array<FilterColumn<PerfMonth>> = SNAP_COLS.map((c) => ({ key: c.key, get: c.get }));
+const snapGetter = (m: PerfMonth, key: string) => SNAP_COLS.find((c) => c.key === key)?.get(m);
+
+interface CloserRow { closer: string; lc: number; volMt: number; valueLacs: number }
+const CLOSER_COLS: Array<{ key: string; label: string; get: (c: CloserRow) => string | number; cell: (c: CloserRow) => ReactNode; td: string }> = [
+  { key: "closer", label: "Closer", get: (c) => c.closer, cell: (c) => c.closer, td: "px-2 py-1.5 text-left font-semibold text-[#0b2a5b]" },
+  { key: "lc", label: "LC (Closer Date)", get: (c) => c.lc, cell: (c) => int(c.lc), td: "px-2 py-1.5" },
+  { key: "volMt", label: "Vol (MT)", get: (c) => c.volMt, cell: (c) => int(c.volMt), td: "px-2 py-1.5" },
+  { key: "valueLacs", label: "Value (₹ Lacs)", get: (c) => c.valueLacs, cell: (c) => lacs(c.valueLacs), td: "px-2 py-1.5" },
+];
+const CLOSER_FILTER_COLS: Array<FilterColumn<CloserRow>> = CLOSER_COLS.map((c) => ({ key: c.key, get: c.get }));
+const closerGetter = (c: CloserRow, key: string) => CLOSER_COLS.find((x) => x.key === key)?.get(c);
+
 export function BirlanuSlidePerformance({ data, open }: { data: BirlanuMis; open: (s: DrawerSpec) => void }) {
   const { months, total, callingSplit, closers, closerMonth } = data.performance;
+  const snapFilters = useColumnFilters(months, SNAP_FILTER_COLS);
+  const { sorted: snapRows, sortKey: snapSortKey, sortDir: snapSortDir, toggleSort: snapToggleSort } = useSortableRows(snapFilters.filtered, snapGetter);
+  const closerFilters = useColumnFilters(closers, CLOSER_FILTER_COLS);
+  const { sorted: closerRows, sortKey: closerSortKey, sortDir: closerSortDir, toggleSort: closerToggleSort } = useSortableRows(closerFilters.filtered, closerGetter);
   if (months.length === 0) return <Empty />;
   const latest = months[months.length - 1];
   const prev: PerfMonth | undefined = months.length > 1 ? months[months.length - 2] : undefined;
@@ -55,6 +99,7 @@ export function BirlanuSlidePerformance({ data, open }: { data: BirlanuMis; open
   ];
   const donutTotal = donut[0].value + donut[1].value;
   const closerTotal = closers.reduce((a, c) => a + c.lc, 0);
+
 
   return (
     <div className="space-y-3">
@@ -117,25 +162,27 @@ export function BirlanuSlidePerformance({ data, open }: { data: BirlanuMis; open
 
       <BCard icon={Table2} title="Monthly Performance Snapshot" footnote="Click a month for its full record. 'As per closer month' groups the same conversions by Lead Closer Month; the other columns group by LeadRegisterMonth. There is no investment figure in the data, so no ROI column is shown."
         action={<DetailsBtn onClick={() => drill("Monthly Performance Snapshot", COLS_ALL.map((c) => c.key), [s("enquiries", "Enquiries", "#3b82f6"), s("converted", "Converted", "#16a34a")])} />}>
+        {snapFilters.activeCount > 0 && (
+          <button type="button" onClick={snapFilters.clearAll} className="mb-2 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {snapFilters.activeCount} filter{snapFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] text-center text-xs">
             <thead>
               <tr>
-                <Th className="rounded-l-md text-left">Month</Th><Th>Status</Th><Th>Enquiries Received</Th><Th>Leads Connected</Th><Th>Connect %</Th><Th>Leads Validated</Th><Th>ELCV %</Th><Th>Leads Qualified</Th><Th>ELCQ %</Th>
-                <Th>Leads Converted</Th><Th>ELCO %</Th><Th>Vol (MT)</Th><Th>Value (₹ Lacs)</Th><Th className="bg-[#123a7a]">LC (Closer Date)</Th><Th className="bg-[#123a7a]">ELCO % (Closer)</Th><Th className="bg-[#123a7a]">Vol (MT) (Closer)</Th><Th className="rounded-r-md bg-[#123a7a]">Value (Lacs) (Closer)</Th>
+                {SNAP_COLS.map((c) => (
+                  <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={snapSortKey} sortDir={snapSortDir} onSort={snapToggleSort} filters={snapFilters} className={c.th} />
+                ))}
               </tr>
             </thead>
             <tbody>
-              {months.map((m, i) => (
+              {snapRows.map((m, i) => (
                 <tr key={m.month} role="button" tabIndex={0} onClick={() => monthDetail(m)} onKeyDown={(e) => { if (e.key === "Enter") monthDetail(m); }} className={`cursor-pointer hover:bg-amber-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
-                  <td className="px-2 py-1.5 text-left font-semibold text-[#0b2a5b]">{m.month}</td>
-                  <td className="px-2 py-1.5"><span className="inline-flex items-center gap-1 text-[10px] text-slate-600"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Active</span></td>
-                  <td className="px-2 py-1.5">{int(m.enquiries)}</td><td className="px-2 py-1.5">{int(m.connected)}</td><td className="px-2 py-1.5">{pct1(m.connectPct)}</td>
-                  <td className="px-2 py-1.5">{int(m.validated)}</td><td className="px-2 py-1.5">{pct1(m.elvaPct)}</td><td className="px-2 py-1.5">{int(m.qualified)}</td><td className="px-2 py-1.5">{pct1(m.elqPct)}</td>
-                  <td className="px-2 py-1.5 font-semibold">{int(m.converted)}</td><td className="px-2 py-1.5">{pct2(m.elcoPct)}</td><td className="px-2 py-1.5">{int(m.volMt)}</td><td className="px-2 py-1.5 font-semibold text-emerald-700">{lacs(m.valueLacs)}</td>
-                  <td className="px-2 py-1.5">{int(m.lcCloser)}</td><td className="px-2 py-1.5">{pct2(m.elcoCloserPct)}</td><td className="px-2 py-1.5">{int(m.volMtCloser)}</td><td className="px-2 py-1.5">{lacs(m.valueLacsCloser)}</td>
+                  {SNAP_COLS.map((c) => <td key={c.key} className={c.td}>{c.cell(m)}</td>)}
                 </tr>
               ))}
+              {snapRows.length === 0 && <tr><td colSpan={SNAP_COLS.length} className="py-6 text-center text-slate-400">No months match the filters.</td></tr>}
             </tbody>
             <tfoot>
               <tr className="bg-amber-100 font-bold text-slate-800">
@@ -153,19 +200,36 @@ export function BirlanuSlidePerformance({ data, open }: { data: BirlanuMis; open
         <BCard className="lg:col-span-5" icon={Trophy} title={`Lead Closer Performance (${closerMonth || "—"})`} footnote="Closer = the seller who closed the lead (Seller Email in the data); counts are conversions by Lead Closer Month."
           action={<DetailsBtn onClick={() => open({ title: "Lead Closer Performance", subtitle: closerMonth, xKey: "closer", columns: [{ key: "closer", label: "Closer", fmt: "text" }, { key: "lc", label: "LC (closer date)" }, { key: "volMt", label: "Vol (MT)" }, { key: "valueLacs", label: "Value (Lacs)", fmt: "lacs" }], rows: closers as unknown as DrawerSpec["rows"], chart: [s("lc", "LC", "#0b2a5b"), s("valueLacs", "Value (Lacs)", "#f59e0b", "line", "right")] })} />}>
           {closers.length === 0 ? <Empty text="No conversions in the latest closer month." /> : (
-            <div className="max-h-[260px] overflow-auto">
-              <table className="w-full text-center text-xs">
-                <thead><tr className="sticky top-0"><Th className="rounded-l-md text-left">Closer</Th><Th>LC (Closer Date)</Th><Th>Vol (MT)</Th><Th className="rounded-r-md">Value (₹ Lacs)</Th></tr></thead>
-                <tbody>
-                  {closers.map((c, i) => (
-                    <tr key={c.closer} role="button" tabIndex={0} onClick={() => open({ title: c.closer, subtitle: `Closer · ${closerMonth}`, columns: [{ key: "metric", label: "Metric", fmt: "text" }, { key: "value", label: "Value", fmt: "text" }], rows: [{ metric: "Leads closed (LC)", value: int(c.lc) }, { metric: "Share of all closed leads", value: pct1((c.lc / Math.max(1, closerTotal)) * 100) }, { metric: "Vol (MT)", value: int(c.volMt) }, { metric: "Value (₹ Lacs)", value: lacs(c.valueLacs) }] })} className={`cursor-pointer hover:bg-amber-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
-                      <td className="px-2 py-1.5 text-left font-semibold text-[#0b2a5b]">{c.closer}</td><td className="px-2 py-1.5">{int(c.lc)}</td><td className="px-2 py-1.5">{int(c.volMt)}</td><td className="px-2 py-1.5">{lacs(c.valueLacs)}</td>
+            <>
+              {closerFilters.activeCount > 0 && (
+                <button type="button" onClick={closerFilters.clearAll} className="mb-2 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                  Clear {closerFilters.activeCount} filter{closerFilters.activeCount > 1 ? "s" : ""}
+                </button>
+              )}
+              <div className="max-h-[260px] overflow-auto">
+                <table className="w-full text-center text-xs">
+                  <thead>
+                    <tr className="sticky top-0">
+                      {CLOSER_COLS.map((c, i) => (
+                        <FilterSortTh
+                          key={c.key} label={c.label} columnKey={c.key} sortKey={closerSortKey} sortDir={closerSortDir} onSort={closerToggleSort} filters={closerFilters}
+                          className={`whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white ${i === 0 ? "rounded-l-md text-left" : ""} ${i === CLOSER_COLS.length - 1 ? "rounded-r-md" : ""}`}
+                        />
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-                <tfoot><tr className="bg-amber-100 font-bold"><td className="px-2 py-1.5 text-left">Total</td><td className="px-2 py-1.5">{int(closerTotal)}</td><td className="px-2 py-1.5">{int(closers.reduce((a, c) => a + c.volMt, 0))}</td><td className="px-2 py-1.5">{lacs(closers.reduce((a, c) => a + c.valueLacs, 0))}</td></tr></tfoot>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {closerRows.map((c, i) => (
+                      <tr key={c.closer} role="button" tabIndex={0} onClick={() => open({ title: c.closer, subtitle: `Closer · ${closerMonth}`, columns: [{ key: "metric", label: "Metric", fmt: "text" }, { key: "value", label: "Value", fmt: "text" }], rows: [{ metric: "Leads closed (LC)", value: int(c.lc) }, { metric: "Share of all closed leads", value: pct1((c.lc / Math.max(1, closerTotal)) * 100) }, { metric: "Vol (MT)", value: int(c.volMt) }, { metric: "Value (₹ Lacs)", value: lacs(c.valueLacs) }] })} className={`cursor-pointer hover:bg-amber-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
+                        {CLOSER_COLS.map((c2) => <td key={c2.key} className={c2.td}>{c2.cell(c)}</td>)}
+                      </tr>
+                    ))}
+                    {closerRows.length === 0 && <tr><td colSpan={CLOSER_COLS.length} className="py-6 text-center text-slate-400">No closers match the filters.</td></tr>}
+                  </tbody>
+                  <tfoot><tr className="bg-amber-100 font-bold"><td className="px-2 py-1.5 text-left">Total</td><td className="px-2 py-1.5">{int(closerTotal)}</td><td className="px-2 py-1.5">{int(closers.reduce((a, c) => a + c.volMt, 0))}</td><td className="px-2 py-1.5">{lacs(closers.reduce((a, c) => a + c.valueLacs, 0))}</td></tr></tfoot>
+                </table>
+              </div>
+            </>
           )}
         </BCard>
 

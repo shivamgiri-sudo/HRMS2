@@ -15,6 +15,7 @@ import { HousingPremiumAgentDrawer } from "./HousingPremiumAgentDrawer";
 import { HousingPremiumOutboundDashboard } from "./HousingPremiumOutboundDashboard";
 import { useSortableRows } from "./useSortableRows";
 import { SortTh } from "./SortTh";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 import {
   type HPOverviewData, type HPDayWiseData, type HPAgentWiseData,
   type HPTqMqBqAgentsData, type HPTqMqBqTlData, type HPTeamDetailsData, type HPValidation, type HPStage,
@@ -180,19 +181,23 @@ function OverviewTab({ from, to }: { from: string; to: string }) {
     aov: t.values.mtd.aov,
     rpa: t.agentCount > 0 ? t.values.mtd.revenue / t.agentCount : 0,
   })), [data]);
-  const tlRevenueSort = useSortableRows<{ tlName: string; agentCount: number; revenue: number; aov: number; rpa: number }>(
-    tlRevenueRows,
-    (t, key) => {
-      switch (key) {
-        case "tlName": return t.tlName;
-        case "agentCount": return t.agentCount;
-        case "revenue": return t.revenue;
-        case "aov": return t.aov;
-        case "rpa": return t.rpa;
-        default: return null;
-      }
-    },
-  );
+  type TlRevenueRow = { tlName: string; agentCount: number; revenue: number; aov: number; rpa: number };
+  const tlRevenueColGetter = (t: TlRevenueRow, key: string) => {
+    switch (key) {
+      case "tlName": return t.tlName;
+      case "agentCount": return t.agentCount;
+      case "revenue": return t.revenue;
+      case "aov": return t.aov;
+      case "rpa": return t.rpa;
+      default: return null;
+    }
+  };
+  const TL_REVENUE_FILTER_COLS: Array<FilterColumn<TlRevenueRow>> = [
+    { key: "tlName", get: (t) => t.tlName }, { key: "agentCount", get: (t) => t.agentCount },
+    { key: "revenue", get: (t) => t.revenue }, { key: "aov", get: (t) => t.aov }, { key: "rpa", get: (t) => t.rpa },
+  ];
+  const tlRevenueFilters = useColumnFilters(tlRevenueRows, TL_REVENUE_FILTER_COLS);
+  const tlRevenueSort = useSortableRows<TlRevenueRow>(tlRevenueFilters.filtered, tlRevenueColGetter);
 
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -339,16 +344,23 @@ function OverviewTab({ from, to }: { from: string; to: string }) {
         </SectionCard>
       </div>
 
-      <SectionCard icon={Users} title="TL-wise Revenue, AOV & RPA (MTD)" tone="indigo">
+      <SectionCard
+        icon={Users} title="TL-wise Revenue, AOV & RPA (MTD)" tone="indigo"
+        action={tlRevenueFilters.activeCount > 0 ? (
+          <button type="button" onClick={tlRevenueFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {tlRevenueFilters.activeCount} filter{tlRevenueFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <SortTh label="TL" sortKey="tlName" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-3 font-semibold" />
-                <SortTh label="Agents" sortKey="agentCount" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                <SortTh label="Revenue" sortKey="revenue" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                <SortTh label="AOV" sortKey="aov" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
-                <SortTh label="RPA" sortKey="rpa" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-0 text-right font-semibold" />
+                <FilterSortTh label="TL" columnKey="tlName" sortKey={tlRevenueSort.sortKey} sortDir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} filters={tlRevenueFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Agents" columnKey="agentCount" sortKey={tlRevenueSort.sortKey} sortDir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} filters={tlRevenueFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Revenue" columnKey="revenue" sortKey={tlRevenueSort.sortKey} sortDir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} filters={tlRevenueFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="AOV" columnKey="aov" sortKey={tlRevenueSort.sortKey} sortDir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} filters={tlRevenueFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="RPA" columnKey="rpa" sortKey={tlRevenueSort.sortKey} sortDir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} filters={tlRevenueFilters} className="py-2 pr-0 text-right font-semibold" />
               </tr>
             </thead>
             <tbody>
@@ -361,8 +373,8 @@ function OverviewTab({ from, to }: { from: string; to: string }) {
                   <td className="py-2.5 pr-0 text-right text-slate-600">{formatINR(t.rpa)}</td>
                 </tr>
               ))}
-              {data.byTl.length === 0 && (
-                <tr><td colSpan={5} className="py-6 text-center text-slate-400">No data.</td></tr>
+              {tlRevenueSort.sorted.length === 0 && (
+                <tr><td colSpan={5} className="py-6 text-center text-slate-400">{data.byTl.length === 0 ? "No data." : "No TLs match the current filters."}</td></tr>
               )}
             </tbody>
           </table>
@@ -389,6 +401,18 @@ function DayWiseTab({ from, to, agents }: { from: string; to: string; agents: st
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [from, to, agent]);
+
+  type DayRow = HPDayWiseData["days"][number];
+  const DAY_FILTER_COLS: Array<FilterColumn<DayRow>> = [
+    { key: "dayName", get: (d) => d.dayName }, { key: "date", get: (d) => d.date }, { key: "target", get: (d) => d.target },
+    { key: "totalCalls", get: (d) => d.totalCalls }, { key: "connected", get: (d) => d.connected }, { key: "notConnected", get: (d) => d.notConnected },
+    { key: "uniqueConnected", get: (d) => d.uniqueConnected }, { key: "connectedPct", get: (d) => d.connectedPct },
+    { key: "avgTalkTimeSec", get: (d) => d.avgTalkTimeSec }, { key: "saleCount", get: (d) => d.saleCount }, { key: "revenue", get: (d) => d.revenue },
+    { key: "aov", get: (d) => d.aov }, { key: "presentCount", get: (d) => d.presentCount }, { key: "avgSalePerAgent", get: (d) => d.avgSalePerAgent },
+  ];
+  const dayColGetter = (d: DayRow, key: string) => DAY_FILTER_COLS.find((c) => c.key === key)?.get(d);
+  const dayFilters = useColumnFilters(data?.days ?? [], DAY_FILTER_COLS);
+  const { sorted: sortedDays, sortKey: daySortKey, sortDir: daySortDir, toggleSort: toggleDaySort } = useSortableRows(dayFilters.filtered, dayColGetter);
 
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -420,22 +444,36 @@ function DayWiseTab({ from, to, agents }: { from: string; to: string; agents: st
         </ResponsiveContainer>
       </SectionCard>
 
-      <SectionCard icon={Clock} title="Day Wise Performance" tone="blue" footnote="Matches the reference workbook's Day Wise Agent Performance / Date Wise Performance sheets, combined into one agent-selectable table.">
+      <SectionCard
+        icon={Clock} title="Day Wise Performance" tone="blue" footnote="Matches the reference workbook's Day Wise Agent Performance / Date Wise Performance sheets, combined into one agent-selectable table."
+        action={dayFilters.activeCount > 0 ? (
+          <button type="button" onClick={dayFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {dayFilters.activeCount} filter{dayFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">Day</th><th className="py-2 pr-3 font-semibold">Date</th>
-                <th className="py-2 pr-3 text-right font-semibold">Target</th><th className="py-2 pr-3 text-right font-semibold">Total Calls</th>
-                <th className="py-2 pr-3 text-right font-semibold">Connected</th><th className="py-2 pr-3 text-right font-semibold">Not Connected</th>
-                <th className="py-2 pr-3 text-right font-semibold">Unique Conn.</th><th className="py-2 pr-3 text-right font-semibold">Cont%</th>
-                <th className="py-2 pr-3 text-right font-semibold">Avg Talk</th><th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
-                <th className="py-2 pr-3 text-right font-semibold">Revenue</th><th className="py-2 pr-3 text-right font-semibold">AOV</th>
-                <th className="py-2 pr-3 text-right font-semibold">Present</th><th className="py-2 pr-0 text-right font-semibold">Avg Sale/Agent</th>
+                <FilterSortTh label="Day" columnKey="dayName" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Date" columnKey="date" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Target" columnKey="target" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Total Calls" columnKey="totalCalls" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Connected" columnKey="connected" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Not Connected" columnKey="notConnected" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Unique Conn." columnKey="uniqueConnected" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Cont%" columnKey="connectedPct" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Avg Talk" columnKey="avgTalkTimeSec" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Sale Count" columnKey="saleCount" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Revenue" columnKey="revenue" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="AOV" columnKey="aov" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Present" columnKey="presentCount" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Avg Sale/Agent" columnKey="avgSalePerAgent" sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className="py-2 pr-0 text-right font-semibold" />
               </tr>
             </thead>
             <tbody>
-              {data.days.map((d) => (
+              {sortedDays.map((d) => (
                 <tr key={d.date} className="border-b border-slate-50 last:border-0 hover:bg-indigo-50/40">
                   <td className="py-2 pr-3 font-medium text-slate-700">{d.dayName}</td>
                   <td className="py-2 pr-3 text-slate-600">{fmtDate(d.date)}</td>
@@ -453,7 +491,7 @@ function DayWiseTab({ from, to, agents }: { from: string; to: string; agents: st
                   <td className="py-2 pr-0 text-right text-slate-600">{d.avgSalePerAgent}</td>
                 </tr>
               ))}
-              {data.days.length === 0 && <tr><td colSpan={14} className="py-6 text-center text-slate-400">No data for this period.</td></tr>}
+              {sortedDays.length === 0 && <tr><td colSpan={14} className="py-6 text-center text-slate-400">{data.days.length === 0 ? "No data for this period." : "No dates match the current filters."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -487,6 +525,17 @@ function AgentWiseTab({ from, to, onOpen }: { from: string; to: string; onOpen: 
   }, [data, search]);
 
   const top3 = useMemo(() => (data?.agents ?? []).filter((a) => a.saleCount > 0).slice(0, 3), [data]);
+
+  type AgentRow = HPAgentWiseData["agents"][number];
+  const AGENT_FILTER_COLS: Array<FilterColumn<AgentRow>> = [
+    { key: "name", get: (a) => a.name }, { key: "tlName", get: (a) => a.tlName }, { key: "bucket", get: (a) => a.bucket }, { key: "status", get: (a) => a.status },
+    { key: "target", get: (a) => a.target }, { key: "totalCalls", get: (a) => a.totalCalls }, { key: "connected", get: (a) => a.connected },
+    { key: "connectedPct", get: (a) => a.connectedPct }, { key: "avgTalkTimeSec", get: (a) => a.avgTalkTimeSec }, { key: "saleCount", get: (a) => a.saleCount },
+    { key: "revenue", get: (a) => a.revenue }, { key: "aov", get: (a) => a.aov }, { key: "achievedPct", get: (a) => a.achievedPct },
+  ];
+  const agentColGetter = (a: AgentRow, key: string) => AGENT_FILTER_COLS.find((c) => c.key === key)?.get(a);
+  const agentFilters = useColumnFilters(rows, AGENT_FILTER_COLS);
+  const { sorted: sortedAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
 
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -528,22 +577,35 @@ function AgentWiseTab({ from, to, onOpen }: { from: string; to: string; onOpen: 
         </div>
       </div>
 
-      <SectionCard icon={Users} title="Agent Wise Performance" tone="indigo">
+      <SectionCard
+        icon={Users} title="Agent Wise Performance" tone="indigo"
+        action={agentFilters.activeCount > 0 ? (
+          <button type="button" onClick={agentFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">Agent</th><th className="py-2 pr-3 font-semibold">TL</th>
-                <th className="py-2 pr-3 font-semibold">Bucket</th><th className="py-2 pr-3 font-semibold">Status</th>
-                <th className="py-2 pr-3 text-right font-semibold">Target</th><th className="py-2 pr-3 text-right font-semibold">Calls</th>
-                <th className="py-2 pr-3 text-right font-semibold">Connected</th><th className="py-2 pr-3 text-right font-semibold">Cont%</th>
-                <th className="py-2 pr-3 text-right font-semibold">Avg Talk</th><th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
-                <th className="py-2 pr-3 text-right font-semibold">Revenue</th><th className="py-2 pr-3 text-right font-semibold">AOV</th>
-                <th className="py-2 pr-0 text-right font-semibold">Ach%</th>
+                <FilterSortTh label="Agent" columnKey="name" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="TL" columnKey="tlName" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Bucket" columnKey="bucket" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Status" columnKey="status" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Target" columnKey="target" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Calls" columnKey="totalCalls" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Connected" columnKey="connected" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Cont%" columnKey="connectedPct" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Avg Talk" columnKey="avgTalkTimeSec" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Sale Count" columnKey="saleCount" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Revenue" columnKey="revenue" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="AOV" columnKey="aov" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Ach%" columnKey="achievedPct" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 pr-0 text-right font-semibold" />
               </tr>
             </thead>
             <tbody>
-              {rows.map((a) => (
+              {sortedAgents.map((a) => (
                 <tr key={a.empId || a.name} role="button" tabIndex={0} onClick={() => onOpen(a.name)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(a.name); } }}
                   className="cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/50 focus:bg-indigo-50/60 focus:outline-none">
@@ -562,7 +624,7 @@ function AgentWiseTab({ from, to, onOpen }: { from: string; to: string; onOpen: 
                   <td className="py-2.5 pr-0 text-right font-semibold text-indigo-700">{fmtPct(a.achievedPct)}</td>
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={13} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>}
+              {sortedAgents.length === 0 && <tr><td colSpan={13} className="py-6 text-center text-slate-400">{rows.length === 0 ? "No agents match this search." : "No agents match the current filters."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -602,6 +664,20 @@ function TqMqBqAgentsTab({ month, onOpen }: { month: string; onOpen: (name: stri
     return c;
   }, [data]);
 
+  // Excel-style sort + filter for the fixed columns of the Agent Wise Target Achievement table. The week columns
+  // (shown only when "Show weekly columns" is on) are per-agent, variable-length and stay plain -- not worth the
+  // added complexity for a toggle-only view.
+  type TqRow = HPTqMqBqAgentsData["agents"][number];
+  const TQ_FILTER_COLS: Array<FilterColumn<TqRow>> = [
+    { key: "rank", get: (a) => a.rank }, { key: "name", get: (a) => a.name }, { key: "tlName", get: (a) => a.tlName },
+    { key: "target", get: (a) => a.target }, { key: "mtdTarget", get: (a) => a.mtdTarget }, { key: "achieved", get: (a) => a.achieved },
+    { key: "saleCount", get: (a) => a.saleCount }, { key: "aov", get: (a) => a.aov }, { key: "remaining", get: (a) => a.remaining },
+    { key: "achievedPct", get: (a) => a.achievedPct }, { key: "stage", get: (a) => a.stage },
+  ];
+  const tqColGetter = (a: TqRow, key: string) => TQ_FILTER_COLS.find((c) => c.key === key)?.get(a);
+  const tqFilters = useColumnFilters(rows, TQ_FILTER_COLS);
+  const { sorted: sortedTqRows, sortKey: tqSortKey, sortDir: tqSortDir, toggleSort: toggleTqSort } = useSortableRows(tqFilters.filtered, tqColGetter);
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -639,21 +715,35 @@ function TqMqBqAgentsTab({ month, onOpen }: { month: string; onOpen: (name: stri
         </button>
       </div>
 
-      <SectionCard icon={Trophy} title={`Agent Wise Target Achievement — as of ${fmtDate(data.asOfDate)}`} tone="indigo" footnote="TQ/MQ/BQ thresholds match the reference workbook: TQ above 80% of MTD target, MQ 60-80%, BQ below 60%. Rank is among Active agents only.">
+      <SectionCard
+        icon={Trophy} title={`Agent Wise Target Achievement — as of ${fmtDate(data.asOfDate)}`} tone="indigo"
+        footnote="TQ/MQ/BQ thresholds match the reference workbook: TQ above 80% of MTD target, MQ 60-80%, BQ below 60%. Rank is among Active agents only."
+        action={tqFilters.activeCount > 0 ? (
+          <button type="button" onClick={tqFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {tqFilters.activeCount} filter{tqFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">Rank</th><th className="py-2 pr-3 font-semibold">Agent</th><th className="py-2 pr-3 font-semibold">TL</th>
-                <th className="py-2 pr-3 text-right font-semibold">Target</th><th className="py-2 pr-3 text-right font-semibold">MTD Target</th>
-                <th className="py-2 pr-3 text-right font-semibold">Achieved</th><th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
-                <th className="py-2 pr-3 text-right font-semibold">AOV</th><th className="py-2 pr-3 text-right font-semibold">Remaining</th>
-                <th className="py-2 pr-3 text-right font-semibold">Ach%</th><th className="py-2 pr-3 font-semibold">Stage</th>
+                <FilterSortTh label="Rank" columnKey="rank" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Agent" columnKey="name" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="TL" columnKey="tlName" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Target" columnKey="target" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="MTD Target" columnKey="mtdTarget" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Achieved" columnKey="achieved" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Sale Count" columnKey="saleCount" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="AOV" columnKey="aov" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Remaining" columnKey="remaining" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Ach%" columnKey="achievedPct" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Stage" columnKey="stage" sortKey={tqSortKey} sortDir={tqSortDir} onSort={toggleTqSort} filters={tqFilters} className="py-2 pr-3 font-semibold" />
                 {expandedWeeks && data.agents[0]?.weeks.map((w) => <th key={w.label} className="py-2 pr-3 text-right font-semibold text-violet-600">{w.label}</th>)}
               </tr>
             </thead>
             <tbody>
-              {rows.map((a) => (
+              {sortedTqRows.map((a) => (
                 <tr key={a.empId || a.name} role="button" tabIndex={0} onClick={() => onOpen(a.name)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(a.name); } }}
                   className="cursor-pointer border-b border-slate-50 last:border-0 hover:bg-indigo-50/40">
@@ -673,7 +763,7 @@ function TqMqBqAgentsTab({ month, onOpen }: { month: string; onOpen: (name: stri
                   ))}
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={11} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>}
+              {sortedTqRows.length === 0 && <tr><td colSpan={11} className="py-6 text-center text-slate-400">{rows.length === 0 ? "No agents match this search." : "No agents match the current filters."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -699,6 +789,17 @@ function TlTargetTab({ month }: { month: string }) {
     return () => { cancelled = true; };
   }, [month]);
 
+  type TlTargetRow = HPTqMqBqTlData["tls"][number];
+  const TL_TARGET_FILTER_COLS: Array<FilterColumn<TlTargetRow>> = [
+    { key: "tlName", get: (t) => t.tlName }, { key: "agentCount", get: (t) => t.agentCount }, { key: "target", get: (t) => t.target },
+    { key: "achievement", get: (t) => t.achievement }, { key: "remaining", get: (t) => t.remaining }, { key: "saleCount", get: (t) => t.saleCount },
+    { key: "drr", get: (t) => t.drr }, { key: "currentDrr", get: (t) => t.currentDrr }, { key: "tillDayAchievedPct", get: (t) => t.tillDayAchievedPct },
+    { key: "stage", get: (t) => t.stage },
+  ];
+  const tlTargetColGetter = (t: TlTargetRow, key: string) => TL_TARGET_FILTER_COLS.find((c) => c.key === key)?.get(t);
+  const tlTargetFilters = useColumnFilters(data?.tls ?? [], TL_TARGET_FILTER_COLS);
+  const { sorted: sortedTlTargets, sortKey: tlTargetSortKey, sortDir: tlTargetSortDir, toggleSort: toggleTlTargetSort } = useSortableRows(tlTargetFilters.filtered, tlTargetColGetter);
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -719,20 +820,33 @@ function TlTargetTab({ month }: { month: string }) {
         </ResponsiveContainer>
       </SectionCard>
 
-      <SectionCard icon={Trophy} title={`TL Wise Target — as of ${fmtDate(data.asOfDate)}`} tone="indigo" footnote="DRR = Target / 30. Current DRR = DRR × day of month reached. Till-Day Ach% compares Achievement to (DRR × day of month), the daily-run-rate expectation so far.">
+      <SectionCard
+        icon={Trophy} title={`TL Wise Target — as of ${fmtDate(data.asOfDate)}`} tone="indigo"
+        footnote="DRR = Target / 30. Current DRR = DRR × day of month reached. Till-Day Ach% compares Achievement to (DRR × day of month), the daily-run-rate expectation so far."
+        action={tlTargetFilters.activeCount > 0 ? (
+          <button type="button" onClick={tlTargetFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {tlTargetFilters.activeCount} filter{tlTargetFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">TL</th><th className="py-2 pr-3 text-right font-semibold">Agents</th>
-                <th className="py-2 pr-3 text-right font-semibold">Target</th><th className="py-2 pr-3 text-right font-semibold">Achievement</th>
-                <th className="py-2 pr-3 text-right font-semibold">Remaining</th><th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
-                <th className="py-2 pr-3 text-right font-semibold">DRR</th><th className="py-2 pr-3 text-right font-semibold">Current DRR</th>
-                <th className="py-2 pr-3 text-right font-semibold">Till-Day Ach%</th><th className="py-2 pr-0 font-semibold">Stage</th>
+                <FilterSortTh label="TL" columnKey="tlName" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Agents" columnKey="agentCount" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Target" columnKey="target" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Achievement" columnKey="achievement" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Remaining" columnKey="remaining" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Sale Count" columnKey="saleCount" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="DRR" columnKey="drr" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Current DRR" columnKey="currentDrr" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Till-Day Ach%" columnKey="tillDayAchievedPct" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Stage" columnKey="stage" sortKey={tlTargetSortKey} sortDir={tlTargetSortDir} onSort={toggleTlTargetSort} filters={tlTargetFilters} className="py-2 pr-0 font-semibold" />
               </tr>
             </thead>
             <tbody>
-              {data.tls.map((t) => (
+              {sortedTlTargets.map((t) => (
                 <tr key={t.tlName} className="border-b border-slate-50 last:border-0 hover:bg-indigo-50/40">
                   <td className="py-2.5 pr-3 font-medium text-slate-700">{t.tlName}</td>
                   <td className="py-2.5 pr-3 text-right text-slate-600">{t.agentCount}</td>
@@ -746,7 +860,7 @@ function TlTargetTab({ month }: { month: string }) {
                   <td className="py-2.5 pr-0"><StageBadge stage={t.stage} /></td>
                 </tr>
               ))}
-              {data.tls.length === 0 && <tr><td colSpan={10} className="py-6 text-center text-slate-400">No data.</td></tr>}
+              {sortedTlTargets.length === 0 && <tr><td colSpan={10} className="py-6 text-center text-slate-400">{data.tls.length === 0 ? "No data." : "No TLs match the current filters."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -779,6 +893,17 @@ function TeamDetailsTab({ onOpen }: { onOpen: (name: string) => void }) {
     return q ? list.filter((r) => r.name.toLowerCase().includes(q) || r.tlName.toLowerCase().includes(q) || r.empId.toLowerCase().includes(q)) : list;
   }, [data, search]);
 
+  type TeamRow = HPTeamDetailsData["rows"][number];
+  const TEAM_FILTER_COLS: Array<FilterColumn<TeamRow>> = [
+    { key: "empId", get: (r) => r.empId }, { key: "name", get: (r) => r.name }, { key: "tlName", get: (r) => r.tlName },
+    { key: "center", get: (r) => r.center }, { key: "doj", get: (r) => r.doj }, { key: "bucket", get: (r) => r.bucket }, { key: "status", get: (r) => r.status },
+    { key: "target", get: (r) => r.target }, { key: "uploadedAchievement", get: (r) => r.uploadedAchievement }, { key: "computedRevenue", get: (r) => r.computedRevenue },
+    { key: "match", get: (r) => (r.achievementMismatch ? "Mismatch" : "Match") },
+  ];
+  const teamColGetter = (r: TeamRow, key: string) => TEAM_FILTER_COLS.find((c) => c.key === key)?.get(r);
+  const teamFilters = useColumnFilters(rows, TEAM_FILTER_COLS);
+  const { sorted: sortedTeam, sortKey: teamSortKey, sortDir: teamSortDir, toggleSort: toggleTeamSort } = useSortableRows(teamFilters.filtered, teamColGetter);
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -794,20 +919,34 @@ function TeamDetailsTab({ onOpen }: { onOpen: (name: string) => void }) {
         <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500"><ListFilter className="h-3 w-3" />{rows.length} of {data.rows.length}</span>
       </div>
 
-      <SectionCard icon={Users} title="Team Details" tone="indigo" footnote="Computed Revenue is a live SUM of this agent's Sale rows, checked against the achievement figure uploaded with the roster. A mismatch means the roster wasn't refreshed after the sales it should reflect.">
+      <SectionCard
+        icon={Users} title="Team Details" tone="indigo"
+        footnote="Computed Revenue is a live SUM of this agent's Sale rows, checked against the achievement figure uploaded with the roster. A mismatch means the roster wasn't refreshed after the sales it should reflect."
+        action={teamFilters.activeCount > 0 ? (
+          <button type="button" onClick={teamFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {teamFilters.activeCount} filter{teamFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">Emp ID</th><th className="py-2 pr-3 font-semibold">Name</th><th className="py-2 pr-3 font-semibold">TL</th>
-                <th className="py-2 pr-3 font-semibold">Center</th><th className="py-2 pr-3 font-semibold">DOJ</th><th className="py-2 pr-3 font-semibold">Bucket</th>
-                <th className="py-2 pr-3 font-semibold">Status</th><th className="py-2 pr-3 text-right font-semibold">Target</th>
-                <th className="py-2 pr-3 text-right font-semibold">Roster Achv.</th><th className="py-2 pr-3 text-right font-semibold">Computed Rev.</th>
-                <th className="py-2 pr-0 font-semibold">Match</th>
+                <FilterSortTh label="Emp ID" columnKey="empId" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Name" columnKey="name" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="TL" columnKey="tlName" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Center" columnKey="center" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="DOJ" columnKey="doj" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Bucket" columnKey="bucket" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Status" columnKey="status" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 font-semibold" />
+                <FilterSortTh label="Target" columnKey="target" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Roster Achv." columnKey="uploadedAchievement" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Computed Rev." columnKey="computedRevenue" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-3 text-right font-semibold" />
+                <FilterSortTh label="Match" columnKey="match" sortKey={teamSortKey} sortDir={teamSortDir} onSort={toggleTeamSort} filters={teamFilters} className="py-2 pr-0 font-semibold" />
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {sortedTeam.map((r) => (
                 <tr key={r.empId || r.name} role="button" tabIndex={0} onClick={() => onOpen(r.name)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(r.name); } }}
                   className={`cursor-pointer border-b border-slate-50 last:border-0 hover:bg-indigo-50/40 ${r.achievementMismatch ? "bg-amber-50/50" : ""}`}>
@@ -828,7 +967,7 @@ function TeamDetailsTab({ onOpen }: { onOpen: (name: string) => void }) {
                   </td>
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={11} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>}
+              {sortedTeam.length === 0 && <tr><td colSpan={11} className="py-6 text-center text-slate-400">{rows.length === 0 ? "No agents match this search." : "No agents match the current filters."}</td></tr>}
             </tbody>
           </table>
         </div>

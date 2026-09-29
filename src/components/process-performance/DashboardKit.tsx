@@ -114,9 +114,9 @@ export function KpiCard({
       <span className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${t.badge}`}>
         <Icon className="h-3.5 w-3.5" />
       </span>
-      <div className="relative min-w-0">
+      <div className="relative min-w-0 flex-1">
         <p className={`truncate text-[15px] font-bold leading-tight tracking-tight ${t.value}`}>{value}</p>
-        <p className="truncate text-[10px] font-medium leading-tight text-slate-500">{label}</p>
+        <p className="break-words text-[10px] font-medium leading-tight text-slate-500">{label}</p>
         {sub && <p className="truncate text-[9px] leading-tight text-slate-400">{sub}</p>}
       </div>
     </Tag>

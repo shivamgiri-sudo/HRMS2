@@ -225,8 +225,9 @@ export async function getPnlTrend(
   // tiles do — the trend used to drop draft runs, so a month still in draft showed a lower (or zero)
   // cost here than on the tile.
   const runCost = async (months: string[]): Promise<RowDataPacket[]> => {
+    // Hint overrides the API session's max_execution_time: years of salary lines, cached for hours.
     const [rows] = await db.query<RowDataPacket[]>(
-    `SELECT pm.id AS processId, pm.process_name AS processName,
+    `SELECT /*+ MAX_EXECUTION_TIME(900000) */ pm.id AS processId, pm.process_name AS processName,
             sr.run_month AS period,
             SUM(${peopleCostSql("spl")}) AS cost,
             COUNT(DISTINCT spl.employee_id) AS headcount

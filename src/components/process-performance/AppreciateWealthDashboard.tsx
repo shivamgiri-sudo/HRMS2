@@ -350,8 +350,8 @@ function OverviewTab({ data, openDay, setDrawer }: TabProps) {
         <SectionCard icon={Database} title="Data coverage" footnote="Each source is uploaded separately, so each covers different days. Click a row for its upload batches and blank-column profile.">
           <DataTable rows={data.overview.coverage} rowKey={(r) => r.table} onRow={(r) => setDrawer({ kind: "source", table: r.table })}
             cols={[
-              { key: "s", header: "Source", render: (r) => r.source }, { key: "f", header: "From", render: (r) => (r.firstDate ? fmtDate(r.firstDate) : "—") }, { key: "l", header: "To", render: (r) => (r.lastDate ? fmtDate(r.lastDate) : "—") },
-              { key: "d", header: "Days", align: "right", render: (r) => r.daysWithData || "—" }, { key: "n", header: "Rows in range", align: "right", render: (r) => fmtNum(r.rangeRows) },
+              { key: "s", header: "Source", get: (r) => r.source, render: (r) => r.source }, { key: "f", header: "From", get: (r) => r.firstDate, render: (r) => (r.firstDate ? fmtDate(r.firstDate) : "—") }, { key: "l", header: "To", get: (r) => r.lastDate, render: (r) => (r.lastDate ? fmtDate(r.lastDate) : "—") },
+              { key: "d", header: "Days", align: "right", get: (r) => r.daysWithData, render: (r) => r.daysWithData || "—" }, { key: "n", header: "Rows in range", align: "right", get: (r) => r.rangeRows, render: (r) => fmtNum(r.rangeRows) },
             ]} />
         </SectionCard>
       </div>
@@ -364,12 +364,15 @@ function BillingTab({ data, setDrawer, openDay }: TabProps) {
   const b = data.billing;
   const k = b.kpis;
   const segs = data.options.segments;
-  const groupCols = (label: string): Array<Col<(typeof b.bySegment)[number]>> => [
-    { key: "n", header: label, render: (r) => r.name }, { key: "a", header: "Agents", align: "right", render: (r) => r.agents ?? "" }, { key: "d", header: "Agent-days", align: "right", render: (r) => fmtNum(r.agentDays) },
-    { key: "c", header: "Calls", align: "right", render: (r) => fmtNum(r.calls) }, { key: "p", header: "Connect %", align: "right", render: (r) => (r.calls ? fmtPct(r.connectPct) : "—") },
-    { key: "h", header: "Net h", align: "right", render: (r) => fmtHrs(r.netHrs) }, { key: "t", header: "ACHT", align: "right", render: (r) => fmtSecs(r.acht) },
-    { key: "o", header: "Net occ.", align: "right", render: (r) => fmtPct(r.netOccPct) }, { key: "l", header: "Late %", align: "right", render: (r) => fmtPct(r.latePct) },
-    { key: "b", header: "Break %", align: "right", render: (r) => fmtPct(r.breakPct) }, { key: "at", header: "Target att.", align: "right", render: (r) => fmtPct(r.attainPct) },
+  // `sortable` is left off for "By segment" (only Inbound/Outbound/VKYC -- 3 possible rows, so
+  // sort/filter would add UI with no real use); "By billing type" passes it since billing types
+  // are a configurable, open list.
+  const groupCols = (label: string, sortable = false): Array<Col<(typeof b.bySegment)[number]>> => [
+    { key: "n", header: label, get: sortable ? (r) => r.name : undefined, render: (r) => r.name }, { key: "a", header: "Agents", align: "right", get: sortable ? (r) => r.agents ?? null : undefined, render: (r) => r.agents ?? "" }, { key: "d", header: "Agent-days", align: "right", get: sortable ? (r) => r.agentDays : undefined, render: (r) => fmtNum(r.agentDays) },
+    { key: "c", header: "Calls", align: "right", get: sortable ? (r) => r.calls : undefined, render: (r) => fmtNum(r.calls) }, { key: "p", header: "Connect %", align: "right", get: sortable ? (r) => r.connectPct : undefined, render: (r) => (r.calls ? fmtPct(r.connectPct) : "—") },
+    { key: "h", header: "Net h", align: "right", get: sortable ? (r) => r.netHrs : undefined, render: (r) => fmtHrs(r.netHrs) }, { key: "t", header: "ACHT", align: "right", get: sortable ? (r) => r.acht : undefined, render: (r) => fmtSecs(r.acht) },
+    { key: "o", header: "Net occ.", align: "right", get: sortable ? (r) => r.netOccPct : undefined, render: (r) => fmtPct(r.netOccPct) }, { key: "l", header: "Late %", align: "right", get: sortable ? (r) => r.latePct : undefined, render: (r) => fmtPct(r.latePct) },
+    { key: "b", header: "Break %", align: "right", get: sortable ? (r) => r.breakPct : undefined, render: (r) => fmtPct(r.breakPct) }, { key: "at", header: "Target att.", align: "right", get: sortable ? (r) => r.attainPct : undefined, render: (r) => fmtPct(r.attainPct) },
   ];
   return (
     <div className="space-y-5">
@@ -408,13 +411,13 @@ function BillingTab({ data, setDrawer, openDay }: TabProps) {
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <SectionCard icon={Layers} title="By segment"><DataTable rows={b.bySegment} rowKey={(r) => r.name} onRow={(r) => setDrawer({ kind: "billing", key: r.name })} cols={groupCols("Segment")} /></SectionCard>
-        <SectionCard icon={Layers} title="By billing type"><DataTable rows={b.byBillingType} rowKey={(r) => r.name} onRow={(r) => setDrawer({ kind: "billing", key: r.name })} cols={groupCols("Billing type")} /></SectionCard>
+        <SectionCard icon={Layers} title="By billing type"><DataTable rows={b.byBillingType} rowKey={(r) => r.name} onRow={(r) => setDrawer({ kind: "billing", key: r.name })} cols={groupCols("Billing type", true)} /></SectionCard>
       </div>
       <SectionCard icon={CalendarClock} title="Week-wise (7-day blocks from the 1st)">
         <DataTable rows={b.weekly} rowKey={(r) => r.week + r.from} onRow={(r) => openDay(r.from, r.to, `${r.week} (${fmtDate(r.from)} – ${fmtDate(r.to)})`)}
           cols={[
-            { key: "w", header: "Week", render: (r) => r.week }, { key: "r", header: "Period", render: (r) => `${fmtDate(r.from)} – ${fmtDate(r.to)}` }, { key: "d", header: "Agent-days", align: "right", render: (r) => fmtNum(r.agentDays) },
-            { key: "c", header: "Calls", align: "right", render: (r) => fmtNum(r.calls) }, { key: "p", header: "Connect %", align: "right", render: (r) => (r.calls ? fmtPct(r.connectPct) : "—") }, { key: "h", header: "Net h", align: "right", render: (r) => fmtHrs(r.netHrs) }, { key: "l", header: "Late %", align: "right", render: (r) => fmtPct(r.latePct) },
+            { key: "w", header: "Week", get: (r) => r.week, render: (r) => r.week }, { key: "r", header: "Period", get: (r) => r.from, render: (r) => `${fmtDate(r.from)} – ${fmtDate(r.to)}` }, { key: "d", header: "Agent-days", align: "right", get: (r) => r.agentDays, render: (r) => fmtNum(r.agentDays) },
+            { key: "c", header: "Calls", align: "right", get: (r) => r.calls, render: (r) => fmtNum(r.calls) }, { key: "p", header: "Connect %", align: "right", get: (r) => r.connectPct, render: (r) => (r.calls ? fmtPct(r.connectPct) : "—") }, { key: "h", header: "Net h", align: "right", get: (r) => r.netHrs, render: (r) => fmtHrs(r.netHrs) }, { key: "l", header: "Late %", align: "right", get: (r) => r.latePct, render: (r) => fmtPct(r.latePct) },
           ]} />
       </SectionCard>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -430,14 +433,14 @@ function BillingTab({ data, setDrawer, openDay }: TabProps) {
         </SectionCard>
         <SectionCard icon={Users} title="Agents">
           <DataTable rows={b.byAgent} rowKey={(r) => r.agentId ?? r.name} onRow={(r) => setDrawer({ kind: "agent", key: r.agentId ?? r.name })} maxHeight="max-h-[440px]"
-            cols={[{ key: "n", header: "Agent", render: (r) => r.name }, { key: "d", header: "Days", align: "right", render: (r) => r.agentDays }, { key: "c", header: "Calls", align: "right", render: (r) => fmtNum(r.calls) }, { key: "h", header: "Net h", align: "right", render: (r) => r.netHrs }, { key: "l", header: "Late %", align: "right", render: (r) => fmtPct(r.latePct) }]} />
+            cols={[{ key: "n", header: "Agent", get: (r) => r.name, render: (r) => r.name }, { key: "d", header: "Days", align: "right", get: (r) => r.agentDays, render: (r) => r.agentDays }, { key: "c", header: "Calls", align: "right", get: (r) => r.calls, render: (r) => fmtNum(r.calls) }, { key: "h", header: "Net h", align: "right", get: (r) => r.netHrs, render: (r) => r.netHrs }, { key: "l", header: "Late %", align: "right", get: (r) => r.latePct, render: (r) => fmtPct(r.latePct) }]} />
         </SectionCard>
       </div>
       <SectionCard icon={CalendarClock} title="Agent-day records" footnote={b.daysTruncated ? "Latest 400 agent-days shown; totals above cover all of them." : "Click a row for every stored field."}>
         <DataTable rows={b.days} rowKey={(r) => String(r.id)} onRow={(r) => setDrawer({ kind: "agentDay", source: "billing", id: r.id })}
           cols={[
-            { key: "d", header: "Date", render: (r) => fmtDate(r.date) }, { key: "a", header: "Agent", render: (r) => r.agent }, { key: "s", header: "Segment", render: (r) => r.segment }, { key: "b", header: "Billing type", render: (r) => r.billingType },
-            { key: "c", header: "Calls", align: "right", render: (r) => fmtNum(r.calls) }, { key: "k", header: "Connected", align: "right", render: (r) => fmtNum(r.connected) }, { key: "h", header: "Net h", align: "right", render: (r) => r.netHrs }, { key: "l", header: "Late", render: (r) => (r.late ? "Yes" : "No") },
+            { key: "d", header: "Date", get: (r) => r.date, render: (r) => fmtDate(r.date) }, { key: "a", header: "Agent", get: (r) => r.agent, render: (r) => r.agent }, { key: "s", header: "Segment", get: (r) => r.segment, render: (r) => r.segment }, { key: "b", header: "Billing type", get: (r) => r.billingType, render: (r) => r.billingType },
+            { key: "c", header: "Calls", align: "right", get: (r) => r.calls, render: (r) => fmtNum(r.calls) }, { key: "k", header: "Connected", align: "right", get: (r) => r.connected, render: (r) => fmtNum(r.connected) }, { key: "h", header: "Net h", align: "right", get: (r) => r.netHrs, render: (r) => r.netHrs }, { key: "l", header: "Late", get: (r) => (r.late ? "Yes" : "No"), render: (r) => (r.late ? "Yes" : "No") },
           ]} />
       </SectionCard>
     </div>
@@ -458,25 +461,25 @@ function MandateTab({ data, setDrawer }: SimpleTabProps) {
       <SectionCard icon={Handshake} title="Mandate vs delivery" footnote="Delivered = net login hours from the agent-day report for that billing type and month, inside the selected range (days covered shown). This is delivery against the mandate, not an invoice: the billing rule is not in the data, so no billed amount is computed.">
         <DataTable rows={m.table} rowKey={(r) => String(r.id)} onRow={(r) => setDrawer({ kind: "mandate", id: r.id })}
           cols={[
-            { key: "m", header: "Month", render: (r) => r.month }, { key: "b", header: "Billing type", render: (r) => r.billingType }, { key: "f", header: "Mandate", align: "right", render: (r) => r.mandate },
-            { key: "r", header: "Rate / FTE", align: "right", render: (r) => fmtInr(r.rate) }, { key: "v", header: "Contract value", align: "right", render: (r) => fmtInr(r.contractValue) },
-            { key: "mh", header: "Mandated h", align: "right", render: (r) => (r.mandatedHrs === null ? "—" : fmtHrs(r.mandatedHrs)) }, { key: "dh", header: "Delivered h", align: "right", render: (r) => fmtHrs(r.deliveredHrs) },
-            { key: "p", header: "% of mandated h", render: (r) => <Bar100 pct={r.hoursDeliveredPct} /> }, { key: "e", header: "FTE-eq", align: "right", render: (r) => r.fteEq ?? "—" },
-            { key: "a", header: "Agents", align: "right", render: (r) => r.agents }, { key: "dd", header: "Days with data", align: "right", render: (r) => `${r.daysWithData} / ${r.daysInMonth}` },
+            { key: "m", header: "Month", get: (r) => r.month, render: (r) => r.month }, { key: "b", header: "Billing type", get: (r) => r.billingType, render: (r) => r.billingType }, { key: "f", header: "Mandate", align: "right", get: (r) => r.mandate, render: (r) => r.mandate },
+            { key: "r", header: "Rate / FTE", align: "right", get: (r) => r.rate, render: (r) => fmtInr(r.rate) }, { key: "v", header: "Contract value", align: "right", get: (r) => r.contractValue, render: (r) => fmtInr(r.contractValue) },
+            { key: "mh", header: "Mandated h", align: "right", get: (r) => r.mandatedHrs, render: (r) => (r.mandatedHrs === null ? "—" : fmtHrs(r.mandatedHrs)) }, { key: "dh", header: "Delivered h", align: "right", get: (r) => r.deliveredHrs, render: (r) => fmtHrs(r.deliveredHrs) },
+            { key: "p", header: "% of mandated h", get: (r) => r.hoursDeliveredPct, render: (r) => <Bar100 pct={r.hoursDeliveredPct} /> }, { key: "e", header: "FTE-eq", align: "right", get: (r) => r.fteEq, render: (r) => r.fteEq ?? "—" },
+            { key: "a", header: "Agents", align: "right", get: (r) => r.agents, render: (r) => r.agents }, { key: "dd", header: "Days with data", align: "right", get: (r) => r.daysWithData, render: (r) => `${r.daysWithData} / ${r.daysInMonth}` },
           ]} />
       </SectionCard>
       {m.deliveredNoMandate.length > 0 && (
         <SectionCard icon={AlertTriangle} title="Delivered with no mandate row" footnote="Billing types that logged hours in a month with no uploaded mandate.">
           <DataTable rows={m.deliveredNoMandate} rowKey={(r) => r.month + r.billingType} onRow={(r) => setDrawer({ kind: "billing", key: r.billingType })}
-            cols={[{ key: "m", header: "Month", render: (r) => r.month }, { key: "b", header: "Billing type", render: (r) => r.billingType }, { key: "h", header: "Net hours", align: "right", render: (r) => fmtHrs(r.deliveredHrs) }, { key: "d", header: "Agent-days", align: "right", render: (r) => fmtNum(r.agentDays) }]} />
+            cols={[{ key: "m", header: "Month", get: (r) => r.month, render: (r) => r.month }, { key: "b", header: "Billing type", get: (r) => r.billingType, render: (r) => r.billingType }, { key: "h", header: "Net hours", align: "right", get: (r) => r.deliveredHrs, render: (r) => fmtHrs(r.deliveredHrs) }, { key: "d", header: "Agent-days", align: "right", get: (r) => r.agentDays, render: (r) => fmtNum(r.agentDays) }]} />
         </SectionCard>
       )}
       <SectionCard icon={Database} title="Mandate upload history" footnote="The same month was uploaded more than once (as 'Sep-26' text and as an Excel serial). Only the latest row per month + billing type is used; older rows are marked Superseded.">
         <DataTable rows={m.history} rowKey={(r) => String(r.id)} onRow={(r) => setDrawer({ kind: "mandate", id: r.id })}
           cols={[
-            { key: "i", header: "Row", render: (r) => r.id }, { key: "m", header: "Month (raw → parsed)", render: (r) => `${r.monthRaw} → ${r.month}` }, { key: "b", header: "Billing type", render: (r) => r.billingType },
-            { key: "f", header: "Mandate", align: "right", render: (r) => r.mandate }, { key: "r", header: "Rate", align: "right", render: (r) => fmtInr(r.rate) }, { key: "h", header: "Hours / FTE (raw)", render: (r) => r.hoursRaw },
-            { key: "s", header: "Status", render: (r) => (r.superseded ? "Superseded" : "Current") }, { key: "t", header: "Uploaded", render: (r) => fmtStamp(r.insertedAt) },
+            { key: "i", header: "Row", get: (r) => r.id, render: (r) => r.id }, { key: "m", header: "Month (raw → parsed)", get: (r) => r.month, render: (r) => `${r.monthRaw} → ${r.month}` }, { key: "b", header: "Billing type", get: (r) => r.billingType, render: (r) => r.billingType },
+            { key: "f", header: "Mandate", align: "right", get: (r) => r.mandate, render: (r) => r.mandate }, { key: "r", header: "Rate", align: "right", get: (r) => r.rate, render: (r) => fmtInr(r.rate) }, { key: "h", header: "Hours / FTE (raw)", get: (r) => r.hoursRaw, render: (r) => r.hoursRaw },
+            { key: "s", header: "Status", get: (r) => (r.superseded ? "Superseded" : "Current"), render: (r) => (r.superseded ? "Superseded" : "Current") }, { key: "t", header: "Uploaded", get: (r) => r.insertedAt, render: (r) => fmtStamp(r.insertedAt) },
           ]} />
       </SectionCard>
     </div>
@@ -485,14 +488,14 @@ function MandateTab({ data, setDrawer }: SimpleTabProps) {
 
 function callCols(label: string, opts: { hangup?: boolean } = {}): Array<Col<DashboardData["inbound"]["byCampaign"][number]>> {
   return [
-    { key: "n", header: label, render: (r) => r.name }, { key: "c", header: "Calls", align: "right", render: (r) => fmtNum(r.calls) }, { key: "a", header: "Answered", align: "right", render: (r) => fmtNum(r.answered) },
-    { key: "p", header: "Answer %", render: (r) => <Bar100 pct={r.answerPct} color="#10b981" /> },
-    ...(opts.hangup ? [] : [{ key: "t", header: "Avg talk", align: "right" as const, render: (r: { avgTalk: number | null }) => fmtSecs(r.avgTalk) }, { key: "h", header: "Avg handling", align: "right" as const, render: (r: { avgHandling: number | null }) => fmtSecs(r.avgHandling) }]),
+    { key: "n", header: label, get: (r) => r.name, render: (r) => r.name }, { key: "c", header: "Calls", align: "right", get: (r) => r.calls, render: (r) => fmtNum(r.calls) }, { key: "a", header: "Answered", align: "right", get: (r) => r.answered, render: (r) => fmtNum(r.answered) },
+    { key: "p", header: "Answer %", get: (r) => r.answerPct, render: (r) => <Bar100 pct={r.answerPct} color="#10b981" /> },
+    ...(opts.hangup ? [] : [{ key: "t", header: "Avg talk", align: "right" as const, get: (r: { avgTalk: number | null }) => r.avgTalk, render: (r: { avgTalk: number | null }) => fmtSecs(r.avgTalk) }, { key: "h", header: "Avg handling", align: "right" as const, get: (r: { avgHandling: number | null }) => r.avgHandling, render: (r: { avgHandling: number | null }) => fmtSecs(r.avgHandling) }]),
   ];
 }
 const recentCols = (): Array<Col<DashboardData["inbound"]["recent"][number]>> => [
-  { key: "d", header: "Date", render: (r) => fmtDate(r.date) }, { key: "t", header: "Start", render: (r) => hms(r.startS) }, { key: "ty", header: "Type", render: (r) => r.callType }, { key: "c", header: "Campaign", render: (r) => r.campaign },
-  { key: "a", header: "Agent", render: (r) => r.agent }, { key: "s", header: "Status", render: (r) => r.status }, { key: "p", header: "Disposition", render: (r) => r.disposition }, { key: "k", header: "Talk", align: "right", render: (r) => `${r.talkS}s` },
+  { key: "d", header: "Date", get: (r) => r.date, render: (r) => fmtDate(r.date) }, { key: "t", header: "Start", get: (r) => r.startS, render: (r) => hms(r.startS) }, { key: "ty", header: "Type", get: (r) => r.callType, render: (r) => r.callType }, { key: "c", header: "Campaign", get: (r) => r.campaign, render: (r) => r.campaign },
+  { key: "a", header: "Agent", get: (r) => r.agent, render: (r) => r.agent }, { key: "s", header: "Status", get: (r) => r.status, render: (r) => r.status }, { key: "p", header: "Disposition", get: (r) => r.disposition, render: (r) => r.disposition }, { key: "k", header: "Talk", align: "right", get: (r) => r.talkS, render: (r) => `${r.talkS}s` },
 ];
 
 function InboundTab({ data, setDrawer, openDay }: TabProps) {
@@ -605,11 +608,11 @@ function DialerTab({ data, setDrawer, openDay }: TabProps) {
         <SectionCard icon={Layers} title="By call type"><DataTable rows={c.byCallType} rowKey={(r) => r.name} onRow={g("callType")} cols={callCols("Call type")} /></SectionCard>
         <SectionCard icon={Layers} title="By disposition category">
           <DataTable<DashboardData["dialer"]["byCategory"][number]> rows={c.byCategory} rowKey={(r) => r.name} onRow={g("category")}
-            cols={[{ key: "n", header: "Category", render: (r) => r.name }, { key: "l", header: "Legs", align: "right", render: (r) => fmtNum(r.legs) }, { key: "s", header: "Share", render: (r) => <Bar100 pct={r.sharePct} color="#6366f1" /> }, { key: "a", header: "Answered", align: "right", render: (r) => fmtNum(r.answered) }]} />
+            cols={[{ key: "n", header: "Category", get: (r) => r.name, render: (r) => r.name }, { key: "l", header: "Legs", align: "right", get: (r) => r.legs, render: (r) => fmtNum(r.legs) }, { key: "s", header: "Share", get: (r) => r.sharePct, render: (r) => <Bar100 pct={r.sharePct} color="#6366f1" /> }, { key: "a", header: "Answered", align: "right", get: (r) => r.answered, render: (r) => fmtNum(r.answered) }]} />
         </SectionCard>
         <SectionCard icon={Layers} title="Yes__ sub-reasons">
           <DataTable<DashboardData["dialer"]["byReason"][number]> rows={c.byReason} rowKey={(r) => r.name} onRow={(r) => setDrawer({ kind: "group", source: "cdr", dim: "category", value: r.name.split(" > ")[0] })}
-            cols={[{ key: "n", header: "Category > reason", render: (r) => r.name }, { key: "l", header: "Legs", align: "right", render: (r) => fmtNum(r.legs) }, { key: "a", header: "Answered", align: "right", render: (r) => fmtNum(r.answered) }]} />
+            cols={[{ key: "n", header: "Category > reason", get: (r) => r.name, render: (r) => r.name }, { key: "l", header: "Legs", align: "right", get: (r) => r.legs, render: (r) => fmtNum(r.legs) }, { key: "a", header: "Answered", align: "right", get: (r) => r.answered, render: (r) => fmtNum(r.answered) }]} />
         </SectionCard>
         <SectionCard icon={Users} title="By agent"><DataTable rows={c.byAgent} rowKey={(r) => r.name} onRow={g("agent")} cols={callCols("Agent")} /></SectionCard>
         <SectionCard icon={Layers} title="By full disposition (top 40)"><DataTable rows={c.byDisposition} rowKey={(r) => r.name} onRow={g("disposition")} cols={callCols("Disposition")} /></SectionCard>
@@ -651,19 +654,19 @@ function SalesTab({ data, setDrawer, openDay }: TabProps) {
       <SectionCard icon={Users} title="Agent leaderboard">
         <DataTable rows={s.byAgent} rowKey={(r) => r.agentId} onRow={(r) => setDrawer({ kind: "agent", key: r.agentId })}
           cols={[
-            { key: "n", header: "Agent", render: (r) => r.name }, { key: "d", header: "Days", align: "right", render: (r) => r.agentDays },
-            { key: "l", header: "LRS", align: "right", render: (r) => fmtInr(r.lrsA) }, { key: "la", header: "LRS att.", align: "right", render: (r) => fmtPct(r.lrsAttain) },
-            { key: "t", header: "Trade", align: "right", render: (r) => fmtInr(r.trA) }, { key: "ta", header: "Trade att.", align: "right", render: (r) => fmtPct(r.trAttain) },
-            { key: "m", header: "MF", align: "right", render: (r) => fmtInr(r.mfA) }, { key: "ma", header: "MF att.", align: "right", render: (r) => fmtPct(r.mfAttain) },
-            { key: "tt", header: "Total", align: "right", render: (r) => <b>{fmtInr(r.total)}</b> },
+            { key: "n", header: "Agent", get: (r) => r.name, render: (r) => r.name }, { key: "d", header: "Days", align: "right", get: (r) => r.agentDays, render: (r) => r.agentDays },
+            { key: "l", header: "LRS", align: "right", get: (r) => r.lrsA, render: (r) => fmtInr(r.lrsA) }, { key: "la", header: "LRS att.", align: "right", get: (r) => r.lrsAttain, render: (r) => fmtPct(r.lrsAttain) },
+            { key: "t", header: "Trade", align: "right", get: (r) => r.trA, render: (r) => fmtInr(r.trA) }, { key: "ta", header: "Trade att.", align: "right", get: (r) => r.trAttain, render: (r) => fmtPct(r.trAttain) },
+            { key: "m", header: "MF", align: "right", get: (r) => r.mfA, render: (r) => fmtInr(r.mfA) }, { key: "ma", header: "MF att.", align: "right", get: (r) => r.mfAttain, render: (r) => fmtPct(r.mfAttain) },
+            { key: "tt", header: "Total", align: "right", get: (r) => r.total, render: (r) => <b>{fmtInr(r.total)}</b> },
           ]} />
       </SectionCard>
       <SectionCard icon={CalendarClock} title="Agent-day sales records" footnote={s.rowsTruncated ? "Latest 400 agent-days shown; totals above cover all of them." : "Click a row for every stored field and the other uploads of the same agent-day."}>
         <DataTable rows={s.rows} rowKey={(r) => String(r.id)} onRow={(r) => setDrawer({ kind: "agentDay", source: "out", id: r.id })}
           cols={[
-            { key: "d", header: "Date", render: (r) => fmtDate(r.date) }, { key: "a", header: "Agent", render: (r) => r.agent },
-            { key: "l", header: "LRS", align: "right", render: (r) => `${fmtInr(r.lrsA)} (${r.lrsC})` }, { key: "t", header: "Trade", align: "right", render: (r) => `${fmtInr(r.trA)} (${r.trC})` }, { key: "m", header: "MF", align: "right", render: (r) => `${fmtInr(r.mfA)} (${r.mfC})` },
-            { key: "g", header: "Target", render: (r) => (r.hasTarget ? "Set" : "None") },
+            { key: "d", header: "Date", get: (r) => r.date, render: (r) => fmtDate(r.date) }, { key: "a", header: "Agent", get: (r) => r.agent, render: (r) => r.agent },
+            { key: "l", header: "LRS", align: "right", get: (r) => r.lrsA, render: (r) => `${fmtInr(r.lrsA)} (${r.lrsC})` }, { key: "t", header: "Trade", align: "right", get: (r) => r.trA, render: (r) => `${fmtInr(r.trA)} (${r.trC})` }, { key: "m", header: "MF", align: "right", get: (r) => r.mfA, render: (r) => `${fmtInr(r.mfA)} (${r.mfC})` },
+            { key: "g", header: "Target", get: (r) => (r.hasTarget ? "Set" : "None"), render: (r) => (r.hasTarget ? "Set" : "None") },
           ]} />
       </SectionCard>
     </div>
@@ -676,10 +679,10 @@ function AgentsTab({ data, setDrawer }: SimpleTabProps) {
       <SectionCard icon={Users} title="Agent scorecard" footnote="One row per dialer agent id across the agent-day report and the outbound sales file. Click a row for the agent's days, AUX time, dispositions and upload audit.">
         <DataTable rows={data.agents.rows} rowKey={(r) => r.agentId} onRow={(r) => setDrawer({ kind: "agent", key: r.agentId })} maxHeight="max-h-[640px]"
           cols={[
-            { key: "n", header: "Agent", render: (r) => r.name }, { key: "e", header: "Emp id", render: (r) => r.empId || "—" }, { key: "s", header: "Segment", render: (r) => r.segments },
-            { key: "d", header: "Days", align: "right", render: (r) => r.agentDays }, { key: "c", header: "Calls", align: "right", render: (r) => fmtNum(r.calls) }, { key: "p", header: "Connect %", align: "right", render: (r) => (r.calls ? fmtPct(r.connectPct) : "—") },
-            { key: "h", header: "Net h", align: "right", render: (r) => r.netHrs }, { key: "a", header: "ACHT", align: "right", render: (r) => fmtSecs(r.acht) }, { key: "o", header: "Net occ.", align: "right", render: (r) => fmtPct(r.netOccPct) },
-            { key: "l", header: "Late days", align: "right", render: (r) => (r.agentDays ? `${r.lateDays} (${fmtPct(r.latePct, 0)})` : "—") }, { key: "sa", header: "Sales", align: "right", render: (r) => (r.salesDays ? fmtInr(r.salesTotal) : "—") },
+            { key: "n", header: "Agent", get: (r) => r.name, render: (r) => r.name }, { key: "e", header: "Emp id", get: (r) => r.empId, render: (r) => r.empId || "—" }, { key: "s", header: "Segment", get: (r) => r.segments, render: (r) => r.segments },
+            { key: "d", header: "Days", align: "right", get: (r) => r.agentDays, render: (r) => r.agentDays }, { key: "c", header: "Calls", align: "right", get: (r) => r.calls, render: (r) => fmtNum(r.calls) }, { key: "p", header: "Connect %", align: "right", get: (r) => r.connectPct, render: (r) => (r.calls ? fmtPct(r.connectPct) : "—") },
+            { key: "h", header: "Net h", align: "right", get: (r) => r.netHrs, render: (r) => r.netHrs }, { key: "a", header: "ACHT", align: "right", get: (r) => r.acht, render: (r) => fmtSecs(r.acht) }, { key: "o", header: "Net occ.", align: "right", get: (r) => r.netOccPct, render: (r) => fmtPct(r.netOccPct) },
+            { key: "l", header: "Late days", align: "right", get: (r) => r.lateDays, render: (r) => (r.agentDays ? `${r.lateDays} (${fmtPct(r.latePct, 0)})` : "—") }, { key: "sa", header: "Sales", align: "right", get: (r) => r.salesTotal, render: (r) => (r.salesDays ? fmtInr(r.salesTotal) : "—") },
           ]} />
       </SectionCard>
       {data.agents.withoutBilling > 0 && <Note>{data.agents.withoutBilling} agent(s) appear only in the sales file (no agent-day report row in this range).</Note>}
@@ -697,24 +700,24 @@ function HealthTab({ data, setDrawer, openDay }: TabProps) {
       <SectionCard icon={Database} title="Source tables (all uploads)" footnote="Dates arrive as text ('5-Sep-26') and as Excel serials ('46270'); both are parsed. Unparsed = date text neither format could read.">
         <DataTable rows={h.coverage} rowKey={(r) => r.table} onRow={(r) => setDrawer({ kind: "source", table: r.table })}
           cols={[
-            { key: "s", header: "Source", render: (r) => r.source }, { key: "t", header: "Table", render: (r) => r.table }, { key: "f", header: "First", render: (r) => (r.firstDate ? fmtDate(r.firstDate) : "—") }, { key: "l", header: "Last", render: (r) => (r.lastDate ? fmtDate(r.lastDate) : "—") },
-            { key: "d", header: "Days", align: "right", render: (r) => r.daysWithData || "—" }, { key: "se", header: "Serial dates", align: "right", render: (r) => fmtNum(r.serialDateRows) }, { key: "tx", header: "Text dates", align: "right", render: (r) => fmtNum(r.textDateRows) },
-            { key: "u", header: "Unparsed", align: "right", render: (r) => fmtNum(r.unparsedDates) }, { key: "up", header: "Latest upload", render: (r) => fmtStamp(r.latestUpload) },
+            { key: "s", header: "Source", get: (r) => r.source, render: (r) => r.source }, { key: "t", header: "Table", get: (r) => r.table, render: (r) => r.table }, { key: "f", header: "First", get: (r) => r.firstDate, render: (r) => (r.firstDate ? fmtDate(r.firstDate) : "—") }, { key: "l", header: "Last", get: (r) => r.lastDate, render: (r) => (r.lastDate ? fmtDate(r.lastDate) : "—") },
+            { key: "d", header: "Days", align: "right", get: (r) => r.daysWithData, render: (r) => r.daysWithData || "—" }, { key: "se", header: "Serial dates", align: "right", get: (r) => r.serialDateRows, render: (r) => fmtNum(r.serialDateRows) }, { key: "tx", header: "Text dates", align: "right", get: (r) => r.textDateRows, render: (r) => fmtNum(r.textDateRows) },
+            { key: "u", header: "Unparsed", align: "right", get: (r) => r.unparsedDates, render: (r) => fmtNum(r.unparsedDates) }, { key: "up", header: "Latest upload", get: (r) => r.latestUpload, render: (r) => fmtStamp(r.latestUpload) },
           ]} />
       </SectionCard>
       <SectionCard icon={Layers} title="Duplicate rows ignored (selected range)">
         <DataTable rows={h.duplicates} rowKey={(r) => r.source} onRow={(r) => setDrawer({ kind: "source", table: r.source })}
-          cols={[{ key: "s", header: "Source", render: (r) => r.source }, { key: "k", header: "De-dup key", render: (r) => r.key }, { key: "r", header: "Uploaded", align: "right", render: (r) => fmtNum(r.raw) }, { key: "u", header: "Used", align: "right", render: (r) => fmtNum(r.kept) }, { key: "d", header: "Ignored", align: "right", render: (r) => fmtNum(r.dropped) }]} />
+          cols={[{ key: "s", header: "Source", get: (r) => r.source, render: (r) => r.source }, { key: "k", header: "De-dup key", get: (r) => r.key, render: (r) => r.key }, { key: "r", header: "Uploaded", align: "right", get: (r) => r.raw, render: (r) => fmtNum(r.raw) }, { key: "u", header: "Used", align: "right", get: (r) => r.kept, render: (r) => fmtNum(r.kept) }, { key: "d", header: "Ignored", align: "right", get: (r) => r.dropped, render: (r) => fmtNum(r.dropped) }]} />
       </SectionCard>
       <SectionCard icon={AlertTriangle} title={`Conflicting sales values between re-uploads (${fmtN(h.conflictCount)})`} footnote="The same agent-day was uploaded more than once with different values. The complete-template row is used; the other value is shown for review.">
         <DataTable rows={h.conflicts} rowKey={(r) => r.date + r.agentId + r.field} onRow={(r) => setDrawer({ kind: "agent", key: r.agentId })}
-          cols={[{ key: "d", header: "Date", render: (r) => fmtDate(r.date) }, { key: "a", header: "Agent", render: (r) => r.agentName }, { key: "f", header: "Field", render: (r) => r.field }, { key: "v", header: "Values seen", render: (r) => r.values }]} />
+          cols={[{ key: "d", header: "Date", get: (r) => r.date, render: (r) => fmtDate(r.date) }, { key: "a", header: "Agent", get: (r) => r.agentName, render: (r) => r.agentName }, { key: "f", header: "Field", get: (r) => r.field, render: (r) => r.field }, { key: "v", header: "Values seen", get: (r) => r.values, render: (r) => r.values }]} />
       </SectionCard>
       <SectionCard icon={Gauge} title="Call-level files vs the agent-day report" footnote="Where the CDR file is complete, its rows per agent equal the agent-day report's total_calls exactly. Coverage below 100% means the CDR upload for that day is partial - use the agent-day figures for totals.">
         <DataTable rows={h.reconciliation} rowKey={(r) => r.date} onRow={(r) => openDay(r.date, r.date, fmtDate(r.date))}
           cols={[
-            { key: "d", header: "Date", render: (r) => fmtDate(r.date) }, { key: "o", header: "Outbound report calls", align: "right", render: (r) => fmtNum(r.outboundReportCalls) }, { key: "c", header: "Dialer CDR legs", align: "right", render: (r) => fmtNum(r.dialerCdrLegs) }, { key: "p", header: "Dialer coverage", align: "right", render: (r) => fmtPct(r.dialerCoveragePct) },
-            { key: "i", header: "Inbound report calls", align: "right", render: (r) => fmtNum(r.inboundReportCalls) }, { key: "ic", header: "Inbound CDR rows", align: "right", render: (r) => fmtNum(r.inboundCdrLegs) }, { key: "ip", header: "Inbound coverage", align: "right", render: (r) => fmtPct(r.inboundCoveragePct) },
+            { key: "d", header: "Date", get: (r) => r.date, render: (r) => fmtDate(r.date) }, { key: "o", header: "Outbound report calls", align: "right", get: (r) => r.outboundReportCalls, render: (r) => fmtNum(r.outboundReportCalls) }, { key: "c", header: "Dialer CDR legs", align: "right", get: (r) => r.dialerCdrLegs, render: (r) => fmtNum(r.dialerCdrLegs) }, { key: "p", header: "Dialer coverage", align: "right", get: (r) => r.dialerCoveragePct, render: (r) => fmtPct(r.dialerCoveragePct) },
+            { key: "i", header: "Inbound report calls", align: "right", get: (r) => r.inboundReportCalls, render: (r) => fmtNum(r.inboundReportCalls) }, { key: "ic", header: "Inbound CDR rows", align: "right", get: (r) => r.inboundCdrLegs, render: (r) => fmtNum(r.inboundCdrLegs) }, { key: "ip", header: "Inbound coverage", align: "right", get: (r) => r.inboundCoveragePct, render: (r) => fmtPct(r.inboundCoveragePct) },
           ]} />
       </SectionCard>
       <Note>Repeated call ids (agent legs of one call): inbound file {h.multiLegCallIds.inbound}, dialer file {h.multiLegCallIds.dialer}. Blank dispositions: inbound {h.blankDisposition.inbound}, dialer {h.blankDisposition.dialer}. Days in range with no agent-day report: {h.missingDays}. Generated {fmtStamp(data.generatedAt)}.</Note>

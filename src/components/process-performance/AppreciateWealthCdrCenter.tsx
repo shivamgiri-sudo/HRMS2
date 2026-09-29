@@ -11,6 +11,8 @@ import type { DrawerTarget } from "./AppreciateWealthDrawer";
 import {
   TOOLTIP_PROPS, fmtHms, fmtClock, fmtNum, fmtPctVal, deltaOf, CcShell, CcHeader, CcPanel, CcTile, CoverageNote,
 } from "./AwControlKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Appreciate Wealth -- "CDR Report" slide. Every figure is live from
@@ -57,6 +59,19 @@ function bucketOf(date: string, grain: Grain): { key: string; label: string } {
   return { key: `${ym}-W${w}`, label: `W-${w} ${m}` };
 }
 
+/** "Agent Wise Summary" table columns -- one row per agent. The Grand Total row stays pinned below the sorted body, outside this. */
+const AGENT_COLS: Array<{ key: string; label: string; get: (a: AgentRow) => string | number | null }> = [
+  { key: "agent", label: "Agent Name", get: (a) => a.agent },
+  { key: "answered", label: "Answered", get: (a) => a.answered },
+  { key: "unanswered", label: "Unanswered", get: (a) => a.unanswered },
+  { key: "answerPct", label: "Answered %", get: (a) => a.answerPct },
+  { key: "talkS", label: "Talk Time", get: (a) => a.talkS },
+  { key: "wrapS", label: "Wrapup", get: (a) => a.wrapS },
+  { key: "ahtS", label: "AHT", get: (a) => (a.answered > 0 ? a.ahtS : null) },
+];
+const AGENT_FILTER_COLS: Array<FilterColumn<AgentRow>> = AGENT_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentColGetter = (a: AgentRow, key: string) => AGENT_COLS.find((c) => c.key === key)?.get(a);
+
 export function AppreciateWealthCdrCenter({ from, to, onOpen }: { from: string; to: string; onOpen: (t: DrawerTarget) => void }) {
   const [data, setData] = useState<Data | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,6 +97,8 @@ export function AppreciateWealthCdrCenter({ from, to, onOpen }: { from: string; 
     }
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([key, v]) => ({ key, ...v, answerPct: v.calls > 0 ? Math.round((v.answered / v.calls) * 1000) / 10 : 0 }));
   }, [data, grain]);
+  const agentFilters = useColumnFilters(data?.agents ?? [], AGENT_FILTER_COLS);
+  const { sorted: agentSorted, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
 
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;

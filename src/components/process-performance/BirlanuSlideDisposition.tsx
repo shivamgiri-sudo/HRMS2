@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { BarChart3, PhoneCall, PhoneOff, Link2, XCircle, RefreshCw, Lightbulb, CheckCircle2, PieChart as PieIcon, Table2, Layers } from "lucide-react";
 import type { BirlanuMis } from "./birlanuTypes";
 import { BCard, DetailsBtn, Empty, Insights, Kpi, LegendList, Th, TOOLTIP_STYLE, PALETTE, int, pct1, type DrawerSpec } from "./BirlanuKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Slide 3 -- Channel Wise Disposition. Logic = the workbook's "Channel Wise Disposition" sheet:
@@ -18,6 +20,21 @@ const CONNECT_COLORS = ["#1e3a8a", "#2563eb", "#0ea5e9", "#f59e0b", "#a855f7", "
 
 export function BirlanuSlideDisposition({ data, open }: { data: BirlanuMis; open: (s: DrawerSpec) => void }) {
   const d = data.disposition;
+  // Excel-style sort + filter for the Monthly Channel Mix table -- hooks must run every render, so this is computed
+  // before the `d.grand === 0` early return further down.
+  type MonthlyMixRow = (typeof d.monthly)[number];
+  const MIX_COLS: Array<{ key: string; label: string; get: (r: MonthlyMixRow) => string | number; cell: (r: MonthlyMixRow) => ReactNode; className: string }> = [
+    { key: "month", label: "Month", get: (r) => r.month, cell: (r) => r.month, className: "px-2 py-1 text-left font-semibold text-[#0b2a5b]" },
+    ...d.sources.map((s) => ({
+      key: `src:${s}`, label: s, get: (r: MonthlyMixRow) => r.by[s] ?? 0, cell: (r: MonthlyMixRow) => int(r.by[s] ?? 0), className: "px-2 py-1",
+    })),
+    { key: "total", label: "Grand Total", get: (r) => r.total, cell: (r) => int(r.total), className: "bg-blue-50 px-2 py-1 font-bold" },
+  ];
+  const MIX_FILTER_COLS: Array<FilterColumn<MonthlyMixRow>> = MIX_COLS.map((c) => ({ key: c.key, get: c.get }));
+  const mixColGetter = (r: MonthlyMixRow, key: string) => MIX_COLS.find((c) => c.key === key)?.get(r);
+  const mixFilters = useColumnFilters(d.monthly, MIX_FILTER_COLS);
+  const { sorted: sortedMonthly, sortKey: mixSortKey, sortDir: mixSortDir, toggleSort: mixToggleSort } = useSortableRows(mixFilters.filtered, mixColGetter);
+
   if (d.grand === 0) return <Empty />;
   const src = d.sources;
   const cTotal = d.connectTotals.total;
@@ -128,16 +145,38 @@ export function BirlanuSlideDisposition({ data, open }: { data: BirlanuMis; open
           <LegendList items={notDonut} />
         </BCard>
 
-        <BCard className="lg:col-span-6" icon={Table2} title="Monthly Channel Mix (Grand Total)" action={<DetailsBtn onClick={() => monthlyDrill("Monthly Channel Mix")} />}>
+        <BCard
+          className="lg:col-span-6" icon={Table2} title="Monthly Channel Mix (Grand Total)"
+          action={
+            <div className="flex items-center gap-2">
+              {mixFilters.activeCount > 0 && (
+                <button type="button" onClick={mixFilters.clearAll} className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold text-white hover:bg-white/20">
+                  Clear {mixFilters.activeCount} filter{mixFilters.activeCount > 1 ? "s" : ""}
+                </button>
+              )}
+              <DetailsBtn onClick={() => monthlyDrill("Monthly Channel Mix")} />
+            </div>
+          }
+        >
           <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] text-center text-xs">
-              <thead><tr><Th className="rounded-l-md text-left">Month</Th>{src.map((s) => <Th key={s}>{s}</Th>)}<Th className="rounded-r-md">Grand Total</Th></tr></thead>
+              <thead>
+                <tr>
+                  {MIX_COLS.map((c, i) => (
+                    <FilterSortTh
+                      key={c.key} label={c.label} columnKey={c.key} sortKey={mixSortKey} sortDir={mixSortDir} onSort={mixToggleSort} filters={mixFilters}
+                      className={`whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white ${i === 0 ? "rounded-l-md text-left" : i === MIX_COLS.length - 1 ? "rounded-r-md" : ""}`}
+                    />
+                  ))}
+                </tr>
+              </thead>
               <tbody>
-                {d.monthly.map((m, i) => (
+                {sortedMonthly.map((m, i) => (
                   <tr key={m.month} role="button" tabIndex={0} onClick={() => open({ title: m.month, subtitle: "Channel mix", xKey: "source", columns: [{ key: "source", label: "Channel", fmt: "text" }, { key: "count", label: "Leads" }, { key: "share", label: "Share", fmt: "pct1" }], rows: src.map((s) => ({ source: s, count: m.by[s] ?? 0, share: m.total ? ((m.by[s] ?? 0) / m.total) * 100 : 0 })), chart: [{ key: "count", label: "Leads", color: "#0b2a5b", type: "bar" }] })} className={`cursor-pointer hover:bg-amber-50 ${i % 2 ? "bg-slate-50" : "bg-white"}`}>
-                    <td className="px-2 py-1 text-left font-semibold text-[#0b2a5b]">{m.month}</td>{src.map((s) => <td key={s} className="px-2 py-1">{int(m.by[s] ?? 0)}</td>)}<td className="bg-blue-50 px-2 py-1 font-bold">{int(m.total)}</td>
+                    {MIX_COLS.map((c) => <td key={c.key} className={c.className}>{c.cell(m)}</td>)}
                   </tr>
                 ))}
+                {sortedMonthly.length === 0 && <tr><td colSpan={MIX_COLS.length} className="py-4 text-slate-400">No months match the current filters.</td></tr>}
               </tbody>
             </table>
           </div>

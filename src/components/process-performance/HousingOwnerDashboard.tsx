@@ -6,19 +6,19 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   Home, PhoneCall, PhoneOutgoing, PhoneOff, Percent, ShoppingBag, IndianRupee, Wallet, Target, TrendingUp,
-  Timer, Users, Lightbulb, Eye, RefreshCw, Layers, ArrowUp, ArrowDown, Search, ClipboardList, Award, PieChart as PieIcon, Filter, Check,
+  Timer, Users, Lightbulb, Eye, RefreshCw, X, Layers, ArrowUp, ArrowDown, Search, ClipboardList, Award, PieChart as PieIcon, Filter, Check,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Spinner, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
+  Spinner, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu, TableExcelIconButton,
   currentMonthRange, formatINR, formatShortDate,
   KPI_TONES, type KpiTone, type ExportSlide,
 } from "./DashboardKit";
 import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
 import { useSortableRows } from "./useSortableRows";
-import { SortTh } from "./SortTh";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Housing Owner -- Outbound Performance Dashboard (Calls / Sales / Revenue /
@@ -155,6 +155,7 @@ function calc(ctx: Ctx, pred: Pred, w: Win) {
     monthlyTarget: monthly,
     achPct: monthly > 0 ? r1((t.revenue / monthly) * 100) : 0,
     mtdTarget,
+    mtdRevenue,
     mtdPct: mtdTarget > 0 ? r1((mtdRevenue / mtdTarget) * 100) : 0,
     salePerAgent: agents.size > 0 ? r1(t.saleCount / agents.size) : 0,
   };
@@ -315,6 +316,12 @@ function MiniSelect<T extends string>({ value, onChange, options, label }: { val
 /* --------------------------------- matrix --------------------------------- */
 
 const pctTone = (v: number, has: boolean) => (!has ? "text-slate-300" : v >= 80 ? "text-emerald-600" : v >= 50 ? "text-amber-600" : "text-red-600");
+/** TQ >= 80% of target, MQ 50-79%, BQ < 50%, NA when the agent has no target -- same thresholds pctTone colors by. */
+const stageOf = (achPct: number, hasTarget: boolean): "TQ" | "MQ" | "BQ" | "NA" => (!hasTarget ? "NA" : achPct >= 80 ? "TQ" : achPct >= 50 ? "MQ" : "BQ");
+const STAGE_RANK: Record<string, number> = { TQ: 3, MQ: 2, BQ: 1, NA: 0 };
+const STAGE_BADGE: Record<string, string> = {
+  TQ: "bg-emerald-100 text-emerald-700", MQ: "bg-amber-100 text-amber-700", BQ: "bg-red-100 text-red-700", NA: "bg-slate-100 text-slate-400",
+};
 
 const MATRIX_ROWS: Array<{ label: string; hint?: string; cell: (m: M) => { text: string; cls?: string } }> = [
   { label: "Connected Calls", cell: (m) => ({ text: int(m.connected) }) },
@@ -339,8 +346,10 @@ interface MatrixCol { key: string; label: string; m: M; onClick: () => void }
 function MetricMatrix({ columns, total, firstColLabel = "Metric" }: { columns: MatrixCol[]; total?: MatrixCol; firstColLabel?: string }) {
   const all = total ? [...columns, total] : columns;
   if (columns.length === 0) return <p className="py-6 text-center text-xs text-slate-400">No data for the current selection.</p>;
+  const sheet = () => [{ name: firstColLabel, columns: [firstColLabel, ...all.map((c) => c.label)], rows: MATRIX_ROWS.map((row) => [row.label, ...all.map((c) => row.cell(c.m).text)]) }];
   return (
     <div className="overflow-x-auto">
+      <div className="mb-1.5 flex justify-end"><TableExcelIconButton fileBase={`Housing_Owner_${firstColLabel}_wise`} getSheets={sheet} /></div>
       <table className="w-full min-w-max text-center text-xs">
         <thead>
           <tr className="sticky top-0 z-10 bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
@@ -397,6 +406,8 @@ export function HousingOwnerDashboard() {
   const [drawer, setDrawer] = useState<DrawerState | null>(null);
   const [dailyBar, setDailyBar] = useState<"calls" | "connected" | "notConnected">("calls");
   const [trendView, setTrendView] = useState<"calls" | "target">("calls");
+  const [pieView, setPieView] = useState<"calls" | "target">("calls");
+  const [activeOpen, setActiveOpen] = useState(false);
   const [trendAm, setTrendAm] = useState("all");
   const [revMode, setRevMode] = useState<"daily" | "weekly">("daily");
   const [talkMode, setTalkMode] = useState<"daily" | "weekly">("daily");
@@ -436,8 +447,10 @@ export function HousingOwnerDashboard() {
     for (const r of ctx?.sales ?? []) if (!m.has(r.agent)) m.set(r.agent, r);
     return [...m.values()];
   }, [ctx]);
-  const amOptions = useMemo(() => [...new Set(people.map((p) => p.am))].sort(), [people]);
-  const tlOptions = useMemo(() => [...new Set(people.filter((p) => am === "all" || p.am === am).map((p) => p.tl))].sort(), [people, am]);
+  // Placeholder/roster-noise values -- never real AMs or TLs a user would filter by.
+  const isRealFilterValue = (v: string) => !["-", "unassigned", "ojt"].includes(v.trim().toLowerCase());
+  const amOptions = useMemo(() => [...new Set(people.map((p) => p.am))].filter(isRealFilterValue).sort(), [people]);
+  const tlOptions = useMemo(() => [...new Set(people.filter((p) => am === "all" || p.am === am).map((p) => p.tl))].filter(isRealFilterValue).sort(), [people, am]);
   const vintageOptions = useMemo(() => [...new Set(people.map((p) => p.vintage))].sort(byVintage), [people]);
   const agentOptions = useMemo(
     () => people.filter((p) => (am === "all" || p.am === am) && (tl === "all" || p.tl === tl) && (vintage === "all" || p.vintage === vintage))
@@ -540,6 +553,32 @@ export function HousingOwnerDashboard() {
     }).filter((r) => r.m.hasData);
   }, [ctx, people, basePred, range]);
 
+  /** Active roster agents matching the current filters, each with their own window metrics -- the Active Agents tile's drawer. */
+  const activeAgents = useMemo(() => {
+    if (!ctx) return [];
+    return ctx.roster
+      .filter((r) => r.status === "Active" && basePred({ agent: r.name, tl: r.tl, am: r.am, vintage: r.vintage }))
+      .map((r) => { const pred: Pred = (f) => f.agent === r.name; return { agent: r.name, tl: r.tl, am: r.am, vintage: r.vintage, m: calc(ctx, pred, range), pred }; })
+      .sort((a, b) => b.m.revenue - a.m.revenue || a.agent.localeCompare(b.agent));
+  }, [ctx, basePred, range]);
+
+  // Excel-style sort + filter for the "Active Agents" dialog table.
+  const ACTIVE_AGENT_FILTER_COLS: Array<FilterColumn<typeof activeAgents[number]>> = [
+    { key: "agent", get: (a) => a.agent },
+    { key: "tl", get: (a) => a.tl },
+    { key: "am", get: (a) => a.am },
+    { key: "vintage", get: (a) => a.vintage },
+    { key: "calls", get: (a) => a.m.calls },
+    { key: "connectedPct", get: (a) => (a.m.calls > 0 ? a.m.connectedPct : null) },
+    { key: "saleCount", get: (a) => a.m.saleCount },
+    { key: "revenue", get: (a) => a.m.revenue },
+    { key: "target", get: (a) => (a.m.monthlyTarget > 0 ? a.m.monthlyTarget : null) },
+    { key: "achPct", get: (a) => (a.m.monthlyTarget > 0 ? a.m.achPct : null) },
+  ];
+  const activeAgentFilters = useColumnFilters(activeAgents, ACTIVE_AGENT_FILTER_COLS);
+  const activeAgentColGetter = (a: typeof activeAgents[number], key: string) => ACTIVE_AGENT_FILTER_COLS.find((c) => c.key === key)?.get(a);
+  const activeAgentSort = useSortableRows(activeAgentFilters.filtered, activeAgentColGetter);
+
   const topAgents = useMemo(
     () => [...agentRows].sort((a, b) => {
       const va = agentSort === "saleCount" ? a.m.saleCount : agentSort === "calls" ? a.m.calls : a.m.revenue;
@@ -553,21 +592,25 @@ export function HousingOwnerDashboard() {
     const q = agentSearch.trim().toLowerCase();
     return q ? agentRows.filter((r) => r.agent.toLowerCase().includes(q)) : agentRows;
   }, [agentRows, agentSearch]);
-  const tableSort = useSortableRows(tableRows, (r, key) => {
-    switch (key) {
-      case "agent": return r.agent;
-      case "tl": return r.tl;
-      case "am": return r.am;
-      case "vintage": return r.vintage;
-      case "calls": return r.m.calls;
-      case "connectedPct": return r.m.connectedPct;
-      case "saleCount": return r.m.saleCount;
-      case "revenue": return r.m.revenue;
-      case "achPct": return r.m.monthlyTarget > 0 ? r.m.achPct : null;
-      case "talk": return r.m.avgTalkSec;
-      default: return null;
-    }
-  });
+  // Excel-style: every header sorts (click) and filters (funnel icon); "stage" filters/sorts by its
+  // TQ/MQ/BQ/NA label (not STAGE_RANK) so the filter checklist offers meaningful values.
+  const AGENT_FILTER_COLS: Array<FilterColumn<typeof tableRows[number]>> = [
+    { key: "agent", get: (r) => r.agent },
+    { key: "tl", get: (r) => r.tl },
+    { key: "am", get: (r) => r.am },
+    { key: "vintage", get: (r) => r.vintage },
+    { key: "calls", get: (r) => r.m.calls },
+    { key: "connectedPct", get: (r) => r.m.connectedPct },
+    { key: "saleCount", get: (r) => r.m.saleCount },
+    { key: "revenue", get: (r) => r.m.revenue },
+    { key: "target", get: (r) => (r.m.monthlyTarget > 0 ? r.m.monthlyTarget : null) },
+    { key: "achPct", get: (r) => (r.m.monthlyTarget > 0 ? r.m.achPct : null) },
+    { key: "stage", get: (r) => stageOf(r.m.achPct, r.m.monthlyTarget > 0) },
+    { key: "talk", get: (r) => r.m.avgTalkSec },
+  ];
+  const agentTableFilters = useColumnFilters(tableRows, AGENT_FILTER_COLS);
+  const agentTableColGetter = (r: typeof tableRows[number], key: string) => AGENT_FILTER_COLS.find((c) => c.key === key)?.get(r);
+  const tableSort = useSortableRows(agentTableFilters.filtered, agentTableColGetter);
 
   /* Chart series */
   const dailyChart = useMemo<Array<Record<string, string | number>>>(() => (rows?.dailyRows ?? []).map((r) => ({ ...r, x: formatShortDate(String(r.date)) })), [rows]);
@@ -719,6 +762,10 @@ export function HousingOwnerDashboard() {
     { name: "Not Connected", value: cur.notConnected, color: COLORS.calls },
   ];
   const donutTotal = cur.connected + cur.notConnected;
+  const targetDonut = [
+    { name: "Achieved", value: Math.min(cur.revenue, cur.monthlyTarget), color: "#10b981" },
+    { name: cur.revenue >= cur.monthlyTarget ? "Above target" : "Remaining", value: cur.revenue >= cur.monthlyTarget ? cur.revenue - cur.monthlyTarget : cur.monthlyTarget - cur.revenue, color: cur.revenue >= cur.monthlyTarget ? "#0ea5e9" : "#e2e8f0" },
+  ];
   const dataNote = `Call data through ${data.cdrThrough ? formatShortDate(data.cdrThrough) : "—"} · Sale data through ${data.saleThrough ? formatShortDate(data.saleThrough) : "—"}`;
   const targetSub = cur.monthlyTarget > 0 ? `Target ${formatINR(cur.monthlyTarget)}` : "No target set";
 
@@ -734,7 +781,7 @@ export function HousingOwnerDashboard() {
       {error && <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
 
       {/* KPI row -- every card opens its own week/date drill-down */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-9">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-10">
         <StatTile icon={PhoneCall} tone="amber" label="Total Calls" value={int(cur.calls)} sub={prev?.hasData ? `vs previous ${int(prev.calls)}` : undefined} delta={pctDelta(cur.calls, prev?.calls)} onClick={() => openOverall("Total Calls", [S.calls])} />
         <StatTile icon={PhoneOutgoing} tone="sky" label="Connected Calls" value={int(cur.connected)} sub={prev?.hasData ? `vs previous ${int(prev.connected)}` : undefined} delta={pctDelta(cur.connected, prev?.connected)} onClick={() => openOverall("Connected Calls", [S.connected])} />
         <StatTile icon={PhoneOff} tone="rose" label="Not Connected Calls" value={int(cur.notConnected)} sub={prev?.hasData ? `vs previous ${int(prev.notConnected)}` : undefined} delta={pctDelta(cur.notConnected, prev?.notConnected)} onClick={() => openOverall("Not Connected Calls", [S.notConnected])} />
@@ -744,36 +791,89 @@ export function HousingOwnerDashboard() {
         <StatTile icon={Wallet} tone="cyan" label="AOV" value={cur.saleCount > 0 ? formatINR(cur.aov) : "—"} sub={prev?.hasData && prev.saleCount > 0 ? `vs previous ${formatINR(prev.aov)}` : undefined} delta={pctDelta(cur.aov, prev?.aov)} onClick={() => openOverall("AOV (Average Order Value)", [S.aov, S.saleCount, S.revenue])} />
         <StatTile icon={Target} tone="violet" label="Ach %" value={cur.monthlyTarget > 0 ? `${cur.achPct}%` : "—"} sub={targetSub} delta={cur.monthlyTarget > 0 ? ppDelta(cur.achPct, prev?.achPct) : null} deltaUnit="pp" onClick={() => openOverall("Ach % (vs daily share of monthly target)", [S.achPct, S.revenue])} />
         <StatTile icon={Target} tone="blue" label="MTD Ach %" value={cur.mtdTarget > 0 ? `${cur.mtdPct}%` : "—"} sub={cur.mtdTarget > 0 ? `MTD target ${formatINR(cur.mtdTarget)}` : "No target set"} delta={cur.mtdTarget > 0 ? ppDelta(cur.mtdPct, prev?.mtdPct) : null} deltaUnit="pp" onClick={() => openOverall("MTD Ach % (month-to-date revenue / target prorated to date)", [S.revenue, S.achPct])} />
+        <StatTile icon={Users} tone="indigo" label="Active Agents" value={String(activeAgents.length)} sub={`${activeAgents.filter((a) => a.m.calls > 0).length} dialled in range`} onClick={() => setActiveOpen(true)} />
       </div>
 
       {/* Call status + Daily performance */}
       <div className="grid gap-3 lg:grid-cols-3">
         <SectionCard
-          icon={PieIcon} title="Call Status Distribution" tone="amber"
-          action={<ViewDetailsBtn onClick={() => openOverall("Call Status Distribution", [S.connected, S.notConnected, S.connectedPct])} />}
-        >
-          <div className="relative">
-            <ResponsiveContainer width="100%" height={190}>
-              <PieChart>
-                <Pie data={donut} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2} stroke="none">
-                  {donut.map((d) => <Cell key={d.name} fill={d.color} />)}
-                </Pie>
-                <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => [`${int(v)} (${donutTotal > 0 ? r1((v / donutTotal) * 100) : 0}%)`, n]} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-              <p className="text-lg font-extrabold leading-tight text-slate-800">{int(donutTotal)}</p>
-              <p className="text-[10px] font-medium text-slate-400">Total Calls</p>
+          icon={PieIcon} title={pieView === "calls" ? "Call Status Distribution" : "Target vs Achievement"} tone="amber"
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <Seg value={pieView} onChange={(v) => setPieView(v)} options={[{ key: "calls", label: "Calls" }, { key: "target", label: "Target vs Ach %" }]} />
+              <ViewDetailsBtn onClick={() => (pieView === "calls" ? openOverall("Call Status Distribution", [S.connected, S.notConnected, S.connectedPct]) : openOverall("Target vs Ach %", [S.revenue, S.achPct]))} />
             </div>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
-            {donut.map((d) => (
-              <span key={d.name} className="inline-flex items-center gap-1.5 text-[11px] text-slate-600">
-                <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: d.color }} />
-                {d.name} <span className="font-semibold text-slate-800">{donutTotal > 0 ? r1((d.value / donutTotal) * 100) : 0}%</span>
-              </span>
-            ))}
-          </div>
+          }
+        >
+          {pieView === "calls" ? (
+            <>
+              <div className="relative">
+                <ResponsiveContainer width="100%" height={190}>
+                  <PieChart>
+                    <Pie data={donut} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2} stroke="none">
+                      {donut.map((d) => <Cell key={d.name} fill={d.color} />)}
+                    </Pie>
+                    <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => [`${int(v)} (${donutTotal > 0 ? r1((v / donutTotal) * 100) : 0}%)`, n]} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <p className="text-lg font-extrabold leading-tight text-slate-800">{int(donutTotal)}</p>
+                  <p className="text-[10px] font-medium text-slate-400">Total Calls</p>
+                </div>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+                {donut.map((d) => (
+                  <span key={d.name} className="inline-flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: d.color }} />
+                    {d.name} <span className="font-semibold text-slate-800">{donutTotal > 0 ? r1((d.value / donutTotal) * 100) : 0}%</span>
+                  </span>
+                ))}
+              </div>
+            </>
+          ) : cur.monthlyTarget > 0 ? (
+            <>
+              <div className="relative">
+                <ResponsiveContainer width="100%" height={190}>
+                  <PieChart>
+                    <Pie data={targetDonut} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2} stroke="none" startAngle={90} endAngle={-270}>
+                      {targetDonut.map((d) => <Cell key={d.name} fill={d.color} />)}
+                    </Pie>
+                    <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => [formatINR(v), n]} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <p className="text-lg font-extrabold leading-tight text-slate-800">{cur.achPct}%</p>
+                  <p className="text-[10px] font-medium text-slate-400">of monthly target</p>
+                </div>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+                {targetDonut.map((d) => (
+                  <span key={d.name} className="inline-flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: d.color }} />
+                    {d.name} <span className="font-semibold text-slate-800">{formatINR(d.value)}</span>
+                  </span>
+                ))}
+              </div>
+              <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                {([
+                  ["Monthly target", cur.monthlyTarget, cur.revenue, cur.achPct],
+                  ...(cur.mtdTarget > 0 ? [["MTD target", cur.mtdTarget, cur.mtdRevenue, cur.mtdPct] as const] : []),
+                ] as Array<readonly [string, number, number, number]>).map(([label, tgt, ach, p]) => {
+                  const tone = p >= 100 ? { bar: "bg-emerald-500", text: "text-emerald-600" } : p >= 60 ? { bar: "bg-amber-500", text: "text-amber-600" } : { bar: "bg-rose-500", text: "text-rose-600" };
+                  return (
+                    <div key={label}>
+                      <div className="mb-1 flex items-baseline justify-between gap-2 text-[11px]">
+                        <span className="font-semibold text-slate-600">{label} <span className="font-bold text-slate-800">{formatINR(tgt)}</span></span>
+                        <span className={`text-sm font-extrabold ${tone.text}`}>{p}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${Math.min(100, Math.max(0, p))}%` }} /></div>
+                      <p className="mt-0.5 text-[10px] text-slate-400">Achieved {formatINR(ach)}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : <p className="rounded-lg bg-slate-50 px-3 py-10 text-center text-[11px] text-slate-400">No target set for this selection</p>}
         </SectionCard>
 
         <div className="lg:col-span-2">
@@ -929,13 +1029,23 @@ export function HousingOwnerDashboard() {
       <div className="grid gap-3 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <SectionCard
-            icon={Award} title={agentView === "chart" ? "Agent Productivity (Top 10)" : `Agent-wise Performance (${tableRows.length}${agentSearch.trim() ? ` of ${agentRows.length}` : ""} agents)`} tone="emerald"
+            icon={Award} title={agentView === "chart" ? "Agent Productivity (Top 10)" : `Agent-wise Performance (${agentTableFilters.filtered.length}${agentSearch.trim() || agentTableFilters.activeCount > 0 ? ` of ${agentRows.length}` : ""} agents)`} tone="emerald"
             action={
               <div className="flex items-center gap-2">
                 {agentView === "chart" && (
                   <MiniSelect
                     label="Rank by" value={agentSort} onChange={(v) => setAgentSort(v)}
                     options={[{ key: "saleCount", label: "Sale Count" }, { key: "calls", label: "Total Calls" }, { key: "revenue", label: "Revenue" }]}
+                  />
+                )}
+                {agentView === "table" && (
+                  <TableExcelIconButton
+                    fileBase="Housing_Owner_agent_wise"
+                    getSheets={() => [{
+                      name: "Agent-wise",
+                      columns: ["Agent", "TL", "AM", "Vintage", "Calls", "Connected", "Conn %", "Sales", "Revenue", "Target", "Ach %", "Stage", "MTD Target", "MTD %", "Avg Talk"],
+                      rows: tableSort.sorted.map((r) => [r.agent, r.tl, r.am, r.vintage, r.m.calls, r.m.connected, `${r.m.connectedPct}%`, r.m.saleCount, Math.round(r.m.revenue), Math.round(r.m.monthlyTarget), r.m.monthlyTarget > 0 ? `${r.m.achPct}%` : "—", stageOf(r.m.achPct, r.m.monthlyTarget > 0), Math.round(r.m.mtdTarget), r.m.mtdTarget > 0 ? `${r.m.mtdPct}%` : "—", r.m.avgTalkSec > 0 ? fmtHms(r.m.avgTalkSec) : "—"]),
+                    }]}
                   />
                 )}
                 <Seg value={agentView} onChange={(v) => setAgentView(v)} options={[{ key: "chart", label: "Top 10" }, { key: "table", label: "All agents" }]} />
@@ -963,27 +1073,36 @@ export function HousingOwnerDashboard() {
               )
             ) : (
               <div>
-                <div className="relative mb-2 w-full max-w-xs">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text" value={agentSearch} onChange={(e) => setAgentSearch(e.target.value)} placeholder="Search agent..." aria-label="Search agents"
-                    className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs text-slate-700 shadow-sm focus:border-orange-400 focus:outline-none"
-                  />
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <div className="relative w-full max-w-xs">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text" value={agentSearch} onChange={(e) => setAgentSearch(e.target.value)} placeholder="Search agent..." aria-label="Search agents"
+                      className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs text-slate-700 shadow-sm focus:border-orange-400 focus:outline-none"
+                    />
+                  </div>
+                  {agentTableFilters.activeCount > 0 && (
+                    <button type="button" onClick={agentTableFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                      Clear {agentTableFilters.activeCount} filter{agentTableFilters.activeCount > 1 ? "s" : ""}
+                    </button>
+                  )}
                 </div>
                 <div className="max-h-[420px] overflow-auto">
                   <table className="w-full text-center text-xs">
                     <thead>
                       <tr className="sticky top-0 z-10 bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
-                        <SortTh label="Agent" sortKey="agent" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="rounded-l-lg px-2 py-2 text-left font-bold text-white" />
-                        <SortTh label="TL" sortKey="tl" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
-                        <SortTh label="AM" sortKey="am" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
-                        <SortTh label="Vintage" sortKey="vintage" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
-                        <SortTh label="Calls" sortKey="calls" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
-                        <SortTh label="Conn %" sortKey="connectedPct" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
-                        <SortTh label="Sales" sortKey="saleCount" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
-                        <SortTh label="Revenue" sortKey="revenue" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
-                        <SortTh label="Ach %" sortKey="achPct" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
-                        <SortTh label="Avg Talk" sortKey="talk" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="rounded-r-lg px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Agent" columnKey="agent" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="rounded-l-lg px-2 py-2 text-left font-bold text-white" />
+                        <FilterSortTh label="TL" columnKey="tl" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="AM" columnKey="am" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Vintage" columnKey="vintage" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Calls" columnKey="calls" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Conn %" columnKey="connectedPct" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Sales" columnKey="saleCount" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Revenue" columnKey="revenue" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Target" columnKey="target" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Ach %" columnKey="achPct" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Stage" columnKey="stage" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="px-2 py-2 font-bold text-white" />
+                        <FilterSortTh label="Avg Talk" columnKey="talk" sortKey={tableSort.sortKey} sortDir={tableSort.sortDir} onSort={tableSort.toggleSort} filters={agentTableFilters} className="rounded-r-lg px-2 py-2 font-bold text-white" />
                       </tr>
                     </thead>
                     <tbody>
@@ -1001,11 +1120,15 @@ export function HousingOwnerDashboard() {
                           <td className="px-2 py-1.5 font-semibold text-sky-700">{r.m.connectedPct}%</td>
                           <td className="px-2 py-1.5 text-slate-700">{int(r.m.saleCount)}</td>
                           <td className="px-2 py-1.5 font-bold text-emerald-700">{formatINR(r.m.revenue)}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{r.m.monthlyTarget > 0 ? formatINR(r.m.monthlyTarget) : "—"}</td>
                           <td className={`px-2 py-1.5 font-bold ${pctTone(r.m.achPct, r.m.monthlyTarget > 0)}`}>{r.m.monthlyTarget > 0 ? `${r.m.achPct}%` : "—"}</td>
+                          <td className="px-2 py-1.5">
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${STAGE_BADGE[stageOf(r.m.achPct, r.m.monthlyTarget > 0)]}`}>{stageOf(r.m.achPct, r.m.monthlyTarget > 0)}</span>
+                          </td>
                           <td className="px-2 py-1.5 text-slate-600">{r.m.avgTalkSec > 0 ? fmtHms(r.m.avgTalkSec) : "—"}</td>
                         </tr>
                       ))}
-                      {tableRows.length === 0 && <tr><td colSpan={10} className="py-6 text-center text-slate-400">No agents match.</td></tr>}
+                      {tableSort.sorted.length === 0 && <tr><td colSpan={12} className="py-6 text-center text-slate-400">No agents match.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -1027,6 +1150,65 @@ export function HousingOwnerDashboard() {
           )}
         </SectionCard>
       </div>
+
+      {activeOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Active agents">
+          <button type="button" aria-label="Close" onClick={() => setActiveOpen(false)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]" />
+          <aside className="relative flex h-full w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl">
+            <header className="flex items-start justify-between gap-3 bg-gradient-to-br from-orange-600 via-amber-600 to-orange-700 px-5 py-4 text-white">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-white/75">Housing Owner · Active agents</p>
+                <h3 className="text-lg font-bold">{activeAgentFilters.filtered.length}{activeAgentFilters.activeCount > 0 ? ` of ${activeAgents.length}` : ""} active agents</h3>
+                <p className="mt-0.5 text-[11px] text-white/80">{formatShortDate(range.from)} to {formatShortDate(range.to)} · click an agent for their week-wise and date-wise details</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {activeAgentFilters.activeCount > 0 && (
+                  <button type="button" onClick={activeAgentFilters.clearAll} className="rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-white/25">
+                    Clear {activeAgentFilters.activeCount} filter{activeAgentFilters.activeCount > 1 ? "s" : ""}
+                  </button>
+                )}
+                <TableExcelIconButton
+                  fileBase="Housing_Owner_active_agents"
+                  getSheets={() => [{
+                    name: "Active agents",
+                    columns: ["Agent", "TL", "AM", "Vintage", "Calls", "Connected", "Conn %", "Sales", "Revenue", "Target", "Ach %", "Avg Talk"],
+                    rows: activeAgents.map((a) => [a.agent, a.tl, a.am, a.vintage, a.m.calls, a.m.connected, `${a.m.connectedPct}%`, a.m.saleCount, Math.round(a.m.revenue), Math.round(a.m.monthlyTarget), a.m.monthlyTarget > 0 ? `${a.m.achPct}%` : "—", a.m.avgTalkSec > 0 ? fmtHms(a.m.avgTalkSec) : "—"]),
+                  }]}
+                />
+                <button type="button" onClick={() => setActiveOpen(false)} aria-label="Close" className="rounded-lg p-1.5 text-white/85 hover:bg-white/15"><X className="h-5 w-5" /></button>
+              </div>
+            </header>
+            <div className="flex-1 overflow-auto p-4">
+              <table className="w-full text-center text-xs">
+                <thead>
+                  <tr className="sticky top-0 z-10 bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
+                    {["Agent", "TL", "AM", "Vintage", "Calls", "Conn %", "Sales", "Revenue", "Target", "Ach %"].map((h, i) => <th key={h} className={`whitespace-nowrap px-2 py-2 font-bold text-white ${i === 0 ? "rounded-l-lg text-left" : ""} ${i === 9 ? "rounded-r-lg" : ""}`}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeAgents.map((a, i) => (
+                    <tr key={a.agent} role="button" tabIndex={0} onClick={() => { setActiveOpen(false); openEntity(a.agent, a.pred); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { setActiveOpen(false); openEntity(a.agent, a.pred); } }}
+                      className={`cursor-pointer transition-colors hover:bg-orange-50 ${i % 2 === 1 ? "bg-slate-50/70" : "bg-white"}`}>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-left font-semibold text-orange-700">{a.agent}</td>
+                      <td className="px-2 py-1.5 text-slate-500">{a.tl}</td>
+                      <td className="px-2 py-1.5 text-slate-500">{a.am}</td>
+                      <td className="px-2 py-1.5 text-slate-500">{a.vintage}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{int(a.m.calls)}</td>
+                      <td className="px-2 py-1.5 font-semibold text-sky-700">{a.m.calls > 0 ? `${a.m.connectedPct}%` : "—"}</td>
+                      <td className="px-2 py-1.5 text-slate-700">{int(a.m.saleCount)}</td>
+                      <td className="px-2 py-1.5 font-bold text-emerald-700">{formatINR(a.m.revenue)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{a.m.monthlyTarget > 0 ? formatINR(a.m.monthlyTarget) : "—"}</td>
+                      <td className={`px-2 py-1.5 font-bold ${pctTone(a.m.achPct, a.m.monthlyTarget > 0)}`}>{a.m.monthlyTarget > 0 ? `${a.m.achPct}%` : "—"}</td>
+                    </tr>
+                  ))}
+                  {activeAgents.length === 0 && <tr><td colSpan={10} className="py-8 text-center text-slate-400">None</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {drawer && (
         <GncDetailDrawer

@@ -3,7 +3,7 @@ import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianG
 import { X, Loader2 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
-  type HPColumn, type HPOverviewValues, type HPAgentWiseData, type HPAgentPerfRow, HP_API, fmtDate, fmtN,
+  type HPColumn, type HPOverviewValues, type HPOverviewData, type HPAgentWiseData, type HPAgentPerfRow, HP_API, fmtDate, fmtN,
 } from "./housingPremiumShared";
 import { METRICS, METRIC_BY_KEY, fmtMetric, type MetricDef, type MetricKey } from "./housingPremiumMetrics";
 import { formatINR, DrawerExcelButton, PeriodModeToggle, type PeriodViewMode, type DrawerSheet } from "./DashboardKit";
@@ -16,8 +16,6 @@ export type HpDrillTarget =
   | { kind: "group"; title: string; keys: MetricKey[] }
   /** Every metric, week-wise and date-wise, with an in-drawer TL filter (Overall / TL Wise Performance "View details"). */
   | { kind: "matrix"; title: string; tlName?: string };
-
-interface TlBlock { tlName: string; agentCount: number; values: Record<string, HPOverviewValues> }
 
 const TOOLTIP_PROPS = {
   contentStyle: { fontSize: 12, borderRadius: 10, border: "1px solid #334155", background: "#0f172a", boxShadow: "0 8px 24px rgba(15,23,42,0.4)", padding: "8px 12px" },
@@ -149,6 +147,28 @@ function DataTable({ head, rows }: { head: string[]; rows: Row[] }) {
   );
 }
 
+/** Dedicated fetch of the full overview for a date window, independent of whatever range the
+ * calling tab's own on-screen data happens to be scoped to (e.g. the Outbound tab's "Call
+ * Status Trend" clamps its default view to 7 days of Pre_cdr for load speed -- see
+ * HousingPremiumOutboundDashboard.tsx). "View details" is an explicit, deliberate click, so
+ * it always shows the true selected range in full, never the calling tab's own possibly-
+ * narrower display window. Confirmed live 2026-09-29: reusing the parent's already-loaded
+ * (and, for Outbound, now-clamped) columns/values/byTl showed only 23-29 Sep in a drawer
+ * whose own header said "01/09/2026 to 29/09/2026" -- this fetch is the fix for that. */
+function useOverviewData(from: string, to: string): { data: HPOverviewData | null; error: string } {
+  const [data, setData] = useState<HPOverviewData | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    setData(null); setError("");
+    hrmsApi.get<{ success: boolean; data: HPOverviewData }>(`${HP_API}/overview?from=${from}&to=${to}`)
+      .then((res) => { if (!cancelled) setData(res.data); })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load this detail."); });
+    return () => { cancelled = true; };
+  }, [from, to]);
+  return { data, error };
+}
+
 /** Dedicated fetch of the per-agent rows for a date window (the existing /agent-wise endpoint). */
 function useAgentRows(from: string, to: string): { rows: HPAgentPerfRow[] | null; error: string } {
   const [rows, setRows] = useState<HPAgentPerfRow[] | null>(null);
@@ -191,14 +211,16 @@ function AgentsSection({
  * One right-side drill-down for everything clickable on the Housing Premium
  * Outbound dashboard: a metric (its day/week/TL breakdown), a single day or
  * week (every metric for it, per TL, plus the agents behind it), or a TL
- * (its weeks, days and agents). Metric/period/TL figures come from the same
- * overview payload the dashboard already holds; the agent lists are a
- * dedicated fetch of /agent-wise for the exact window.
+ * (its weeks, days and agents). Metric/period/TL figures come from this
+ * drawer's own fresh fetch of the true [from, to] range -- NOT the calling
+ * tab's already-loaded data, which may be scoped narrower for its own
+ * display purposes (see useOverviewData's own note above); the agent lists
+ * are a separate dedicated fetch of /agent-wise for the exact window.
  */
 export function HousingPremiumDrilldownDrawer({
-  target, columns, values, byTl, scopeLabel, agentScope, from, to, onDrill, onOpenAgent, onClose,
+  target, scopeLabel, agentScope, from, to, onDrill, onOpenAgent, onClose,
 }: {
-  target: HpDrillTarget; columns: HPColumn[]; values: Record<string, HPOverviewValues>; byTl: TlBlock[];
+  target: HpDrillTarget;
   scopeLabel: string; agentScope: string | null; from: string; to: string;
   onDrill: (t: HpDrillTarget) => void; onOpenAgent: (name: string) => void; onClose: () => void;
 }) {
@@ -211,6 +233,30 @@ export function HousingPremiumDrilldownDrawer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  const { data: ov, error: ovError } = useOverviewData(from, to);
+
+  if (ovError) {
+    return (
+      <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
+        <button type="button" aria-label="Close detail" onClick={onClose} className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]" />
+        <aside className="relative flex h-full w-full max-w-2xl flex-col items-center justify-center bg-white p-6 shadow-2xl">
+          <p className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{ovError}</p>
+        </aside>
+      </div>
+    );
+  }
+  if (!ov) {
+    return (
+      <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true">
+        <button type="button" aria-label="Close detail" onClick={onClose} className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]" />
+        <aside className="relative flex h-full w-full max-w-2xl flex-col items-center justify-center bg-white shadow-2xl">
+          <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+        </aside>
+      </div>
+    );
+  }
+  const columns = ov.columns, values = ov.overall, byTl = ov.byTl;
 
   const mtd = columns.find((c) => c.kind === "mtd");
   const dayCols = columns.filter((c) => c.kind === "day");

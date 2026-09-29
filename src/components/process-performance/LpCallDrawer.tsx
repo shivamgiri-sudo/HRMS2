@@ -8,12 +8,48 @@ import {
   type DetailData, type DetailKind, PALETTE, STATUS_COLORS, TOOLTIP_PROPS,
   fmtDate, fmtN, fmtShortDay, hourLabel, secToHms, secToShort,
 } from "./lpCallShared";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 export interface DrawerTarget { kind: DetailKind; key: string }
 
 const KIND_LABEL: Record<DetailKind, string> = {
   agent: "Agent", service: "Lead-source", week: "Week", day: "Day",
 };
+
+// Excel-style sort + filter columns for the two genuine per-row tables in this drawer (breakdown and latest calls).
+type BreakdownRow = DetailData["breakdown"][number];
+const BREAKDOWN_COLS: Array<{ key: string; label: string; get: (r: BreakdownRow) => string | number | null; className: string }> = [
+  { key: "name", label: "Name", get: (r) => r.name, className: "px-3 py-2 font-semibold" },
+  { key: "calls", label: "Calls", get: (r) => r.calls, className: "px-3 py-2 text-right font-semibold" },
+  { key: "connected", label: "Connected", get: (r) => r.connected, className: "px-3 py-2 text-right font-semibold" },
+  { key: "connectedPct", label: "Connected %", get: (r) => r.connectedPct, className: "px-3 py-2 text-right font-semibold" },
+  { key: "uniqueLeads", label: "Unique", get: (r) => r.uniqueLeads, className: "px-3 py-2 text-right font-semibold" },
+];
+const BREAKDOWN_FILTER_COLS: Array<FilterColumn<BreakdownRow>> = BREAKDOWN_COLS.map((c) => ({ key: c.key, get: c.get }));
+const breakdownColGetter = (r: BreakdownRow, key: string) => BREAKDOWN_COLS.find((c) => c.key === key)?.get(r);
+
+type RecentCallRow = DetailData["recentCalls"][number];
+const RECENT_COLS: Array<{ key: string; label: string; get: (r: RecentCallRow) => string | number | null; className: string }> = [
+  { key: "date", label: "Date", get: (r) => r.reportDate, className: "px-3 py-2 font-semibold" },
+  { key: "lead", label: "Lead", get: (r) => r.leadId || null, className: "px-3 py-2 font-semibold" },
+  { key: "attempt", label: "Attempt", get: (r) => r.attempt || null, className: "px-3 py-2 font-semibold" },
+  { key: "status", label: "Outcome", get: (r) => r.status, className: "px-3 py-2 font-semibold" },
+  { key: "talk", label: "Talk", get: (r) => r.talkSec, className: "px-3 py-2 text-right font-semibold" },
+];
+const RECENT_FILTER_COLS: Array<FilterColumn<RecentCallRow>> = RECENT_COLS.map((c) => ({ key: c.key, get: c.get }));
+const recentColGetter = (r: RecentCallRow, key: string) => RECENT_COLS.find((c) => c.key === key)?.get(r);
+
+function ClearFiltersButton({ count, onClear }: { count: number; onClear: () => void }) {
+  if (count === 0) return null;
+  return (
+    <div className="mb-2 flex justify-end">
+      <button type="button" onClick={onClear} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+        Clear {count} filter{count > 1 ? "s" : ""}
+      </button>
+    </div>
+  );
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -78,6 +114,14 @@ export function LpCallDrawer({
   const tu = data?.timeUse ?? null;
   const avgDay = (sec: number): number => (tu && tu.agentDays > 0 ? Math.round(sec / tu.agentDays) : 0);
   const dailyChart = data?.daily ?? [];
+
+  const breakdownFilters = useColumnFilters(data?.breakdown ?? [], BREAKDOWN_FILTER_COLS);
+  const { sorted: sortedBreakdown, sortKey: breakdownSortKey, sortDir: breakdownSortDir, toggleSort: toggleBreakdownSort } =
+    useSortableRows(breakdownFilters.filtered, breakdownColGetter);
+
+  const recentFilters = useColumnFilters(data?.recentCalls ?? [], RECENT_FILTER_COLS);
+  const { sorted: sortedRecent, sortKey: recentSortKey, sortDir: recentSortDir, toggleSort: toggleRecentSort } =
+    useSortableRows(recentFilters.filtered, recentColGetter);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`${KIND_LABEL[target.kind]} detail`}>
@@ -248,70 +292,78 @@ export function LpCallDrawer({
 
               <Section title={data.breakdownLabel}>
                 {data.breakdown.length === 0 ? <None /> : (
-                  <div className="overflow-x-auto rounded-xl border border-slate-100">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                          <th className="px-3 py-2 font-semibold">Name</th>
-                          <th className="px-3 py-2 text-right font-semibold">Calls</th>
-                          <th className="px-3 py-2 text-right font-semibold">Connected</th>
-                          <th className="px-3 py-2 text-right font-semibold">Connected %</th>
-                          <th className="px-3 py-2 text-right font-semibold">Unique</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.breakdown.map((b) => (
-                          <tr key={b.name} className="border-t border-slate-50">
-                            <td className="px-3 py-2 font-medium text-slate-700">{b.name}</td>
-                            <td className="px-3 py-2 text-right text-slate-600">{fmtN(b.calls)}</td>
-                            <td className="px-3 py-2 text-right text-slate-600">{fmtN(b.connected)}</td>
-                            <td className="px-3 py-2 text-right font-semibold text-slate-800">{b.connectedPct}%</td>
-                            <td className="px-3 py-2 text-right text-slate-600">{fmtN(b.uniqueLeads)}</td>
+                  <>
+                    <ClearFiltersButton count={breakdownFilters.activeCount} onClear={breakdownFilters.clearAll} />
+                    <div className="overflow-x-auto rounded-xl border border-slate-100">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+                            {BREAKDOWN_COLS.map((c) => (
+                              <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={breakdownSortKey} sortDir={breakdownSortDir} onSort={toggleBreakdownSort} filters={breakdownFilters} className={c.className} />
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {sortedBreakdown.map((b) => (
+                            <tr key={b.name} className="border-t border-slate-50">
+                              <td className="px-3 py-2 font-medium text-slate-700">{b.name}</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(b.calls)}</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(b.connected)}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-800">{b.connectedPct}%</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(b.uniqueLeads)}</td>
+                            </tr>
+                          ))}
+                          {sortedBreakdown.length === 0 && (
+                            <tr><td colSpan={BREAKDOWN_COLS.length} className="px-3 py-6 text-center text-slate-400">No rows match the filters.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </Section>
 
               <Section title={`Latest calls (${data.recentCalls.length})`}>
                 {data.recentCalls.length === 0 ? <None /> : (
-                  <div className="overflow-x-auto rounded-xl border border-slate-100">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                          <th className="px-3 py-2 font-semibold">Date</th>
-                          <th className="px-3 py-2 font-semibold">Lead</th>
-                          <th className="px-3 py-2 font-semibold">Attempt</th>
-                          <th className="px-3 py-2 font-semibold">Outcome</th>
-                          <th className="px-3 py-2 text-right font-semibold">Talk</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.recentCalls.map((c, i) => (
-                          <tr key={`${c.reportDate}-${c.leadId}-${i}`} className="border-t border-slate-50 align-top">
-                            <td className="whitespace-nowrap px-3 py-2 text-slate-600">
-                              {fmtDate(c.reportDate)}{c.hour !== null && <span className="text-slate-400"> {hourLabel(c.hour)}</span>}
-                            </td>
-                            <td className="px-3 py-2 text-slate-600">
-                              {c.leadId || "—"}
-                              {data.kind !== "agent" && <div className="text-[10px] text-slate-400">{c.agent}</div>}
-                            </td>
-                            <td className="px-3 py-2 text-slate-600">{c.attempt || "—"}</td>
-                            <td className="px-3 py-2">
-                              <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
-                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: STATUS_COLORS[c.status] ?? PALETTE.slate }} />
-                                {c.status}
-                              </span>
-                              <div className="max-w-[220px] truncate text-[10px] text-slate-400" title={c.disposition}>{c.disposition}</div>
-                            </td>
-                            <td className="px-3 py-2 text-right text-slate-600">{c.talkSec ? secToHms(c.talkSec) : "—"}</td>
+                  <>
+                    <ClearFiltersButton count={recentFilters.activeCount} onClear={recentFilters.clearAll} />
+                    <div className="overflow-x-auto rounded-xl border border-slate-100">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+                            {RECENT_COLS.map((c) => (
+                              <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={recentSortKey} sortDir={recentSortDir} onSort={toggleRecentSort} filters={recentFilters} className={c.className} />
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {sortedRecent.map((c, i) => (
+                            <tr key={`${c.reportDate}-${c.leadId}-${i}`} className="border-t border-slate-50 align-top">
+                              <td className="whitespace-nowrap px-3 py-2 text-slate-600">
+                                {fmtDate(c.reportDate)}{c.hour !== null && <span className="text-slate-400"> {hourLabel(c.hour)}</span>}
+                              </td>
+                              <td className="px-3 py-2 text-slate-600">
+                                {c.leadId || "—"}
+                                {data.kind !== "agent" && <div className="text-[10px] text-slate-400">{c.agent}</div>}
+                              </td>
+                              <td className="px-3 py-2 text-slate-600">{c.attempt || "—"}</td>
+                              <td className="px-3 py-2">
+                                <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
+                                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: STATUS_COLORS[c.status] ?? PALETTE.slate }} />
+                                  {c.status}
+                                </span>
+                                <div className="max-w-[220px] truncate text-[10px] text-slate-400" title={c.disposition}>{c.disposition}</div>
+                              </td>
+                              <td className="px-3 py-2 text-right text-slate-600">{c.talkSec ? secToHms(c.talkSec) : "—"}</td>
+                            </tr>
+                          ))}
+                          {sortedRecent.length === 0 && (
+                            <tr><td colSpan={RECENT_COLS.length} className="px-3 py-6 text-center text-slate-400">No calls match the filters.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </Section>
             </>

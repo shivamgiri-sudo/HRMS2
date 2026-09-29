@@ -39,8 +39,20 @@ const _pool: Pool = mysql.createPool({
   idleTimeout:        env.DB_POOL_IDLE_TIMEOUT_MS,
 });
 
+// 0 = no limit (MySQL default). Only the API process sets one: without it a SELECT keeps running
+// on the server long after nginx (120s) has dropped the request, and repeat requests stack copies.
+// MySQL applies max_execution_time to read-only SELECTs only; writes, DDL and migrations are untouched.
+let sessionMaxExecutionMs = 0;
+
+export function setSessionMaxExecutionTime(ms: number): void {
+  sessionMaxExecutionMs = Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0;
+}
+
 _pool.on('connection', (conn) => {
   conn.query("SET time_zone = '+05:30'");
+  if (sessionMaxExecutionMs > 0) {
+    conn.query(`SET SESSION max_execution_time = ${sessionMaxExecutionMs}`);
+  }
 });
 
 /**

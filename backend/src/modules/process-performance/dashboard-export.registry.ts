@@ -110,11 +110,6 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
       note: "Chats behind the Overview snapshot: user_type Chat, Kenaz or Bevzilla only (Email is excluded).",
     },
     {
-      kind: "masmis", sheet: "bb_chat (dispositions)", table: "bb_chat", dateExpr: "chat_date",
-      extraWhere: "user_type IN ('Chat','Kenaz','Bevzilla')",
-      note: "Older chat table. The BVO Chat QRC rows take each day's dispositions from new_bb_chat when it has them, otherwise from this table (identical chats where both exist).",
-    },
-    {
       kind: "masmis", sheet: "bb_sale (Sale Made)", table: "bb_sale", dateExpr: "`Date`",
       extraWhere: "campaign = 'Chat' AND calling_status = 'Sale Made'",
       note: "Every sale row, one per order line item. Sale Made and Revenue count each bella_vita_order_id once, so this sheet holds more rows than the snapshot's Sale Made. bb_sale has no Kenaz/Bevzilla split.",
