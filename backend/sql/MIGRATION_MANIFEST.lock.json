@@ -980,6 +980,136 @@
     {
       "filename": "1884_employees_salary_start_check_v2.sql",
       "reason": "Removed from the manifest on 2026-09-25 before it was ever applied: its ALTER TABLE employees DROP CHECK needs an exclusive metadata lock on employees, which an idle session held, so it blocked production startup. The check is dropped later, off the startup path, when the table is quiet. Approved by Shivam Giri (deploy owner) in session."
+    },
+    {
+      "filename": "1870_collections_masters.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1871_collections_source_file.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1872_collections_allocation.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1873_collections_mis_ingest.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1874_collections_identity.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1875_collections_attempts.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1876_collections_recon.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1877_collections_page_access.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1878_collections_metric_definitions_seed.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1879_collections_live_events.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1880_collections_contact_policy_suppression.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1881_collections_callback_task.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1882_collections_incident.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1883_collections_alert_engine.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1884_collections_live_page_access.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1885_collections_live_page_access_seed.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1886_collections_payment_ledger.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1887_collections_promise_event.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1888_collections_qa_complaint.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1889_collections_commercial_terms.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1890_collections_cash_page_access.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1891_collections_optimization_cohort_calibration.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1892_collections_guardrail_config.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1893_collections_staffing_scenario.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1894_collections_campaign_experiment.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1895_collections_optimization_page_access.sql",
+      "reason": "Registered in the manifest by commit 70d43ff3 (2026-09-28) without the corresponding .sql files ever being created or committed to the repo. The deploy-preflight script blocked production deployment because each filename in the manifest had no matching file on disk. Removed from manifest 2026-09-29; SQL files can be re-added with proper content once the Collections module schema is finalised.",
+      "approvedBy": "shivam.giri@teammas.in"
     }
   ],
   "knownDangling": [
