@@ -404,19 +404,31 @@ async function handleExitStatusUpdate(req: any, res: any) {
        JOIN employees e ON e.id = er.employee_id
        LEFT JOIN user_roles ur ON ur.user_id = ? AND ur.active_status = 1
       WHERE er.id = ?
+      GROUP BY er.id, e.id
       LIMIT 1`,
     [userId, userId, exitId],
   );
   const prefetch = prefetchRows[0] as any;
   if (!prefetch?.current_status)
-    return res.status(404).json({ success: false, message: "Exit request not found" });
+    return res
+      .status(404)
+      .json({ success: false, message: "Exit request not found" });
 
-  const userRoles: string[] = prefetch.roles ? String(prefetch.roles).split(",") : [];
+  const userRoles: string[] = prefetch.roles
+    ? String(prefetch.roles).split(",")
+    : [];
   const isSuperAdmin = userRoles.includes("super_admin");
-  const isAdminOrHr = isSuperAdmin || ["admin", "hr", "ceo", "branch_admin"].some((r) => userRoles.includes(r));
-  const isManager = isSuperAdmin || ["manager", "process_manager", "operations_manager", "branch_head"].some((r) => userRoles.includes(r));
+  const isAdminOrHr =
+    isSuperAdmin ||
+    ["admin", "hr", "ceo", "branch_admin"].some((r) => userRoles.includes(r));
+  const isManager =
+    isSuperAdmin ||
+    ["manager", "process_manager", "operations_manager", "branch_head"].some(
+      (r) => userRoles.includes(r),
+    );
   const isReportingManager = Number(prefetch.is_reporting_manager) === 1;
-  const isPureAdminSuperCeo = isSuperAdmin || ["admin", "ceo"].some((r) => userRoles.includes(r));
+  const isPureAdminSuperCeo =
+    isSuperAdmin || ["admin", "ceo"].some((r) => userRoles.includes(r));
 
   // Scope check: admin/hr/super_admin always have access; others need in-scope access.
   if (!isAdminOrHr) {
@@ -434,7 +446,12 @@ async function handleExitStatusUpdate(req: any, res: any) {
       { allowAdminBypass: true, requireScopeForNonAdmin: true },
     );
     if (!scopeOk)
-      return res.status(403).json({ success: false, message: "Forbidden: exit request is outside your action scope" });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "Forbidden: exit request is outside your action scope",
+        });
   }
 
   const nextStatus = normalizeExitStatus(req.body?.status);
