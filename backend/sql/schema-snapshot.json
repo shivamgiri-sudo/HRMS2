@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1214,
-  "columnCount": 18076,
+  "tableCount": 1215,
+  "columnCount": 18086,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -3205,6 +3205,18 @@
       "upload_batch_id",
       "created_by",
       "created_at",
+      "updated_at"
+    ],
+    "bla_dash_target": [
+      "lob",
+      "required_per_day",
+      "cap_pct",
+      "conversion_target",
+      "prepaid_target",
+      "rto_target",
+      "target_aov",
+      "comment",
+      "updated_by",
       "updated_at"
     ],
     "bmi_manual_input": [
