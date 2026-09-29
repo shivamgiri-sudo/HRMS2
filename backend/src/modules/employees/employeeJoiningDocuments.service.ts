@@ -479,6 +479,41 @@ async function ensureChecklistRows(target: EmployeeDocumentTarget, actorUserId?:
  * tracker actions defer to it instead of computing a rival figure.
  */
 export async function recalculateDocumentProgress(employeeId: string) {
+  // Luckpay's completion callback is unreliable. The normal flow is one kit
+  // covering all esign documents — one signature covers everything. Advance any
+  // checklist item that is still 'esign_initiated' but whose kit is signed (or
+  // that has its own signed direct transaction) so the percentage reflects what
+  // the employee actually signed, not what the callback delivered.
+  await db
+    .execute(
+      `UPDATE employee_joining_document_checklist c
+          SET c.status    = 'esign_completed',
+              c.updated_at = NOW()
+        WHERE c.employee_id = ?
+          AND c.status = 'esign_initiated'
+          AND (
+                EXISTS (
+                  SELECT 1 FROM employee_document_esign_transaction t
+                   WHERE t.checklist_id = c.id
+                     AND t.status IN ('signed', 'completed')
+                   LIMIT 1
+                )
+                OR
+                EXISTS (
+                  SELECT 1
+                    FROM employee_joining_esign_kit_item ki
+                    JOIN employee_joining_esign_kit k ON k.id = ki.kit_id
+                   WHERE ki.checklist_id = c.id
+                     AND k.status IN ('signed', 'completed')
+                   LIMIT 1
+                )
+              )`,
+      [employeeId],
+    )
+    .catch(() => {
+      /* non-fatal — the count below reflects the current persisted status */
+    });
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
         COUNT(*) AS total_count,
