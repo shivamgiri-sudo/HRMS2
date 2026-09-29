@@ -58,7 +58,8 @@ export function createAnalyticsCache(cache: TtlCache<CachedBody> = sharedCache, 
   // In-flight de-duplication: concurrent identical requests share the first one's query.
   const inFlight = new Map<string, Promise<CachedBody | undefined>>();
 
-  return function analyticsCache(name: string) {
+  /** `ttlOverrideMs`: shorter TTL for near-live endpoints (default = the shared 180s). */
+  return function analyticsCache(name: string, ttlOverrideMs: number = ttlMs) {
     return (req: Request, res: Response, next: NextFunction): void => {
       const key = buildAnalyticsCacheKey(name, req as CallerRequest);
       const bypass = isRefreshRequested(req.query);
@@ -96,7 +97,7 @@ export function createAnalyticsCache(cache: TtlCache<CachedBody> = sharedCache, 
       res.json = ((body: unknown) => {
         if (res.statusCode === 200) {
           const entry = { body };
-          cache.set(key, entry, ttlMs);
+          cache.set(key, entry, ttlOverrideMs);
           finish(entry);
         } else {
           finish(undefined);

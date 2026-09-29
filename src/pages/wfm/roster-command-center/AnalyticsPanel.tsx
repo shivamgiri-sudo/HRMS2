@@ -246,14 +246,17 @@ export default function AnalyticsPanel() {
   const lobId = filters.lobId;
   const weekStart = getWeekStart();
   const period = getPreviousMonth();
+  // Only the visible sub-tab fetches; the other three stay idle until opened
+  // (previously all four heavy queries fired on page load).
+  const [activeTab, setActiveTab] = useState<"shrinkage" | "quality" | "cost" | "forecast">("shrinkage");
 
-  const { data: shrinkageData, isLoading: shrinkageLoading } = useQuery({
+  const { data: shrinkageData, isLoading: shrinkageLoading, refetch: refetchShrinkage } = useQuery({
     queryKey: ["roster-analytics", "shrinkage", branchId, weekStart],
     queryFn: () =>
       hrmsApi.get<ShrinkageIntelligence>(
         `/api/roster-analytics/shrinkage-intelligence/${branchId}?weekStart=${weekStart}`
       ),
-    enabled: branchId !== ALL,
+    enabled: branchId !== ALL && activeTab === "shrinkage",
   });
 
   const { mark, consume } = useRefreshFlags();
@@ -262,13 +265,13 @@ export default function AnalyticsPanel() {
     return params;
   };
 
-  // Quality correlation goes first; cost impact only starts once it has settled (never both at once).
   const qualityQuery = useQuery({
     queryKey: ["roster-analytics", "quality", branchId, processId, lobId, period],
     queryFn: ({ signal }) => {
       const params = withRefresh(scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }, { period }), "quality");
       return hrmsApi.get<QualityCorrelation>(`/api/roster-analytics/quality-correlation?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
     },
+    enabled: activeTab === "quality",
     ...HEAVY_QUERY_OPTIONS,
   });
   const { data: qualityData, isPending: qualityLoading } = qualityQuery;
@@ -279,24 +282,29 @@ export default function AnalyticsPanel() {
       const params = withRefresh(scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }, { period }), "cost");
       return hrmsApi.get<CostImpact>(`/api/roster-analytics/cost-impact?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
     },
-    enabled: qualityQuery.fetchStatus === "idle",
+    enabled: activeTab === "cost",
     ...HEAVY_QUERY_OPTIONS,
   });
   const { data: costData, isPending: costLoading } = costQuery;
 
   const refreshAll = async () => {
-    mark("quality", "cost");
-    try {
+    if (activeTab === "quality") {
+      mark("quality");
       await qualityQuery.refetch();
-    } finally {
-      void costQuery.refetch();
+    } else if (activeTab === "cost") {
+      mark("cost");
+      await costQuery.refetch();
+    } else if (activeTab === "shrinkage") {
+      await refetchShrinkage();
+    } else {
+      await refetchForecast();
     }
   };
 
-  const { data: forecastData, isLoading: forecastLoading } = useQuery({
+  const { data: forecastData, isLoading: forecastLoading, refetch: refetchForecast } = useQuery({
     queryKey: ["roster-analytics", "forecast", branchId],
     queryFn: () => hrmsApi.get<Forecast>(`/api/roster-analytics/forecast/${branchId}`),
-    enabled: branchId !== ALL,
+    enabled: branchId !== ALL && activeTab === "forecast",
   });
 
   return (
@@ -319,7 +327,7 @@ export default function AnalyticsPanel() {
           }
         />
 
-        <Tabs defaultValue="shrinkage" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="space-y-4">
           <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:w-[600px]">
             <TabsTrigger value="shrinkage" className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4" /> Shrinkage

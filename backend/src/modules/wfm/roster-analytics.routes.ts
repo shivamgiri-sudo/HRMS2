@@ -17,6 +17,9 @@ import { todayLocalDateStr } from "./shift-due.util.js";
 import { lobAnd, readLobFilter } from "../../shared/lobFilter.js";
 import { analyticsCache } from "../../shared/analyticsCache.js";
 
+/** Near-live views (current week): data at most ~30s old, but a burst of viewers shares one query. */
+const LIVE_CACHE_TTL_MS = 30_000;
+
 const router = Router();
 
 router.use(requireAuth);
@@ -69,7 +72,7 @@ const TEAM_ROSTER_ROLES = [
 router.get(
   "/shrinkage-intelligence/:branchId",
   requireRole(...ANALYTICS_ROLES),
-  analyticsCache("roster-analytics-shrinkage-intelligence"),
+  analyticsCache("roster-analytics-shrinkage-intelligence", LIVE_CACHE_TTL_MS),
   async (req, res) => {
     try {
       const { branchId } = req.params;
@@ -196,7 +199,7 @@ router.get(
 router.get(
   "/forecast/:branchId",
   requireRole(...ANALYTICS_ROLES),
-  analyticsCache("roster-analytics-forecast"),
+  analyticsCache("roster-analytics-forecast", LIVE_CACHE_TTL_MS),
   async (req, res) => {
     try {
       const { branchId } = req.params;

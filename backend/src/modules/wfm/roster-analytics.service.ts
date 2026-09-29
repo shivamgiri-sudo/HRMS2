@@ -186,7 +186,7 @@ export async function getWeeklyShrinkageIntelligence(
 
   // Get roster + attendance data
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
+    `SELECT /*+ MAX_EXECUTION_TIME(8000) */
        e.id AS employee_id,
        e.reporting_manager_id,
        e.process_id,
@@ -470,7 +470,7 @@ export async function getQualityAdherenceCorrelation(
 
   // Get adherence data per employee
   const [adherenceRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
+    `SELECT /*+ MAX_EXECUTION_TIME(8000) */
        e.id AS employee_id,
        e.employee_code,
        e.full_name AS employee_name,
@@ -678,7 +678,7 @@ export async function getCostOfNonAdherence(
   // Aggregated in SQL (one summary row) instead of pulling every roster-day into Node —
   // a month for a branch is tens of thousands of rows, which was the page's main latency.
   const [aggRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
+    `SELECT /*+ MAX_EXECUTION_TIME(8000) */
        COALESCE(SUM(x.exp_h), 0) AS planned_h,
        COALESCE(SUM(CASE WHEN x.has_in = 1 THEN x.worked_h ELSE 0 END), 0) AS worked_h,
        COALESCE(SUM(CASE WHEN x.has_in = 0 THEN x.exp_h ELSE 0 END), 0) AS absent_h,
