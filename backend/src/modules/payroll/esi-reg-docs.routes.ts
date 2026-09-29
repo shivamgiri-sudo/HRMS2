@@ -41,10 +41,7 @@ function newZipArchive(): ArchiverInstance {
   return new ZipArchive({ zlib: { level: 9 } }) as unknown as ArchiverInstance;
 }
 
-const UPLOADS_ROOT = path.resolve(
-  new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
-  "../../../../uploads",
-);
+const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
 
 const ESI_DOCS_DIR = path.join(UPLOADS_ROOT, "esi-docs");
 fs.mkdirSync(ESI_DOCS_DIR, { recursive: true });
