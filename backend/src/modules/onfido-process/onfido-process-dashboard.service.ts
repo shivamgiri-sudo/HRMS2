@@ -5738,30 +5738,31 @@ export async function getAuditSampling(
   const rows: AuditSamplingRow[] = [];
 
   if (!rawFilters.queue || rawFilters.queue === "DOC") {
-    // Internal quality (DOC Check)
-    const [intRows] = await pool.query<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(TRIM(ims_client_name),''), '(unknown)') AS client,
-              COALESCE(NULLIF(TRIM(docupedia_document_name),''), '(unknown)') AS doc_type,
-              'DOC Check' AS task_type,
-              COALESCE(SUM(total_audits),0) AS audited,
-              COALESCE(SUM(total_error),0) AS errors
-         FROM onfido_doc_quality_raw
-        WHERE task_complete_date BETWEEN ? AND ? ${clause} ${extra}
-        GROUP BY client, doc_type
-        ORDER BY audited DESC`,
-      [f.from, f.to, ...params, ...extraParams],
-    );
-    for (const r of intRows) {
-      const audited = Number(r.audited);
-      rows.push({
-        client: r.client,
-        documentType: r.doc_type,
-        taskType: r.task_type,
-        totalAudited: audited,
-        errors: Number(r.errors),
-        errPct: pct1(Number(r.errors), audited),
-        avgAht: null,
-      });
+    // Internal quality (DOC Check) — onfido_doc_quality_raw carries no client/document-type
+    // columns at all (see onfido-report-configs.ts's extract list for ONFIDO_DOC_QUALITY),
+    // so this source can only ever be a single "(unknown)" bucket for the period, and it
+    // cannot be filtered by client/document type at all.
+    if (!rawFilters.clientName && !rawFilters.documentType) {
+      const [intRows] = await pool.query<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(total_audits),0) AS audited,
+                COALESCE(SUM(total_error),0) AS errors
+           FROM onfido_doc_quality_raw
+          WHERE task_complete_date BETWEEN ? AND ? ${clause}`,
+        [f.from, f.to, ...params],
+      );
+      for (const r of intRows) {
+        const audited = Number(r.audited);
+        if (audited === 0) continue;
+        rows.push({
+          client: "(unknown)",
+          documentType: "(unknown)",
+          taskType: "DOC Check",
+          totalAudited: audited,
+          errors: Number(r.errors),
+          errPct: pct1(Number(r.errors), audited),
+          avgAht: null,
+        });
+      }
     }
     // External quality (DOC) — has AHT via manual_processing_time_secs
     const [extRows] = await pool.query<RowDataPacket[]>(
@@ -5791,31 +5792,33 @@ export async function getAuditSampling(
     }
   }
 
-  if (!rawFilters.queue || rawFilters.queue === "POA") {
-    // POA quality
+  if (
+    (!rawFilters.queue || rawFilters.queue === "POA") &&
+    !rawFilters.clientName &&
+    !rawFilters.documentType
+  ) {
+    // POA quality — onfido_poa_quality_raw has no client/document-type or has_error/
+    // manual_processing_time_secs columns either (see onfido-report-configs.ts's extract
+    // list for ONFIDO_POA_QUALITY): its own error rate is SUM(error_count) /
+    // (SUM(error_count) + SUM(no_error_count)), and it carries no AHT at all.
     const [poaRows] = await pool.query<RowDataPacket[]>(
-      `SELECT COALESCE(NULLIF(TRIM(ims_client_name),''), '(unknown)') AS client,
-              COALESCE(NULLIF(TRIM(docupedia_document_name),''), '(unknown)') AS doc_type,
-              'POA' AS task_type,
-              COUNT(*) AS audited,
-              COALESCE(SUM(has_error),0) AS errors,
-              AVG(manual_processing_time_secs) AS avg_aht
+      `SELECT COALESCE(SUM(error_count),0) AS errors,
+              COALESCE(SUM(error_count) + SUM(no_error_count),0) AS audited
          FROM onfido_poa_quality_raw
-        WHERE report_completed_date BETWEEN ? AND ? ${clause} ${extra}
-        GROUP BY client, doc_type
-        ORDER BY audited DESC`,
-      [f.from, f.to, ...params, ...extraParams],
+        WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
+      [f.from, f.to, ...params],
     );
     for (const r of poaRows) {
       const audited = Number(r.audited);
+      if (audited === 0) continue;
       rows.push({
-        client: r.client,
-        documentType: r.doc_type,
-        taskType: r.task_type,
+        client: "(unknown)",
+        documentType: "(unknown)",
+        taskType: "POA",
         totalAudited: audited,
         errors: Number(r.errors),
         errPct: pct1(Number(r.errors), audited),
-        avgAht: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
+        avgAht: null,
       });
     }
   }
