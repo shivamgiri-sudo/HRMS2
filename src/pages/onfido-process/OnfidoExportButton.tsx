@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { createContext, useContext, useEffect, useId, useState, type MutableRefObject, type RefObject } from "react";
 import { Download } from "lucide-react";
 import { exportDashboardToExcel, type ExcelSheetSpec } from "@/lib/dashboardExcelExport";
 
@@ -20,11 +20,30 @@ function uniqueHeaders(raw: string[]): string[] {
   });
 }
 
+/**
+ * Views that page or window their table register the full data here, so the page-level export
+ * still contains every row the filters select, not just the rows on the current page. The paged
+ * table itself carries data-export-skip so it is not exported twice.
+ */
+export type ExportSheetRegistry = MutableRefObject<Map<string, ExcelSheetSpec>>;
+export const ExportSheetContext = createContext<ExportSheetRegistry | null>(null);
+
+export function useRegisterExportSheet(spec: ExcelSheetSpec | null): void {
+  const registry = useContext(ExportSheetContext);
+  const id = useId();
+  useEffect(() => {
+    if (!registry) return;
+    if (spec && spec.rows.length > 0) registry.current.set(id, spec);
+    else registry.current.delete(id);
+    return () => { registry.current.delete(id); };
+  }, [registry, id, spec]);
+}
+
 /** Turns every visible table inside `root` into a sheet, exactly as displayed. */
 export function collectVisibleTables(root: HTMLElement): ExcelSheetSpec[] {
   const sheets: ExcelSheetSpec[] = [];
   root.querySelectorAll("table").forEach((table, idx) => {
-    if (!(table as HTMLElement).offsetParent) return;
+    if (!(table as HTMLElement).offsetParent || table.hasAttribute("data-export-skip")) return;
     const headRow = table.querySelector("thead tr:last-child") ?? table.querySelector("tr");
     if (!headRow) return;
     const headers = uniqueHeaders([...headRow.querySelectorAll("th,td")].map((c) => c.textContent ?? ""));
@@ -48,11 +67,12 @@ export function collectVisibleTables(root: HTMLElement): ExcelSheetSpec[] {
 /** Exports the data currently shown on the page to a plain (gridline-free) Excel sheet — never raw source data. */
 export function OnfidoExportButton({ targetRef, filename, label = "Export" }: { targetRef: RefObject<HTMLElement | null>; filename: string; label?: string }) {
   const [error, setError] = useState<string | null>(null);
+  const registry = useContext(ExportSheetContext);
   function run() {
     setError(null);
     try {
       if (!targetRef.current) return;
-      exportDashboardToExcel(filename, collectVisibleTables(targetRef.current));
+      exportDashboardToExcel(filename, [...collectVisibleTables(targetRef.current), ...(registry ? [...registry.current.values()] : [])]);
     } catch (err) {
       setError(err instanceof Error ? err.message.slice(0, 140) : "Export failed");
     }

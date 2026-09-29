@@ -4,7 +4,7 @@ import { db } from "../../db/mysql.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import type {
   ManpowerPlanRow,
-  ProcessQueue,
+  PlanQueue,
 } from "./onfido-overview-report.pure.js";
 import type {
   ManpowerPlanInput,
@@ -40,7 +40,7 @@ export async function listManpowerPlan(): Promise<ManpowerPlanRecord[]> {
   );
   return rows.map((r) => ({
     id: String(r.id),
-    processQueue: r.process_queue as ProcessQueue,
+    processQueue: r.process_queue as PlanQueue,
     effectiveFrom: String(r.effective_from),
     approvedHc: Number(r.approved_hc),
     activeHc: numOrNull(r.active_hc),

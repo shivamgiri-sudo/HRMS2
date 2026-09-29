@@ -1,7 +1,7 @@
 import {
   isIsoDay,
-  PROCESS_QUEUES,
-  type ProcessQueue,
+  PLAN_QUEUES,
+  type PlanQueue,
 } from "./onfido-overview-report.pure.js";
 
 /**
@@ -16,7 +16,7 @@ const MAX_HC = 100000;
 const MAX_INPUT_VALUE = 100000000;
 
 export interface ManpowerPlanInput {
-  processQueue: ProcessQueue;
+  processQueue: PlanQueue;
   effectiveFrom: string;
   approvedHc: number;
   activeHc: number | null;
@@ -87,8 +87,8 @@ export function parseManpowerPlanInput(
   if (typeof raw !== "object" || raw === null)
     return fail("Request body must be an object.");
   const r = raw as Record<string, unknown>;
-  if (!PROCESS_QUEUES.includes(r.processQueue as ProcessQueue))
-    return fail("Queue must be EWYS, POA or Encord.");
+  if (!PLAN_QUEUES.includes(r.processQueue as PlanQueue))
+    return fail("Queue must be EWYS, POA, Encord or the company total.");
   if (!isIsoDay(r.effectiveFrom))
     return fail("Effective from must be a valid date.");
   const approved = optionalNumber(r.approvedHc, "Approved HC", {
@@ -110,7 +110,7 @@ export function parseManpowerPlanInput(
   return {
     ok: true,
     value: {
-      processQueue: r.processQueue as ProcessQueue,
+      processQueue: r.processQueue as PlanQueue,
       effectiveFrom: r.effectiveFrom,
       approvedHc: approved.value,
       // Active HC is only accepted for Encord, the one queue with no uploaded staffing source.

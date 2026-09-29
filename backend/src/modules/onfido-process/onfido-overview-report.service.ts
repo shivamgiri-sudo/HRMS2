@@ -14,6 +14,7 @@ import {
 } from "./onfido-utilization.service.js";
 import {
   DOC_TASK_GROUPS,
+  PLAN_QUEUES,
   PROCESS_QUEUES,
   QUEUE_LABELS,
   UNCLASSIFIED_AON_LABEL,
@@ -239,7 +240,7 @@ async function loadManpower(
     ),
   ]);
   const approved = totalApprovedAsOf(plan, asOf);
-  const planDates = PROCESS_QUEUES.map(
+  const planDates = PLAN_QUEUES.map(
     (q) => planAsOf(plan, q, asOf)?.effectiveFrom,
   )
     .filter((d): d is string => !!d)

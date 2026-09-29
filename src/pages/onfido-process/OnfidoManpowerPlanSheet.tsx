@@ -10,7 +10,7 @@ import { DASH, fmtDate, fmtDateTime, fmtHc, fmtInt } from "./onfidoReportShared"
  * enters it here. Required HC is always Approved x 120%, computed on read, never stored.
  */
 
-export type PlanQueue = "EXTRACTION" | "POA" | "ENCORD";
+export type PlanQueue = "TOTAL" | "EXTRACTION" | "POA" | "ENCORD";
 
 export interface PlanRecord {
   id: string; processQueue: PlanQueue; effectiveFrom: string; approvedHc: number; activeHc: number | null;
@@ -18,6 +18,7 @@ export interface PlanRecord {
 }
 
 export const QUEUE_OPTIONS: { key: PlanQueue; label: string }[] = [
+  { key: "TOTAL", label: "Company total (all queues)" },
   { key: "EXTRACTION", label: "EWYS Queue" },
   { key: "POA", label: "POA Queue" },
   { key: "ENCORD", label: "Encord" },
@@ -54,7 +55,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 export function OnfidoManpowerPlanSheet({ open, onOpenChange, canEdit }: { open: boolean; onOpenChange: (v: boolean) => void; canEdit: boolean }) {
   const qc = useQueryClient();
   const plan = usePlanRecords();
-  const [queue, setQueue] = useState<PlanQueue>("EXTRACTION");
+  const [queue, setQueue] = useState<PlanQueue>("TOTAL");
   const [effectiveFrom, setEffectiveFrom] = useState(todayIso());
   const [approved, setApproved] = useState("");
   const [active, setActive] = useState("");
@@ -78,9 +79,9 @@ export function OnfidoManpowerPlanSheet({ open, onOpenChange, canEdit }: { open:
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="onfido-central-theme oc-sheet w-full overflow-y-auto sm:max-w-2xl">
         <SheetHeader>
-          <SheetTitle className="!text-[color:var(--text)]">Approved headcount by queue</SheetTitle>
+          <SheetTitle className="!text-[color:var(--text)]">Approved headcount</SheetTitle>
           <SheetDescription className="!text-[color:var(--muted)]">
-            Required HC = Approved HC x 120%. A value applies from its effective date until the next one for the same queue.
+            Required HC = Approved HC x 120%. Enter one company-wide total, or a figure per queue. A value applies from its effective date until the next one for the same queue; a company total, when entered, is used for Buffer % and Shortfall.
           </SheetDescription>
         </SheetHeader>
 

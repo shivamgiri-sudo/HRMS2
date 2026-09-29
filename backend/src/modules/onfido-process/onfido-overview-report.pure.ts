@@ -130,8 +130,12 @@ export const QUEUE_LABELS: Record<ProcessQueue, string> = {
   ENCORD: "Encord",
 };
 
+/** A plan row is per queue, or one company-wide "TOTAL" approved figure for the whole floor. */
+export type PlanQueue = ProcessQueue | "TOTAL";
+export const PLAN_QUEUES: readonly PlanQueue[] = [...PROCESS_QUEUES, "TOTAL"];
+
 export interface ManpowerPlanRow {
-  processQueue: ProcessQueue;
+  processQueue: PlanQueue;
   /** YYYY-MM-DD */
   effectiveFrom: string;
   approvedHc: number;
@@ -141,7 +145,7 @@ export interface ManpowerPlanRow {
 /** The plan row in force on `day`: the latest effective_from on or before it. */
 export function planAsOf(
   rows: readonly ManpowerPlanRow[],
-  queue: ProcessQueue,
+  queue: PlanQueue,
   day: string,
 ): ManpowerPlanRow | null {
   let best: ManpowerPlanRow | null = null;
@@ -157,11 +161,14 @@ export function queuesMissingPlan(
   rows: readonly ManpowerPlanRow[],
   day: string,
 ): ProcessQueue[] {
+  // A company-wide total covers every queue, so none is "missing".
+  if (planAsOf(rows, "TOTAL", day) !== null) return [];
   return PROCESS_QUEUES.filter((q) => planAsOf(rows, q, day) === null);
 }
 
 /**
- * Total approved HC on `day`: the sum over the three queues, but only once every queue has an
+ * Total approved HC on `day`: a company-wide TOTAL entry if one is in force, otherwise the sum
+ * over the three queues, but only once every queue has an
  * entry (0 is a valid entry for a queue with no approved staff). A partial sum would be set
  * against the whole floor's Active HC and show a false shortfall, so it stays null instead.
  */
@@ -169,6 +176,9 @@ export function totalApprovedAsOf(
   rows: readonly ManpowerPlanRow[],
   day: string,
 ): number | null {
+  // An explicit company-wide total wins over the per-queue sum.
+  const total = planAsOf(rows, "TOTAL", day);
+  if (total !== null) return total.approvedHc;
   if (queuesMissingPlan(rows, day).length > 0) return null;
   return PROCESS_QUEUES.reduce(
     (sum, q) => sum + (planAsOf(rows, q, day)?.approvedHc ?? 0),

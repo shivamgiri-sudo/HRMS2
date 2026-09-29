@@ -4,6 +4,23 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-09-30 (later) — Company-wide Approved HC (181) + Audit Sampling paging
+
+**Method:** temporary Vite harness (mocked API, 250 audit rows, canEdit=true), headless Playwright Chromium; migration 1917 on a throwaway `mysql:8`.
+
+| Check | Result |
+|---|---|
+| Audit Sampling | 100 rows per page ("Showing 1-100 of 250", Page x / 3, Next disabled on last page: 50 rows) |
+| Audit Sampling Excel export | One "Audit Sampling" sheet with **all 250 rows** (252 rows incl. title + header), not just the visible page |
+| Manage approved HC | Queue list now starts with "Company total (all queues)" (default); Save sends `{processQueue:"TOTAL", approvedHc:"181"}` |
+| Migration 1917 | Appends `TOTAL` to the ENUM, existing POA row untouched, TOTAL upsert is idempotent (one row) |
+| Logic (unit tests) | 181 approved vs 199 active -> required 217.2, buffer 9.9%, shortfall 18.2; TOTAL wins over per-queue sum; not in force before its effective date |
+| Console / page errors | None |
+
+**Note:** the sheet's default "Effective from" is today; the dashboard reads approved HC as of the last day with data (31-Aug-2026 today), so the value must be effective on or before that date.
+
+---
+
 ## 2026-09-30 — LIVE production verification (https://mcnhrms.teammas.in, deploy of `bfe2d20`)
 
 **Method:** logged in as a real Manager user in headless Playwright Chromium; Process Operations -> Onfido; GET-only (no uploads, no saves). Session cookies deleted afterwards; credentials not stored.

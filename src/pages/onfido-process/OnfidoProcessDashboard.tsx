@@ -7,7 +7,8 @@ import {
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Trophy, UserCheck, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { OnfidoExportButton } from "./OnfidoExportButton";
+import type { ExcelSheetSpec } from "@/lib/dashboardExcelExport";
+import { ExportSheetContext, OnfidoExportButton, useRegisterExportSheet } from "./OnfidoExportButton";
 import OnfidoOutliersView from "./OnfidoOutliersView";
 import OnfidoFreshnessStrip from "./OnfidoFreshnessStrip";
 import { useHierarchyFilters } from "./useHierarchyFilters";
@@ -4520,6 +4521,8 @@ type DateRange = { from: string; to: string };
 
 // ── Audit Sampling View ────────────────────────────────────────────────────────
 
+const AUDIT_PAGE_SIZE = 100;
+
 interface AuditSamplingRow {
   client: string; documentType: string; taskType: string;
   totalAudited: number; errors: number; errPct: number | null; avgAht: number | null;
@@ -4548,6 +4551,23 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
   const docTypes = [...new Set(rows.map((r) => r.documentType))].sort();
 
   const filtered = rows.filter((r) => (!clientFilter || r.client === clientFilter) && (!docTypeFilter || r.documentType === docTypeFilter));
+
+  // The API returns one row per client x document type x task type (thousands). Render a page at a
+  // time; the Excel export still gets every filtered row through the export registry.
+  const [page, setPage] = useState(0);
+  useEffect(() => { setPage(0); }, [range.from, range.to, tlFilter, amFilter, granularity, queueFilter, clientFilter, docTypeFilter]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / AUDIT_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows = filtered.slice(safePage * AUDIT_PAGE_SIZE, (safePage + 1) * AUDIT_PAGE_SIZE);
+  const exportSheet = useMemo<ExcelSheetSpec | null>(() => (filtered.length === 0 ? null : {
+    name: "Audit Sampling",
+    title: "Audit Sampling — DOC Check & POA",
+    rows: filtered.map((r) => ({
+      "Client": r.client, "Document Type": r.documentType, "Task Type": r.taskType,
+      "Audited": r.totalAudited, "Errors": r.errors, "Error %": r.errPct, "Avg AHT (s)": r.avgAht,
+    })),
+  }), [filtered]);
+  useRegisterExportSheet(exportSheet);
 
   const errC = (v: number | null) => qualityPctStyle(v);
 
@@ -4598,7 +4618,7 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
         {!q.isLoading && filtered.length === 0 && <div style={{ padding: "40px 0", textAlign: "center", color: "var(--muted)", fontSize: 13 }}>No audit data in this range.</div>}
         {filtered.length > 0 && (
           <div style={{ overflowX: "auto", marginTop: 12 }}>
-            <table className="oc-table">
+            <table className="oc-table" data-export-skip="true">
               <thead>
                 <tr>
                   <th>Client</th>
@@ -4611,7 +4631,7 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r, i) => (
+                {pageRows.map((r, i) => (
                   <tr key={i}>
                     <td>{r.client}</td>
                     <td>{r.documentType}</td>
@@ -4624,6 +4644,16 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
                 ))}
               </tbody>
             </table>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
+              <span>
+                Showing {(safePage * AUDIT_PAGE_SIZE + 1).toLocaleString("en-IN")}–{Math.min((safePage + 1) * AUDIT_PAGE_SIZE, filtered.length).toLocaleString("en-IN")} of {filtered.length.toLocaleString("en-IN")} rows · Export (Excel) includes all of them
+              </span>
+              <span className="oc-pillbar">
+                <button type="button" className="oc-pill-btn" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>Previous</button>
+                <span style={{ alignSelf: "center", padding: "0 8px" }}>Page {safePage + 1} / {pageCount}</span>
+                <button type="button" className="oc-pill-btn" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>Next</button>
+              </span>
+            </div>
           </div>
         )}
       </div>
@@ -4770,6 +4800,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
   const Shell = embedded ? Fragment : DashboardLayout;
   const [view, setView] = useState<ViewKey>("overview");
   const exportRef = useRef<HTMLDivElement>(null);
+  const exportSheets = useRef<Map<string, ExcelSheetSpec>>(new Map());
   const [range, setRange] = useState(defaultRange());
   const { tlFilter, setTlFilter, amFilter, setAmFilter, analystFilter, setAnalystFilter, tlOptions, amOptions, analystOptions, clear: clearHierarchy } = useHierarchyFilters(range);
   const [activeTable, setActiveTable] = useState<string>("ONFIDO_DOC_RAW");
@@ -4850,6 +4881,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           )}
 
           <OnfidoFreshnessStrip />
+          <ExportSheetContext.Provider value={exportSheets}>
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <OnfidoExportButton targetRef={exportRef} filename={`onfido_${view}`} label="Export (Excel)" />
           </div>
@@ -4882,6 +4914,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
 
           {view === "overview" && <OnfidoOverviewReport range={range} tlFilter={tlFilter} amFilter={amFilter} />}
           </div>
+          </ExportSheetContext.Provider>
         </div>
 
         <RecordDrawer
