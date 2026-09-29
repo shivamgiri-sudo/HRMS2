@@ -166,9 +166,7 @@ const KNOWN_GAPS: Record<string, string> = {
 
   // ── Collections module — routes implemented 2026-09-29; stale entries removed ──
   // All collections/process-performance routes were built by another session and are
-  // now served. Only /bulk-upload/coverage remains unimplemented.
-  "GET /api/bulk-upload/coverage":
-    "Collections: UploadCoverage.tsx calls /coverage to fetch upload coverage stats; backend endpoint not yet implemented.",
+  // now served, including /bulk-upload/coverage (tausif-mis merge, 2026-09-30).
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
