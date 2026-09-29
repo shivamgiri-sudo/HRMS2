@@ -954,7 +954,11 @@
     "1902_process_target_override.sql",
     "migrations/1903_noc_case_override_document.sql",
     "1903_process_manual_agent.sql",
-    "1904_process_details_page_access.sql"
+    "1904_process_details_page_access.sql",
+    "1905_employee_attrition_fields.sql",
+    "1906_attendance_data_fixes.sql",
+    "1907_skill_roadmap_fk_fix.sql",
+    "1908_backfill_esi_docs_vault.sql"
   ],
   "approvedDeletions": [
     {
