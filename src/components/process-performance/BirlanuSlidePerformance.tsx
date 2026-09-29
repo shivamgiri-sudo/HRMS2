@@ -65,6 +65,10 @@ const closerGetter = (c: CloserRow, key: string) => CLOSER_COLS.find((x) => x.ke
 
 export function BirlanuSlidePerformance({ data, open }: { data: BirlanuMis; open: (s: DrawerSpec) => void }) {
   const { months, total, callingSplit, closers, closerMonth } = data.performance;
+  const snapFilters = useColumnFilters(months, SNAP_FILTER_COLS);
+  const { sorted: snapRows, sortKey: snapSortKey, sortDir: snapSortDir, toggleSort: snapToggleSort } = useSortableRows(snapFilters.filtered, snapGetter);
+  const closerFilters = useColumnFilters(closers, CLOSER_FILTER_COLS);
+  const { sorted: closerRows, sortKey: closerSortKey, sortDir: closerSortDir, toggleSort: closerToggleSort } = useSortableRows(closerFilters.filtered, closerGetter);
   if (months.length === 0) return <Empty />;
   const latest = months[months.length - 1];
   const prev: PerfMonth | undefined = months.length > 1 ? months[months.length - 2] : undefined;
@@ -96,10 +100,6 @@ export function BirlanuSlidePerformance({ data, open }: { data: BirlanuMis; open
   const donutTotal = donut[0].value + donut[1].value;
   const closerTotal = closers.reduce((a, c) => a + c.lc, 0);
 
-  const snapFilters = useColumnFilters(months, SNAP_FILTER_COLS);
-  const { sorted: snapRows, sortKey: snapSortKey, sortDir: snapSortDir, toggleSort: snapToggleSort } = useSortableRows(snapFilters.filtered, snapGetter);
-  const closerFilters = useColumnFilters(closers, CLOSER_FILTER_COLS);
-  const { sorted: closerRows, sortKey: closerSortKey, sortDir: closerSortDir, toggleSort: closerToggleSort } = useSortableRows(closerFilters.filtered, closerGetter);
 
   return (
     <div className="space-y-3">

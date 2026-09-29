@@ -678,7 +678,7 @@ const MIGRATION_MANIFEST: string[] = [
   // being LABELLED in the way that made users read it as cost-centre headcount â€" which is
   // the confusion the rename exists to remove.
   //
-  // âš  Adding it here means the rename applies on the next restart. That is the intent, but
+  // âš  Adding it here means the rename applies on the next restart. That is the intent, but
   // it is a user-visible label change: "Call Centre Headcount" -> "Call Centre (Dialer)
   // Headcount". Name only â€" report_code, query_key, category and permissions are untouched,
   // so every link, saved filter and role grant keeps working, and no row is deleted.
