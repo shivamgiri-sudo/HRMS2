@@ -1192,6 +1192,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1910_bla_bli_blu_sales_dashboard.sql", // Registered 2026-09-29. BLA/BLI/BLU (Bellavita Cart ABC / Inbound / Upgrade) Sales Dashboard: bla_dash_received upload and bla_dash_target config (Overall Sales is read from the existing bla_bli_blu_overall_sales_raw). Additive: new tables only.
   "migrations/1916_onfido_utilization_static_values.sql", // Registered 2026-09-30. Seven nullable fixed_* columns on onfido_utilization_daily_input so WFM can bulk-upload the Utilization calculated columns as static values instead of formulas; NULL falls back to the on-screen calculation. Purely additive ALTER ADD COLUMN.
   "migrations/1917_onfido_manpower_plan_total_queue.sql", // Registered 2026-09-30. Appends TOTAL to the onfido_manpower_plan.process_queue ENUM so one company-wide approved HC (181) can be entered; additive ENUM extension, existing rows untouched.
+  "migrations/1918_operations_command_indexes.sql", // Registered 2026-09-30. Operations Command dashboard: additive information_schema-guarded indexes (employees joining/exit dates, attendance date+branch/process and a covering attendance scan index, exit_request, kpi_daily_actual, break_daily_summary, employee_warning, pip_record, job_requisition, wfm_attendance_session, wfm_slot_requirement, process_metric_employee_actual). No data changes.
 ];
 
 export type MigrationHealth = {

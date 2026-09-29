@@ -1056,8 +1056,10 @@ app.use("/api/operations", operationsLiveRouter);
 // name-resolved API per domain. See docs/superpowers/specs/2026-08-04-unified-quality-operations-dashboards-design.md
 import qualityDashboardV2Router from "./modules/quality-dashboard/quality-dashboard-v2.routes.js";
 import operationsDashboardV2Router from "./modules/operations/operations-dashboard-v2.routes.js";
+import opsCommandRouter from "./modules/operations/ops-command.routes.js";
 app.use("/api/quality-dashboard-v2", qualityDashboardV2Router);
 app.use("/api/operations-dashboard-v2", operationsDashboardV2Router);
+app.use("/api/operations-command", opsCommandRouter);
 
 import { policyEngineRouter } from "./modules/policy-engine/policy-engine.routes.js";
 app.use("/api/policy-engine", policyEngineRouter);
