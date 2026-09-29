@@ -122,22 +122,29 @@ export async function requireAuth(
         isReadOnly = cached.isReadOnly;
         isRevoked = cached.isRevoked;
       } else {
-        try {
-          const ctx = await getUserRoleContext(mysqlUser.id);
-          resolvedRole = ctx.primaryRole;
-          resolvedRoleKeys = ctx.roleKeys;
-        } catch {
-          // Non-fatal — role stays undefined; requireRole middleware falls back to DB lookup
+        // The three lookups are independent, so they run concurrently on a cache miss.
+        // Each keeps its own failure handling: role context and read-only fall back to
+        // their defaults, and isAccountRevoked already fails open internally.
+        const [roleCtx, readOnlyFlag, revoked] = await Promise.all([
+          getUserRoleContext(mysqlUser.id).catch(() => null),
+          (async () => {
+            try {
+              const { db } = await import('../db/mysql.js');
+              const [rows] = await db.execute<import('mysql2').RowDataPacket[]>(
+                'SELECT is_read_only FROM auth_user WHERE id = ? LIMIT 1',
+                [mysqlUser.id]
+              );
+              return Array.isArray(rows) && rows.length > 0 ? !!(rows[0] as ReadOnlyRow).is_read_only : false;
+            } catch { return false; }
+          })(),
+          isAccountRevoked(mysqlUser.id),
+        ]);
+        if (roleCtx) {
+          resolvedRole = roleCtx.primaryRole;
+          resolvedRoleKeys = roleCtx.roleKeys;
         }
-        try {
-          const { db } = await import('../db/mysql.js');
-          const [rows] = await db.execute<import('mysql2').RowDataPacket[]>(
-            'SELECT is_read_only FROM auth_user WHERE id = ? LIMIT 1',
-            [mysqlUser.id]
-          );
-          isReadOnly = Array.isArray(rows) && rows.length > 0 ? !!(rows[0] as ReadOnlyRow).is_read_only : false;
-        } catch { /* keep false */ }
-        isRevoked = await isAccountRevoked(mysqlUser.id);
+        isReadOnly = readOnlyFlag;
+        isRevoked = revoked;
         setCachedAuthContext(mysqlUser.id, resolvedRole, isReadOnly, isRevoked, resolvedRoleKeys);
       }
 

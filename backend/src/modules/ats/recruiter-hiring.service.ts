@@ -543,26 +543,29 @@ async function getOptionLists(keys: string[], defaults: Record<string, string[]>
 }
 
 async function buildActivityActorContext(actorUserId: string): Promise<ActivityActorContext> {
-  const recruiterProfile = await resolveRecruiterForActor(actorUserId).catch((err: unknown) => {
-    // Re-throw hard DB/connection errors; swallow only "not found" misses
-    if (err && typeof err === "object" && ("fatal" in err || "code" in err)) {
-      const e = err as { fatal?: boolean; code?: string };
-      if (e.fatal || (e.code && e.code !== "ER_NO_ROWS_FOUND")) throw err;
-    }
-    return null;
-  });
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-        e.id AS employee_id,
-        e.employee_code,
-        COALESCE(NULLIF(e.full_name, ''), TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')))) AS employee_name,
-        COALESCE(b.branch_name, b.branch_code, e.branch_id) AS branch_name
-       FROM employees e
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-      WHERE e.user_id = ?
-      LIMIT 1`,
-    [actorUserId]
-  );
+  // The recruiter-roster lookup and the employee lookup do not depend on each other — issued together.
+  const [recruiterProfile, [rows]] = await Promise.all([
+    resolveRecruiterForActor(actorUserId).catch((err: unknown) => {
+      // Re-throw hard DB/connection errors; swallow only "not found" misses
+      if (err && typeof err === "object" && ("fatal" in err || "code" in err)) {
+        const e = err as { fatal?: boolean; code?: string };
+        if (e.fatal || (e.code && e.code !== "ER_NO_ROWS_FOUND")) throw err;
+      }
+      return null;
+    }),
+    db.execute<RowDataPacket[]>(
+      `SELECT
+          e.id AS employee_id,
+          e.employee_code,
+          COALESCE(NULLIF(e.full_name, ''), TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')))) AS employee_name,
+          COALESCE(b.branch_name, b.branch_code, e.branch_id) AS branch_name
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+        WHERE e.user_id = ?
+        LIMIT 1`,
+      [actorUserId]
+    ),
+  ]);
   const employee = rows[0] ?? {};
   const branchName = text(recruiterProfile?.branch) ?? text(employee.branch_name) ?? "Unmapped";
   const recruiterName =
@@ -902,7 +905,7 @@ export async function listHiringActivity(userId: string, role: string | undefine
     : Math.min(Math.max(1, Math.trunc(Number(filters.limit) || 50)), 100);
   const offset = (page - 1) * limit;
 
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const rowsPromise = db.execute<RowDataPacket[]>(
     `SELECT arha.*,
             ac.profile_status   AS linked_profile_status,
             ac.final_decision   AS linked_final_decision,
@@ -916,12 +919,14 @@ export async function listHiringActivity(userId: string, role: string | undefine
       LIMIT ${limit} OFFSET ${offset}`,
     params
   );
-  const [count] = await db.execute<CountRow[]>(
+  const countPromise = db.execute<CountRow[]>(
     `SELECT COUNT(*) AS total
        FROM ats_recruiter_hiring_activity
       WHERE ${sql}`,
     params
   );
+  // Rows and total are independent reads — issue them concurrently.
+  const [[rows], [count]] = await Promise.all([rowsPromise, countPromise]);
 
   return {
     data: rows,
@@ -1477,8 +1482,8 @@ async function applyActivityFilters(filters: HiringFilters, scopedOnly: boolean,
   return { sql, params };
 }
 
-async function aggregateBy(column: string, filters: HiringFilters, scopedOnly: boolean, userId?: string) {
-  const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
+async function aggregateBy(column: string, resolved: { sql: string; params: unknown[] }) {
+  const { sql, params } = resolved; // resolved once by the caller, not per breakdown
   const F = funnelPredicates("");
   const [rows] = await db.execute<DashboardGroupRow[]>(
     // Two corrections against the headline summary:
@@ -1507,6 +1512,17 @@ export async function getHiringDashboard(userId: string, role: string | undefine
   const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
   // Same funnel definitions as the Analytics tab — see funnelPredicates().
   const F = funnelPredicates("");
+  // The summary and the four breakdowns are independent reads over the same filter, so they
+  // run concurrently rather than one after the other.
+  const resolvedFilters = { sql, params };
+  const breakdownsPromise = Promise.all([
+    aggregateBy("recruiter_name_snapshot", resolvedFilters),
+    aggregateBy("hiring_source", resolvedFilters),
+    aggregateBy("process_name", resolvedFilters),
+    aggregateBy("branch_name", resolvedFilters),
+  ]);
+  // Avoid an unhandled rejection if the summary query throws first.
+  breakdownsPromise.catch(() => undefined);
   const [summary] = await db.execute<DashboardSummaryRow[]>(
     `SELECT
         COUNT(*) AS total_records,
@@ -1564,12 +1580,7 @@ export async function getHiringDashboard(userId: string, role: string | undefine
   metrics.recruiter_inactive_count = Math.max(0, metrics.recruiters_in_scope - metrics.active_recruiters);
   metrics.contacted_pct = metrics.total_records ? Math.round((metrics.total_contacted / metrics.total_records) * 1000) / 10 : 0;
 
-  const [byRecruiter, bySource, byProcess, byBranch] = await Promise.all([
-    aggregateBy("recruiter_name_snapshot", filters, scopedOnly, userId),
-    aggregateBy("hiring_source", filters, scopedOnly, userId),
-    aggregateBy("process_name", filters, scopedOnly, userId),
-    aggregateBy("branch_name", filters, scopedOnly, userId),
-  ]);
+  const [byRecruiter, bySource, byProcess, byBranch] = await breakdownsPromise;
 
   return { metrics, byRecruiter, bySource, byProcess, byBranch };
 }
@@ -2396,47 +2407,57 @@ export async function listFollowups(opts: {
   else if (window === "week") base.push("arha.followup_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)");
   const where = base.join(" AND ");
 
-  const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COALESCE(SUM(arha.followup_date <  CURDATE()), 0) AS overdue,
-       COALESCE(SUM(arha.followup_date =  CURDATE()), 0) AS today,
-       COALESCE(SUM(arha.followup_date >  CURDATE()
-                AND arha.followup_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)), 0) AS upcoming7,
-       COUNT(*) AS total
-     FROM ats_recruiter_hiring_activity arha
-     WHERE arha.followup_required = 1
-       AND arha.followup_date IS NOT NULL
-       AND ${scoped.sql}`,
-    scoped.params,
-  );
-
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT arha.id,
-            arha.candidate_name,
-            arha.mobile,
-            arha.process_name,
-            arha.position_name,
-            arha.branch_name,
-            arha.recruiter_name_snapshot,
-            arha.recruiter_remarks,
-            DATE_FORMAT(arha.activity_date, '%Y-%m-%d')   AS activity_date,
-            DATE_FORMAT(arha.followup_date, '%Y-%m-%d')   AS followup_date,
-            arha.followup_reason,
-            DATEDIFF(CURDATE(), arha.followup_date)       AS days_overdue,
-            arha.followup_call_outcome                    AS last_call_outcome,
-            DATE_FORMAT(arha.followup_call_date, '%Y-%m-%d') AS last_call_date,
-            (SELECT COUNT(*) FROM ats_recruiter_hiring_activity a2
-              WHERE a2.followup_of_activity_id = arha.id)  AS attempts
+  // The counts, the page of rows and the server date are independent reads — issued together.
+  const [[countRows], [rows], [todayRow]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         COALESCE(SUM(arha.followup_date <  CURDATE()), 0) AS overdue,
+         COALESCE(SUM(arha.followup_date =  CURDATE()), 0) AS today,
+         COALESCE(SUM(arha.followup_date >  CURDATE()
+                  AND arha.followup_date <= DATE_ADD(CURDATE(), INTERVAL 7 DAY)), 0) AS upcoming7,
+         COUNT(*) AS total
        FROM ats_recruiter_hiring_activity arha
-      WHERE ${where}
-      ORDER BY arha.followup_date ASC, arha.created_at ASC
-      LIMIT ${limit} OFFSET ${offset}`,
-    [...scoped.params, ...scoped.params],
-  );
-
-  const [todayRow] = await db.execute<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS server_today`,
-  );
+       WHERE arha.followup_required = 1
+         AND arha.followup_date IS NOT NULL
+         AND ${scoped.sql}`,
+      scoped.params,
+    ),
+    db.execute<RowDataPacket[]>(
+      // `attempts` is a grouped derived table joined once, not a correlated COUNT(*) per row:
+      // followup_of_activity_id has no index, so the correlated form scanned all ~45k
+      // activity rows once for every row on the page. The derived table is one scan and is
+      // unique per key, so it cannot change the row count, order or LIMIT.
+      `SELECT arha.id,
+              arha.candidate_name,
+              arha.mobile,
+              arha.process_name,
+              arha.position_name,
+              arha.branch_name,
+              arha.recruiter_name_snapshot,
+              arha.recruiter_remarks,
+              DATE_FORMAT(arha.activity_date, '%Y-%m-%d')   AS activity_date,
+              DATE_FORMAT(arha.followup_date, '%Y-%m-%d')   AS followup_date,
+              arha.followup_reason,
+              DATEDIFF(CURDATE(), arha.followup_date)       AS days_overdue,
+              arha.followup_call_outcome                    AS last_call_outcome,
+              DATE_FORMAT(arha.followup_call_date, '%Y-%m-%d') AS last_call_date,
+              COALESCE(att.attempts, 0)                     AS attempts
+         FROM ats_recruiter_hiring_activity arha
+         LEFT JOIN (
+           SELECT followup_of_activity_id, COUNT(*) AS attempts
+             FROM ats_recruiter_hiring_activity
+            WHERE followup_of_activity_id IS NOT NULL
+            GROUP BY followup_of_activity_id
+         ) att ON att.followup_of_activity_id = arha.id
+        WHERE ${where}
+        ORDER BY arha.followup_date ASC, arha.created_at ASC
+        LIMIT ${limit} OFFSET ${offset}`,
+      [...scoped.params, ...scoped.params],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS server_today`,
+    ),
+  ]);
 
   const c = (countRows as RowDataPacket[])[0] ?? {};
   return {

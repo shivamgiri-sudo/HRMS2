@@ -307,14 +307,25 @@ payrollProcessReadinessRouter.get(
         readiness_status: string;
       }> = [];
 
-      for (const scope of scopes) {
-        try {
-          const rec = await payrollBranchReadinessService.getOrRefresh(
-            month,
-            scope.branch_id,
-            scope.process_id
-          );
-          if (rec.readiness_status !== "ready") {
+      // Scopes are independent (distinct branch/process rows): refresh in small concurrent
+      // chunks, keeping scope order. A scope that fails to load is skipped, as before.
+      const SCOPE_CHUNK = 4;
+      for (let i = 0; i < scopes.length; i += SCOPE_CHUNK) {
+        const recs = await Promise.all(
+          scopes.slice(i, i + SCOPE_CHUNK).map(async (scope) => {
+            try {
+              return await payrollBranchReadinessService.getOrRefresh(
+                month,
+                scope.branch_id,
+                scope.process_id
+              );
+            } catch {
+              return null; // skip processes that fail to load
+            }
+          })
+        );
+        for (const rec of recs) {
+          if (rec && rec.readiness_status !== "ready") {
             pending.push({
               branch_id: rec.branch_id,
               process_id: rec.process_id,
@@ -324,8 +335,6 @@ payrollProcessReadinessRouter.get(
               readiness_status: rec.readiness_status,
             });
           }
-        } catch {
-          // skip processes that fail to load
         }
       }
 

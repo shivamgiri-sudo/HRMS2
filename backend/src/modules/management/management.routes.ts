@@ -12,11 +12,21 @@ import { PAYROLL_ROLES } from "../../platform/policy/roles.js";
 import { assertCanViewMember, getTeamMemberDeepDive, getTeamHygiene } from "./team-member.service.js";
 import { getManagerAttrition, getManagerShrinkage } from "./manager-attribution.service.js";
 import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
+import { TtlCache } from "../../shared/ttlCache.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 router.use(requireAuth);
+
+// The workforce dashboard fans out ~25 statements, several of which scan `employees`. Every
+// viewer with the same effective scope gets the same numbers, so they share one computation
+// per 30s window (same window as the dashboards /summary metrics cache), and concurrent
+// requests share the in-flight one — a cold cache no longer multiplies the fan-out by the
+// number of open tabs. Keyed on the RESOLVED scope, never on the user, so a narrower
+// entitlement can never be served a wider one's payload.
+const WORKFORCE_DASHBOARD_TTL_MS = 30_000;
+export const workforceDashboardCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: WORKFORCE_DASHBOARD_TTL_MS });
 
 /**
  * Whether the caller may see salary, PF/ESIC and payroll cost figures.
@@ -175,7 +185,12 @@ router.get("/workforce-dashboard", requireRole("admin", "payroll", "payroll_hr",
   const branchIds = requested(req.query.branchId, scope.branchIds) ?? scope.branchIds;
   const processIds = requested(req.query.processId, scope.processIds) ?? scope.processIds;
 
-  res.json({ data: await managementService.getWorkforceDashboard(branchIds, processIds, scope.level) });
+  const cacheKey = `workforce:${scope.level}:${branchIds.join(",")}:${processIds.join(",")}`;
+  const { value } = await workforceDashboardCache.getOrCompute(
+    cacheKey,
+    () => managementService.getWorkforceDashboard(branchIds, processIds, scope.level),
+  );
+  res.json({ data: value });
 }));
 
 router.get("/system-dashboard", requireRole("admin", "super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
@@ -313,7 +328,7 @@ router.get("/team-overview", requireRoleOrDirectReports("admin", "hr", "manager"
 
   const today = new Date().toISOString().slice(0, 10);
 
-  const [headcountRows, attendanceRows, kpiRows, salaryRows] = await Promise.all([
+  const [headcountRows, attendanceRows, kpiRows, salaryRows, canSeePayroll] = await Promise.all([
     // Fast headcount — simple COUNT with index on active_status
     db.execute<any[]>(
       `SELECT COUNT(*) AS headcount FROM employees e WHERE e.active_status = 1 AND LOWER(COALESCE(e.employment_status,'active')) = 'active' ${empClause}`,
@@ -335,7 +350,8 @@ router.get("/team-overview", requireRoleOrDirectReports("admin", "hr", "manager"
       `SELECT ROUND(AVG(kda.actual_value), 1) AS avg_kpi
        FROM kpi_daily_actual kda
        JOIN employees e ON e.id = kda.employee_id
-       WHERE DATE_FORMAT(kda.score_date,'%Y-%m') = DATE_FORMAT(CURDATE(),'%Y-%m')
+       WHERE kda.score_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')
+         AND kda.score_date < DATE_ADD(DATE_FORMAT(CURDATE(),'%Y-%m-01'), INTERVAL 1 MONTH)
          AND e.active_status = 1 ${empClause}`,
       empParams
     ),
@@ -356,11 +372,11 @@ router.get("/team-overview", requireRoleOrDirectReports("admin", "hr", "manager"
           ${empClause}`,
       empParams
     ),
+    // Even correctly scoped, salary cost is payroll data — withhold it from roles that
+    // are on this route but outside PAYROLL_ROLES (manager, branch_head, process_manager, hr).
+    // Independent of the four reads above, so it runs with them.
+    callerHasPayrollAccess(req.authUser!.id),
   ]);
-
-  // Even correctly scoped, salary cost is payroll data — withhold it from roles that
-  // are on this route but outside PAYROLL_ROLES (manager, branch_head, process_manager, hr).
-  const canSeePayroll = await callerHasPayrollAccess(req.authUser!.id);
 
   const headcount = Number(headcountRows[0][0]?.headcount ?? 0);
   const att = attendanceRows[0][0] ?? {};

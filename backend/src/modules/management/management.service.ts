@@ -19,6 +19,7 @@ import {
 } from "../../shared/attendanceStatus.js";
 import { PENDENCY_CUTOFF_DATE } from "../dashboards/pendency-cutoff.js";
 import type { Request } from "express";
+import { TtlCache } from "../../shared/ttlCache.js";
 
 function numberValue(value: unknown): number {
   const parsed = Number(value ?? 0);
@@ -35,6 +36,153 @@ function monthKeys(monthCount: number): string[] {
   }
 
   return months;
+}
+
+const SYSTEM_DASHBOARD_TTL_MS = 45_000;
+const systemDashboardCache = new TtlCache<Awaited<ReturnType<typeof loadSystemDashboardRows>>>({
+  maxEntries: 4,
+  defaultTtlMs: SYSTEM_DASHBOARD_TTL_MS,
+});
+
+/** Test seam: forget the cached system-dashboard rows. */
+export function resetSystemDashboardCacheForTest(): void {
+  systemDashboardCache.clear();
+}
+
+/**
+ * One row per module for the "system health" table: how many rows the module's table holds,
+ * when it last changed, and how many errors it reports.
+ *
+ * Deliberately NOT filtered by record_type, unlike the candidate-pipeline counts elsewhere in
+ * this file. This reports how many ROWS each module's table holds (a data-volume/activity
+ * metric sitting beside salary_prep_run, leave_request and attendance_daily_record row
+ * counts) — not how many genuine candidates exist. The 29,926 legacy employee rows are real
+ * rows in this table and belong in a row count; excluding them here would make "ATS records"
+ * disagree with the table it names.
+ *
+ * This used to be ONE six-arm UNION ALL, which MySQL executes arm after arm on a single
+ * connection — attendance_daily_record (175k rows) and kpi_daily_actual (82k) are full
+ * clustered scans, so the whole statement cost the SUM of six scans. The arms are
+ * independent; they now run as six concurrent statements and are reassembled in the
+ * original order, so the response is unchanged.
+ */
+async function loadModuleActivityRows(): Promise<RowDataPacket[]> {
+  const [ats, payroll, leave, attendance, integration, kpi] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
+         FROM ats_candidate`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'Payroll' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity,
+              SUM(status = 'failed') AS error_count
+         FROM salary_prep_run`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'Leave' AS module_name, COUNT(*) AS record_count, MAX(COALESCE(applied_at, created_at)) AS last_activity,
+              0 AS error_count
+         FROM leave_request`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'Attendance' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity,
+              0 AS error_count
+         FROM attendance_daily_record`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'Integration Hub' AS module_name, COUNT(*) AS record_count, MAX(completed_at) AS last_activity,
+              SUM(status = 'failed' AND started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS error_count
+         FROM integration_connector_run`
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT 'KPI' AS module_name, COUNT(*) AS record_count, MAX(created_at) AS last_activity,
+              0 AS error_count
+         FROM kpi_daily_actual`
+    ),
+  ]);
+  return [ats, payroll, leave, attendance, integration, kpi].flatMap(([rows]) => rows);
+}
+
+async function loadSystemDashboardRows() {
+  const [
+      usersRows,
+      employeeRows,
+      roleRows,
+      pageRows,
+      integrationRows,
+      twoFaRows,
+      moduleRowList,
+      activityRows,
+      branchCountRows,
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
+      db.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND date_of_joining <= CURDATE()"
+      ),
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM workforce_role_catalog WHERE active_status = 1"),
+      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM page_catalog"),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(*) AS configured,
+           SUM(active_status = 1) AS active
+         FROM integration_config`
+      ),
+      // auth_user has no 2FA column at all — two-factor is not implemented, so
+      // this cannot be counted. It used to fall into `.catch(() => 0)`, which
+      // rendered as "0 users without 2FA", i.e. the strongest possible security
+      // reassurance produced by a query that had never run. null so the tile
+      // reads as unavailable rather than as good news.
+      ifObjectExists(
+        columnExists("auth_user", "two_fa_enabled"),
+        () =>
+          db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`
+          ).catch(() => [[{ count: null }]] as any),
+        [[{ count: null }]] as any,
+      ),
+      loadModuleActivityRows(),
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           sal.id,
+           LOWER(sal.module_key) AS type,
+           COALESCE(au.email, 'System') AS user,
+           REPLACE(LOWER(sal.action_type), '_', ' ') AS action,
+           sal.acted_at AS timestamp,
+           'success' AS status
+         FROM sensitive_action_log sal
+         LEFT JOIN auth_user au ON au.id = sal.actor_user_id
+         ORDER BY sal.acted_at DESC
+         LIMIT 12`
+      ),
+      db.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS count FROM branch_master WHERE active_status = 1"
+      ).catch(() => [[{ count: null }]] as any),
+    ]);
+  return {
+    usersRows,
+    employeeRows,
+    roleRows,
+    pageRows,
+    integrationRows,
+    twoFaRows,
+    moduleRows: [moduleRowList] as [RowDataPacket[]],
+    activityRows,
+    branchCountRows,
+  };
+}
+
+/**
+ * kda.score_date month filter. A valid YYYY-MM becomes a half-open range so an index on
+ * score_date is usable (same rows as DATE_FORMAT(score_date,'%Y-%m') = period); any other
+ * value keeps the original predicate so odd input behaves exactly as before.
+ */
+export function pushScoreMonthCond(conds: string[], params: unknown[], period: string): void {
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+    const first = `${period}-01`;
+    conds.push("kda.score_date >= ? AND kda.score_date < DATE_ADD(?, INTERVAL 1 MONTH)");
+    params.push(first, first);
+    return;
+  }
+  conds.push("DATE_FORMAT(kda.score_date, '%Y-%m') = ?");
+  params.push(period);
 }
 
 export const managementService = {
@@ -70,7 +218,7 @@ export const managementService = {
       params.push(...filters.employee_ids);
     }
     const period = filters.period ?? new Date().toISOString().slice(0, 7);
-    conds.push("DATE_FORMAT(kda.score_date, '%Y-%m') = ?"); params.push(period);
+    pushScoreMonthCond(conds, params, period);
 
     // Previous period for trend calculation
     const prevDate = new Date(period + "-01");
@@ -121,8 +269,9 @@ export const managementService = {
     const prevScoreMap: Record<string, number> = {};
 
     if (empIds.length > 0) {
-      const prevConds: string[] = ["e.active_status = 1", "DATE_FORMAT(kda.score_date, '%Y-%m') = ?"];
-      const prevParams: unknown[] = [prevPeriod];
+      const prevConds: string[] = ["e.active_status = 1"];
+      const prevParams: unknown[] = [];
+      pushScoreMonthCond(prevConds, prevParams, prevPeriod);
       const prevPlaceholders = empIds.map(() => "?").join(",");
       prevConds.push(`e.id IN (${prevPlaceholders})`);
       prevParams.push(...empIds);
@@ -443,7 +592,12 @@ export const managementService = {
   },
 
   async getSystemDashboard() {
-    const [
+    // The DB-backed part is identical for every caller (no per-user scope), so it is computed
+    // once per window and shared — with in-flight de-duplication, so a burst of Super Admin
+    // page loads (or a cold start) runs ONE set of table scans instead of one per request.
+    // uptime and generatedAt are still computed fresh below.
+    const { value: rows } = await systemDashboardCache.getOrCompute("system-dashboard", loadSystemDashboardRows);
+    const {
       usersRows,
       employeeRows,
       roleRows,
@@ -453,75 +607,7 @@ export const managementService = {
       moduleRows,
       activityRows,
       branchCountRows,
-    ] = await Promise.all([
-      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
-      db.execute<RowDataPacket[]>(
-        "SELECT COUNT(*) AS total FROM employees WHERE active_status = 1 AND date_of_joining <= CURDATE()"
-      ),
-      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM workforce_role_catalog WHERE active_status = 1"),
-      db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM page_catalog"),
-      db.execute<RowDataPacket[]>(
-        `SELECT
-           COUNT(*) AS configured,
-           SUM(active_status = 1) AS active
-         FROM integration_config`
-      ),
-      // auth_user has no 2FA column at all — two-factor is not implemented, so
-      // this cannot be counted. It used to fall into `.catch(() => 0)`, which
-      // rendered as "0 users without 2FA", i.e. the strongest possible security
-      // reassurance produced by a query that had never run. null so the tile
-      // reads as unavailable rather than as good news.
-      ifObjectExists(
-        columnExists("auth_user", "two_fa_enabled"),
-        () =>
-          db.execute<RowDataPacket[]>(
-            `SELECT COUNT(*) AS count FROM auth_user WHERE two_fa_enabled = 0 OR two_fa_enabled IS NULL`
-          ).catch(() => [[{ count: null }]] as any),
-        [[{ count: null }]] as any,
-      ),
-      db.execute<RowDataPacket[]>(
-        // Deliberately NOT filtered by record_type, unlike the candidate-pipeline counts
-        // elsewhere in this file. This UNION reports how many ROWS each module's table holds
-        // (a data-volume/activity metric sitting beside salary_prep_run, leave_request and
-        // attendance_daily_record row counts) — not how many genuine candidates exist. The
-        // 29,926 legacy employee rows are real rows in this table and belong in a row count;
-        // excluding them here would make "ATS records" disagree with the table it names.
-        `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
-           FROM ats_candidate
-         UNION ALL
-         SELECT 'Payroll', COUNT(*), MAX(updated_at), SUM(status = 'failed')
-           FROM salary_prep_run
-         UNION ALL
-         SELECT 'Leave', COUNT(*), MAX(COALESCE(applied_at, created_at)), 0
-           FROM leave_request
-         UNION ALL
-         SELECT 'Attendance', COUNT(*), MAX(updated_at), 0
-           FROM attendance_daily_record
-         UNION ALL
-         SELECT 'Integration Hub', COUNT(*), MAX(completed_at),
-                SUM(status = 'failed' AND started_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR))
-           FROM integration_connector_run
-         UNION ALL
-         SELECT 'KPI', COUNT(*), MAX(created_at), 0
-           FROM kpi_daily_actual`
-      ),
-      db.execute<RowDataPacket[]>(
-        `SELECT
-           sal.id,
-           LOWER(sal.module_key) AS type,
-           COALESCE(au.email, 'System') AS user,
-           REPLACE(LOWER(sal.action_type), '_', ' ') AS action,
-           sal.acted_at AS timestamp,
-           'success' AS status
-         FROM sensitive_action_log sal
-         LEFT JOIN auth_user au ON au.id = sal.actor_user_id
-         ORDER BY sal.acted_at DESC
-         LIMIT 12`
-      ),
-      db.execute<RowDataPacket[]>(
-        "SELECT COUNT(*) AS count FROM branch_master WHERE active_status = 1"
-      ).catch(() => [[{ count: null }]] as any),
-    ]);
+    } = rows;
 
     const modules = moduleRows[0].map((row) => {
       const recordCount = numberValue(row.record_count);
@@ -958,7 +1044,7 @@ export const managementService = {
          FROM branch_master b
          LEFT JOIN employees e ON e.branch_id = b.id AND e.active_status = 1 AND e.date_of_joining <= CURDATE()
          LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id
-           AND DATE(s.session_date) = CURDATE()
+           AND s.session_date = CURDATE()
            AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
          WHERE b.active_status = 1
          GROUP BY b.id, b.branch_name
@@ -973,7 +1059,8 @@ export const managementService = {
          FROM employees e
          LEFT JOIN leave_request lr ON lr.employee_id = e.id
            AND lr.status = 'approved'
-           AND YEAR(lr.start_date) = YEAR(CURDATE())
+           AND lr.start_date >= MAKEDATE(YEAR(CURDATE()), 1)
+           AND lr.start_date < MAKEDATE(YEAR(CURDATE()) + 1, 1)
          WHERE e.active_status = 1`
       ),
       // Manager-specific: expense claims, work items
@@ -1026,11 +1113,14 @@ export const managementService = {
       // and at that point this reports it. Document Compliance already omits expiry
       // for exactly this reason; the two panels now agree.
       db.execute<RowDataPacket[]>(
+        // NOT EXISTS + a bounded COUNT instead of two SUM()s over the whole table: with an index on
+        // expiry_date both probes are index-only (the old form read every one of ~209k rows to
+        // compute two aggregates). Same three outcomes — NULL when no row carries an expiry
+        // date (including an empty table), otherwise the number already expired.
         `SELECT
-           CASE WHEN SUM(expiry_date IS NOT NULL) = 0 THEN NULL
-                ELSE SUM(expiry_date IS NOT NULL AND expiry_date < CURDATE())
-           END AS count
-         FROM employee_documents`
+           CASE WHEN NOT EXISTS (SELECT 1 FROM employee_documents WHERE expiry_date IS NOT NULL) THEN NULL
+                ELSE (SELECT COUNT(*) FROM employee_documents WHERE expiry_date IS NOT NULL AND expiry_date < CURDATE())
+           END AS count`
       ).catch(() => [[{ count: null }]] as any),
       // Pending policy acknowledgements.
       //

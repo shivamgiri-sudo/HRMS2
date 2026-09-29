@@ -149,16 +149,16 @@ export async function getRosterView(
   const whereSql = where.join(' AND ');
 
   // Count distinct employees first so the page size means "employees", not "cells".
-  const [countRows] = await db.execute<RowDataPacket[]>(
+  // The count and the page query are independent, so run them concurrently (both are heavy).
+  const countPromise = db.execute<RowDataPacket[]>(
     `SELECT COUNT(DISTINCT e.id) AS n
        FROM wfm_roster_assignment ra
        JOIN employees e ON e.id = ra.employee_id
       WHERE ${whereSql}`,
     params
   );
-  const total = Number(countRows[0]?.n ?? 0);
 
-  const [rows] = await db.execute<RowDataPacket[]>(
+  const rowsPromise = db.execute<RowDataPacket[]>(
     `SELECT e.id                AS employee_id,
             e.employee_code     AS employee_code,
             e.full_name         AS employee_name,
@@ -200,6 +200,8 @@ export async function getRosterView(
       ORDER BY e.employee_code, ra.roster_date`,
     [...params, ...params]
   );
+  const [[countRows], [rows]] = await Promise.all([countPromise, rowsPromise]);
+  const total = Number(countRows[0]?.n ?? 0);
 
   // Collect employee IDs for attendance lookup
   const employeeIds = new Set<string>();

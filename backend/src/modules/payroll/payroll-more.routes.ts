@@ -13,6 +13,19 @@ import { payslipService } from "./payslip.service.js";
 import { computeForm16Data } from "./form16-data.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
+const QUEUE_REASON_LIST_MAX = 500;
+
+/**
+ * payroll_month is a DATE stored as YYYY-MM-01. A half-open range on the raw column can use an
+ * index; DATE_FORMAT(payroll_month, '%Y-%m') = ? cannot, and forced a full scan of the table.
+ * A malformed month matches nothing (as the old string compare did) instead of erroring.
+ */
+function pushMonthRange(conds: string[], params: unknown[], ym: string) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) { conds.push("1 = 0"); return; }
+  conds.push("(rq.payroll_month >= ? AND rq.payroll_month < DATE_ADD(?, INTERVAL 1 MONTH))");
+  params.push(`${ym}-01`, `${ym}-01`);
+}
+
 export const payrollMoreRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 payrollMoreRouter.use(requireAuth);
@@ -155,10 +168,14 @@ payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin"
   const conds: string[] = [];
   const params: unknown[] = [];
   if (status)        { conds.push("rq.status = ?");               params.push(status); }
-  if (payrollMonth)  { conds.push("DATE_FORMAT(rq.payroll_month, '%Y-%m') = ?"); params.push(payrollMonth); }
+  if (payrollMonth)  { pushMonthRange(conds, params, payrollMonth); }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT rq.*,
+    // Explicit columns, `reason` capped: it can be many KB and the grid shows it truncated
+    // anyway. Was `rq.*`, which dragged every full reason over the wire on each page load.
+    `SELECT rq.id, rq.employee_id, rq.run_id, rq.payroll_month, rq.source_event_type, rq.source_event_id,
+            LEFT(rq.reason, ${QUEUE_REASON_LIST_MAX}) AS reason,
+            rq.status, rq.requested_by, rq.requested_at, rq.processed_at, rq.error_message,
             COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
             e.employee_code
        FROM payroll_recalculation_queue rq
@@ -178,7 +195,7 @@ payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin"
   // so "Failed" could read 0/green while thousands of failed rows sat on other pages.
   const statusConds: string[] = [];
   const statusParams: unknown[] = [];
-  if (payrollMonth) { statusConds.push("DATE_FORMAT(rq.payroll_month, '%Y-%m') = ?"); statusParams.push(payrollMonth); }
+  if (payrollMonth) { pushMonthRange(statusConds, statusParams, payrollMonth); }
   const statusWhere = statusConds.length ? `WHERE ${statusConds.join(" AND ")}` : "";
   const [statusRows] = await db.execute<RowDataPacket[]>(
     `SELECT rq.status, COUNT(*) AS c FROM payroll_recalculation_queue rq ${statusWhere} GROUP BY rq.status`,

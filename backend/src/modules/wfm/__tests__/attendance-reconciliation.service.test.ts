@@ -133,4 +133,29 @@ describe("attendanceReconciliationService", () => {
 
     expect(result.countsByType.dialler_source_without_evidence).toBe(1);
   });
+
+  it("issues the four independent range reads concurrently", async () => {
+    ncosecQuery.mockResolvedValueOnce({
+      recordset: [{
+        cosec_user_id: "MAS1", punch_date: "2026-07-25", first_punch: "2026-07-25 10:00:00",
+        last_punch: "2026-07-25 19:00:00", total_punches: 4, working_minutes: 540,
+      }],
+    });
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    dbQuery.mockImplementation(async (sql: string) => {
+      const tag = ["integration_biometric_daily", "FROM attendance_daily_record", "FROM apr a", "dialer_session_log"]
+        .find((t) => sql.includes(t));
+      if (tag) {
+        started.push(tag);
+        // Hold every read until all four have started: only possible if they run concurrently.
+        if (started.length === 4) release();
+        await gate;
+      }
+      return [[], []];
+    });
+    await attendanceReconciliationService.audit({ from: "2026-07-25", to: "2026-07-25" });
+    expect(new Set(started.slice(0, 4)).size).toBe(4);
+  });
 });

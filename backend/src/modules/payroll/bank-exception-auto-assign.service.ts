@@ -74,7 +74,12 @@ async function resolvePayrollHrForBranch(branchId: string): Promise<PayrollHrPer
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT DISTINCT e.id AS employee_id, e.user_id, e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name),''), e.employee_code) AS name
-       FROM employees e
+       FROM (
+              SELECT r.user_id FROM user_roles r WHERE r.active_status = 1 AND r.role_key = 'payroll_hr'
+              UNION
+              SELECT s.user_id FROM user_assignment_scope s WHERE s.active_status = 1 AND s.role_key = 'payroll_hr'
+            ) g
+       JOIN employees e ON e.user_id = g.user_id
        JOIN auth_user au ON au.id = e.user_id
        LEFT JOIN user_roles ur ON ur.user_id = e.user_id AND ur.active_status = 1 AND ur.role_key = 'payroll_hr'
        LEFT JOIN user_assignment_scope uas ON uas.user_id = e.user_id AND uas.active_status = 1 AND uas.role_key = 'payroll_hr'

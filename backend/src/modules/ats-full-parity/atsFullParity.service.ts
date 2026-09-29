@@ -1121,6 +1121,9 @@ export const atsFullParityService = {
   async webData(filters: { fromDate?: string; toDate?: string; branch?: string; process?: string; recruiter?: string; period?: Period; actorId?: string; bypassScope?: boolean } = {}) {
     const { where, params } = await buildCandidateFilters(filters);
 
+    // The config lookup does not depend on the candidate rows, so it is issued alongside them.
+    const cfgPromise = getConfigMap();
+    cfgPromise.catch(() => undefined); // awaited below; guards against an unhandled rejection if the row query throws first
     const allRows = await candidateSelect(where, params, WEB_DATA_ROW_LIMIT);
     // candidateSelect caps rows and every figure below is computed in JS over what came back,
     // so a cap that is hit silently understates every total. Report it instead: genuine
@@ -1156,7 +1159,7 @@ export const atsFullParityService = {
         "Client Round": rows.filter((r) => contains(r._endStage, ["client"])).length,
       };
     });
-    const cfg = await getConfigMap();
+    const cfg = await cfgPromise;
     return {
       ok: true,
       // Consumed by the command-center tabs so a capped dataset can say so rather than
@@ -1203,9 +1206,12 @@ export const atsFullParityService = {
    */
   async commandCenterData(filters: CandidateFilters = {}) {
     const { where, params } = await buildCandidateFilters(filters);
+    // The other-entity count is independent of the candidate rows — issue both together.
+    const otherEntityPromise = countOtherEntityCandidates();
+    otherEntityPromise.catch(() => undefined); // awaited below; guards against an unhandled rejection
     const allRows = await candidateSelectAnalytics(where, params, WEB_DATA_ROW_LIMIT);
+    const excludedOtherEntity = await otherEntityPromise;
     const truncated = allRows.length >= WEB_DATA_ROW_LIMIT;
-    const excludedOtherEntity = await countOtherEntityCandidates();
     const period = filters.period || "ALL";
     const candidateRows = allRows.filter((r) => inPeriod(r, period));
     const queueRows = allRows
@@ -1360,14 +1366,19 @@ export const atsFullParityService = {
     const q = `%${query.trim()}%`;
     const rows = await candidateSelect(
       `(c.id = ? OR c.candidate_code = ? OR c.q_token = ? OR c.mobile LIKE ? OR c.email LIKE ? OR c.full_name LIKE ?) AND c.active_status = 1`,
-      [query, query, query, q, q, q]
+      [query, query, query, q, q, q],
+      // Only the first match is used below, so do not materialise and enrich up to 5,000 rows.
+      1
     );
     const candidate = rows[0];
     if (!candidate) return null;
-    const [stageLogs] = await db.execute<RowDataPacket[]>(`SELECT * FROM ats_candidate_stage_log WHERE candidate_id = ? ORDER BY stage_date ASC, created_at ASC`, [candidate.id]);
-    const [confirmations] = await db.execute<RowDataPacket[]>(`SELECT * FROM ats_candidate_confirmation WHERE candidate_id IN (?, ?) ORDER BY created_at DESC`, [candidate.id, candidate.candidate_code]);
-    const [emails] = await db.execute<RowDataPacket[]>(`SELECT * FROM ats_command_email_log WHERE candidate_id IN (?, ?) ORDER BY created_at DESC`, [candidate.id, candidate.candidate_code]);
-    const [notifications] = await db.execute<RowDataPacket[]>(`SELECT * FROM ats_notification_log WHERE candidate_id IN (?, ?) ORDER BY created_at DESC`, [candidate.id, candidate.candidate_code]);
+    // Four independent reads keyed on the same candidate — issued together.
+    const [[stageLogs], [confirmations], [emails], [notifications]] = await Promise.all([
+      db.execute<RowDataPacket[]>(`SELECT * FROM ats_candidate_stage_log WHERE candidate_id = ? ORDER BY stage_date ASC, created_at ASC`, [candidate.id]),
+      db.execute<RowDataPacket[]>(`SELECT * FROM ats_candidate_confirmation WHERE candidate_id IN (?, ?) ORDER BY created_at DESC`, [candidate.id, candidate.candidate_code]),
+      db.execute<RowDataPacket[]>(`SELECT * FROM ats_command_email_log WHERE candidate_id IN (?, ?) ORDER BY created_at DESC`, [candidate.id, candidate.candidate_code]),
+      db.execute<RowDataPacket[]>(`SELECT * FROM ats_notification_log WHERE candidate_id IN (?, ?) ORDER BY created_at DESC`, [candidate.id, candidate.candidate_code]),
+    ]);
     return { candidate, stageLogs, confirmations, emails, notifications };
   },
 

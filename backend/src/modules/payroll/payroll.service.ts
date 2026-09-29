@@ -749,13 +749,16 @@ export const payrollService = {
     // or every branch-scoped user gets ER_BAD_FIELD_ERROR ("Unknown column 'spr.branch_id' in
     // 'where clause'") instead of their runs. It did, on live traffic, repeatedly.
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT spr.* FROM salary_prep_run spr ${where} ORDER BY spr.run_month DESC LIMIT ${limit} OFFSET ${offset}`,
-      params
-    );
-    const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM salary_prep_run spr ${where}`, params
-    );
+    // Page and total are independent reads: issue together.
+    const [[rows], [countRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT spr.* FROM salary_prep_run spr ${where} ORDER BY spr.run_month DESC LIMIT ${limit} OFFSET ${offset}`,
+        params
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total FROM salary_prep_run spr ${where}`, params
+      ),
+    ]);
     return { data: rows as SalaryPrepRun[], total: (countRows as any)[0]?.total ?? 0, page, limit };
   },
 
@@ -792,8 +795,6 @@ export const payrollService = {
 
     const query = baseSelect + whereExtra + ` ORDER BY spl.employee_code ASC ${sqlLimitOffset(limit, offset)}`;
 
-    const [rows] = await db.execute<RowDataPacket[]>(query, params);
-
     const countParams: any[] = [runId];
     let countExtra = "";
     if (search) {
@@ -805,7 +806,11 @@ export const payrollService = {
       FROM salary_prep_line spl
       LEFT JOIN employees e ON e.id = spl.employee_id
       WHERE spl.run_id = ?` + countExtra;
-    const [countRows] = await db.execute<RowDataPacket[]>(countQuery, countParams);
+    // Page and total are independent reads: issue together.
+    const [[rows], [countRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(query, params),
+      db.execute<RowDataPacket[]>(countQuery, countParams),
+    ]);
     const total = (countRows as any[])[0]?.total ?? 0;
 
     return { lines: rows as SalaryPrepLine[], total, page, limit };
@@ -1131,14 +1136,17 @@ export const payrollService = {
         dm.dept_name AS department_name,
         dsg.designation_name AS designation`;
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `${selectSql} ${baseSql} ORDER BY spr.run_month DESC, employee_name ASC ${sqlLimitOffset(limit, offset)}`,
-      allParams
-    );
-    const [countRow] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) as total ${countBaseSql}`,
-      allParams
-    );
+    // Page and total are independent reads: issue together.
+    const [[rows], [countRow]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `${selectSql} ${baseSql} ORDER BY spr.run_month DESC, employee_name ASC ${sqlLimitOffset(limit, offset)}`,
+        allParams
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as total ${countBaseSql}`,
+        allParams
+      ),
+    ]);
 
     // Batch-fetch component breakdown for all payroll lines (eliminates N+1 queries)
     const lineIds = (rows as any[]).map((r: any) => r.id).filter(Boolean);

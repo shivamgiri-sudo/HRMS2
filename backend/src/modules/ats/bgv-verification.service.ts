@@ -524,14 +524,28 @@ export async function getBgvStatusByToken(token: string) {
 }
 
 export async function getBgvStatusForCandidate(candidateId: string) {
-  const [consents] = await db.execute<RowDataPacket[]>(
-    `SELECT id, consent_version, consent_status, granted_at, withdrawn_at FROM candidate_bgv_consent WHERE candidate_id = ? ORDER BY granted_at DESC`,
-    [candidateId]
-  );
-  const [rawChecks] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_bgv_check WHERE candidate_id = ? ORDER BY updated_at DESC`,
-    [candidateId]
-  );
+  // The four reads are independent — issued together (one round trip instead of four).
+  const [[consents], [rawChecks], [documents], [bankRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT id, consent_version, consent_status, granted_at, withdrawn_at FROM candidate_bgv_consent WHERE candidate_id = ? ORDER BY granted_at DESC`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_bgv_check WHERE candidate_id = ? ORDER BY updated_at DESC`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, doc_type, doc_name, document_status, verification_method, verification_ref, uploaded_at
+         FROM candidate_onboarding_document
+        WHERE candidate_id = ? AND deleted_at IS NULL
+        ORDER BY uploaded_at DESC`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_bank_verification WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 5`,
+      [candidateId]
+    ),
+  ]);
   // Defense in depth: candidate_bgv_check has no unique constraint on (candidate_id,
   // check_type), and recordFaceMatchSkipped used to insert a fresh photo_match row on
   // every identity-image upload (fixed in onboarding-full.service.ts, but existing
@@ -545,17 +559,6 @@ export async function getBgvStatusForCandidate(candidateId: string) {
     seenCheckTypes.add(t);
     return true;
   });
-  const [documents] = await db.execute<RowDataPacket[]>(
-    `SELECT id, doc_type, doc_name, document_status, verification_method, verification_ref, uploaded_at
-       FROM candidate_onboarding_document
-      WHERE candidate_id = ? AND deleted_at IS NULL
-      ORDER BY uploaded_at DESC`,
-    [candidateId]
-  );
-  const [bankRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_bank_verification WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 5`,
-    [candidateId]
-  );
 
   const required = ["aadhaar", "pan"];
   const clearChecks = new Set(checks.filter((c) => ["verified", "waived"].includes(String(c.status))).map((c) => String(c.check_type)));
@@ -1518,7 +1521,11 @@ export async function listBgvQueueScoped(status: string | undefined, scopeClause
             SUM(CASE WHEN ch.status = 'manual_review' THEN 1 ELSE 0 END) AS checks_manual,
             COUNT(ch.id) AS total_checks
        FROM ats_candidate c
-       LEFT JOIN candidate_bgv_check ch ON ch.candidate_id = c.id
+       -- INNER JOIN, not LEFT JOIN: the HAVING below discards every candidate with no check
+       -- row (and a status filter on ch already does the same), so the two are equivalent —
+       -- but the LEFT JOIN forced a scan of all ~37k ats_candidate rows before grouping, where
+       -- driving from candidate_bgv_check touches only the ~2k rows that can qualify.
+       JOIN candidate_bgv_check ch ON ch.candidate_id = c.id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
        LEFT JOIN process_master pm ON pm.id = c.applied_for_process
       WHERE ${statusSQL}

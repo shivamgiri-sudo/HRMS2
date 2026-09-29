@@ -35,8 +35,11 @@ function cachedCartDashboard(from: string, to: string) {
 router.get("/bellavita-cart-dashboard", requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const from = String(req.query.from ?? "");
   const to = String(req.query.to ?? "");
-  const data = await cachedCartDashboard(from, to);
-  const canSetTarget = await hasAnyRole(req.authUser!.id, ...TARGET_ADMIN_ROLES);
+  // Role lookup is independent of the dashboard payload -- run both together.
+  const [data, canSetTarget] = await Promise.all([
+    cachedCartDashboard(from, to),
+    hasAnyRole(req.authUser!.id, ...TARGET_ADMIN_ROLES),
+  ]);
   res.json({ success: true, data: { ...data, canSetTarget } });
 }));
 

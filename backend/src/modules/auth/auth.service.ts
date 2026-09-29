@@ -286,7 +286,7 @@ export const authService = {
                 e.active_status
            FROM auth_user au
            LEFT JOIN employees e ON e.user_id = au.id
-          WHERE LOWER(au.email) = LOWER(?)
+          WHERE au.email = ?
           UNION
          SELECT au.id, au.email, au.password_hash, au.is_blocked,
                 COALESCE(au.must_change_password, 0) AS must_change_password,
@@ -296,7 +296,7 @@ export const authService = {
                 e.active_status
            FROM auth_user au
            JOIN employees e ON e.user_id = au.id
-          WHERE UPPER(e.employee_code) = UPPER(?)
+          WHERE e.employee_code = ?
           LIMIT 1`,
         [trimmed, trimmed]
       );
@@ -934,7 +934,7 @@ export const authService = {
 
       // Check for existing user with FOR UPDATE to prevent race conditions
       const [existing] = await conn.execute<RowDataPacket[]>(
-        'SELECT id FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1 FOR UPDATE',
+        'SELECT id FROM auth_user WHERE email = ? LIMIT 1 FOR UPDATE',
         [normalizedEmail]
       );
       if (existing.length > 0) {
@@ -997,7 +997,7 @@ export const authService = {
 
       // Check for existing auth_user with FOR UPDATE to prevent race conditions
       const [existingAuth] = await conn.execute<RowDataPacket[]>(
-        'SELECT id FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1 FOR UPDATE',
+        'SELECT id FROM auth_user WHERE email = ? LIMIT 1 FOR UPDATE',
         [normalizedEmail]
       );
       if (existingAuth.length > 0) {
@@ -1040,7 +1040,7 @@ export const authService = {
   async forgotPassword(email: string): Promise<{ token: string; deliverTo: string } | null> {
     const normalizedEmail = normalizeEmail(email);
     const [rows] = await db.execute<ResetTokenRow[]>(
-      'SELECT id, email FROM auth_user WHERE LOWER(email) = LOWER(?) AND is_blocked = 0 LIMIT 1',
+      'SELECT id, email FROM auth_user WHERE email = ? AND is_blocked = 0 LIMIT 1',
       [normalizedEmail]
     );
     if (rows[0]) {
@@ -1054,8 +1054,8 @@ export const authService = {
       `SELECT id, user_id, active_status,
               COALESCE(NULLIF(TRIM(official_email),''), NULLIF(TRIM(email),'')) AS resolved_email
          FROM employees
-        WHERE LOWER(email) = LOWER(?)
-           OR LOWER(official_email) = LOWER(?)
+        WHERE email = ?
+           OR official_email = ?
         LIMIT 1`,
       [normalizedEmail, normalizedEmail]
     );

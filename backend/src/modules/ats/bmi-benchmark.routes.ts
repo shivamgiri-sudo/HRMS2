@@ -106,17 +106,298 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
     }
     const months = getMonthRange(6);
 
-    // ── FUNNEL queries ────────────────────────────────────────────────────────
+    // Every query below is independent of the others, so they are issued together instead of as
+    // ~30 round trips in a row (the previous form awaited each one — and each month's payroll
+    // run — in turn). Results are unpacked in the same order and combined exactly as before.
+    const SCREENED_STAGES = "'Round 1- HR Screening','HR Interview','Screening','screening'";
+    const PASSED_STAGES = [
+      // current vocabulary — everything downstream of HR screening
+      "'Round 2- Op''s'", "'Interview - Skill Test'", "'Round 3- Client'", "'Selection Discussion'",
+      "'Selected'", "'Offer Submitted'", "'Offer'", "'BGV In Progress'", "'BGV'",
+      "'Onboarding Link Sent'", "'Onboarding'", "'Joining'", "'Converted'", "'Profile Submitted'",
+      // legacy snake_case still present on historical rows
+      "'offer_approved'", "'bgv_pending'", "'bgv_verified'", "'payroll_validated'",
+      "'offer_pending'", "'offer_accepted'", "'joined'", "'shortlisted'",
+    ].join(",");
+    const HIRING_HEADS = "'Hiring Charges','Staff Training & Recruitment'";
 
-    // 1. New hires required (demand raised via job_requisition)
-    const [demandRows] = await db.execute<RowDataPacket[]>(
+    // Early attrition: joined in month, left within N days
+    const makeAttritionQuery = (minDays: number, maxDays: number) =>
+      db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(e.date_of_joining, '%Y-%m') AS mo, COUNT(*) AS cnt
+         FROM employees e
+         JOIN exit_request er ON er.employee_id = e.id
+         WHERE e.date_of_joining >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+           AND DATEDIFF(
+             COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed),
+             e.date_of_joining
+           ) BETWEEN ? AND ?
+           ${branchId ? 'AND e.branch_id = ?' : ''}
+         GROUP BY mo`,
+        branchId ? [minDays, maxDays, branchId] : [minDays, maxDays]
+      );
+
+
+    // salary_prep_run is looked up once per month and shared by the HR-CTC and overtime figures
+    // (both used the identical lookup); each month then runs its own two totals concurrently.
+    const payrollByMonth = Promise.all(months.map(async (mo) => {
+      const [runRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM salary_prep_run WHERE run_month = ? ORDER BY created_at DESC LIMIT 1`,
+        [mo]
+      );
+      if (!runRows.length) return null;
+      const runId = (runRows[0] as { id: string }).id;
+      const qArgs: (string | null)[] = [runId];
+      if (branchId) qArgs.push(branchId);
+      const [[ctcRows], [otRows]] = await Promise.all([
+        db.execute<RowDataPacket[]>(
+          `SELECT SUM(spl.gross_salary) AS total
+           FROM salary_prep_line spl
+           JOIN employees e ON e.id = spl.employee_id
+           JOIN department_master dm ON dm.id = e.department_id
+           WHERE spl.run_id = ?
+             AND dm.dept_code = 'HR'
+             ${branchId ? 'AND e.branch_id = ?' : ''}`,
+          qArgs
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT SUM(spl.overtime_pay) AS total
+           FROM salary_prep_line spl
+           JOIN employees e ON e.id = spl.employee_id
+           WHERE spl.run_id = ?
+             ${branchId ? 'AND e.branch_id = ?' : ''}`,
+          qArgs
+        ),
+      ]);
+      const raw = (ctcRows[0] as { total: string | null })?.total;
+      const rawOt = (otRows[0] as { total: string | null })?.total;
+      return {
+        mo,
+        hrCtc: raw != null && raw !== '' ? Number(raw) : null,
+        overtime: rawOt != null && rawOt !== '' ? Number(rawOt) : null,
+      };
+    }));
+
+    const [
+      [demandRows], [sourcedRows], [screenedRows], [passedRows], [interviewRows], [selectedRows],
+      [offersMadeRows], [offersAccRows], [joinedRows], [avgDaysRows], [grnPortalRows],
+      [grnConsultRows], [refBonusRows], [ghostRows], [hrRejRows], [vacancyDaysRows], [manualRows],
+      [[left30Rows], [left60Rows], [left90Rows]],
+      brateResult,
+      payrollRows,
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(jr.created_at, '%Y-%m') AS mo, COUNT(*) AS cnt
        FROM job_requisition jr
        WHERE jr.created_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
          ${branchId ? 'AND jr.branch_id = ?' : ''}
        GROUP BY mo`,
       branchId ? [branchId] : []
-    );
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(ac.created_at, '%Y-%m') AS mo,
+              ${canonicalSourceSql('ac.sourcing_channel')} AS channel_code,
+              COUNT(DISTINCT ac.id) AS cnt
+       FROM ats_candidate ac
+       WHERE ac.created_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         AND ${EXCLUDE_AC}
+         ${branchId ? 'AND ac.applied_for_branch = ?' : ''}
+       GROUP BY mo, channel_code`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
+       FROM ats_candidate_stage_log sl
+       WHERE sl.to_stage IN (${SCREENED_STAGES})
+         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
+       GROUP BY mo`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
+       FROM ats_candidate_stage_log sl
+       WHERE sl.to_stage IN (${PASSED_STAGES})
+         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
+       GROUP BY mo`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(ir.interviewed_at, '%Y-%m') AS mo, COUNT(DISTINCT ir.candidate_id) AS cnt
+       FROM ats_interview_result ir
+       WHERE ir.interviewed_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         ${branchId ? `AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
+       GROUP BY mo`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(ir.interviewed_at, '%Y-%m') AS mo, COUNT(DISTINCT ir.candidate_id) AS cnt
+       FROM ats_interview_result ir
+       WHERE ir.interview_status = 'selected'
+         AND ir.interviewed_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         ${branchId ? `AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
+       GROUP BY mo`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
+       FROM ats_candidate_stage_log sl
+       WHERE sl.to_stage = 'offer_pending'
+         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
+       GROUP BY mo`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
+       FROM ats_candidate_stage_log sl
+       WHERE sl.to_stage = 'offer_accepted'
+         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
+       GROUP BY mo`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(e.date_of_joining, '%Y-%m') AS mo, COUNT(*) AS cnt
+       FROM employees e
+       WHERE e.date_of_joining >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         AND e.employee_code IS NOT NULL
+         ${branchId ? 'AND e.branch_id = ?' : ''}
+       GROUP BY mo`,
+      branchId ? [branchId] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(ob.joining_date, '%Y-%m') AS mo,
+              ROUND(AVG(DATEDIFF(ob.joining_date, jr.created_at)), 1) AS avg_days
+       FROM ats_onboarding_bridge ob
+       JOIN ats_candidate ac ON ac.id = ob.candidate_id
+       JOIN job_requisition jr ON jr.id = ac.requisition_id
+       WHERE ob.joining_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         AND jr.created_at IS NOT NULL
+         ${branchId ? 'AND ac.applied_for_branch = ?' : ''}
+       GROUP BY mo`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(g.bill_date, '%Y-%m') AS mo, SUM(g.amount) AS total
+       FROM grn_request g
+       WHERE g.head IN (${HIRING_HEADS})
+         AND (g.sub_head LIKE '%Advertisement%' OR g.sub_head LIKE '%Portal%' OR g.sub_head LIKE '%Naukri%')
+         AND g.status IN ('approved','submitted')
+         AND g.bill_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         ${branchId ? 'AND g.branch_id = ?' : ''}
+       GROUP BY mo`,
+      branchId ? [branchId] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(g.bill_date, '%Y-%m') AS mo, SUM(g.amount) AS total
+       FROM grn_request g
+       WHERE g.head IN (${HIRING_HEADS})
+         AND (g.sub_head LIKE '%Consultancy%' OR g.sub_head LIKE '%Agency%' OR g.sub_head LIKE '%Brokerage%')
+         AND g.status IN ('approved','submitted')
+         AND g.bill_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         ${branchId ? 'AND g.branch_id = ?' : ''}
+       GROUP BY mo`,
+      branchId ? [branchId] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT iub.pay_month AS mo, SUM(iul.amount) AS total
+       FROM incentive_upload_line iul
+       JOIN incentive_upload_batch iub ON iub.id = iul.batch_id
+       JOIN incentive_master im ON im.id = iub.incentive_id
+       WHERE im.incentive_code = 'REF'
+         AND iub.status IN ('approved','applied','finance_approved')
+         AND iub.pay_month >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m')
+         ${branchId ? 'AND iub.branch_id = ?' : ''}
+       GROUP BY iub.pay_month`,
+      branchId ? [branchId] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
+       FROM ats_candidate_stage_log sl
+       WHERE sl.to_stage = 'offer_accepted'
+         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         AND sl.candidate_id NOT IN (
+           SELECT candidate_id FROM ats_onboarding_bridge WHERE candidate_id IS NOT NULL
+         )
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
+       GROUP BY mo`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(rej.stage_date, '%Y-%m') AS mo,
+              COUNT(DISTINCT rej.candidate_id) AS rejected,
+              COUNT(DISTINCT sh.candidate_id) AS shortlisted
+       FROM ats_candidate_stage_log sh
+       JOIN ats_candidate_stage_log rej ON rej.candidate_id = sh.candidate_id
+         AND rej.to_stage IN ('rejected','rejected_by_branch_head')
+         AND rej.stage_date > sh.stage_date
+       LEFT JOIN ats_candidate_stage_log iv ON iv.candidate_id = sh.candidate_id
+         AND iv.to_stage = 'interview_1'
+         AND iv.stage_date BETWEEN sh.stage_date AND rej.stage_date
+       WHERE sh.to_stage = 'shortlisted'
+         AND sh.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         AND iv.candidate_id IS NULL
+         ${branchId ? `AND sh.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
+       GROUP BY mo`,
+      branchName ? [branchName] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(jr.target_joining_date, '%Y-%m') AS mo,
+              ROUND(AVG(DATEDIFF(
+                COALESCE(ob.joining_date, CURDATE()),
+                jr.target_joining_date
+              )), 1) AS avg_days
+       FROM job_requisition jr
+       LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id IN (
+         SELECT id FROM ats_candidate WHERE requisition_id = jr.id
+       )
+       WHERE jr.target_joining_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         ${branchId ? 'AND jr.branch_id = ?' : ''}
+       GROUP BY mo`,
+      branchId ? [branchId] : []
+      ),
+      db.execute<RowDataPacket[]>(
+      `SELECT period_month, metric_key, value
+       FROM bmi_manual_input
+       WHERE period_month IN (${months.map(() => '?').join(',')})
+         ${branchId ? 'AND branch_id = ?' : ''}`,
+      branchId ? [...months, branchId] : months
+      ),
+      Promise.all([
+        makeAttritionQuery(0, 30),
+        makeAttritionQuery(31, 60),
+        makeAttritionQuery(61, 90),
+      ]),
+      // Billing rate per seat per day — pick most recent process_billing_rate for branch's processes
+      branchId
+        ? db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(pbr.effective_from, '%Y-%m') AS mo,
+                ROUND(AVG(pbr.rate_amount / 30), 2) AS daily_rate
+         FROM process_billing_rate pbr
+         JOIN process_master pm ON pm.id = pbr.process_id
+         WHERE pbr.unit = 'seat'
+           AND pm.branch_id = ?
+           AND pbr.effective_from >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
+         GROUP BY mo`,
+        [branchId]
+        )
+        : Promise.resolve(null),
+      payrollByMonth,
+    ]);
+
+    const hrCtcMap: CellMap = {};
+    const overtimeMap: CellMap = {};
+    for (const row of payrollRows) {
+      if (!row) continue;
+      hrCtcMap[row.mo] = row.hrCtc;
+      overtimeMap[row.mo] = row.overtime;
+    }
+
+    // ── FUNNEL queries ────────────────────────────────────────────────────────
+
+    // 1. New hires required (demand raised via job_requisition)
     const demandMap: CellMap = {};
     for (const r of demandRows) demandMap[r.mo as string] = Number(r.cnt);
 
@@ -147,17 +428,6 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
      * (Recruiter, Other) fall out of SOURCE_BMI_TYPE and are not counted here, which is the
      * pre-existing shape of the board — it has four channel rows, not six.
      */
-    const [sourcedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(ac.created_at, '%Y-%m') AS mo,
-              ${canonicalSourceSql('ac.sourcing_channel')} AS channel_code,
-              COUNT(DISTINCT ac.id) AS cnt
-       FROM ats_candidate ac
-       WHERE ac.created_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         AND ${EXCLUDE_AC}
-         ${branchId ? 'AND ac.applied_for_branch = ?' : ''}
-       GROUP BY mo, channel_code`,
-      branchName ? [branchName] : []
-    );
     for (const r of sourcedRows) {
       const bmiType = SOURCE_BMI_TYPE[r.channel_code as string];
       if (!bmiType) continue;
@@ -182,222 +452,57 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
      * older rows still carry them, and dropping them would re-introduce the same undercount for
      * historical months. MySQL's default collation makes the comparison case-insensitive.
      */
-    const SCREENED_STAGES = "'Round 1- HR Screening','HR Interview','Screening','screening'";
-    const PASSED_STAGES = [
-      // current vocabulary — everything downstream of HR screening
-      "'Round 2- Op''s'", "'Interview - Skill Test'", "'Round 3- Client'", "'Selection Discussion'",
-      "'Selected'", "'Offer Submitted'", "'Offer'", "'BGV In Progress'", "'BGV'",
-      "'Onboarding Link Sent'", "'Onboarding'", "'Joining'", "'Converted'", "'Profile Submitted'",
-      // legacy snake_case still present on historical rows
-      "'offer_approved'", "'bgv_pending'", "'bgv_verified'", "'payroll_validated'",
-      "'offer_pending'", "'offer_accepted'", "'joined'", "'shortlisted'",
-    ].join(",");
 
     // 6. Screened by HR (reached an HR screening stage)
-    const [screenedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
-       FROM ats_candidate_stage_log sl
-       WHERE sl.to_stage IN (${SCREENED_STAGES})
-         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
-       GROUP BY mo`,
-      branchName ? [branchName] : []
-    );
     const screenedMap: CellMap = {};
     for (const r of screenedRows) screenedMap[r.mo as string] = Number(r.cnt);
 
     // 7. Passed HR screening (reached any stage downstream of screening)
-    const [passedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
-       FROM ats_candidate_stage_log sl
-       WHERE sl.to_stage IN (${PASSED_STAGES})
-         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
-       GROUP BY mo`,
-      branchName ? [branchName] : []
-    );
     const passedMap: CellMap = {};
     for (const r of passedRows) passedMap[r.mo as string] = Number(r.cnt);
 
     // 8. Appeared for ops interview
-    const [interviewRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(ir.interviewed_at, '%Y-%m') AS mo, COUNT(DISTINCT ir.candidate_id) AS cnt
-       FROM ats_interview_result ir
-       WHERE ir.interviewed_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? `AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
-       GROUP BY mo`,
-      branchName ? [branchName] : []
-    );
     const interviewMap: CellMap = {};
     for (const r of interviewRows) interviewMap[r.mo as string] = Number(r.cnt);
 
     // 9. Selected by ops
-    const [selectedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(ir.interviewed_at, '%Y-%m') AS mo, COUNT(DISTINCT ir.candidate_id) AS cnt
-       FROM ats_interview_result ir
-       WHERE ir.interview_status = 'selected'
-         AND ir.interviewed_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? `AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
-       GROUP BY mo`,
-      branchName ? [branchName] : []
-    );
     const selectedMap: CellMap = {};
     for (const r of selectedRows) selectedMap[r.mo as string] = Number(r.cnt);
 
     // 10. Offers made (entered offer_pending stage)
-    const [offersMadeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
-       FROM ats_candidate_stage_log sl
-       WHERE sl.to_stage = 'offer_pending'
-         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
-       GROUP BY mo`,
-      branchName ? [branchName] : []
-    );
     const offersMadeMap: CellMap = {};
     for (const r of offersMadeRows) offersMadeMap[r.mo as string] = Number(r.cnt);
 
     // 11. Offers accepted
-    const [offersAccRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
-       FROM ats_candidate_stage_log sl
-       WHERE sl.to_stage = 'offer_accepted'
-         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
-       GROUP BY mo`,
-      branchName ? [branchName] : []
-    );
     const offersAccMap: CellMap = {};
     for (const r of offersAccRows) offersAccMap[r.mo as string] = Number(r.cnt);
 
     // 12. Actually joined day-1
-    const [joinedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(e.date_of_joining, '%Y-%m') AS mo, COUNT(*) AS cnt
-       FROM employees e
-       WHERE e.date_of_joining >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         AND e.employee_code IS NOT NULL
-         ${branchId ? 'AND e.branch_id = ?' : ''}
-       GROUP BY mo`,
-      branchId ? [branchId] : []
-    );
     const joinedMap: CellMap = {};
     for (const r of joinedRows) joinedMap[r.mo as string] = Number(r.cnt);
 
     // 13. Avg days: demand raised → joining (per month of joining)
-    const [avgDaysRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(ob.joining_date, '%Y-%m') AS mo,
-              ROUND(AVG(DATEDIFF(ob.joining_date, jr.created_at)), 1) AS avg_days
-       FROM ats_onboarding_bridge ob
-       JOIN ats_candidate ac ON ac.id = ob.candidate_id
-       JOIN job_requisition jr ON jr.id = ac.requisition_id
-       WHERE ob.joining_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         AND jr.created_at IS NOT NULL
-         ${branchId ? 'AND ac.applied_for_branch = ?' : ''}
-       GROUP BY mo`,
-      branchName ? [branchName] : []
-    );
     const avgDaysMap: CellMap = {};
     for (const r of avgDaysRows) avgDaysMap[r.mo as string] = Number(r.avg_days) || null;
 
     // ── COSTS queries ─────────────────────────────────────────────────────────
 
     // Portal + ad costs from grn_request
-    const HIRING_HEADS = "'Hiring Charges','Staff Training & Recruitment'";
-    const [grnPortalRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(g.bill_date, '%Y-%m') AS mo, SUM(g.amount) AS total
-       FROM grn_request g
-       WHERE g.head IN (${HIRING_HEADS})
-         AND (g.sub_head LIKE '%Advertisement%' OR g.sub_head LIKE '%Portal%' OR g.sub_head LIKE '%Naukri%')
-         AND g.status IN ('approved','submitted')
-         AND g.bill_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND g.branch_id = ?' : ''}
-       GROUP BY mo`,
-      branchId ? [branchId] : []
-    );
     const portalCostMap: CellMap = {};
     for (const r of grnPortalRows) portalCostMap[r.mo as string] = Number(r.total);
 
     // Consultant/agency fees from grn_request
-    const [grnConsultRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(g.bill_date, '%Y-%m') AS mo, SUM(g.amount) AS total
-       FROM grn_request g
-       WHERE g.head IN (${HIRING_HEADS})
-         AND (g.sub_head LIKE '%Consultancy%' OR g.sub_head LIKE '%Agency%' OR g.sub_head LIKE '%Brokerage%')
-         AND g.status IN ('approved','submitted')
-         AND g.bill_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND g.branch_id = ?' : ''}
-       GROUP BY mo`,
-      branchId ? [branchId] : []
-    );
     const consultCostMap: CellMap = {};
     for (const r of grnConsultRows) consultCostMap[r.mo as string] = Number(r.total);
 
     // Referral bonuses from incentive_upload_line
-    const [refBonusRows] = await db.execute<RowDataPacket[]>(
-      `SELECT iub.pay_month AS mo, SUM(iul.amount) AS total
-       FROM incentive_upload_line iul
-       JOIN incentive_upload_batch iub ON iub.id = iul.batch_id
-       JOIN incentive_master im ON im.id = iub.incentive_id
-       WHERE im.incentive_code = 'REF'
-         AND iub.status IN ('approved','applied','finance_approved')
-         AND iub.pay_month >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m')
-         ${branchId ? 'AND iub.branch_id = ?' : ''}
-       GROUP BY iub.pay_month`,
-      branchId ? [branchId] : []
-    );
     const refBonusMap: CellMap = {};
     for (const r of refBonusRows) refBonusMap[r.mo as string] = Number(r.total);
 
     // HR department CTC from payroll
-    const hrCtcMap: CellMap = {};
-    for (const mo of months) {
-      const [runRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM salary_prep_run WHERE run_month = ? ORDER BY created_at DESC LIMIT 1`,
-        [mo]
-      );
-      if (runRows.length) {
-        const runId = (runRows[0] as { id: string }).id;
-        const qArgs: (string | null)[] = [runId];
-        if (branchId) qArgs.push(branchId);
-        const [ctcRows] = await db.execute<RowDataPacket[]>(
-          `SELECT SUM(spl.gross_salary) AS total
-           FROM salary_prep_line spl
-           JOIN employees e ON e.id = spl.employee_id
-           JOIN department_master dm ON dm.id = e.department_id
-           WHERE spl.run_id = ?
-             AND dm.dept_code = 'HR'
-             ${branchId ? 'AND e.branch_id = ?' : ''}`,
-          qArgs
-        );
-        const raw = (ctcRows[0] as { total: string | null })?.total;
-        hrCtcMap[mo] = raw != null && raw !== '' ? Number(raw) : null;
-      }
-    }
-
     // ── QUALITY queries ───────────────────────────────────────────────────────
 
-    // Early attrition: joined in month, left within N days
-    const makeAttritionQuery = (minDays: number, maxDays: number) =>
-      db.execute<RowDataPacket[]>(
-        `SELECT DATE_FORMAT(e.date_of_joining, '%Y-%m') AS mo, COUNT(*) AS cnt
-         FROM employees e
-         JOIN exit_request er ON er.employee_id = e.id
-         WHERE e.date_of_joining >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-           AND DATEDIFF(
-             COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed),
-             e.date_of_joining
-           ) BETWEEN ? AND ?
-           ${branchId ? 'AND e.branch_id = ?' : ''}
-         GROUP BY mo`,
-        branchId ? [minDays, maxDays, branchId] : [minDays, maxDays]
-      );
-
-    const [[left30Rows], [left60Rows], [left90Rows]] = await Promise.all([
-      makeAttritionQuery(0, 30),
-      makeAttritionQuery(31, 60),
-      makeAttritionQuery(61, 90),
-    ]);
-
+    // Early attrition: joined in month, left within N days (queries issued above)
     const left30Map: CellMap = {};
     for (const r of left30Rows) left30Map[r.mo as string] = Number(r.cnt);
     const left60Map: CellMap = {};
@@ -406,41 +511,11 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
     for (const r of left90Rows) left90Map[r.mo as string] = Number(r.cnt);
 
     // Offer accepted but never joined (ghosts) — by month of offer_accepted transition
-    const [ghostRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
-       FROM ats_candidate_stage_log sl
-       WHERE sl.to_stage = 'offer_accepted'
-         AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         AND sl.candidate_id NOT IN (
-           SELECT candidate_id FROM ats_onboarding_bridge WHERE candidate_id IS NOT NULL
-         )
-         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
-       GROUP BY mo`,
-      branchName ? [branchName] : []
-    );
     const ghostMap: CellMap = {};
     for (const r of ghostRows) ghostMap[r.mo as string] = Number(r.cnt);
 
     // HR screening rejection % = candidates who reached 'shortlisted' then went to 'rejected'/'rejected_by_branch_head'
     //   WITHOUT passing through interview_1
-    const [hrRejRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(rej.stage_date, '%Y-%m') AS mo,
-              COUNT(DISTINCT rej.candidate_id) AS rejected,
-              COUNT(DISTINCT sh.candidate_id) AS shortlisted
-       FROM ats_candidate_stage_log sh
-       JOIN ats_candidate_stage_log rej ON rej.candidate_id = sh.candidate_id
-         AND rej.to_stage IN ('rejected','rejected_by_branch_head')
-         AND rej.stage_date > sh.stage_date
-       LEFT JOIN ats_candidate_stage_log iv ON iv.candidate_id = sh.candidate_id
-         AND iv.to_stage = 'interview_1'
-         AND iv.stage_date BETWEEN sh.stage_date AND rej.stage_date
-       WHERE sh.to_stage = 'shortlisted'
-         AND sh.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         AND iv.candidate_id IS NULL
-         ${branchId ? `AND sh.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
-       GROUP BY mo`,
-      branchName ? [branchName] : []
-    );
     const hrRejMap: CellMap = {};
     for (const r of hrRejRows) {
       const sh = Number(r.shortlisted);
@@ -450,73 +525,18 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
     // ── SPEED queries ─────────────────────────────────────────────────────────
 
     // Avg days a seat stayed vacant = avg DATEDIFF(fulfilled or NOW, target_joining_date) per month of target
-    const [vacancyDaysRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(jr.target_joining_date, '%Y-%m') AS mo,
-              ROUND(AVG(DATEDIFF(
-                COALESCE(ob.joining_date, CURDATE()),
-                jr.target_joining_date
-              )), 1) AS avg_days
-       FROM job_requisition jr
-       LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id IN (
-         SELECT id FROM ats_candidate WHERE requisition_id = jr.id
-       )
-       WHERE jr.target_joining_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND jr.branch_id = ?' : ''}
-       GROUP BY mo`,
-      branchId ? [branchId] : []
-    );
     const vacancyDaysMap: CellMap = {};
     for (const r of vacancyDaysRows) vacancyDaysMap[r.mo as string] = Number(r.avg_days) || null;
 
     // Billing rate per seat per day — pick most recent process_billing_rate for branch's processes
     const billingRateMap: CellMap = {};
     if (branchId) {
-      const [brateRows] = await db.execute<RowDataPacket[]>(
-        `SELECT DATE_FORMAT(pbr.effective_from, '%Y-%m') AS mo,
-                ROUND(AVG(pbr.rate_amount / 30), 2) AS daily_rate
-         FROM process_billing_rate pbr
-         JOIN process_master pm ON pm.id = pbr.process_id
-         WHERE pbr.unit = 'seat'
-           AND pm.branch_id = ?
-           AND pbr.effective_from >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         GROUP BY mo`,
-        [branchId]
-      );
-      for (const r of brateRows) billingRateMap[r.mo as string] = Number(r.daily_rate) || null;
+      for (const r of (brateResult?.[0] ?? []) as RowDataPacket[]) billingRateMap[r.mo as string] = Number(r.daily_rate) || null;
     }
 
     // Overtime paid from salary_prep_line
-    const overtimeMap: CellMap = {};
-    for (const mo of months) {
-      const [runRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM salary_prep_run WHERE run_month = ? ORDER BY created_at DESC LIMIT 1`, [mo]
-      );
-      if (runRows.length) {
-        const runId = (runRows[0] as { id: string }).id;
-        const qArgs: (string | null)[] = [runId];
-        if (branchId) qArgs.push(branchId);
-        const [otRows] = await db.execute<RowDataPacket[]>(
-          `SELECT SUM(spl.overtime_pay) AS total
-           FROM salary_prep_line spl
-           JOIN employees e ON e.id = spl.employee_id
-           WHERE spl.run_id = ?
-             ${branchId ? 'AND e.branch_id = ?' : ''}`,
-          qArgs
-        );
-        const rawOt = (otRows[0] as { total: string | null })?.total;
-        overtimeMap[mo] = rawOt != null && rawOt !== '' ? Number(rawOt) : null;
-      }
-    }
-
     // ── Manual inputs ─────────────────────────────────────────────────────────
 
-    const [manualRows] = await db.execute<RowDataPacket[]>(
-      `SELECT period_month, metric_key, value
-       FROM bmi_manual_input
-       WHERE period_month IN (${months.map(() => '?').join(',')})
-         ${branchId ? 'AND branch_id = ?' : ''}`,
-      branchId ? [...months, branchId] : months
-    );
 
     const manualMaps: Record<string, CellMap> = {
       hr_hours_week: {},

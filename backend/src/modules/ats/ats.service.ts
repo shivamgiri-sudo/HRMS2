@@ -137,7 +137,8 @@ export const atsService = {
 
     const offset = (filters.page - 1) * filters.limit;
 
-    const [rows] = await db.execute<RowDataPacket[]>(
+    // The page and its COUNT are independent reads over the same filter — issued together.
+    const rowsPromise = db.execute<RowDataPacket[]>(
       `SELECT c.*,
               scores.assessment_percentage,
               scores.typing_net_wpm,
@@ -160,10 +161,11 @@ export const atsService = {
        ${where} ORDER BY c.created_at DESC LIMIT ${filters.limit} OFFSET ${offset}`,
       params
     );
-    const [countRows] = await db.execute<RowDataPacket[]>(
+    const countPromise = db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM ats_candidate c ${where}`,
       params
     );
+    const [[rows], [countRows]] = await Promise.all([rowsPromise, countPromise]);
     const sanitizedRows = (rows as RowDataPacket[]).map((row) => sanitizeCandidateListRow(row));
     return { data: sanitizedRows as unknown as AtsCandidate[], total: Number(countRows[0]?.total ?? 0), page: filters.page, limit: filters.limit };
   },
@@ -559,13 +561,10 @@ export const atsService = {
     if (processNames.length) { scopeConds.push(inClause("applied_for_process", processNames)); scopeParams.push(...processNames); }
     const scopeSql = scopeConds.length ? ` AND ${scopeConds.join(" AND ")}` : "";
 
-    const [stageRows] = await db.execute<RowDataPacket[]>(
+    const stageQuery = db.execute<RowDataPacket[]>(
       `SELECT current_stage, COUNT(*) AS count FROM ats_candidate ${where} GROUP BY current_stage`, params
     );
-    const [total] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM ats_candidate ${where}`, params
-    );
-    const [sourceRows] = await db.execute<RowDataPacket[]>(
+    const sourceQuery = db.execute<RowDataPacket[]>(
       `SELECT sourcing_channel, COUNT(*) AS count FROM ats_candidate ${where} GROUP BY sourcing_channel`, params
     );
     // Was `current_stage IN ('converted','Onboarded','Selected')` — a second, hand-copied
@@ -587,16 +586,10 @@ export const atsService = {
     // One extra SELECT scoped identically to every other query in this function; the
     // expensive part (grouping the whole employees table by mobile) is the shared
     // 15-minute cache, not paid per request — see getEmployeeMobileJoinMap's own comment.
-    const [convCandidateRows] = await db.execute<RowDataPacket[]>(
+    const convCandidateQuery = db.execute<RowDataPacket[]>(
       `SELECT current_stage, mobile, created_at FROM ats_candidate ${where}`, params
     );
-    const mobileJoinMap = await getEmployeeMobileJoinMap();
-    const convertedCount = (convCandidateRows as RowDataPacket[]).filter((row) =>
-      candidateBecameEmployee(
-        row as unknown as { current_stage: string | null; mobile: string | null; created_at: string },
-        mobileJoinMap,
-      ),
-    ).length;
+    const mobileJoinMapQuery = getEmployeeMobileJoinMap();
     // Approximate time-to-hire using updated_at as proxy for converted candidates.
     // Deliberately stage-only, NOT the identity-match convertedCount above: updated_at is
     // only a meaningful hire-date proxy for a candidate whose stage was actually moved at
@@ -607,45 +600,26 @@ export const atsService = {
     // only (narrower even than the old stage list); broadened to the full JOINED_STAGE_
     // PREDICATE so it at least agrees with the STAGE-only count, which is real progress
     // even though it does not (and should not) match the identity-enhanced total above.
-    const [timeRows] = await db.execute<RowDataPacket[]>(
+    const timeQuery = db.execute<RowDataPacket[]>(
       `SELECT AVG(DATEDIFF(updated_at, created_at)) AS avg_days
          FROM ats_candidate
         WHERE active_status = 1 AND ${JOINED_STAGE_PREDICATE} AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}${scopeSql}`, scopeParams
     );
 
-    const totalCount = Number(total[0]?.total ?? 0);
-
-    // Build by_stage as Record<string, number> keyed by stage name
-    const by_stage: Record<string, number> = {};
-    for (const row of stageRows as { current_stage: string; count: number }[]) {
-      by_stage[row.current_stage] = Number(row.count);
-    }
-
-    // Build by_source as Record<string, number>
-    const by_source: Record<string, number> = {};
-    for (const row of sourceRows as { sourcing_channel: string | null; count: number }[]) {
-      const key = row.sourcing_channel ?? "unknown";
-      by_source[key] = Number(row.count);
-    }
-
     // Open positions from job_requisition: sum of unfilled headcount on approved, active requisitions.
     // Previously counted DISTINCT applied_for_process from ats_candidate (pipeline proxy), which
     // returned the number of processes that had any active candidate — not the actual open
     // headcount demand.
-    const [openPosRows] = await db.execute<RowDataPacket[]>(
+    const openPosQuery = db.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(GREATEST(requested_headcount - fulfilled_headcount, 0)), 0) AS count
        FROM job_requisition
        WHERE approval_status = 'approved'
          AND active_status = 1
          AND closed_at IS NULL`
     ).catch(() => [[{ count: 0 }]] as any);
-    const openPositions = Number(openPosRows[0]?.count ?? 0);
 
-    // Selected candidates (last 30 days)
-    const selectedCount = (by_stage["selected"] ?? 0) + (by_stage["Selected"] ?? 0) +
-      (by_stage["Onboarded"] ?? 0) + (by_stage["converted"] ?? 0);
     // Previous 30 days for trend comparison (selected)
-    const [prevRows] = await db.execute<RowDataPacket[]>(
+    const prevQuery = db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM ats_candidate
        WHERE active_status = 1
          AND current_stage IN ('selected','Selected','Onboarded','converted')
@@ -663,7 +637,7 @@ export const atsService = {
     });
 
     // Previous 30 days for onboarding submitted trend (HR dashboard)
-    const [prevSubmittedRows] = await db.execute<RowDataPacket[]>(
+    const prevSubmittedQuery = db.execute<RowDataPacket[]>(
       // Three separate defects, all masked by the .catch below returning a confident 0:
       //   bridge_status  -> the column is `status`
       //   'submitted'    -> the real values are pending / profile_submitted / joined
@@ -694,11 +668,60 @@ export const atsService = {
     // job_requisition.approval_status holds draft / approved / closed. "Pending" is a
     // requisition still awaiting approval: raised but neither approved nor closed.
     // null on failure, so a broken lookup cannot read as an empty queue.
-    const [pendingReqRows] = await db.execute<RowDataPacket[]>(
+    const pendingReqQuery = db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM job_requisition
         WHERE LOWER(COALESCE(approval_status, 'draft')) NOT IN ('approved', 'closed', 'rejected')`
     ).catch(() => [[{ cnt: null }]] as any);
 
+
+    // All nine reads are independent of one another (each carries its own .catch where it
+    // needs one), so they run as one batch rather than nine sequential round trips. The
+    // employee-mobile map is the shared cached one and de-duplicates concurrent builds.
+    const [
+      [stageRows],
+      [sourceRows],
+      [convCandidateRows],
+      mobileJoinMap,
+      [timeRows],
+      [openPosRows],
+      [prevRows],
+      [prevSubmittedRows],
+      [pendingReqRows],
+    ] = await Promise.all([
+      stageQuery, sourceQuery, convCandidateQuery, mobileJoinMapQuery, timeQuery,
+      openPosQuery, prevQuery, prevSubmittedQuery, pendingReqQuery,
+    ]);
+
+    const convertedCount = (convCandidateRows as RowDataPacket[]).filter((row) =>
+      candidateBecameEmployee(
+        row as unknown as { current_stage: string | null; mobile: string | null; created_at: string },
+        mobileJoinMap,
+      ),
+    ).length;
+
+    // The overall total is the sum of the per-stage counts — the stage query groups the very same
+    // rows (same `where`, same params) and its NULL-stage group is included — so the separate
+    // COUNT(*) that used to scan them a second time is gone.
+    const totalCount = (stageRows as { count: number }[]).reduce((sum, row) => sum + Number(row.count), 0);
+
+    // Build by_stage as Record<string, number> keyed by stage name
+    const by_stage: Record<string, number> = {};
+    for (const row of stageRows as { current_stage: string; count: number }[]) {
+      by_stage[row.current_stage] = Number(row.count);
+    }
+
+    // Build by_source as Record<string, number>
+    const by_source: Record<string, number> = {};
+    for (const row of sourceRows as { sourcing_channel: string | null; count: number }[]) {
+      const key = row.sourcing_channel ?? "unknown";
+      by_source[key] = Number(row.count);
+    }
+
+    const openPositions = Number(openPosRows[0]?.count ?? 0);
+
+    // Selected candidates (last 30 days)
+    const selectedCount = (by_stage["selected"] ?? 0) + (by_stage["Selected"] ?? 0) +
+      (by_stage["Onboarded"] ?? 0) + (by_stage["converted"] ?? 0);
     return {
       total_candidates: totalCount,
       by_stage,

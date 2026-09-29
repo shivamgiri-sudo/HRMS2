@@ -192,15 +192,48 @@ async function activeMappingVersion(
   return rows[0]?.id ? String(rows[0].id) : null;
 }
 
+type MappedEmployee = {
+  employeeId: string;
+  processId: string | null;
+  branchId: string | null;
+} | null;
+
+/**
+ * Per-run memo for the row-level lookups. A run maps thousands of rows but only a handful of
+ * distinct (identifier, date) / process values, and the employee fallback below scans the
+ * active employees with UPPER(TRIM(..)) predicates. Keys use the exact parameter strings, so a
+ * cache hit is by construction the same query with the same parameters.
+ */
+export type MappingCache = {
+  employee: Map<string, MappedEmployee>;
+  fallback: Map<string, MappedEmployee>;
+  process: Map<string, { processId: string; branchId: string | null } | null>;
+};
+
+export function createMappingCache(): MappingCache {
+  return { employee: new Map(), fallback: new Map(), process: new Map() };
+}
+
 async function mapEmployee(
   sourceKey: string,
   externalIdentifier: string,
   eventDate: string,
-): Promise<{
-  employeeId: string;
-  processId: string | null;
-  branchId: string | null;
-} | null> {
+  cache?: MappingCache,
+): Promise<MappedEmployee> {
+  if (!cache) return mapEmployeeUncached(sourceKey, externalIdentifier, eventDate);
+  const key = JSON.stringify([sourceKey, externalIdentifier, eventDate]);
+  if (cache.employee.has(key)) return cache.employee.get(key)!;
+  const result = await mapEmployeeUncached(sourceKey, externalIdentifier, eventDate, cache);
+  cache.employee.set(key, result);
+  return result;
+}
+
+async function mapEmployeeUncached(
+  sourceKey: string,
+  externalIdentifier: string,
+  eventDate: string,
+  cache?: MappingCache,
+): Promise<MappedEmployee> {
   const [mapped] = await db.execute<RowDataPacket[]>(
     `SELECT pim.employee_id,
             COALESCE(pim.process_id, e.process_id) AS process_id,
@@ -226,6 +259,8 @@ async function mapEmployee(
     };
   }
 
+  // The fallback does not depend on the event date, so it is memoised by identifier alone.
+  if (cache?.fallback.has(externalIdentifier)) return cache.fallback.get(externalIdentifier)!;
   const [fallback] = await db.execute<RowDataPacket[]>(
     `SELECT id AS employee_id, process_id, branch_id
        FROM employees
@@ -238,15 +273,32 @@ async function mapEmployee(
       LIMIT 2`,
     [externalIdentifier, externalIdentifier],
   );
-  if (fallback.length !== 1) return null;
-  return {
-    employeeId: String(fallback[0].employee_id),
-    processId: fallback[0].process_id ? String(fallback[0].process_id) : null,
-    branchId: fallback[0].branch_id ? String(fallback[0].branch_id) : null,
-  };
+  const resolved: MappedEmployee =
+    fallback.length !== 1
+      ? null
+      : {
+          employeeId: String(fallback[0].employee_id),
+          processId: fallback[0].process_id ? String(fallback[0].process_id) : null,
+          branchId: fallback[0].branch_id ? String(fallback[0].branch_id) : null,
+        };
+  cache?.fallback.set(externalIdentifier, resolved);
+  return resolved;
 }
 
 async function mapProcess(
+  sourceKey: string,
+  externalProcess: string,
+  eventDate: string,
+  cache?: MappingCache,
+): Promise<{ processId: string; branchId: string | null } | null> {
+  const key = JSON.stringify([sourceKey, externalProcess, eventDate]);
+  if (cache?.process.has(key)) return cache.process.get(key)!;
+  const result = await mapProcessUncached(sourceKey, externalProcess, eventDate);
+  cache?.process.set(key, result);
+  return result;
+}
+
+async function mapProcessUncached(
   sourceKey: string,
   externalProcess: string,
   eventDate: string,
@@ -680,6 +732,7 @@ export const performanceIngestionService = {
       const metrics = await metricMap(dataset.mapping.metrics);
       const accumulator = new Map<string, Accumulator>();
       const mappingVersionCache = new Map<string, string | null>();
+      const mappingCache = createMappingCache();
 
       for (const row of rows) {
         const eventDate = dateOnly(
@@ -764,6 +817,7 @@ export const performanceIngestionService = {
           dataset.datasetKey,
           externalIdentifier,
           eventDate!,
+          mappingCache,
         );
         if (!employee) {
           const issue: ValidationIssue = {
@@ -794,6 +848,7 @@ export const performanceIngestionService = {
             dataset.datasetKey,
             externalProcess,
             eventDate!,
+            mappingCache,
           );
           if (!process && !processId) {
             const issue: ValidationIssue = {

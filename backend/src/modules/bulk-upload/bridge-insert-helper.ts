@@ -35,7 +35,7 @@ export async function importViaSharedInsert(
   );
   if (batchRows.length === 0) {
     const [staged] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS n FROM upload_batch_row WHERE upload_batch_id = ?`,
+      `SELECT EXISTS(SELECT 1 FROM upload_batch_row WHERE upload_batch_id = ?) AS n`,
       [batchId],
     );
     if (Number(staged[0]?.n ?? 0) === 0) {

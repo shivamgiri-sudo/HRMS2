@@ -30,7 +30,7 @@ export async function importRosterAssignmentBatch(
     await conn.beginTransaction();
 
     const [batchRows] = await conn.execute<RowDataPacket[]>(
-      "SELECT * FROM upload_batch_row WHERE upload_batch_id = ? AND row_status IN ('valid','pending') ORDER BY row_no ASC",
+      "SELECT id, row_no, normalized_data FROM upload_batch_row WHERE upload_batch_id = ? AND row_status IN ('valid','pending') ORDER BY row_no ASC",
       [batchId]
     );
 

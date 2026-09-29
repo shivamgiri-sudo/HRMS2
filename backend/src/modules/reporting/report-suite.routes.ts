@@ -96,6 +96,23 @@ function endOfDayParam(date: string): string {
   return `${date} 23:59:59`;
 }
 
+/**
+ * Sargable month filter: for a valid YYYY-MM it pushes the half-open range
+ * `col >= first-of-month AND col < first-of-next-month` (same rows as
+ * DATE_FORMAT(col,'%Y-%m') = month, but an index on `col` can be used);
+ * anything else keeps the original DATE_FORMAT predicate.
+ */
+export function pushMonthClause(clauses: string[], params: unknown[], col: string, month: string): void {
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    const first = `${month}-01`;
+    clauses.push(`${col} >= ? AND ${col} < DATE_ADD(?, INTERVAL 1 MONTH)`);
+    params.push(first, first);
+    return;
+  }
+  clauses.push(`DATE_FORMAT(${col},'%Y-%m') = ?`);
+  params.push(month);
+}
+
 function monthParam(value: unknown) {
   const text = String(value ?? "").trim();
   return /^\d{4}-\d{2}$/.test(text) ? text : new Date().toISOString().slice(0, 7);
@@ -1946,7 +1963,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     case "productivity-team-rollup": {
       const month = monthParam(req.query.month);
       addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
+      pushMonthClause(clauses, params, "adr.record_date", month);
       sql = `SELECT p.process_name, b.branch_name,
                     COUNT(DISTINCT e.id) AS headcount,
                     ROUND(SUM(adr.dialler_minutes) / 60 / NULLIF(COUNT(DISTINCT e.id),0), 2) AS avg_login_hours,
@@ -1976,7 +1993,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const month = monthParam(req.query.month);
       const tier = String(req.query.tier ?? "top");
       addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
+      pushMonthClause(clauses, params, "adr.record_date", month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS login_hours,
@@ -2027,7 +2044,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     case "schedule-adherence-vs-kpi": {
       const month = monthParam(req.query.month);
       addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
+      pushMonthClause(clauses, params, "adr.record_date", month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)
@@ -3046,7 +3063,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     case "productivity-adherence-vs-kpi": {
       const month = monthParam(req.query.month);
       addScopedEmployeeFilters(req, clauses, params);
-      clauses.push("DATE_FORMAT(adr.record_date,'%Y-%m') = ?"); params.push(month);
+      pushMonthClause(clauses, params, "adr.record_date", month);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
                     ROUND(COUNT(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 END)

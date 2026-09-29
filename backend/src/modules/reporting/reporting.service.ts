@@ -14,6 +14,23 @@ function scopeClause(
   return { sql: `${branchCol} IN (${placeholders})`, params: scope.branchIds };
 }
 
+/**
+ * Month filter that lets the planner use an index on the date column.
+ * `DATE_FORMAT(col,'%Y-%m') = ?` wraps the column in a function so no index on
+ * it can be used; for a well-formed YYYY-MM value the equivalent half-open
+ * range `col >= first-of-month AND col < first-of-next-month` returns exactly
+ * the same rows. Anything that is not a valid YYYY-MM keeps the original
+ * predicate so unusual input behaves exactly as before.
+ */
+export function monthClause(col: string, month: string | undefined): { sql: string; params: unknown[] } {
+  if (!month) return { sql: "", params: [] };
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    const first = `${month}-01`;
+    return { sql: `AND ${col} >= ? AND ${col} < DATE_ADD(?, INTERVAL 1 MONTH)`, params: [first, first] };
+  }
+  return { sql: `AND DATE_FORMAT(${col},'%Y-%m') = ?`, params: [month] };
+}
+
 type Builder = (
   f: Record<string, string>,
   scope: BranchScope,
@@ -641,6 +658,7 @@ const QUERIES: Record<string, Builder> = {
 
   att_monthly: (f, scope) => {
     const sc = scopeClause(scope, "e.branch_id");
+    const mc = monthClause("adr.record_date", f.month);
     return {
       sql: `SELECT
                adr.record_date,
@@ -663,7 +681,7 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ""}
+              ${mc.sql}
               ${f.branch ? "AND e.branch_id = ?" : ""}
               ${f.process ? "AND e.process_id = ?" : ""}
               ${f.dateFrom ? "AND adr.record_date >= ?" : ""}
@@ -671,7 +689,7 @@ const QUERIES: Record<string, Builder> = {
             ORDER BY adr.record_date, b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
-        ...(f.month ? [f.month] : []),
+        ...mc.params,
         ...(f.branch ? [f.branch] : []),
         ...(f.process ? [f.process] : []),
         ...(f.dateFrom ? [f.dateFrom] : []),
@@ -682,6 +700,7 @@ const QUERIES: Record<string, Builder> = {
 
   att_late_mark: (f, scope) => {
     const sc = scopeClause(scope, "e.branch_id");
+    const mc = monthClause("adr.record_date", f.month);
     return {
       sql: `SELECT
                DATE_FORMAT(adr.record_date,'%Y-%m') AS month,
@@ -705,13 +724,13 @@ const QUERIES: Record<string, Builder> = {
               AND COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) IS NOT NULL
               AND TIME(adr.clock_in_time) > COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME))
               AND ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ""}
+              ${mc.sql}
               ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id
             ORDER BY month, b.branch_name, total_late_marks DESC`,
       params: [
         ...sc.params,
-        ...(f.month ? [f.month] : []),
+        ...mc.params,
         ...(f.branch ? [f.branch] : []),
       ],
     };
@@ -719,6 +738,7 @@ const QUERIES: Record<string, Builder> = {
 
   att_biometric: (f, scope) => {
     const sc = scopeClause(scope, "e.branch_id");
+    const mc = monthClause("was.session_date", f.month);
     return {
       sql: `SELECT
                was.session_date,
@@ -739,14 +759,14 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(was.session_date,'%Y-%m') = ?" : ""}
+              ${mc.sql}
               ${f.branch ? "AND e.branch_id = ?" : ""}
               ${f.dateFrom ? "AND was.session_date >= ?" : ""}
               ${f.dateTo ? "AND was.session_date <= ?" : ""}
             ORDER BY was.session_date, b.branch_name, e.employee_code`,
       params: [
         ...sc.params,
-        ...(f.month ? [f.month] : []),
+        ...mc.params,
         ...(f.branch ? [f.branch] : []),
         ...(f.dateFrom ? [f.dateFrom] : []),
         ...(f.dateTo ? [f.dateTo] : []),
@@ -868,6 +888,7 @@ const QUERIES: Record<string, Builder> = {
 
   apr_monthly: (f, scope) => {
     const sc = scopeClause(scope, "e.branch_id");
+    const mc = monthClause("a.ReportDate", f.month);
     return {
       sql: `SELECT
                DATE_FORMAT(a.ReportDate,'%Y-%m') AS month,
@@ -887,13 +908,13 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(a.ReportDate,'%Y-%m') = ?" : ""}
+              ${mc.sql}
               ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(a.ReportDate,'%Y-%m'), a.UserID, a.campaign_id
             ORDER BY month, b.branch_name, a.UserID`,
       params: [
         ...sc.params,
-        ...(f.month ? [f.month] : []),
+        ...mc.params,
         ...(f.branch ? [f.branch] : []),
       ],
     };
@@ -901,6 +922,7 @@ const QUERIES: Record<string, Builder> = {
 
   apr_campaign: (f, scope) => {
     const sc = scopeClause(scope, "e.branch_id");
+    const mc = monthClause("a.ReportDate", f.month);
     return {
       sql: `SELECT
                a.campaign_id,
@@ -916,14 +938,14 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN employees e ON e.biometric_code = a.UserID AND e.active_status = 1
              LEFT JOIN branch_master b ON b.id = e.branch_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(a.ReportDate,'%Y-%m') = ?" : ""}
+              ${mc.sql}
               ${f.branch ? "AND e.branch_id = ?" : ""}
               ${f.campaign ? "AND a.campaign_id = ?" : ""}
             GROUP BY a.campaign_id, DATE_FORMAT(a.ReportDate,'%Y-%m'), b.branch_name
             ORDER BY month, b.branch_name, a.campaign_id`,
       params: [
         ...sc.params,
-        ...(f.month ? [f.month] : []),
+        ...mc.params,
         ...(f.branch ? [f.branch] : []),
         ...(f.campaign ? [f.campaign] : []),
       ],
@@ -1009,6 +1031,7 @@ const QUERIES: Record<string, Builder> = {
 
   leave_lwp: (f, scope) => {
     const sc = scopeClause(scope, "e.branch_id");
+    const mc = monthClause("adr.record_date", f.month);
     return {
       sql: `SELECT
                DATE_FORMAT(adr.record_date,'%Y-%m') AS month,
@@ -1024,13 +1047,13 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN process_master p ON p.id = e.process_id
             WHERE adr.lwp_value > 0
               AND ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?" : ""}
+              ${mc.sql}
               ${f.branch ? "AND e.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m'), e.id
             ORDER BY month, b.branch_name, total_lwp_days DESC`,
       params: [
         ...sc.params,
-        ...(f.month ? [f.month] : []),
+        ...mc.params,
         ...(f.branch ? [f.branch] : []),
       ],
     };
@@ -1109,6 +1132,7 @@ const QUERIES: Record<string, Builder> = {
 
   attrition_monthly: (f, scope) => {
     const sc = scopeClause(scope, "ar.branch_id");
+    const mc = monthClause("ar.exit_date", f.month);
     return {
       sql: `SELECT
                DATE_FORMAT(ar.exit_date,'%Y-%m') AS month,
@@ -1122,13 +1146,13 @@ const QUERIES: Record<string, Builder> = {
              LEFT JOIN branch_master b ON b.id = ar.branch_id
              LEFT JOIN process_master p ON p.id = ar.process_id
             WHERE ${sc.sql}
-              ${f.month ? "AND DATE_FORMAT(ar.exit_date,'%Y-%m') = ?" : ""}
+              ${mc.sql}
               ${f.branch ? "AND ar.branch_id = ?" : ""}
             GROUP BY DATE_FORMAT(ar.exit_date,'%Y-%m'), ar.branch_id, ar.process_id, ar.exit_type
             ORDER BY month DESC, b.branch_name`,
       params: [
         ...sc.params,
-        ...(f.month ? [f.month] : []),
+        ...mc.params,
         ...(f.branch ? [f.branch] : []),
       ],
     };

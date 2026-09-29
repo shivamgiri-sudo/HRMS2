@@ -265,7 +265,13 @@ router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: Authenticate
     if (clientId) params.push(clientId);
     const scopeCond = auditScopeCond(scope, params);
 
-    const [rows] = await pool.execute<RowDataPacket[]>(`
+    // The freshness stamp is independent of the summary aggregate, so both run concurrently.
+    const freshP = pool.execute<RowDataPacket[]>(
+      `SELECT MAX(CallDate) AS latest FROM db_audit.call_quality_assessment
+        WHERE CallDate BETWEEN ? AND ?`,
+      [from, to],
+    );
+    const rowsP = pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
         COUNT(CASE WHEN quality_percentage IS NOT NULL THEN 1 END) as audited_calls,
@@ -283,6 +289,7 @@ router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: Authenticate
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?${clientCond}${scopeCond}
     `, params);
+    const [[rows], [freshRows]] = await Promise.all([rowsP, freshP]);
 
     const row = rows[0] as Record<string, unknown>;
     const parameterFails = [
@@ -296,11 +303,6 @@ router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: Authenticate
     // Stamp the newest audited call in range. db_audit is an upstream system, so a
     // dashboard must be able to say how current its quality numbers are rather than
     // implying they are live.
-    const [freshRows] = await pool.execute<RowDataPacket[]>(
-      `SELECT MAX(CallDate) AS latest FROM db_audit.call_quality_assessment
-        WHERE CallDate BETWEEN ? AND ?`,
-      [from, to],
-    );
 
     return res.json({
       success: true,
@@ -585,7 +587,8 @@ router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req, r
     const clientCond = clientId ? " AND client_id = ?" : "";
     if (clientId) summaryParams.push(clientId);
 
-    const [summaryRows] = await pool.execute<RowDataPacket[]>(`
+    const [[summaryRows], [competitorRows]] = await Promise.all([
+    pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
         SUM(CASE WHEN SaleDone='1' OR SaleDone=1 OR LOWER(SaleDone)='yes' THEN 1 ELSE 0 END) as sales_done,
@@ -594,9 +597,8 @@ router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req, r
         SUM(CASE WHEN ObjectionHandling='1' OR ObjectionHandling=1 THEN 1 ELSE 0 END) as objection_calls
       FROM db_external.CallDetails
       WHERE CallDate BETWEEN ? AND ?${clientCond}
-    `, summaryParams);
-
-    const [competitorRows] = await pool.execute<RowDataPacket[]>(`
+    `, summaryParams),
+    pool.execute<RowDataPacket[]>(`
       SELECT CompetitorName, COUNT(*) as mentions
       FROM db_external.CallDetails
       WHERE CallDate BETWEEN ? AND ?
@@ -605,7 +607,8 @@ router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req, r
       GROUP BY CompetitorName
       ORDER BY mentions DESC
       LIMIT 10
-    `, [from, to]);
+    `, [from, to]),
+    ]);
 
     return res.json({ success: true, summary: summaryRows[0], top_competitors: competitorRows });
   } catch (err: unknown) {
@@ -681,7 +684,8 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req, res) =>
     if (clientId) { whereClauses.push("client_id = ?"); params.push(clientId); }
     const where = whereClauses.join(" AND ");
 
-    const [sales] = await pool.execute<RowDataPacket[]>(`
+    const [[sales], [rejection], [reasons]] = await Promise.all([
+    pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
         SUM(CASE WHEN Opening='1' OR Opening=1 THEN 1 ELSE 0 END) as opening_done,
@@ -689,9 +693,8 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req, res) =>
         SUM(CASE WHEN ObjectionHandling='1' OR ObjectionHandling=1 THEN 1 ELSE 0 END) as objection_handled,
         SUM(CASE WHEN SaleDone='1' OR SaleDone=1 OR LOWER(SaleDone)='yes' THEN 1 ELSE 0 END) as sale_done
       FROM db_external.CallDetails WHERE ${where}
-    `, params);
-
-    const [rejection] = await pool.execute<RowDataPacket[]>(`
+    `, params),
+    pool.execute<RowDataPacket[]>(`
       SELECT
         COUNT(*) as total_calls,
         SUM(CASE WHEN NotInterestedBucketReason IS NOT NULL AND NotInterestedBucketReason NOT IN ('','null','None') THEN 1 ELSE 0 END) as not_interested,
@@ -700,15 +703,15 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req, res) =>
         SUM(CASE WHEN OfferingRejected='1' OR OfferingRejected=1 THEN 1 ELSE 0 END) as offering_rejected,
         SUM(CASE WHEN OpeningRejected='1' OR OpeningRejected=1 THEN 1 ELSE 0 END) as opening_rejected
       FROM db_external.CallDetails WHERE ${where}
-    `, params);
-
-    const [reasons] = await pool.execute<RowDataPacket[]>(`
+    `, params),
+    pool.execute<RowDataPacket[]>(`
       SELECT NotInterestedBucketReason as reason, COUNT(*) as count
       FROM db_external.CallDetails
       WHERE ${where}
         AND NotInterestedBucketReason IS NOT NULL AND NotInterestedBucketReason NOT IN ('','null')
       GROUP BY NotInterestedBucketReason ORDER BY count DESC LIMIT 8
-    `, params);
+    `, params),
+    ]);
 
     return res.json({
       success: true,

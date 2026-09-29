@@ -83,11 +83,11 @@ async function fetchSnapshotData(
     case "quality": {
       // Future snapshot types — fetch from relevant tables, apply masking
       const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT process_id, period, COUNT(*) AS record_count
+        `SELECT process_id, ? AS period, COUNT(*) AS record_count
          FROM employees
          WHERE process_id = ?
-         GROUP BY process_id, DATE_FORMAT(CURDATE(), '%Y-%m')`,
-        [processId]
+         GROUP BY process_id`,
+        [period, processId]
       ).catch((): [RowDataPacket[], unknown] => [[{ process_id: processId, period, record_count: 0 } as RowDataPacket], null]);
 
       return (rows as RowDataPacket[]).map(r =>

@@ -6,6 +6,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { getBatchJob, readBatchProgress } from "./batch-job.js";
+import { deleteBatchRowsChunked } from "./batch-row-status.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
@@ -685,7 +686,7 @@ router.post("/batches/:id/import", requireRole(...HUB_ROLES), restrictLobOnlyBat
       `SELECT valid_rows FROM upload_batch WHERE id = ? LIMIT 1`, [id]
     );
     const [stagedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS n FROM upload_batch_row WHERE upload_batch_id = ?`, [id]
+      `SELECT EXISTS(SELECT 1 FROM upload_batch_row WHERE upload_batch_id = ?) AS n`, [id]
     );
     const validRows = Number((batchRows as RowDataPacket[])[0]?.valid_rows ?? 0);
     const stagedCount = Number((stagedRows as RowDataPacket[])[0]?.n ?? 0);
@@ -805,7 +806,8 @@ router.delete("/batches/:id", requireRole(...HUB_ROLES), restrictLobOnlyBatchAcc
   if (batch.batch_status === "importing") {
     return res.status(409).json({ success: false, error: "Cannot delete a batch that is currently importing" });
   }
-  await db.query("DELETE FROM upload_batch_row WHERE upload_batch_id = ?", [id]);
+  // Chunked: one statement over a large JSON-heavy batch ran for minutes holding row locks.
+  await deleteBatchRowsChunked(id);
   await db.query("DELETE FROM upload_batch WHERE id = ?", [id]);
   return res.json({ success: true });
 }));

@@ -63,6 +63,7 @@ const JOINED_STAGE_SQL = `CASE WHEN ${JOINED_STAGE_PREDICATE} THEN 1 ELSE 0 END`
  */
 const MOBILE_JOIN_MAP_TTL_MS = 15 * 60 * 1000;
 let _mobileJoinMapCache: { value: Map<string, string>; at: number } | null = null;
+let _mobileJoinMapInFlight: Promise<Map<string, string>> | null = null;
 
 /**
  * Cached rather than joined into the query it feeds: grouping the whole employees table
@@ -81,23 +82,38 @@ export async function getEmployeeMobileJoinMap(opts?: { force?: boolean }): Prom
   if (!opts?.force && _mobileJoinMapCache && now - _mobileJoinMapCache.at < MOBILE_JOIN_MAP_TTL_MS) {
     return _mobileJoinMapCache.value;
   }
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT mobile, MAX(date_of_joining) as doj
-       FROM employees
-      WHERE mobile IS NOT NULL AND mobile <> ''
-      GROUP BY mobile`
-  );
-  const value = new Map<string, string>();
-  for (const row of rows as RowDataPacket[]) {
-    if (row.doj) value.set(String(row.mobile), String(row.doj));
+  // In-flight de-duplication. When the 15-minute entry expired (or on a cold start), every
+  // request arriving during the ~6s rebuild used to start its OWN GROUP BY over the whole
+  // employees table — a thundering herd of identical full scans, which is what tipped
+  // /api/ats/stats into 502s. Concurrent callers now await the single build in progress. A
+  // forced refresh still starts a fresh build.
+  if (!opts?.force && _mobileJoinMapInFlight) return _mobileJoinMapInFlight;
+  const build = (async () => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT mobile, MAX(date_of_joining) as doj
+         FROM employees
+        WHERE mobile IS NOT NULL AND mobile <> ''
+        GROUP BY mobile`
+    );
+    const value = new Map<string, string>();
+    for (const row of rows as RowDataPacket[]) {
+      if (row.doj) value.set(String(row.mobile), String(row.doj));
+    }
+    _mobileJoinMapCache = { value, at: Date.now() };
+    return value;
+  })();
+  _mobileJoinMapInFlight = build;
+  try {
+    return await build;
+  } finally {
+    if (_mobileJoinMapInFlight === build) _mobileJoinMapInFlight = null;
   }
-  _mobileJoinMapCache = { value, at: now };
-  return value;
 }
 
 /** Test-only escape hatch — mirrors resetBgvDbConfigCache(). */
 export function resetEmployeeMobileJoinMapCacheForTest(): void {
   _mobileJoinMapCache = null;
+  _mobileJoinMapInFlight = null;
 }
 
 /**
@@ -265,7 +281,13 @@ export async function getSourceChannelROI(): Promise<{
   // Per-channel totals and avg_time_to_hire_days — unchanged from before this fix, and
   // deliberately left as AVG(DATEDIFF) over every candidate in the channel, not just the
   // hired ones (that was already this metric's definition; not this change's concern).
-  const [newData] = await db.execute<SourceRow[]>(
+  // The channel totals, the candidate rows and the (cached, ~6s when cold) employees-by-mobile
+  // map do not depend on each other, so all three are issued together. See the comment
+  // above candidateBecameEmployee() for why the hired count is combined in JS.
+  const mobileJoinMapPromise = getEmployeeMobileJoinMap();
+  mobileJoinMapPromise.catch(() => undefined); // awaited below; avoids an unhandled rejection if a query throws first
+  const [newDataResult, candidateRowsResult] = await Promise.all([
+  db.execute<SourceRow[]>(
     `SELECT
       COALESCE(sourcing_channel, 'Walk-in') as source_channel,
       COUNT(*) as total_candidates,
@@ -274,19 +296,22 @@ export async function getSourceChannelROI(): Promise<{
     WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY sourcing_channel
     ORDER BY total_candidates DESC`
-  );
+  ),
+  db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(sourcing_channel, 'Walk-in') as source_channel,
+            current_stage, mobile, created_at
+       FROM ats_candidate
+      WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+  ),
+  ]);
+  const [newData] = newDataResult;
+  const [candidateRows] = candidateRowsResult;
 
   // total_hired / conversion_rate go through candidateBecameEmployee() instead of a bare
   // SQL SUM, because that determination needs the cached employees-by-mobile map — see
   // its comment above for why this is two cheap queries plus a cache hit rather than one
   // query with the match folded in as a correlated subquery or JOIN.
-  const [candidateRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(sourcing_channel, 'Walk-in') as source_channel,
-            current_stage, mobile, created_at
-       FROM ats_candidate
-      WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`
-  );
-  const mobileJoinMap = await getEmployeeMobileJoinMap();
+  const mobileJoinMap = await mobileJoinMapPromise;
   const hiredByChannel = new Map<string, number>();
   for (const row of candidateRows as RowDataPacket[]) {
     if (candidateBecameEmployee(row as { current_stage: string | null; mobile: string | null; created_at: string }, mobileJoinMap)) {
@@ -347,7 +372,9 @@ export async function getPredictiveAnalytics(): Promise<{
   avg_candidate_journey_days: number;
 }> {
   // Historical pattern analysis
-  const [monthlyHires] = await db.execute<MonthlyHireRow[]>(
+  // The four reads are independent — issued together; the average below is computed after.
+  const [[monthlyHires], [bottleneck], [journeyTime], [peakMonths]] = await Promise.all([
+  db.execute<MonthlyHireRow[]>(
     `SELECT
       DATE_FORMAT(created_at, '%Y-%m') as month,
       COUNT(*) as hires
@@ -357,15 +384,9 @@ export async function getPredictiveAnalytics(): Promise<{
     AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY month
     ORDER BY month`
-  );
-
-  // Calculate average
-  const avgHires = monthlyHires.length > 0
-    ? monthlyHires.reduce((sum, row) => sum + Number(row.hires || 0), 0) / monthlyHires.length
-    : 0;
-
+  ),
   // Find bottleneck
-  const [bottleneck] = await db.execute<StageRow[]>(
+  db.execute<StageRow[]>(
     `SELECT
       current_stage,
       COUNT(*) as stuck_count,
@@ -378,17 +399,15 @@ export async function getPredictiveAnalytics(): Promise<{
     GROUP BY current_stage
     ORDER BY avg_days_stuck DESC
     LIMIT 1`
-  );
-
+  ),
   // Average journey time
-  const [journeyTime] = await db.execute<AvgRow[]>(
+  db.execute<AvgRow[]>(
     `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
     FROM ats_candidate
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`
-  );
-
+  ),
   // Calculate actual peak months from data (top 3 months by hire volume)
-  const [peakMonths] = await db.execute<RowDataPacket[]>(
+  db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(created_at, '%M') AS month_name, COUNT(*) AS cnt
      FROM ats_candidate
      WHERE profile_status IN ('onboarded', 'selected')
@@ -397,7 +416,13 @@ export async function getPredictiveAnalytics(): Promise<{
      GROUP BY DATE_FORMAT(created_at, '%M')
      ORDER BY cnt DESC
      LIMIT 3`
-  );
+  ),
+  ]);
+
+  // Calculate average
+  const avgHires = monthlyHires.length > 0
+    ? monthlyHires.reduce((sum, row) => sum + Number(row.hires || 0), 0) / monthlyHires.length
+    : 0;
   const peakMonthNames = (peakMonths as any[]).map(r => r.month_name as string);
 
   return {
@@ -421,14 +446,16 @@ export async function getTimeToHireMetrics(): Promise<{
   slowest_hire_days: number;
 }> {
   // Overall average
-  const [overall] = await db.execute<AvgRow[]>(
+  // Five independent reads over the same joined set — issued together.
+  const [[overall], [byRole], [bySource], [byBranch], [minMax]] = await Promise.all([
+  db.execute<AvgRow[]>(
     `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
     FROM ats_candidate
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`
-  );
+  ),
 
   // By role
-  const [byRole] = await db.execute<RoleDayRow[]>(
+  db.execute<RoleDayRow[]>(
     `SELECT
       COALESCE(role_applied, applied_for_process) as role,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
@@ -436,10 +463,10 @@ export async function getTimeToHireMetrics(): Promise<{
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY COALESCE(role_applied, applied_for_process)
     ORDER BY avg_days`
-  );
+  ),
 
   // By source
-  const [bySource] = await db.execute<SourceDayRow[]>(
+  db.execute<SourceDayRow[]>(
     `SELECT
       COALESCE(sourcing_channel, 'Walk-in') as source,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
@@ -447,10 +474,10 @@ export async function getTimeToHireMetrics(): Promise<{
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY sourcing_channel
     ORDER BY avg_days`
-  );
+  ),
 
   // By branch
-  const [byBranch] = await db.execute<BranchDayRow[]>(
+  db.execute<BranchDayRow[]>(
     `SELECT
       branch_display_name as branch,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
@@ -458,16 +485,17 @@ export async function getTimeToHireMetrics(): Promise<{
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY branch_display_name
     ORDER BY avg_days`
-  );
+  ),
 
   // Min/Max
-  const [minMax] = await db.execute<MinMaxRow[]>(
+  db.execute<MinMaxRow[]>(
     `SELECT
       MIN(DATEDIFF(updated_at, created_at)) as fastest,
       MAX(DATEDIFF(updated_at, created_at)) as slowest
     FROM ats_candidate
     WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`
-  );
+  ),
+  ]);
 
   return {
     overall_avg_days: Math.round(overall[0]?.avg_days || 0),

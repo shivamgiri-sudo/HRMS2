@@ -40,22 +40,19 @@ function capturingConn(rows: unknown[][]) {
 }
 
 /**
- * Eight execute() calls in order: current metrics, 7-day, 30-day, top performers,
- * bottom performers, process metrics, per-agent scores, org benchmarks.
- * Index 5 is the process-performance query under test.
+ * Five execute() calls in order: window averages (current/7-day/30-day), top performers,
+ * bottom performers, process metrics, per-agent scores + org benchmarks.
+ * Index 3 is the process-performance query under test.
  */
-const PROCESS_QUERY_INDEX = 5;
+const PROCESS_QUERY_INDEX = 3;
 
 function fixture(processRows: unknown[]) {
   return [
-    [{ current_quality: "73.59", total_calls: 14488, unique_agents: 59 }],
-    [{ avg_quality: "73.59" }],
-    [{ avg_quality: "73.59" }],
+    [{ current_quality: "73.59", total_calls: 14488, unique_agents: 59, avg_quality_7d: "73.59", avg_quality_30d: "73.59" }],
     [],
     [],
     processRows,
     [],
-    [{ avg_quality: "73.59", std_dev: "12.00" }],
   ];
 }
 
@@ -120,12 +117,55 @@ describe("QualityExecutiveService process_performance — splits by client, not 
 
   it("labels top and bottom performers by client, not by the dead Campaign column", async () => {
     const { captured } = await runWith([]);
-    const topSql = captured[3]!.sql.replace(/\s+/g, " ");
-    const bottomSql = captured[4]!.sql.replace(/\s+/g, " ");
+    const topSql = captured[1]!.sql.replace(/\s+/g, " ");
+    const bottomSql = captured[2]!.sql.replace(/\s+/g, " ");
 
     // Both carried `SUBSTRING(cqa.Campaign, 1, 10)` as the agent's process label, which
     // is NULL for every current row, so every performer read "N/A".
     expect(topSql).not.toMatch(/cqa\.Campaign/i);
     expect(bottomSql).not.toMatch(/cqa\.Campaign/i);
+  });
+});
+
+describe("QualityExecutiveService batching and caching", () => {
+  it("issues five statements (not eight), folds the 7/30-day and benchmark reads in, and reuses the result", async () => {
+    const { conn, captured } = capturingConn([
+      [{ current_quality: "70.00", total_calls: 10, unique_agents: 2, avg_quality_7d: "72.00", avg_quality_30d: "71.00" }],
+      [],
+      [],
+      [],
+      [
+        { agent_code: "A", avg_quality: "50.00", bench_avg_quality: "65.00", bench_std_dev: "15.00" },
+        { agent_code: "B", avg_quality: "80.00", bench_avg_quality: "65.00", bench_std_dev: "15.00" },
+      ],
+    ]);
+    const service = new QualityExecutiveService({ getConnection: async () => conn as any });
+
+    const [a, b] = await Promise.all([service.getExecutiveSummary(30), service.getExecutiveSummary(30)]);
+    expect(captured).toHaveLength(5);
+    expect(b).toBe(a);                                    // concurrent callers shared one computation
+    await service.getExecutiveSummary(30);
+    expect(captured).toHaveLength(5);                     // and so did the next one, inside the TTL
+
+    expect(a.metrics.trend_7day).toEqual({ direction: "↗", change_pct: 2 });
+    expect(a.metrics.trend_30day).toEqual({ direction: "↗", change_pct: 1 });
+    expect(a.org_benchmarks).toEqual({ avg_quality: "65.00", median_quality: 65, std_deviation: "15.00" });
+    expect(a.risk_summary).toEqual({ critical_agents_count: 1, at_risk_agents_count: 0, coaching_priority_count: 0 });
+
+    // The window query scans the wider of daysBack/30 once; nothing else re-reads the 7/30-day windows.
+    expect(captured[0]!.params).toEqual([30, 30, 30, 30]);
+    const sql = captured.map((c) => c.sql.replace(/\s+/g, " "));
+    expect(sql.filter((s) => /INTERVAL 7 DAY/.test(s))).toHaveLength(1);
+    expect(sql.some((s) => /STDDEV\(user_stats\.avg_quality\) OVER \(\)/.test(s))).toBe(true);
+  });
+
+  it("does not cache a failed computation", async () => {
+    const failing = { execute: vi.fn(async () => { throw new Error("db down"); }), release: vi.fn() };
+    const service = new QualityExecutiveService({ getConnection: async () => failing as any });
+    await expect(service.getExecutiveSummary(30)).rejects.toThrow("db down");
+    const before = failing.execute.mock.calls.length;
+    await expect(service.getExecutiveSummary(30)).rejects.toThrow("db down");
+    expect(failing.execute.mock.calls.length).toBeGreaterThan(before);
+    expect(failing.release).toHaveBeenCalled();
   });
 });

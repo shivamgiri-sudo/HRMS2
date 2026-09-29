@@ -1266,52 +1266,64 @@ export async function getFullOnboardingStatus(token: string) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
 
-  const [documents] = await db.execute<RowDataPacket[]>(
-    `SELECT id, doc_type, doc_name, page_no, file_original_name, file_url, mime_type, file_size_bytes,
-            document_status, verification_method, verification_ref, uploaded_at
-       FROM candidate_onboarding_document
-      WHERE candidate_id = ? AND deleted_at IS NULL
-      ORDER BY uploaded_at DESC`,
-    [candidateId]
-  );
-  const [bankRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
-    [candidateId]
-  );
-  const [qualificationRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`,
-    [candidateId]
-  );
-  const [familyRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`,
-    [candidateId]
-  );
-  const [experienceRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`,
-    [candidateId]
-  );
-  // Both of these are written by the journey and were never read back, so a
-  // returning candidate saw an empty table and re-entered what they had already
-  // supplied. It also silently capped section completeness: sectionComplete is
-  // derived purely from this payload, so a step whose data never returns can
-  // never tick. `family` above is the aggregate row (income, dependents) — a
-  // different table from the per-member list below.
-  const [familyMemberRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_onboarding_family_member WHERE candidate_id = ? ORDER BY created_at ASC`,
-    [candidateId]
-  );
-  const [languageRows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`,
-    [candidateId]
-  );
+  // Every read below is keyed on the same candidateId and none depends on another, so they are
+  // issued together rather than as nine round trips in a row.
+  //
+  // `familyMemberRows` and `languageRows` are written by the journey and were never read back,
+  // so a returning candidate saw an empty table and re-entered what they had already supplied.
+  // It also silently capped section completeness: sectionComplete is derived purely from this
+  // payload, so a step whose data never returns can never tick. `family` is the aggregate row
+  // (income, dependents) — a different table from the per-member list.
+  const [
+    [documents],
+    [bankRows],
+    [qualificationRows],
+    [familyRows],
+    [experienceRows],
+    [familyMemberRows],
+    [languageRows],
+    digilocker,
+    esign,
+  ] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT id, doc_type, doc_name, page_no, file_original_name, file_url, mime_type, file_size_bytes,
+              document_status, verification_method, verification_ref, uploaded_at
+         FROM candidate_onboarding_document
+        WHERE candidate_id = ? AND deleted_at IS NULL
+        ORDER BY uploaded_at DESC`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_family_member WHERE candidate_id = ? ORDER BY created_at ASC`,
+      [candidateId]
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`,
+      [candidateId]
+    ),
+    getLatestDigilockerStatus(candidateId),
+    getLatestEsignStatus(candidateId),
+  ]);
 
   const sanitizedDocuments = (documents as RowDataPacket[])
     .map((row) => sanitizeOnboardingDocument(row as Record<string, unknown>, { token }))
     .filter(Boolean);
-  const [digilocker, esign] = await Promise.all([
-    getLatestDigilockerStatus(candidateId),
-    getLatestEsignStatus(candidateId),
-  ]);
 
   return {
     token: tokenData,
@@ -2458,17 +2470,29 @@ export async function getFullOnboardingByCandidate(
   options?: { viewerRoleKeys?: string[]; scopeFilter?: OnboardingScopeFilter }
 ) {
   await ensureCandidateWithinScope(candidateId, options?.scopeFilter);
-  const [profileRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [documents] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL ORDER BY uploaded_at DESC`, [candidateId]);
-  const [bankRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [qualificationRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
-  const [familyRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [experienceRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  // Mirrors getFullOnboardingStatus: HR reviewing a candidate must see the same
-  // family and language rows the candidate entered, not a blank where they are.
-  const [familyMemberRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family_member WHERE candidate_id = ? ORDER BY created_at ASC`, [candidateId]);
-  const [languageRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`, [candidateId]);
-  const [digilocker, esign] = await Promise.all([
+  // Nine independent reads keyed on the same candidateId — issued together rather than as nine
+  // round trips in a row. Family and language rows mirror getFullOnboardingStatus: HR reviewing
+  // a candidate must see the same rows the candidate entered, not a blank where they are.
+  const [
+    [profileRows],
+    [documents],
+    [bankRows],
+    [qualificationRows],
+    [familyRows],
+    [experienceRows],
+    [familyMemberRows],
+    [languageRows],
+    digilocker,
+    esign,
+  ] = await Promise.all([
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL ORDER BY uploaded_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_family_member WHERE candidate_id = ? ORDER BY created_at ASC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_language WHERE candidate_id = ? ORDER BY created_at ASC`, [candidateId]),
     getLatestDigilockerStatus(candidateId),
     getLatestEsignStatus(candidateId),
   ]);

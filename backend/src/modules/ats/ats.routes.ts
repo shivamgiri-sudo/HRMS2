@@ -465,7 +465,7 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
   // ── KPI summary ────────────────────────────────────────────────────────────
   // TAT = Turn Around Time (interview_started_at to submitted_at)
   // SLA breach = TAT > 90 minutes
-  const [[kpi]] = await db.execute<import("mysql2").RowDataPacket[]>(
+  const kpiQ = db.execute<import("mysql2").RowDataPacket[]>(
     `SELECT
       COUNT(*)                                                              AS total,
       SUM(s.final_decision='Selected')                                      AS selected,
@@ -483,7 +483,7 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
   // ── Hiring flow KPIs — compute from ats_interview_submission ─────────────────
   // This shows: Total Interviewed → Walkins (arrived) → Selected → Joined
   // We derive this from the same interview submission data for consistency
-  const [[hiringFlowRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
+  const hiringFlowQ = db.execute<import("mysql2").RowDataPacket[]>(
     `SELECT
       COUNT(*)                                              AS total_entries,
       COUNT(*)                                              AS walkin_count,
@@ -493,35 +493,32 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
     params
   );
 
-  // Try to get joined count from ats_recruiter_hiring_activity if roster exists
-  const [[rosterRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
-    `SELECT r.id AS roster_id, r.recruiter_code
-     FROM ats_recruiter_roster r
-     INNER JOIN employees e ON e.id = r.employee_id
-     WHERE e.user_id = ? LIMIT 1`,
-    [userId]
-  );
-  const rosterId = (rosterRow?.roster_id as string) ?? null;
-  const recruiterCode = (rosterRow?.recruiter_code as string) ?? null;
-
-  let joinedCount = 0;
-  if (rosterId) {
-    const [[joinedRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT SUM(h.joined_flag=1) AS joined_count
-       FROM ats_recruiter_hiring_activity h
-       WHERE h.recruiter_id = ?
-         AND DATE(h.activity_date) >= ${dateStart}`,
-      [rosterId]
+  // Try to get joined count from ats_recruiter_hiring_activity if roster exists.
+  // The joined lookup depends on the roster row, so the two are chained in one promise that
+  // runs alongside the other (independent) queries.
+  // activity_date is a DATE column, so DATE() around it was a no-op that only blocked its index.
+  const rosterQ = (async () => {
+    const [[rosterRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
+      `SELECT r.id AS roster_id, r.recruiter_code
+       FROM ats_recruiter_roster r
+       INNER JOIN employees e ON e.id = r.employee_id
+       WHERE e.user_id = ? LIMIT 1`,
+      [userId]
     );
-    joinedCount = Number(joinedRow?.joined_count) || 0;
-  }
-
-  const hiringFlow = {
-    total_entries: Number(hiringFlowRow?.total_entries) || 0,
-    walkin_count: Number(hiringFlowRow?.walkin_count) || 0,
-    selected_count: Number(hiringFlowRow?.selected_count) || 0,
-    joined_count: joinedCount,
-  };
+    const rosterId = (rosterRow?.roster_id as string) ?? null;
+    let joinedCount = 0;
+    if (rosterId) {
+      const [[joinedRow]] = await db.execute<import("mysql2").RowDataPacket[]>(
+        `SELECT SUM(h.joined_flag=1) AS joined_count
+         FROM ats_recruiter_hiring_activity h
+         WHERE h.recruiter_id = ?
+           AND h.activity_date >= ${dateStart}`,
+        [rosterId]
+      );
+      joinedCount = Number(joinedRow?.joined_count) || 0;
+    }
+    return joinedCount;
+  })();
 
   // ── Stage funnel — derive stage from round results ─────────────────────────────
   // Stages: Arrival → HR Round → Skill Test → Ops Round → Client Round → Selection
@@ -534,7 +531,7 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
   // - Rejected at Client Round: round1='Selected' AND round2='Selected' AND round3='Rejected'
   // - Selected: final_decision='Selected'
 
-  const [stageRows] = await db.execute<import("mysql2").RowDataPacket[]>(
+  const stageQ = db.execute<import("mysql2").RowDataPacket[]>(
     `SELECT
       CASE
         WHEN final_decision = 'No Show' AND (round1_result IS NULL OR round1_result = '') THEN 'Arrival'
@@ -552,6 +549,70 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
      GROUP BY effective_stage, final_decision`,
     params
   );
+
+  // ── Daily trend (all days in period, filled) ───────────────────────────────
+  const trendQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT DATE(s.submitted_at) AS day,
+            COUNT(*) AS total,
+            SUM(s.final_decision='Selected') AS selected,
+            SUM(s.final_decision='Rejected') AS rejected,
+            SUM(s.final_decision='No Show')  AS no_show
+     ${base}
+     GROUP BY DATE(s.submitted_at)
+     ORDER BY day ASC`,
+    params
+  );
+
+  // ── Process breakdown ──────────────────────────────────────────────────────
+  const byProcessQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT COALESCE(s.interviewed_for_process,'Unknown') AS process,
+            COUNT(*) AS total,
+            SUM(s.final_decision='Selected') AS selected,
+            ROUND(SUM(s.final_decision='Selected')*100.0/NULLIF(COUNT(*),0),1) AS rate
+     ${base}
+     GROUP BY s.interviewed_for_process
+     ORDER BY total DESC LIMIT 10`,
+    params
+  );
+
+  // ── VOC breakdown ──────────────────────────────────────────────────────────
+  const vocQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT voc_reason, COUNT(*) AS cnt FROM (
+       SELECT s.round1_voc   AS voc_reason ${base} AND s.round1_voc   IS NOT NULL AND s.round1_voc   != ''
+       UNION ALL
+       SELECT s.round2_voc   AS voc_reason ${base} AND s.round2_voc   IS NOT NULL AND s.round2_voc   != ''
+       UNION ALL
+       SELECT s.round3_voc   AS voc_reason ${base} AND s.round3_voc   IS NOT NULL AND s.round3_voc   != ''
+       UNION ALL
+       SELECT s.skilltest_voc AS voc_reason ${base} AND s.skilltest_voc IS NOT NULL AND s.skilltest_voc != ''
+     ) v GROUP BY voc_reason ORDER BY cnt DESC LIMIT 10`,
+    [...params, ...params, ...params, ...params]
+  );
+
+  // ── Source breakdown ───────────────────────────────────────────────────────
+  const bySourceQ = db.execute<import("mysql2").RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(s.hiring_source_snapshot,''),'Direct/Walk-in') AS source,
+            COUNT(*) AS total,
+            SUM(s.final_decision='Selected') AS selected
+     ${base}
+     GROUP BY source
+     ORDER BY total DESC LIMIT 8`,
+    params
+  );
+
+  // ── Recruiter profile ──────────────────────────────────────────────────────
+  // All of the above are independent reads, so they run concurrently.
+  const [[[kpi]], [[hiringFlowRow]], joinedCount, [stageRows], [trend], [byProcess], [voc], [bySource], profile] = await Promise.all([
+    kpiQ, hiringFlowQ, rosterQ, stageQ, trendQ, byProcessQ, vocQ, bySourceQ,
+    resolveRecruiterForActor(userId),
+  ]);
+
+  const hiringFlow = {
+    total_entries: Number(hiringFlowRow?.total_entries) || 0,
+    walkin_count: Number(hiringFlowRow?.walkin_count) || 0,
+    selected_count: Number(hiringFlowRow?.selected_count) || 0,
+    joined_count: joinedCount,
+  };
 
   // Aggregate by stage
   const stageData: Record<string, { rejected: number; no_show: number; hold: number; pending: number; selected: number }> = {
@@ -616,60 +677,6 @@ atsRouter.get("/recruiter/my-performance", requireRole("admin", "hr", "super_adm
       pass_rate: passRate,
     };
   }).filter(row => row.entered > 0); // skip stages no candidate ever reached
-
-  // ── Daily trend (all days in period, filled) ───────────────────────────────
-  const [trend] = await db.execute<import("mysql2").RowDataPacket[]>(
-    `SELECT DATE(s.submitted_at) AS day,
-            COUNT(*) AS total,
-            SUM(s.final_decision='Selected') AS selected,
-            SUM(s.final_decision='Rejected') AS rejected,
-            SUM(s.final_decision='No Show')  AS no_show
-     ${base}
-     GROUP BY DATE(s.submitted_at)
-     ORDER BY day ASC`,
-    params
-  );
-
-  // ── Process breakdown ──────────────────────────────────────────────────────
-  const [byProcess] = await db.execute<import("mysql2").RowDataPacket[]>(
-    `SELECT COALESCE(s.interviewed_for_process,'Unknown') AS process,
-            COUNT(*) AS total,
-            SUM(s.final_decision='Selected') AS selected,
-            ROUND(SUM(s.final_decision='Selected')*100.0/NULLIF(COUNT(*),0),1) AS rate
-     ${base}
-     GROUP BY s.interviewed_for_process
-     ORDER BY total DESC LIMIT 10`,
-    params
-  );
-
-  // ── VOC breakdown ──────────────────────────────────────────────────────────
-  const [voc] = await db.execute<import("mysql2").RowDataPacket[]>(
-    `SELECT voc_reason, COUNT(*) AS cnt FROM (
-       SELECT s.round1_voc   AS voc_reason ${base} AND s.round1_voc   IS NOT NULL AND s.round1_voc   != ''
-       UNION ALL
-       SELECT s.round2_voc   AS voc_reason ${base} AND s.round2_voc   IS NOT NULL AND s.round2_voc   != ''
-       UNION ALL
-       SELECT s.round3_voc   AS voc_reason ${base} AND s.round3_voc   IS NOT NULL AND s.round3_voc   != ''
-       UNION ALL
-       SELECT s.skilltest_voc AS voc_reason ${base} AND s.skilltest_voc IS NOT NULL AND s.skilltest_voc != ''
-     ) v GROUP BY voc_reason ORDER BY cnt DESC LIMIT 10`,
-    [...params, ...params, ...params, ...params]
-  );
-
-  // ── Source breakdown ───────────────────────────────────────────────────────
-  const [bySource] = await db.execute<import("mysql2").RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(s.hiring_source_snapshot,''),'Direct/Walk-in') AS source,
-            COUNT(*) AS total,
-            SUM(s.final_decision='Selected') AS selected
-     ${base}
-     GROUP BY source
-     ORDER BY total DESC LIMIT 8`,
-    params
-  );
-
-  // ── Recruiter profile ──────────────────────────────────────────────────────
-  const profile = await resolveRecruiterForActor(userId);
-  void recruiterCode;
 
   return res.json({
     success: true,

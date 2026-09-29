@@ -71,10 +71,27 @@ async function scopedWhereForUser(userId: string, alias = "e"): Promise<{ where:
   return { where: `(${ors.join(" OR ")})`, params, roles };
 }
 
-async function canSeeScope(userId: string, scope: { branch_id?: string | null; process_id?: string | null; assigned_employee_id?: string | null; assigned_user_id?: string | null; target_employee_id?: string | null; target_user_id?: string | null; target_role?: string | null; assigned_role?: string | null }): Promise<boolean> {
-  const roles = await getUserRoleKeys(userId);
+/** Per-call cache so a list loop resolves roles/employee/scopes once instead of once per row. */
+export interface ScopeCtx {
+  roles?: Promise<string[]>;
+  emp?: Promise<Awaited<ReturnType<typeof getEmployeeForUser>>>;
+  scopes: Map<string, Promise<any[]>>;
+}
+export function newScopeCtx(): ScopeCtx { return { scopes: new Map() }; }
+
+export async function canSeeScope(userId: string, scope: { branch_id?: string | null; process_id?: string | null; assigned_employee_id?: string | null; assigned_user_id?: string | null; target_employee_id?: string | null; target_user_id?: string | null; target_role?: string | null; assigned_role?: string | null }, ctx?: ScopeCtx): Promise<boolean> {
+  const loadRoles = () => (ctx ? (ctx.roles ??= getUserRoleKeys(userId)) : getUserRoleKeys(userId));
+  const loadEmp = () => (ctx ? (ctx.emp ??= getEmployeeForUser(userId)) : getEmployeeForUser(userId));
+  const loadScopes = (r: string[]) => {
+    if (!ctx) return getUserAssignmentScopes(userId, r);
+    const k = r.join("\u0001");
+    let p = ctx.scopes.get(k);
+    if (!p) { p = getUserAssignmentScopes(userId, r); ctx.scopes.set(k, p); }
+    return p;
+  };
+  const roles = await loadRoles();
   if (roles.includes("admin") || roles.includes("hr") || roles.includes("ceo")) return true;
-  const emp = await getEmployeeForUser(userId);
+  const emp = await loadEmp();
   if (scope.assigned_user_id && scope.assigned_user_id === userId) return true;
   if (scope.target_user_id && scope.target_user_id === userId) return true;
   if (emp && scope.assigned_employee_id && scope.assigned_employee_id === emp.id) return true;
@@ -86,7 +103,7 @@ async function canSeeScope(userId: string, scope: { branch_id?: string | null; p
   // If item has assigned_role but no specific user/employee, allow users with that role
   if (targetRole && roles.includes(targetRole) && !scope.assigned_user_id && !scope.assigned_employee_id) return true;
 
-  const scopes = await getUserAssignmentScopes(userId, targetRole ? [targetRole] : roles);
+  const scopes = await loadScopes(targetRole ? [targetRole] : roles);
   // Scope record matching: "all", "branch", "process", "branch_process", "team", "department"
   return scopes.some((s: any) => {
     const type = String(s.scope_type ?? "").toLowerCase();
@@ -144,8 +161,9 @@ export const controlTowerService = {
       [...params]
     );
     const visible = [] as any[];
+    const ctx = newScopeCtx();
     for (const row of rows as any[]) {
-      if (await canSeeScope(userId, row)) visible.push(row);
+      if (await canSeeScope(userId, row, ctx)) visible.push(row);
     }
     return visible;
   },
@@ -231,8 +249,9 @@ export const controlTowerService = {
       [...params]
     );
     const visible = [] as any[];
+    const ctx = newScopeCtx();
     for (const row of rows as any[]) {
-      if (await canSeeScope(userId, row)) visible.push(row);
+      if (await canSeeScope(userId, row, ctx)) visible.push(row);
     }
     return visible;
   },
@@ -395,7 +414,7 @@ export const controlTowerService = {
       if (query.branchId) { conds.push("branch_id = ?"); params.push(query.branchId); }
       if (query.processId) { conds.push("process_id = ?"); params.push(query.processId); }
       const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM management_risk_register WHERE ${conds.join(" AND ")} ORDER BY FIELD(severity,'critical','high','medium','low'), created_at DESC LIMIT 50`, params);
-      for (const row of rows as any[]) if (await canSeeScope(userId, row)) out.open_risks.push(row);
+      { const ctx = newScopeCtx(); for (const row of rows as any[]) if (await canSeeScope(userId, row, ctx)) out.open_risks.push(row); }
     }
     if (await tableExists("wfm_roster_conflict_log")) {
       const [rows] = await db.execute<RowDataPacket[]>("SELECT severity, COUNT(*) AS c FROM wfm_roster_conflict_log WHERE resolution_status = 'open' GROUP BY severity");

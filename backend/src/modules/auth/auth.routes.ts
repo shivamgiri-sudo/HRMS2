@@ -271,7 +271,7 @@ router.post("/invite-user", requireAuth, requireRole("admin", "hr", "super_admin
   let userId = "";
 
   const [existing] = await db.execute<RowDataPacket[]>(
-    "SELECT id FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1",
+    "SELECT id FROM auth_user WHERE email = ? LIMIT 1",
     [email],
   );
 

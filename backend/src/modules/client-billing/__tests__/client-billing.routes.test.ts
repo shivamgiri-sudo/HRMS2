@@ -363,3 +363,39 @@ describe("GET /api/client-billing/credit-notes/:id", () => {
     expect(res.body.data).toEqual({ id: "cn-1", credit_no: "CN-09-01/26-27", lines: [{ id: "line-1", particulars: "Service credit" }] });
   });
 });
+
+describe("GET /api/client-billing/summary", () => {
+  it("issues the four aggregates concurrently and shapes the response identically", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    execute.mockImplementation(async (sql: string) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      if (sql.includes("GROUP BY invoice_status")) {
+        return [[{ invoice_status: "approved", count: 3, total: "300.50" }], []];
+      }
+      if (sql.includes("GROUP BY credit_status")) {
+        return [[{ credit_status: "draft", count: 1, total: "10" }], []];
+      }
+      if (sql.includes("DATE_FORMAT(invoice_date")) return [[{ count: 2, total: "200" }], []];
+      if (sql.includes("is_migrated = 0")) return [[{ count: 4 }], []];
+      throw new Error(`unexpected sql ${sql}`);
+    });
+
+    const res = await request(app).get("/api/client-billing/summary");
+    expect(res.status).toBe(200);
+    expect(maxInFlight).toBe(4);
+    expect(res.body.data).toEqual({
+      invoices: {
+        proforma: { count: 0, total: 0 },
+        approved: { count: 3, total: 300.5 },
+        rejected: { count: 0, total: 0 },
+      },
+      creditNotes: { draft: { count: 1, total: 10 }, approved: { count: 0, total: 0 } },
+      thisMonthBilled: { count: 2, total: 200 },
+      pendingApprovalCount: 4,
+    });
+  });
+});

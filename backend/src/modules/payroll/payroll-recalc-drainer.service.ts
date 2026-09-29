@@ -96,6 +96,8 @@ export async function drainPayrollRecalcQueue(
         sourceEventType: "cosec_sync",
         reason: entry.reason,
         actorUserId: "system",
+        // This row IS the queue record; the branch below marks it skipped_locked.
+        enqueueOnMiss: false,
       });
 
       if (result.status === "recalculated") {

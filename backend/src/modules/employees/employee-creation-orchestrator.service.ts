@@ -1791,13 +1791,16 @@ async function createRelatedEmployeeRecords(
          SELECT candidate_id, bank_name, branch_name,
                 ROW_NUMBER() OVER (PARTITION BY candidate_id ORDER BY created_at DESC) AS rn
            FROM candidate_onboarding_bank_detail
+          WHERE candidate_id = ?
        ) cbd ON cbd.candidate_id = v.candidate_id AND cbd.rn = 1
       WHERE v.candidate_id = ?
         AND v.verification_status = 'verified'
         AND c.bank_account_no IS NOT NULL AND c.bank_account_no <> ''
       ORDER BY v.verified_at DESC, v.created_at DESC
       LIMIT 1`,
-    [candidateId]
+    // First ? is the derived table's candidate filter (rn is computed per candidate, so
+    // restricting it to this candidate changes nothing but avoids ranking all ~29k rows).
+    [candidateId, candidateId]
   );
   const verifiedAccount = pennyDropRows[0];
   if (verifiedAccount?.account_no) {

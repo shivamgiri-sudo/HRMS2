@@ -1183,6 +1183,15 @@ export const payrollAttendanceControlService = {
     const limit = Math.min(100, Math.max(10, Number(params.limit ?? 50)));
 
     const run = await latestRun(runMonth, params.runId);
+    // Governance readiness depends only on the run, not on the gap queries below, so it is
+    // started now and awaited where it used to be computed. A failure is captured, never thrown,
+    // exactly as before.
+    const readinessPromise: Promise<unknown> = run?.id
+      ? payrollGovernanceService.readiness(String(run.id)).then(
+          (r: unknown) => r,
+          (err: any) => ({ error: err?.message ?? String(err) }),
+        )
+      : Promise.resolve(null);
     const [counts, apr, ncosec, crossConflicts, regularization, salary] = await Promise.all([
       sourceCounts(from, to),
       aprGaps(from, to, params),
@@ -1243,14 +1252,7 @@ export const payrollAttendanceControlService = {
     const blockers = visibleGaps.filter((gap) => gap.severity === "blocker").length;
     const warnings = visibleGaps.filter((gap) => gap.severity === "warning").length;
 
-    let readiness: unknown = null;
-    if (run?.id) {
-      try {
-        readiness = await payrollGovernanceService.readiness(String(run.id));
-      } catch (err: any) {
-        readiness = { error: err?.message ?? String(err) };
-      }
-    }
+    const readiness: unknown = await readinessPromise;
 
     const start = (page - 1) * limit;
     const pageGaps = await attachResolutionState(visibleGaps.slice(start, start + limit));

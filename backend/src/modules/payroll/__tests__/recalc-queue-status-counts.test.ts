@@ -75,6 +75,31 @@ describe("GET /api/payroll/recalculation-queue statusCounts", () => {
     expect(statusCountsCall[0]).toMatch(/GROUP BY rq\.status/);
     expect(statusCountsCall[0]).toMatch(/payroll_month/);
     expect(statusCountsCall[0]).not.toMatch(/rq\.status = \?/);
-    expect(statusCountsCall[1]).toEqual(["2026-07"]);
+    expect(statusCountsCall[1]).toEqual(["2026-07-01", "2026-07-01"]);
+  });
+
+  it("list query names its columns, caps reason, and filters month by a sargable range", async () => {
+    execute
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ total: 0 }]])
+      .mockResolvedValueOnce([[]]);
+    await request(buildApp()).get("/api/payroll/recalculation-queue?payrollMonth=2026-07");
+    const [listSql, listParams] = execute.mock.calls[0];
+    expect(listSql).not.toMatch(/rq\.\*/);
+    expect(listSql).toMatch(/LEFT\(rq\.reason, 500\) AS reason/);
+    expect(listSql).not.toMatch(/DATE_FORMAT\(rq\.payroll_month/);
+    expect(listSql).toMatch(/rq\.payroll_month >= \?/);
+    expect(listParams).toEqual(["2026-07-01", "2026-07-01"]);
+  });
+
+  it("a malformed month matches nothing and never reaches SQL as a date", async () => {
+    execute
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ total: 0 }]])
+      .mockResolvedValueOnce([[]]);
+    await request(buildApp()).get("/api/payroll/recalculation-queue?payrollMonth=2026-13'; DROP");
+    const [listSql, listParams] = execute.mock.calls[0];
+    expect(listSql).toMatch(/1 = 0/);
+    expect(listParams).toEqual([]);
   });
 });

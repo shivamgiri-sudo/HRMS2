@@ -25,7 +25,7 @@ export async function importShiftRotationTypeBatch(
   userId: string
 ): Promise<{ imported: number; skipped: number; errors: string[] }> {
   const [batchRows] = await db.execute<BatchRow[]>(
-    "SELECT * FROM upload_batch_row WHERE upload_batch_id = ? AND row_status IN ('valid','pending') ORDER BY row_no ASC",
+    "SELECT id, row_no, normalized_data FROM upload_batch_row WHERE upload_batch_id = ? AND row_status IN ('valid','pending') ORDER BY row_no ASC",
     [batchId]
   );
 

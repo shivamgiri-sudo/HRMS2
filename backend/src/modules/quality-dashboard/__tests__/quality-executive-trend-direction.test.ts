@@ -30,20 +30,21 @@ function fakeConn(rows: unknown[][]) {
   };
 }
 
-// Eight conn.execute calls happen in this order inside getExecutiveSummary: current metrics,
-// 7-day avg, 30-day avg, top performers, bottom performers, process metrics, per-agent scores,
-// org benchmarks. Every test below fills only the first three (what direction depends on) and
-// leaves the rest empty — a real empty result set, not an omission that could silently pass.
+// Five conn.execute calls happen in this order inside getExecutiveSummary: the combined
+// current/7-day/30-day window averages, top performers, bottom performers, process metrics, and
+// per-agent scores (which also carry the org benchmarks). Every test below fills only the first
+// (what direction depends on) and leaves the rest empty — a real empty result set, not an
+// omission that could silently pass.
 function summaryFixture(currentQuality: string, sevenDay: string, thirtyDay: string) {
   return [
-    [{ current_quality: currentQuality, total_calls: 100, unique_agents: 5 }],
-    [{ avg_quality: sevenDay }],
-    [{ avg_quality: thirtyDay }],
+    [{
+      current_quality: currentQuality, total_calls: 100, unique_agents: 5,
+      avg_quality_7d: sevenDay, avg_quality_30d: thirtyDay,
+    }],
     [], // top performers
     [], // bottom performers
     [], // process metrics
-    [], // per-agent quality scores
-    [{ avg_quality: null, std_dev: null }], // org benchmarks
+    [], // per-agent quality scores + org benchmarks
   ];
 }
 

@@ -252,7 +252,22 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
   // rather than cutting off at midnight of that day.
   const range = [from, to];
 
-  const [[headlineRow]] = await db.execute<HeadlineRow[]>(
+  const [
+    [[headlineRow]],
+    [[activeAgentsRow]],
+    [[allocationHeadlineRow]],
+    [trendRows],
+    [campaignRows],
+    [tlRows],
+    [performerRows],
+    [[cartConnectRow]],
+    [[chatTicketRow]],
+    [allocationStatusRows],
+    [dateCampaignRows],
+    [agentSaleRows],
+    [agentCampaignRows],
+  ] = await Promise.all([
+    db.execute<HeadlineRow[]>(
     `SELECT
        SUM(gross_amount) AS turnover,
        COUNT(*) AS sale_count,
@@ -261,16 +276,14 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      FROM db_masmis.gnc_sale
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY)`,
     range,
-  );
-
-  const [[activeAgentsRow]] = await db.execute<ActiveAgentsRow[]>(
+  ),
+    db.execute<ActiveAgentsRow[]>(
     `SELECT COUNT(DISTINCT emp_id) AS active_agents
      FROM db_masmis.gnc_apr
      WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY)`,
     range,
-  );
-
-  const [[allocationHeadlineRow]] = await db.execute<AllocationHeadlineRow[]>(
+  ),
+    db.execute<AllocationHeadlineRow[]>(
     `SELECT
        COUNT(*) AS total_allocation,
        SUM(CASE WHEN same_day_connect = 'Connected' THEN 1 ELSE 0 END) AS connected_count,
@@ -279,9 +292,8 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      FROM db_masmis.gnc_allocation
      WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY)`,
     range,
-  );
-
-  const [trendRows] = await db.execute<TrendRow[]>(
+  ),
+    db.execute<TrendRow[]>(
     `SELECT DATE(sale_date) AS d,
        COUNT(*) AS sale_count,
        SUM(gross_amount) AS turnover,
@@ -292,9 +304,8 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      GROUP BY DATE(sale_date)
      ORDER BY d ASC`,
     range,
-  );
-
-  const [campaignRows] = await db.execute<CampaignRow[]>(
+  ),
+    db.execute<CampaignRow[]>(
     `SELECT campaign, COUNT(*) AS sale_count,
        SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count,
        SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS paid_count,
@@ -304,18 +315,16 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      GROUP BY campaign
      ORDER BY turnover DESC`,
     range,
-  );
-
-  const [tlRows] = await db.execute<TlRow[]>(
+  ),
+    db.execute<TlRow[]>(
     `SELECT tl, COUNT(*) AS sale_count, SUM(gross_amount) AS turnover
      FROM db_masmis.gnc_sale
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY) AND tl IS NOT NULL AND tl != ''
      GROUP BY tl
      ORDER BY turnover DESC`,
     range,
-  );
-
-  const [performerRows] = await db.execute<PerformerRow[]>(
+  ),
+    db.execute<PerformerRow[]>(
     `SELECT emp_id, MAX(emp_name) AS emp_name, MAX(tl) AS tl, MAX(campaign) AS campaign,
        COUNT(*) AS sale_count, SUM(gross_amount) AS turnover,
        SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS prepaid_count
@@ -325,50 +334,31 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      ORDER BY turnover DESC
      LIMIT 5`,
     range,
-  );
-
-  // Abandon Cart's own Connected + Not Connected allocation total (excludes
-  // "pending to call", which is neither connected nor not-connected) -- the
-  // denominator for Abandon Cart's Conversion %, per gnc_allocation being
-  // cart-calling data only (no campaign split, so this can't be computed
-  // for any other LOB).
-  const [[cartConnectRow]] = await db.execute<RowDataPacket[]>(
+  ),
+    db.execute<RowDataPacket[]>(
     `SELECT
        SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'connected' THEN 1 ELSE 0 END) AS connected,
        SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'not connected' THEN 1 ELSE 0 END) AS not_connected
      FROM db_masmis.gnc_allocation
      WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY)`,
     range,
-  );
-  const cartAllocationTotal = num(cartConnectRow?.connected) + num(cartConnectRow?.not_connected);
-
-  // Chat's own denominator: total chat tickets handled in the range, from
-  // db_masmis.gnc_chat (the GNC Chat uploader's destination table). Its
-  // own "is_checkout_created" flag is unusable for this -- confirmed live
-  // 2026-09-22 that all 6,019 rows in the table hold the literal string
-  // 'FALSE', including rows that have a real order_id -- so ticket COUNT(*)
-  // is used as the denominator instead, same structural idea as Abandon
-  // Cart's Connected+Not Connected total. report_date is stored as text
-  // ("1-Sep-26"), parsed with STR_TO_DATE to match the ISO `range`.
-  const [[chatTicketRow]] = await db.execute<RowDataPacket[]>(
+  ),
+    db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total_tickets
      FROM db_masmis.gnc_chat
      WHERE STR_TO_DATE(report_date, '%e-%b-%y') >= ?
        AND STR_TO_DATE(report_date, '%e-%b-%y') < DATE_ADD(?, INTERVAL 1 DAY)`,
     range,
-  );
-  const chatTicketTotal = num(chatTicketRow?.total_tickets);
-
-  const [allocationStatusRows] = await db.execute<AllocationStatusRow[]>(
+  ),
+    db.execute<AllocationStatusRow[]>(
     `SELECT calling_status, COUNT(*) AS n
      FROM db_masmis.gnc_allocation
      WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY) AND calling_status IS NOT NULL AND calling_status != ''
      GROUP BY calling_status
      ORDER BY n DESC`,
     range,
-  );
-
-  const [dateCampaignRows] = await db.execute<DateCampaignRow[]>(
+  ),
+    db.execute<DateCampaignRow[]>(
     `SELECT DATE(sale_date) AS d, campaign,
        SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_sale_count,
        SUM(CASE WHEN payment_status = 'COD' THEN gross_amount ELSE 0 END) AS cod_amount,
@@ -381,9 +371,8 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      GROUP BY DATE(sale_date), campaign
      ORDER BY d ASC`,
     range,
-  );
-
-  const [agentSaleRows] = await db.execute<AgentSaleRow[]>(
+  ),
+    db.execute<AgentSaleRow[]>(
     `SELECT emp_id, MAX(emp_name) AS emp_name, MAX(tl) AS tl, MAX(campaign) AS campaign,
        COUNT(*) AS sale_count,
        SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count,
@@ -394,19 +383,37 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      GROUP BY emp_id
      ORDER BY turnover DESC`,
     range,
-  );
-
-  // An agent's campaign/LOB is the one they actually sold most in. MAX(campaign)
-  // picked alphabetically, so an agent with 66 Abandon Cart sales and 1 Chat
-  // sale was shown as "Chat" (Top Performers + Agent-wise LOB column).
-  const [agentCampaignRows] = await db.execute<RowDataPacket[]>(
+  ),
+    db.execute<RowDataPacket[]>(
     `SELECT emp_id, campaign, COUNT(*) AS n
      FROM db_masmis.gnc_sale
      WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY) AND emp_id IS NOT NULL AND emp_id != ''
        AND campaign IS NOT NULL AND campaign != ''
      GROUP BY emp_id, campaign`,
     range,
-  );
+  ),
+  ]);
+
+  // Abandon Cart's own Connected + Not Connected allocation total (excludes
+  // "pending to call", which is neither connected nor not-connected) -- the
+  // denominator for Abandon Cart's Conversion %, per gnc_allocation being
+  // cart-calling data only (no campaign split, so this can't be computed
+  // for any other LOB).
+  const cartAllocationTotal = num(cartConnectRow?.connected) + num(cartConnectRow?.not_connected);
+
+  // Chat's own denominator: total chat tickets handled in the range, from
+  // db_masmis.gnc_chat (the GNC Chat uploader's destination table). Its
+  // own "is_checkout_created" flag is unusable for this -- confirmed live
+  // 2026-09-22 that all 6,019 rows in the table hold the literal string
+  // 'FALSE', including rows that have a real order_id -- so ticket COUNT(*)
+  // is used as the denominator instead, same structural idea as Abandon
+  // Cart's Connected+Not Connected total. report_date is stored as text
+  // ("1-Sep-26"), parsed with STR_TO_DATE to match the ISO `range`.
+  const chatTicketTotal = num(chatTicketRow?.total_tickets);
+
+  // An agent's campaign/LOB is the one they actually sold most in. MAX(campaign)
+  // picked alphabetically, so an agent with 66 Abandon Cart sales and 1 Chat
+  // sale was shown as "Chat" (Top Performers + Agent-wise LOB column).
   const topCampaignByAgent = new Map<string, { campaign: string; n: number }>();
   for (const r of agentCampaignRows) {
     const key = String(r.emp_id);
@@ -421,12 +428,13 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
   let attendanceRows: AttendanceRow[] = [];
   if (agentIds.length > 0) {
     const placeholders = agentIds.map(() => "?").join(",");
-    [employeeRows] = await db.execute<EmployeeRow[]>(
+    [[employeeRows], [attendanceRows]] = await Promise.all([
+      db.execute<EmployeeRow[]>(
       `SELECT employee_code, first_name, last_name, date_of_joining
        FROM mas_hrms.employees WHERE employee_code IN (${placeholders})`,
       agentIds,
-    );
-    [attendanceRows] = await db.execute<AttendanceRow[]>(
+      ),
+      db.execute<AttendanceRow[]>(
       // Distinct present DAYS: gnc_apr repeats an agent-day when the same APR
       // file is uploaded more than once (1 Sep 2026: 6 agent-days x3), so
       // SUM(atten) reported 13 days for agents who were present on 11.
@@ -435,7 +443,8 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
        WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY) AND emp_id IN (${placeholders})
        GROUP BY emp_id`,
       [...range, ...agentIds],
-    );
+      ),
+    ]);
   }
   const employeeByCode = new Map(employeeRows.map((e) => [e.employee_code, e]));
   const attendanceByEmpId = new Map(attendanceRows.map((a) => [a.emp_id, num(a.attendance_days)]));
