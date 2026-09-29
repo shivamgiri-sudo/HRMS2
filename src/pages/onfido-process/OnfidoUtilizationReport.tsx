@@ -98,7 +98,7 @@ export default function OnfidoUtilizationReport() {
               {months.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
-          {canEdit && <ImportInputs onSaved={() => report.refetch()} />}
+          <ImportInputs disabled={!canEdit} onSaved={() => report.refetch()} />
           {!canEdit && !isCheckingCanEdit && (
             <span style={{ fontSize: 11, color: "var(--muted)" }}>
               {canEditCheckFailed
@@ -238,7 +238,7 @@ function DrawerBody({ day, canEdit, onSaved }: { day: Day; canEdit: boolean; onS
 
 // ── CSV import ───────────────────────────────────────────────────────────────
 
-function ImportInputs({ onSaved }: { onSaved: () => void }) {
+function ImportInputs({ onSaved, disabled }: { onSaved: () => void; disabled: boolean }) {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState<{ rows: ImportRow[]; errors: string[]; name: string } | null>(null);
@@ -264,7 +264,7 @@ function ImportInputs({ onSaved }: { onSaved: () => void }) {
   return (
     <div className="flex flex-col items-end gap-1">
       <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={onFile} aria-label="Import utilization inputs from CSV" />
-      {!pending && <button type="button" className="oc-btn-ghost" onClick={() => fileRef.current?.click()}>Import inputs (CSV)</button>}
+      {!pending && <button type="button" className="oc-btn-ghost" disabled={disabled} title={disabled ? "Needs an admin, COO, WFM or process manager role" : undefined} onClick={() => fileRef.current?.click()}>Bulk upload (CSV)</button>}
       {pending && (
         <div style={{ fontSize: 12, maxWidth: 360, textAlign: "right" }}>
           <div>{pending.name}: {pending.rows.length} day(s) ready{pending.errors.length > 0 ? `, ${pending.errors.length} problem(s)` : ""}</div>

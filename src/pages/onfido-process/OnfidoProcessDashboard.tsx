@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PoaExternalPage, PoaInternalPage, PoaTrailPage, type PoaDrill } from "./PoaPagesViews";
 import { Area, AreaChart, Bar, BarChart, Cell, ComposedChart, LabelList, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
@@ -7,7 +7,7 @@ import {
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Trophy, UserCheck, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { OnfidoDownloadButton } from "./OnfidoDownloadButton";
+import { OnfidoExportButton } from "./OnfidoExportButton";
 import OnfidoOutliersView from "./OnfidoOutliersView";
 import OnfidoFreshnessStrip from "./OnfidoFreshnessStrip";
 import { useHierarchyFilters } from "./useHierarchyFilters";
@@ -1673,7 +1673,6 @@ function AttritionView({
     <div className="space-y-4">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <PillGroup value={mode} onChange={setMode} options={[{ key: "all", label: "Attrition + Shrinkage" }, { key: "attrition", label: "Attrition" }, { key: "shrinkage", label: "Shrinkage" }]} />
-        <OnfidoDownloadButton path="/api/onfido-process/attrition/exits/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_attrition_analyst_wise.csv" label="Download analyst-wise attrition (CSV)" />
       </div>
       {/* 1 · Current-month status */}
       <div className={mode === "all" ? "kr k6" : "kr"}>
@@ -2048,9 +2047,6 @@ function EtmView({
 
   return (
     <div className="space-y-4">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-        <OnfidoDownloadButton path={`/api/onfido-process/records/${queue === "poa" ? "ONFIDO_POA_ETM" : "ONFIDO_DOC_ETM"}/export.csv`} params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename={`onfido_${queue}_etm.csv`} />
-      </div>
       <PillGroup value={queue} onChange={setQueue} options={[{ key: "doc", label: "DOC ETM" }, { key: "poa", label: "POA ETM" }]} />
 
       {q && (
@@ -2241,9 +2237,6 @@ function TaskSkipView({
 
   return (
     <div className="space-y-4">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_TASK_SKIP/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_task_skip.csv" />
-      </div>
       {ov && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.selected} kc="var(--orange)" />
@@ -2768,10 +2761,6 @@ function EscalationsView({
 
   return (
     <div className="space-y-4">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_DOC_ESCALATION_CRE/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_cre.csv" label="Download CRE (CSV)" />
-        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_DOC_ESCALATION_CRQ/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_crq.csv" label="Download CRQ (CSV)" />
-      </div>
       <div className="flex flex-wrap items-center gap-3">
         <span className="oc-eyebrow">Queue</span>
         <PillGroup
@@ -2977,9 +2966,6 @@ function DocRawView({
 
   return (
     <div className="space-y-4">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_DOC_RAW/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_doc_raw.csv" label="Download RAW file (CSV)" />
-      </div>
       {ov && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
@@ -4540,6 +4526,8 @@ function isoLocal(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+type DateRange = { from: string; to: string };
+
 // ── Audit Sampling View ────────────────────────────────────────────────────────
 
 interface AuditSamplingRow {
@@ -4827,6 +4815,7 @@ function defaultRange() {
 export default function OnfidoProcessDashboard({ embedded = false }: { embedded?: boolean }) {
   const Shell = embedded ? Fragment : DashboardLayout;
   const [view, setView] = useState<ViewKey>("overview");
+  const exportRef = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState(defaultRange());
   const { tlFilter, setTlFilter, amFilter, setAmFilter, analystFilter, setAnalystFilter, tlOptions, amOptions, analystOptions, clear: clearHierarchy } = useHierarchyFilters(range);
   const [activeTable, setActiveTable] = useState<string>("ONFIDO_DOC_RAW");
@@ -4907,6 +4896,10 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           )}
 
           <OnfidoFreshnessStrip />
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <OnfidoExportButton targetRef={exportRef} filename={`onfido_${view}`} label="Export (Excel)" />
+          </div>
+          <div ref={exportRef} className="space-y-5">
           {view === "trends" && <TrendsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "outliers" && <OnfidoOutliersView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "alerts" && <AlertsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
@@ -4934,6 +4927,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           {view === "stackranking" && <StackRankingView range={range} tlFilter={tlFilter} amFilter={amFilter} />}
 
           {view === "overview" && <OnfidoOverviewReport range={range} tlFilter={tlFilter} amFilter={amFilter} />}
+          </div>
         </div>
 
         <RecordDrawer

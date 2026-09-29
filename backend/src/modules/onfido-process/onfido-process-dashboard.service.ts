@@ -5969,7 +5969,8 @@ export async function getStackRanking(
     );
     const [attrRows] = await pool.query<RowDataPacket[]>(
       `SELECT ${dimCol} AS name, COALESCE(SUM(attrition_flag),0) AS attrition,
-              COALESCE(SUM(ul_minutes),0) AS ul, COALESCE(SUM(scheduled_minutes),0) AS scheduled
+              COALESCE(SUM(actual_ul),0) AS ul, COALESCE(SUM(scheduled),0) AS scheduled,
+              COALESCE(SUM(hc),0) / GREATEST(COUNT(DISTINCT work_date),1) AS avg_hc
          FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ?
            AND ${dimCol} IS NOT NULL AND TRIM(${dimCol}) <> ''
          GROUP BY ${dimCol}`,
@@ -6004,7 +6005,7 @@ export async function getStackRanking(
         extErrPct: pct1(extErr, extAud),
         crePct: pct1(cre, totalTasks),
         attritionPct: ar
-          ? pct1(Number(ar.attrition), scheduled > 0 ? scheduled / 60 / 8 : 1)
+          ? pct1(Number(ar.attrition), Number(ar.avg_hc) > 0 ? Number(ar.avg_hc) : 1)
           : null,
         shrinkagePct:
           ar && scheduled > 0 ? pct1(Number(ar.ul), scheduled) : null,
