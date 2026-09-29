@@ -31,12 +31,22 @@ export function usePlanRecords() {
 }
 
 export function useCanEditWfmInputs(): boolean {
+  return useWfmInputsAccess().canEdit;
+}
+
+/** Like useCanEditWfmInputs, but exposes loading/error so the caller can explain
+ * an absent bulk-upload control instead of it silently vanishing. */
+export function useWfmInputsAccess(): { canEdit: boolean; isChecking: boolean; isError: boolean } {
   const q = useQuery({
     queryKey: ["onfido-process", "wfm-can-edit"],
     queryFn: () => hrmsApi.get<{ data: { canEdit: boolean } }>("/api/onfido-process/wfm-inputs/can-edit"),
     staleTime: 5 * 60 * 1000,
   });
-  return q.data?.data.canEdit === true;
+  return {
+    canEdit: q.data?.data.canEdit === true,
+    isChecking: q.isLoading,
+    isError: q.isError,
+  };
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);

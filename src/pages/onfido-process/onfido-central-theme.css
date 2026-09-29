@@ -245,7 +245,6 @@
 .onfido-central-theme table.oc-table td {
   padding: 9px 12px;
   color: var(--text);
-  border-bottom: 1px solid rgba(51, 65, 92, 0.08);
   font-variant-numeric: tabular-nums;
 }
 .onfido-central-theme table.oc-table tr.oc-row-click { cursor: pointer; transition: background 0.15s; }
@@ -534,13 +533,11 @@
 }
 .onfido-central-theme table.oc-table th:first-child { border-top-left-radius: 10px; }
 .onfido-central-theme table.oc-table th:last-child { border-top-right-radius: 10px; }
-.onfido-central-theme table.oc-table tbody tr:nth-child(even) td { background: var(--row-alt); }
 .onfido-central-theme table.oc-table tbody tr { transition: background 0.12s; }
 .onfido-central-theme table.oc-table tbody tr:hover td { background: var(--row-hover); }
 .onfido-central-theme table.oc-table tr.oc-row-click:hover { background: transparent; }
 .onfido-central-theme table.oc-table tr.oc-row-click:hover td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
 .onfido-central-theme table.oc-table tr.oc-row-self td { background: rgba(27, 106, 181, 0.1); }
-.onfido-central-theme table.oc-table td { border-bottom-color: rgba(51, 65, 92, 0.07); }
 
 /* Pills, badges, buttons. */
 .onfido-central-theme .oc-pill-btn { padding: 5px 13px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }

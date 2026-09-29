@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { useCanEditWfmInputs } from "./OnfidoManpowerPlanSheet";
+import { useWfmInputsAccess } from "./OnfidoManpowerPlanSheet";
 import { parseUtilizationCsv, type ImportRow } from "./onfidoUtilizationCsv";
 import { DASH, EmptyNote, SectionCard, fmtDate, fmtDateTime, fmtInt, fmtNum, fmtPct, fmtRatioPct } from "./onfidoReportShared";
 
@@ -77,7 +77,7 @@ export default function OnfidoUtilizationReport() {
   const months = useMemo(monthOptions, []);
   const [month, setMonth] = useState(months[0].value);
   const [selected, setSelected] = useState<string | null>(null);
-  const canEdit = useCanEditWfmInputs();
+  const { canEdit, isChecking: isCheckingCanEdit, isError: canEditCheckFailed } = useWfmInputsAccess();
   const range = monthBounds(month);
   const report = useQuery({
     queryKey: ["onfido-process", "utilization-report", range],
@@ -99,6 +99,13 @@ export default function OnfidoUtilizationReport() {
             </select>
           </div>
           {canEdit && <ImportInputs onSaved={() => report.refetch()} />}
+          {!canEdit && !isCheckingCanEdit && (
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>
+              {canEditCheckFailed
+                ? "Could not check bulk-upload permission."
+                : "Your role can't bulk-upload utilization inputs."}
+            </span>
+          )}
         </div>
       }
     >

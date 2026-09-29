@@ -96,9 +96,9 @@ export const fmtN = (v: number): string => Math.round(Number(v) || 0).toLocaleSt
 export const fmtPct = (v: number): string => `${(Number(v) || 0).toFixed(2)}%`;
 const fmtPctOrBlank = (v: number | null): string => (v === null ? "" : fmtPct(v));
 
-/** Error %: green <= 1, amber > 1 to 1.5, red > 1.5 (owner rule, all quality parameters). */
-export const ERROR_PCT_GOOD_MAX = 1;
-export const ERROR_PCT_WARN_MAX = 1.5;
+/** Error %: green <= 0.75, amber > 0.75 to 1, red > 1 (client rule, all quality parameters). */
+export const ERROR_PCT_GOOD_MAX = 0.75;
+export const ERROR_PCT_WARN_MAX = 1;
 export const ACCURACY_TARGET = 99.5;
 
 interface Tone { color: string; background: string }

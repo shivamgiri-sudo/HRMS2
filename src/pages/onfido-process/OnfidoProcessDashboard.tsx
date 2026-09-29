@@ -4645,9 +4645,6 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
             </table>
           </div>
         )}
-        <div style={{ marginTop: 8, fontSize: 11, color: "var(--muted)" }}>
-          Conditional formatting: <span style={{ color: "var(--green)", fontWeight: 700 }}>Green</span> ≤0.75% · <span style={{ color: "var(--orange)", fontWeight: 700 }}>Amber</span> 0.75–1% · <span style={{ color: "var(--red)", fontWeight: 700 }}>Red</span> &gt;1%
-        </div>
       </div>
     </div>
   );
@@ -4676,6 +4673,13 @@ function StackRankingView({ range, tlFilter, amFilter }: { range: DateRange; tlF
   });
 
   const rows = q.data?.data ?? [];
+
+  const errC = (v: number | null) =>
+    v === null ? undefined
+      : v > 1 ? ({ background: "var(--red)", color: "#fff" } as React.CSSProperties)
+      : v > 0.75 ? ({ background: "var(--orange)", color: "#fff" } as React.CSSProperties)
+      : ({ background: "var(--green)", color: "#fff" } as React.CSSProperties);
+  const QUALITY_PCT_KEYS = new Set(["intErrPct", "extErrPct", "crePct"]);
 
   const WEIGHTS_AM_TL = [
     { key: "intErrPct", label: "Internal Error %", weight: 25, lowerIsBetter: true },
@@ -4748,7 +4752,7 @@ function StackRankingView({ range, tlFilter, amFilter }: { range: DateRange; tlF
                     <td>{r.name}</td>
                     {weights.map((w) => {
                       const v = r[w.key as keyof StackRankingRow] as number | null;
-                      return <td key={w.key} className="oc-right">{v !== null ? (w.key === "ahtSecs" ? `${v}s` : `${v.toFixed(1)}%`) : "—"}</td>;
+                      return <td key={w.key} className="oc-right" style={QUALITY_PCT_KEYS.has(w.key) ? errC(v) : undefined}>{v !== null ? (w.key === "ahtSecs" ? `${v}s` : `${v.toFixed(1)}%`) : "—"}</td>;
                     })}
                     <td className="oc-right" style={{ fontWeight: 700 }}>{r.score.toFixed(1)}</td>
                   </tr>
