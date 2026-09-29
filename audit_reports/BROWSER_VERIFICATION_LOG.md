@@ -4,6 +4,22 @@ Every UI-affecting change is opened in a real browser after building, and record
 
 ---
 
+## 2026-09-30 — Remaining tabs + single Export button
+
+**Method:** temporary Vite harness with mocked API, headless Playwright Chromium; harness removed afterwards.
+
+| Page | Result |
+|---|---|
+| Alerts | 3 error-rate rows filled green/amber/red; the non-error "AHT" alert row correctly left uncoloured |
+| Outliers & Actions | 2 value cells filled (red 2.4%, amber 0.9%) |
+| POA (Internal/External) legacy layout (entity-month grids, day-wise, breakdown, KPIs) | 28 cells filled across all three colours |
+| Audit Sampling / Stack Ranking | Only one "Export (Excel)" button now (redundant CSV pill removed); .xlsx downloads; no "Failed to load" text |
+| Console / page errors | None on any of the above |
+
+**Not verified:** live site (login required); Client & Document tab and Trends tab rendered only via code; Client Escalations rate intentionally not colour-coded (not clearly an error rate).
+
+---
+
 ## 2026-09-29 (later) — Quality colour code on every error-rate section
 
 **Method:** temporary Vite harness with mocked API (error rates 0.5 / 0.9 / 1.6 / 2.2), headless Playwright Chromium, full-page screenshot reviewed; harness removed afterwards.
@@ -73,3 +89,28 @@ Every UI-affecting change is opened in a real browser after building, and record
 - Capacity Builder figures (reads LOB assignments from the main HRMS DB, not available locally).
 - Whether the requester's role passes the Utilization bulk-upload permission (admin, coo, wfm, process_manager, super_admin).
 - Utilization "no formula" request — derived columns are still calculated on screen; bulk upload reads typed-in values only. Awaiting owner decision.
+
+---
+
+## 2026-09-30 — Operations Command (`/operations-dashboard` rebuild)
+
+**Commit:** not committed (no git repo at this path; working tree only).
+
+**Method:** Vite dev server + temporary harness rendering `OperationsCommand` with mocked `/api/operations-command/*` responses, driven by headless Playwright Chromium. Harness deleted afterwards. Backend service functions (`computeTotals`, `computeGroups` for every dimension, `computeTrend`, `computeFilterOptions`, `computePerformance`, `computeRecords` for all 11 domains, `computeEmployeeDetail`) were run against a local `mysql:8` seeded with 48 employees / 1,260 attendance rows / 714 roster rows / 7 exit requests / mandate / requisition / warning, `ONLY_FULL_GROUP_BY` on. Hand checks: 42 active HC, 6 exits, attrition 6 / avg HC 36 = 16.67%, notice 1, branch-scoped HC 21 = branch row HC 21, Kolkata mandate 20 vs HC 21 = 105% fill.
+
+| Area | Result |
+|---|---|
+| Overview: filters, 8 KPI tiles with prev-period deltas, trend, drill table | Renders |
+| Tabs Shrinkage / Attrition / Process Performance / Attendance | Switch, render |
+| Row click drill | URL becomes `?tab=attrition&branch=…&by=process` |
+| Day heatmap (Attendance/Shrinkage), cell click | Renders, opens list drawer |
+| Analyst row -> Agent 360 drawer | Calendar strip, day-by-day roster vs actual, flags, "None" placeholders |
+| Console / page errors | None |
+
+**Not verified:**
+- Real production data and the login-gated page (no credentials in session).
+- Endpoints over HTTP with a real JWT / role scope; scope logic exercised only via `ORG_ALL` and `BRANCH_ALL` scope objects passed to the service.
+- **`/heatmap` and `/employee/:id/days` SQL was written after the local MySQL container and `backend/.env.bla-local` disappeared from this machine (removed outside this session). Those two queries are type-checked only, never executed.**
+- External `db_audit` call-quality feed (absent locally; failure path exercised, success path not).
+- Productivity / break / LMS / live-session SQL ran against empty tables (syntax only).
+- Migration `1915_operations_command_indexes.sql` applied to the local DB only, not production.
