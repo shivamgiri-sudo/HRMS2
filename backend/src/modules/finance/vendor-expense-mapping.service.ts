@@ -80,7 +80,14 @@ export const vendorExpenseMappingService = {
   async activeOptionsForVendor(
     vendorId: string,
     executor: { execute: (sql: string, values?: any) => Promise<any> } = db,
-  ): Promise<Array<{ head_code: string; head_name: string; sub_head_code: string; sub_head_name: string }>> {
+  ): Promise<
+    Array<{
+      head_code: string;
+      head_name: string;
+      sub_head_code: string;
+      sub_head_name: string;
+    }>
+  > {
     const [rows] = (await executor.execute(
       `SELECT DISTINCT h.head_code, h.head_name, s.sub_head_code, s.sub_head_name
          FROM vendor_expense_mapping m
@@ -94,7 +101,12 @@ export const vendorExpenseMappingService = {
         ORDER BY h.head_name, s.sub_head_name`,
       [vendorId],
     )) as [RowDataPacket[]];
-    return rows as Array<{ head_code: string; head_name: string; sub_head_code: string; sub_head_name: string }>;
+    return rows as Array<{
+      head_code: string;
+      head_name: string;
+      sub_head_code: string;
+      sub_head_name: string;
+    }>;
   },
 
   async listForVendor(vendorId: string) {
@@ -108,7 +120,7 @@ export const vendorExpenseMappingService = {
          LEFT JOIN finance_expense_head_master h ON h.head_code = m.head_code
          LEFT JOIN finance_expense_sub_head_master s
                 ON s.head_id = h.id AND s.sub_head_code = m.sub_head_code
-        WHERE m.vendor_id = ?
+        WHERE m.vendor_id = ? AND m.active_status = 1
         ORDER BY h.head_name, s.sub_head_name`,
       [vendorId],
     );
@@ -125,7 +137,12 @@ export const vendorExpenseMappingService = {
    */
   async saveForVendor(
     vendorId: string,
-    mappings: Array<{ headCode: string; subHeadCode?: string | null; effectiveFrom?: string | null; effectiveTo?: string | null }>,
+    mappings: Array<{
+      headCode: string;
+      subHeadCode?: string | null;
+      effectiveFrom?: string | null;
+      effectiveTo?: string | null;
+    }>,
     actorUserId: string,
   ) {
     if (!vendorId) throw new Error("Vendor is required");
@@ -136,9 +153,15 @@ export const vendorExpenseMappingService = {
       const subHeadCode = String(m.subHeadCode ?? "").trim() || ALL_SUB_HEADS;
       if (!headCode) throw new Error("Every mapping needs a head");
       const key = `${headCode}::${subHeadCode}`;
-      if (seen.has(key)) throw new Error(`Duplicate mapping for ${headCode} / ${subHeadCode}`);
+      if (seen.has(key))
+        throw new Error(`Duplicate mapping for ${headCode} / ${subHeadCode}`);
       seen.add(key);
-      return { headCode, subHeadCode, effectiveFrom: m.effectiveFrom ?? null, effectiveTo: m.effectiveTo ?? null };
+      return {
+        headCode,
+        subHeadCode,
+        effectiveFrom: m.effectiveFrom ?? null,
+        effectiveTo: m.effectiveTo ?? null,
+      };
     });
 
     // Reject codes the master does not know before writing anything, so a typo cannot create a
@@ -156,7 +179,10 @@ export const vendorExpenseMappingService = {
             WHERE h.head_code = ? AND s.sub_head_code = ? LIMIT 1`,
           [m.headCode, m.subHeadCode],
         );
-        if (!sub.length) throw new Error(`Sub-head ${m.subHeadCode} does not belong to head ${m.headCode}`);
+        if (!sub.length)
+          throw new Error(
+            `Sub-head ${m.subHeadCode} does not belong to head ${m.headCode}`,
+          );
       }
     }
 
@@ -182,7 +208,16 @@ export const vendorExpenseMappingService = {
              effective_from = VALUES(effective_from),
              effective_to = VALUES(effective_to),
              updated_by = VALUES(created_by)`,
-          [randomUUID(), vendorId, m.subHeadCode, m.effectiveFrom, m.effectiveTo, actorUserId, m.subHeadCode, m.headCode],
+          [
+            randomUUID(),
+            vendorId,
+            m.subHeadCode,
+            m.effectiveFrom,
+            m.effectiveTo,
+            actorUserId,
+            m.subHeadCode,
+            m.headCode,
+          ],
         );
       }
       await connection.commit();
@@ -239,7 +274,12 @@ export const vendorExpenseMappingService = {
       vendorHasMappings = rows.length > 0;
     }
 
-    const conditions = ["bh.branch_id = ?", "bh.status = 'active'", "h.active_status = 1", "s.active_status = 1"];
+    const conditions = [
+      "bh.branch_id = ?",
+      "bh.status = 'active'",
+      "h.active_status = 1",
+      "s.active_status = 1",
+    ];
     const params: unknown[] = [input.branchId];
     if (input.periodCode) {
       conditions.push("bh.period_code = ?");
@@ -314,10 +354,17 @@ export const vendorExpenseMappingService = {
           ? "This vendor is mapped to expense heads that have no approved budget with remaining balance for this branch and period."
           : "This vendor has no active expense mapping.";
       } else {
-        reason = "This branch has no approved budget line with remaining balance for this period.";
+        reason =
+          "This branch has no approved budget line with remaining balance for this period.";
       }
     }
 
-    return { enforced, vendorHasMappings, selectable, reason, mappedButUnbudgeted };
+    return {
+      enforced,
+      vendorHasMappings,
+      selectable,
+      reason,
+      mappedButUnbudgeted,
+    };
   },
 };
