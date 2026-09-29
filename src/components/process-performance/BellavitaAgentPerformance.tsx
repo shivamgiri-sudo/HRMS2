@@ -64,9 +64,6 @@ const COLS: Col[] = [
   { key: "lob", label: "LOB", get: (r) => r.lob, cell: (r) => r.lob, className: "text-slate-500" },
   { key: "tenure", label: "Tenure", get: (r) => r.tenureDays, cell: (r) => r.tenureDays ?? "—", className: "text-slate-600" },
   { key: "attendance", label: "Attendance", get: (r) => r.attendanceDays, cell: (r) => r.attendanceDays, className: "text-slate-600" },
-  { key: "login", label: "Login Hrs", get: (r) => r.loginHours, cell: (r) => r.loginHours, className: "text-slate-600" },
-  { key: "break", label: "Break Hrs", get: (r) => r.breakHours, cell: (r) => r.breakHours, className: "text-slate-600" },
-  { key: "talk", label: "Talk Hrs", get: (r) => r.talkHours, cell: (r) => r.talkHours, className: "text-slate-600" },
   { key: "avgLogin", label: "Avg Login", get: (r) => avgSec(r.loginHours, r.attendanceDays), cell: (r) => avgHms(r.loginHours, r.attendanceDays), className: "text-slate-600" },
   { key: "avgBreak", label: "Avg Break", get: (r) => avgSec(r.breakHours, r.attendanceDays), cell: (r) => avgHms(r.breakHours, r.attendanceDays), className: "text-slate-600" },
   { key: "avgTalk", label: "Avg Talk", get: (r) => avgSec(r.talkHours, r.attendanceDays), cell: (r) => avgHms(r.talkHours, r.attendanceDays), className: "font-semibold text-indigo-700" },
@@ -93,7 +90,7 @@ const colGetter = (r: AgentRow, key: string) => COLS.find((c) => c.key === key)?
  * deliberately left out (no real source exists in this app: DOJ, Bucket,
  * per-agent Target/Achiv%, TQ/MQ/BQ, Compliance%, Man Day, Start Date).
  *
- * Login / Break / Talk Hrs are range TOTALS; the Avg columns divide them by the agent's attendance days
+ * The Avg Login / Break / Talk columns divide the range totals of login, break and talk hours by the agent's attendance days
  * (P = 1, HD = 0.5) so agents with different attendance compare fairly.
  */
 export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to: string; lob?: string }) {
@@ -136,10 +133,10 @@ export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to:
       title: "Agent Performance",
       tables: [{
         title: "Agent Performance",
-        columns: ["Agent", "Emp ID", "TL", "LOB", "Tenure", "Attendance", "Login Hrs", "Break Hrs", "Talk Hrs", "Avg Login", "Avg Break", "Avg Talk", "ACHT", "Sale", "Zecpe", "Website", "Draft Order", "COD%", "Paid%", "RTO%", "Revenue", "Avg Sale"],
+        columns: ["Agent", "Emp ID", "TL", "LOB", "Tenure", "Attendance", "Avg Login", "Avg Break", "Avg Talk", "ACHT", "Sale", "Zecpe", "Website", "Draft Order", "COD%", "Paid%", "RTO%", "Revenue", "Avg Sale"],
         rows: rows.map((r) => [
-          r.empName, r.empId, r.teamLeader, r.lob, r.tenureDays ?? "—", r.attendanceDays, r.loginHours, r.breakHours,
-          r.talkHours, avgHms(r.loginHours, r.attendanceDays), avgHms(r.breakHours, r.attendanceDays), avgHms(r.talkHours, r.attendanceDays), `${r.achtSeconds}s`, r.saleCount, r.zecpeCount, r.websiteCount, r.draftOrderCount,
+          r.empName, r.empId, r.teamLeader, r.lob, r.tenureDays ?? "—", r.attendanceDays,
+          avgHms(r.loginHours, r.attendanceDays), avgHms(r.breakHours, r.attendanceDays), avgHms(r.talkHours, r.attendanceDays), `${r.achtSeconds}s`, r.saleCount, r.zecpeCount, r.websiteCount, r.draftOrderCount,
           `${r.codPct}%`, `${r.paidPct}%`, `${r.rtoPct}%`, formatINR(r.revenue), formatINR(r.avgSale),
         ]),
       }],
@@ -213,7 +210,7 @@ export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to:
               </tr>
             ))}
             {filteredRows.length === 0 && (
-              <tr><td colSpan={21} className="border border-slate-200 py-6 text-center text-slate-400">{rows.length === 0 ? "No agent data for this period." : "No agents match the search / filters."}</td></tr>
+              <tr><td colSpan={COLS.length} className="border border-slate-200 py-6 text-center text-slate-400">{rows.length === 0 ? "No agent data for this period." : "No agents match the search / filters."}</td></tr>
             )}
           </tbody>
         </table>

@@ -3,6 +3,8 @@ import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Respons
 import { X, Loader2 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatINR, formatShortDate, formatDDMMYYYY, localDateStr } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 const TOOLTIP_PROPS = {
   contentStyle: { fontSize: 12, borderRadius: 10, border: "1px solid #334155", background: "#0f172a", boxShadow: "0 8px 24px rgba(15,23,42,0.4)", padding: "8px 12px" },
@@ -64,6 +66,23 @@ export function GncAgentDrawer({
     }
     return [...weeks.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([, w]) => w);
   }, [data]);
+  type WeeklyRow = (typeof weekly)[number];
+  const WEEK_FILTER_COLS: Array<FilterColumn<WeeklyRow>> = [
+    { key: "label", get: (w) => w.label }, { key: "saleCount", get: (w) => w.saleCount }, { key: "codCount", get: (w) => w.codCount },
+    { key: "paidCount", get: (w) => w.paidCount }, { key: "revenue", get: (w) => w.revenue }, { key: "daysPresent", get: (w) => w.daysPresent },
+  ];
+  const weekColGetter = (w: WeeklyRow, key: string) => WEEK_FILTER_COLS.find((c) => c.key === key)?.get(w);
+  const weekFilters = useColumnFilters(weekly, WEEK_FILTER_COLS);
+  const { sorted: sortedWeekly, sortKey: weekSortKey, sortDir: weekSortDir, toggleSort: toggleWeekSort } = useSortableRows(weekFilters.filtered, weekColGetter);
+
+  type DailyRow = AgentDetail["daily"][number];
+  const DAILY_FILTER_COLS: Array<FilterColumn<DailyRow>> = [
+    { key: "date", get: (d) => d.date }, { key: "saleCount", get: (d) => d.saleCount }, { key: "codCount", get: (d) => d.codCount },
+    { key: "paidCount", get: (d) => d.paidCount }, { key: "revenue", get: (d) => d.revenue }, { key: "present", get: (d) => (d.present === null ? null : d.present ? "Present" : "Absent") },
+  ];
+  const dailyColGetter = (d: DailyRow, key: string) => DAILY_FILTER_COLS.find((c) => c.key === key)?.get(d);
+  const dailyFilters = useColumnFilters(data?.daily ?? [], DAILY_FILTER_COLS);
+  const { sorted: sortedDaily, sortKey: dailySortKey, sortDir: dailySortDir, toggleSort: toggleDailySort } = useSortableRows(dailyFilters.filtered, dailyColGetter);
 
   useEffect(() => { const id = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(id); }, []);
   useEffect(() => {
@@ -129,32 +148,42 @@ export function GncAgentDrawer({
                 {weekly.length === 0 ? (
                   <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-400">None</p>
                 ) : (
-                  <div className="overflow-x-auto rounded-xl border border-slate-100">
-                    <table className="w-full text-center text-xs">
-                      <thead>
-                        <tr className="bg-emerald-800 text-[11px] uppercase tracking-wide text-white">
-                          <th className="px-3 py-2 text-left font-bold">Week</th>
-                          <th className="px-3 py-2 font-bold">Sale Made</th>
-                          <th className="px-3 py-2 font-bold">COD</th>
-                          <th className="px-3 py-2 font-bold">Paid</th>
-                          <th className="px-3 py-2 font-bold">Revenue</th>
-                          <th className="px-3 py-2 font-bold">Days Present</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {weekly.map((w, i) => (
-                          <tr key={w.label} className={`border-t border-slate-50 ${i % 2 === 1 ? "bg-emerald-50/30" : "bg-white"}`}>
-                            <td className="px-3 py-2 text-left font-medium text-slate-700">{w.label}</td>
-                            <td className="px-3 py-2 text-slate-600">{w.saleCount}</td>
-                            <td className="px-3 py-2 text-amber-600">{w.codCount}</td>
-                            <td className="px-3 py-2 text-emerald-600">{w.paidCount}</td>
-                            <td className="px-3 py-2 font-semibold text-slate-800">{formatINR(w.revenue)}</td>
-                            <td className="px-3 py-2 text-slate-600">{w.daysPresent}</td>
+                  <>
+                    {weekFilters.activeCount > 0 && (
+                      <div className="flex justify-end">
+                        <button type="button" onClick={weekFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                          Clear {weekFilters.activeCount} filter{weekFilters.activeCount > 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    )}
+                    <div className="overflow-x-auto rounded-xl border border-slate-100">
+                      <table className="w-full text-center text-xs">
+                        <thead>
+                          <tr className="bg-emerald-800 text-[11px] uppercase tracking-wide text-white">
+                            <FilterSortTh label="Week" columnKey="label" sortKey={weekSortKey} sortDir={weekSortDir} onSort={toggleWeekSort} filters={weekFilters} className="px-3 py-2 text-left font-bold" />
+                            <FilterSortTh label="Sale Made" columnKey="saleCount" sortKey={weekSortKey} sortDir={weekSortDir} onSort={toggleWeekSort} filters={weekFilters} className="px-3 py-2 font-bold" />
+                            <FilterSortTh label="COD" columnKey="codCount" sortKey={weekSortKey} sortDir={weekSortDir} onSort={toggleWeekSort} filters={weekFilters} className="px-3 py-2 font-bold" />
+                            <FilterSortTh label="Paid" columnKey="paidCount" sortKey={weekSortKey} sortDir={weekSortDir} onSort={toggleWeekSort} filters={weekFilters} className="px-3 py-2 font-bold" />
+                            <FilterSortTh label="Revenue" columnKey="revenue" sortKey={weekSortKey} sortDir={weekSortDir} onSort={toggleWeekSort} filters={weekFilters} className="px-3 py-2 font-bold" />
+                            <FilterSortTh label="Days Present" columnKey="daysPresent" sortKey={weekSortKey} sortDir={weekSortDir} onSort={toggleWeekSort} filters={weekFilters} className="px-3 py-2 font-bold" />
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {sortedWeekly.map((w, i) => (
+                            <tr key={w.label} className={`border-t border-slate-50 ${i % 2 === 1 ? "bg-emerald-50/30" : "bg-white"}`}>
+                              <td className="px-3 py-2 text-left font-medium text-slate-700">{w.label}</td>
+                              <td className="px-3 py-2 text-slate-600">{w.saleCount}</td>
+                              <td className="px-3 py-2 text-amber-600">{w.codCount}</td>
+                              <td className="px-3 py-2 text-emerald-600">{w.paidCount}</td>
+                              <td className="px-3 py-2 font-semibold text-slate-800">{formatINR(w.revenue)}</td>
+                              <td className="px-3 py-2 text-slate-600">{w.daysPresent}</td>
+                            </tr>
+                          ))}
+                          {sortedWeekly.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-slate-400">No weeks match the current filters.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </section>
 
@@ -175,20 +204,27 @@ export function GncAgentDrawer({
                         <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sale Made" stroke="#047857" strokeWidth={2} dot={{ r: 2 }} />
                       </ComposedChart>
                     </ResponsiveContainer>
+                    {dailyFilters.activeCount > 0 && (
+                      <div className="flex justify-end">
+                        <button type="button" onClick={dailyFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                          Clear {dailyFilters.activeCount} filter{dailyFilters.activeCount > 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    )}
                     <div className="overflow-x-auto rounded-xl border border-slate-100">
                       <table className="w-full text-center text-xs">
                         <thead>
                           <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                            <th className="px-3 py-2 font-semibold">Date</th>
-                            <th className="px-3 py-2 font-semibold">Sale Made</th>
-                            <th className="px-3 py-2 font-semibold">COD</th>
-                            <th className="px-3 py-2 font-semibold">Paid</th>
-                            <th className="px-3 py-2 font-semibold">Revenue</th>
-                            <th className="px-3 py-2 font-semibold">Present</th>
+                            <FilterSortTh label="Date" columnKey="date" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Sale Made" columnKey="saleCount" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="COD" columnKey="codCount" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Paid" columnKey="paidCount" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Revenue" columnKey="revenue" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
+                            <FilterSortTh label="Present" columnKey="present" sortKey={dailySortKey} sortDir={dailySortDir} onSort={toggleDailySort} filters={dailyFilters} className="px-3 py-2 font-semibold" />
                           </tr>
                         </thead>
                         <tbody>
-                          {data.daily.map((d) => (
+                          {sortedDaily.map((d) => (
                             <tr key={d.date} className="border-t border-slate-50">
                               <td className="px-3 py-2 font-medium text-slate-700">{formatShortDate(d.date)}</td>
                               <td className="px-3 py-2 text-slate-600">{d.saleCount}</td>
@@ -204,6 +240,7 @@ export function GncAgentDrawer({
                               </td>
                             </tr>
                           ))}
+                          {sortedDaily.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-slate-400">No dates match the current filters.</td></tr>}
                         </tbody>
                       </table>
                     </div>

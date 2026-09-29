@@ -6,11 +6,13 @@ import {
   Mail, MailOpen, MailCheck, Gauge, Inbox, Hourglass, RotateCcw, Trash2, Users, ShieldCheck, ClipboardCheck, ClipboardList, MessageSquare,
   UserRound, Repeat, Timer, Clock3, MessageSquareOff, Smartphone, MessageCircleQuestion, BadgeCheck, PhoneOutgoing, PhoneCall, Hash, PhoneOff,
   PieChart, MessageSquareHeart, Smile, Frown, Languages, PhoneForwarded, PhoneMissed, PhoneIncoming, OctagonAlert, TrendingDown, CheckCircle2,
-  ArrowUpRight, AlertTriangle, Star, Search, ArrowUpDown, Lightbulb, Info, ChevronLeft, LayoutGrid,
+  ArrowUpRight, AlertTriangle, Star, Search, Lightbulb, Info, ChevronLeft, LayoutGrid,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { KpiCard, SectionCard, type KpiTone, type ExportTable } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Generic renderer for the Clovia LOB report specs (backend/.../clovia-lob.shared.ts).
@@ -211,27 +213,30 @@ export function ChartCard({ spec, onDrill }: { spec: ChartSpec; onDrill?: (kind:
 
 /* ───────────────────────────── tables ───────────────────────────── */
 
+/** A Record<string, unknown> field, narrowed to what sorting and the filter checklist can work with. */
+const asFilterable = (v: unknown): string | number | null => (typeof v === "number" || typeof v === "string" ? v : v === null || v === undefined ? null : String(v));
+
 export function DataTable({ spec, onRow }: { spec: TableSpec; onRow: (kind: string, key: string) => void }) {
   const [q, setQ] = useState("");
-  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(spec.defaultSort ?? null);
-  const rows = useMemo(() => {
-    let r = spec.rows;
+  const searched = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (s) r = r.filter((x) => spec.columns.some((c) => String(x[c.key] ?? "").toLowerCase().includes(s)));
-    if (sort) {
-      const dirn = sort.dir === "asc" ? 1 : -1;
-      r = [...r].sort((a, b) => {
-        const av = a[sort.key]; const bv = b[sort.key];
-        if (av === null || av === undefined) return 1;
-        if (bv === null || bv === undefined) return -1;
-        return typeof av === "number" && typeof bv === "number" ? (av - bv) * dirn : String(av).localeCompare(String(bv)) * dirn;
-      });
-    }
-    return r;
-  }, [spec, q, sort]);
+    return s ? spec.rows.filter((x) => spec.columns.some((c) => String(x[c.key] ?? "").toLowerCase().includes(s))) : spec.rows;
+  }, [spec, q]);
+  // Excel-style: every header sorts (click) and filters (funnel icon), layered on top of the search box above.
+  const filterCols: Array<FilterColumn<Record<string, unknown>>> = useMemo(() => spec.columns.map((c) => ({ key: c.key, get: (r) => asFilterable(r[c.key]) })), [spec.columns]);
+  const filters = useColumnFilters(searched, filterCols);
+  const colGetter = (r: Record<string, unknown>, key: string) => asFilterable(r[key]);
+  const { sorted: rows, sortKey, sortDir, toggleSort } = useSortableRows(filters.filtered, colGetter);
   const cellVal = (c: Column, v: unknown) => (c.fmt ? fmtVal(v, c.fmt) : v === null || v === undefined || v === "" ? "—" : String(v));
   return (
-    <SectionCard icon={LayoutGrid} title={`${spec.title}${spec.rows.length > 0 ? ` (${spec.rows.length})` : ""}`} footnote={spec.footnote}>
+    <SectionCard
+      icon={LayoutGrid} title={`${spec.title}${spec.rows.length > 0 ? ` (${spec.rows.length})` : ""}`} footnote={spec.footnote}
+      action={filters.activeCount > 0 ? (
+        <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+          Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+        </button>
+      ) : undefined}
+    >
       {spec.subtitle && <p className="-mt-1 mb-2 text-[11px] text-slate-400">{spec.subtitle}</p>}
       {spec.searchable && (
         <div className="relative mb-3 max-w-xs">
@@ -244,11 +249,10 @@ export function DataTable({ spec, onRow }: { spec: TableSpec; onRow: (kind: stri
           <thead>
             <tr className="border-b border-slate-100 bg-slate-50/80 text-[11px] uppercase tracking-wide text-slate-400">
               {spec.columns.map((c) => (
-                <th key={c.key} title={c.hint} className={`whitespace-nowrap px-3 py-2.5 font-semibold ${c.align === "left" ? "text-left" : "text-right"}`}>
-                  <button type="button" onClick={() => setSort((p) => (p?.key === c.key ? { key: c.key, dir: p.dir === "asc" ? "desc" : "asc" } : { key: c.key, dir: c.align === "left" ? "asc" : "desc" }))} className="inline-flex items-center gap-1 hover:text-slate-600">
-                    {c.label}{sort?.key === c.key && <ArrowUpDown className="h-3 w-3" />}
-                  </button>
-                </th>
+                <FilterSortTh
+                  key={c.key} label={c.label} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={filters}
+                  className={`whitespace-nowrap px-3 py-2.5 font-semibold ${c.align === "left" ? "text-left" : "text-right"}`}
+                />
               ))}
             </tr>
           </thead>
@@ -259,9 +263,9 @@ export function DataTable({ spec, onRow }: { spec: TableSpec; onRow: (kind: stri
                 {spec.columns.map((c) => <td key={c.key} className={`whitespace-nowrap px-3 py-2 ${c.align === "left" ? "text-left font-medium text-slate-700" : "text-right tabular-nums text-slate-600"}`}>{cellVal(c, r[c.key])}</td>)}
               </tr>
             ))}
-            {rows.length === 0 && <tr><td colSpan={spec.columns.length} className="py-8 text-center text-slate-400">None in this range.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={spec.columns.length} className="py-8 text-center text-slate-400">{spec.rows.length === 0 ? "None in this range." : "No rows match the search / filters."}</td></tr>}
           </tbody>
-          {spec.totals && rows.length > 0 && !q && (
+          {spec.totals && rows.length > 0 && !q && filters.activeCount === 0 && (
             <tfoot>
               <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold text-slate-700">
                 {spec.columns.map((c) => <td key={c.key} className={`whitespace-nowrap px-3 py-2 ${c.align === "left" ? "text-left" : "text-right tabular-nums"}`}>{spec.totals![c.key] === undefined ? "" : cellVal(c, spec.totals![c.key])}</td>)}
@@ -278,6 +282,49 @@ export function DataTable({ spec, onRow }: { spec: TableSpec; onRow: (kind: stri
 
 const BADGE = { green: "bg-emerald-100 text-emerald-700", amber: "bg-amber-100 text-amber-700", red: "bg-red-100 text-red-700", slate: "bg-slate-100 text-slate-600", blue: "bg-blue-100 text-blue-700" } as const;
 const SECTION_LABEL = "text-xs font-bold uppercase tracking-wide text-slate-400";
+
+/** One "table" section of a detail drawer -- its own component so useColumnFilters/useSortableRows (hooks) can be called
+ * unconditionally, since DetailBody renders a variable number of these inside a .map(). */
+function SectionTable({ table, empty, onRecord }: { table: NonNullable<DetailSection["table"]>; empty?: string; onRecord: (type: string, id: number) => void }) {
+  const filterCols: Array<FilterColumn<Record<string, unknown>>> = useMemo(() => table.columns.map((c) => ({ key: c.key, get: (r) => asFilterable(r[c.key]) })), [table.columns]);
+  const filters = useColumnFilters(table.rows, filterCols);
+  const colGetter = (r: Record<string, unknown>, key: string) => asFilterable(r[key]);
+  const { sorted: rows, sortKey, sortDir, toggleSort } = useSortableRows(filters.filtered, colGetter);
+  if (table.rows.length === 0) return <p className="text-xs text-slate-400">{empty ?? "None"}</p>;
+  return (
+    <div className="space-y-1.5">
+      {filters.activeCount > 0 && (
+        <div className="flex justify-end">
+          <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+            Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+          </button>
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-xl border border-slate-100">
+        <table className="w-full border-collapse text-left text-xs">
+          <thead>
+            <tr className="border-b border-slate-100 bg-slate-50/80 text-[11px] uppercase tracking-wide text-slate-400">
+              {table.columns.map((c) => (
+                <FilterSortTh
+                  key={c.key} label={c.label} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={filters}
+                  className={`whitespace-nowrap px-3 py-2 font-semibold ${c.align === "left" ? "text-left" : "text-right"}`}
+                />
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, n) => (
+              <tr key={n} onClick={() => table.recordType && table.keyField && onRecord(table.recordType, Number(r[table.keyField]))} className={`border-b border-slate-50 last:border-0 ${table.recordType ? "cursor-pointer hover:bg-indigo-50/50" : ""}`}>
+                {table.columns.map((c) => <td key={c.key} className={`whitespace-nowrap px-3 py-1.5 ${c.align === "left" ? "text-left text-slate-700" : "text-right tabular-nums text-slate-600"}`}>{c.fmt ? fmtVal(r[c.key], c.fmt) : r[c.key] === null || r[c.key] === undefined || r[c.key] === "" ? "—" : String(r[c.key])}</td>)}
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={table.columns.length} className="py-4 text-center text-slate-400">No rows match the current filters.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 function DetailBody({ d, onRecord }: { d: DetailPayload; onRecord: (type: string, id: number) => void }) {
   return (
@@ -299,25 +346,7 @@ function DetailBody({ d, onRecord }: { d: DetailPayload; onRecord: (type: string
           {s.type === "text" && <p className="whitespace-pre-line rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">{s.text || "None"}</p>}
           {s.type === "chart" && s.chart && (s.chart.data?.length ?? 0) > 0 && <div className="rounded-xl border border-slate-100 p-2"><ChartCard spec={{ ...s.chart, title: s.chart.title }} /></div>}
           {s.type === "chart" && (!s.chart || (s.chart.data?.length ?? 0) === 0) && <p className="text-xs text-slate-400">None</p>}
-          {s.type === "table" && s.table && (
-            s.table.rows.length === 0 ? <p className="text-xs text-slate-400">{s.empty ?? "None"}</p> : (
-              <div className="overflow-x-auto rounded-xl border border-slate-100">
-                <table className="w-full border-collapse text-left text-xs">
-                  <thead><tr className="border-b border-slate-100 bg-slate-50/80 text-[11px] uppercase tracking-wide text-slate-400">{s.table.columns.map((c) => <th key={c.key} className={`whitespace-nowrap px-3 py-2 font-semibold ${c.align === "left" ? "text-left" : "text-right"}`}>{c.label}</th>)}</tr></thead>
-                  <tbody>
-                    {s.table.rows.map((r, n) => {
-                      const rt = s.table!.recordType; const kf = s.table!.keyField;
-                      return (
-                        <tr key={n} onClick={() => rt && kf && onRecord(rt, Number(r[kf]))} className={`border-b border-slate-50 last:border-0 ${rt ? "cursor-pointer hover:bg-indigo-50/50" : ""}`}>
-                          {s.table!.columns.map((c) => <td key={c.key} className={`whitespace-nowrap px-3 py-1.5 ${c.align === "left" ? "text-left text-slate-700" : "text-right tabular-nums text-slate-600"}`}>{c.fmt ? fmtVal(r[c.key], c.fmt) : r[c.key] === null || r[c.key] === undefined || r[c.key] === "" ? "—" : String(r[c.key])}</td>)}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )
-          )}
+          {s.type === "table" && s.table && <SectionTable table={s.table} empty={s.empty} onRecord={onRecord} />}
         </section>
       ))}
     </div>

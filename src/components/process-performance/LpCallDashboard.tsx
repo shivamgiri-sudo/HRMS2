@@ -15,8 +15,11 @@ import {
 import { LpCallDrawer, type DrawerTarget } from "./LpCallDrawer";
 import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
 import {
-  type DashboardData, type DetailKind, fmtDate, fmtN, hourLabel, secToHms,
+  type DashboardData, type DetailKind, type DispositionRow, type ServiceRow, type AgentRow,
+  fmtDate, fmtN, hourLabel, secToHms,
 } from "./lpCallShared";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Lawyer Panel call-performance dashboard, shared by LP Onboarding and LP
@@ -152,6 +155,86 @@ function InfoSection({ title, children }: { title: string; children: ReactNode }
 
 const pct1 = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
 
+// ── Excel-style sort + filter column defs for the genuine per-row list tables in this dashboard. ──
+type ColDef<T> = { key: string; label: string; get: (r: T) => string | number | null; className: string };
+
+const DISPOSITION_COLS: Array<ColDef<DispositionRow>> = [
+  { key: "disposition", label: "Disposition", get: (r) => r.disposition, className: "px-2 py-1.5 text-left font-medium text-slate-700" },
+  { key: "calls", label: "Calls", get: (r) => r.calls, className: "px-2 py-1.5 text-center text-slate-600" },
+  { key: "share", label: "Share", get: (r) => r.pct, className: "px-2 py-1.5 text-center font-semibold text-amber-700" },
+];
+const DISPOSITION_FILTER_COLS: Array<FilterColumn<DispositionRow>> = DISPOSITION_COLS.map((c) => ({ key: c.key, get: c.get }));
+const dispositionColGetter = (r: DispositionRow, key: string) => DISPOSITION_COLS.find((c) => c.key === key)?.get(r);
+
+/** Shape of a row in `weeklyEnriched` -- structurally matches what the useMemo below builds. */
+interface WeekEnriched {
+  label: string; present: number; calls: number; connected: number; connectedPct: number;
+  uniqueLeads: number; uniqueConnected: number; uniqueConnectedPct: number;
+  attempt: number; callsPerAgent: number; avgTalkPerAgent: number; talkTimeSec: number;
+}
+const WEEK_COLS: Array<ColDef<WeekEnriched>> = [
+  { key: "week", label: "Week", get: (w) => w.label, className: "px-2 py-1.5 text-left font-medium text-slate-700" },
+  { key: "present", label: "Present", get: (w) => w.present, className: "px-2 py-1.5 text-slate-600" },
+  { key: "calls", label: "Total Calls", get: (w) => w.calls, className: "px-2 py-1.5 text-slate-600" },
+  { key: "connected", label: "Connected", get: (w) => w.connected, className: "px-2 py-1.5 text-emerald-600" },
+  { key: "connectedPct", label: "Connect %", get: (w) => w.connectedPct, className: "px-2 py-1.5 font-semibold text-amber-600" },
+  { key: "uniqueLeads", label: "Unique Dialed", get: (w) => w.uniqueLeads, className: "px-2 py-1.5 text-slate-600" },
+  { key: "uniqueConnected", label: "Unique Connect", get: (w) => w.uniqueConnected, className: "px-2 py-1.5 text-teal-600" },
+  { key: "uniqueConnectedPct", label: "Unique Connect %", get: (w) => w.uniqueConnectedPct, className: "px-2 py-1.5 font-semibold text-amber-600" },
+];
+const WEEK_FILTER_COLS: Array<FilterColumn<WeekEnriched>> = WEEK_COLS.map((c) => ({ key: c.key, get: c.get }));
+const weekColGetter = (w: WeekEnriched, key: string) => WEEK_COLS.find((c) => c.key === key)?.get(w);
+
+const AGENT_MAIN_COLS: Array<ColDef<AgentRow>> = [
+  { key: "agent", label: "Agent", get: (a) => a.agent, className: "px-2 py-1.5 text-left font-medium text-slate-700" },
+  { key: "leads", label: "Leads", get: (a) => a.uniqueLeads, className: "px-2 py-1.5 text-slate-600" },
+  { key: "calls", label: "Calls", get: (a) => a.totalCalls, className: "px-2 py-1.5 text-slate-600" },
+  { key: "connect", label: "Connect", get: (a) => a.connectedCalls, className: "px-2 py-1.5 text-emerald-600" },
+  { key: "conPct", label: "Con %", get: (a) => a.connectedPct, className: "px-2 py-1.5 font-semibold text-amber-600" },
+  { key: "loginTime", label: "Login Time", get: (a) => a.loginTimeSec, className: "px-2 py-1.5 text-slate-600" },
+  { key: "netLogin", label: "Net Login", get: (a) => a.netLoginTimeSec, className: "px-2 py-1.5 text-slate-600" },
+  { key: "talkTime", label: "Talk Time", get: (a) => a.talkTimeSec, className: "px-2 py-1.5 text-slate-600" },
+  { key: "wrapTime", label: "Wrap Time", get: (a) => a.wrapupSec, className: "px-2 py-1.5 text-slate-600" },
+  { key: "idleTime", label: "Idle Time", get: (a) => a.idleSec, className: "px-2 py-1.5 text-slate-600" },
+  { key: "totalBreak", label: "Total Break", get: (a) => a.breakSec, className: "px-2 py-1.5 text-slate-600" },
+  { key: "occPct", label: "Occ %", get: (a) => (a.loginTimeSec ? a.occupancyPct : null), className: "px-2 py-1.5 font-semibold text-indigo-600" },
+  { key: "shrinkPct", label: "Shrink %", get: (a) => (a.loginTimeSec ? a.shrinkagePct : null), className: "px-2 py-1.5 text-slate-600" },
+];
+const AGENT_MAIN_FILTER_COLS: Array<FilterColumn<AgentRow>> = AGENT_MAIN_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentMainColGetter = (a: AgentRow, key: string) => AGENT_MAIN_COLS.find((c) => c.key === key)?.get(a);
+
+const AGENT_RANK_COLS: Array<ColDef<AgentRow>> = [
+  { key: "agent", label: "Agent", get: (a) => a.agent, className: "px-2 py-1.5 font-medium text-slate-700" },
+  { key: "calls", label: "Calls", get: (a) => a.totalCalls, className: "px-2 py-1.5 text-center text-slate-600" },
+  { key: "connected", label: "Connected", get: (a) => a.connectedCalls, className: "px-2 py-1.5 text-center text-emerald-600" },
+  { key: "connectedPct", label: "Connect %", get: (a) => a.connectedPct, className: "px-2 py-1.5 text-center font-semibold text-amber-600" },
+];
+const AGENT_RANK_FILTER_COLS: Array<FilterColumn<AgentRow>> = AGENT_RANK_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentRankColGetter = (a: AgentRow, key: string) => AGENT_RANK_COLS.find((c) => c.key === key)?.get(a);
+
+const AGENT_PROD_COLS: Array<ColDef<AgentRow>> = [
+  { key: "agent", label: "Agent", get: (a) => a.agent, className: "px-2 py-1.5 text-left font-medium text-slate-700" },
+  { key: "netLogin", label: "Net login", get: (a) => a.netLoginTimeSec, className: "px-2 py-1.5 text-center text-slate-600" },
+  { key: "talk", label: "Talk", get: (a) => a.talkTimeSec, className: "px-2 py-1.5 text-center text-slate-600" },
+  { key: "wrap", label: "Wrap", get: (a) => a.wrapupSec, className: "px-2 py-1.5 text-center text-slate-600" },
+  { key: "idle", label: "Idle", get: (a) => a.idleSec, className: "px-2 py-1.5 text-center text-slate-600" },
+  { key: "occupancy", label: "Occupancy", get: (a) => a.occupancyPct, className: "px-2 py-1.5 text-center font-semibold text-sky-700" },
+  { key: "shrinkage", label: "Shrinkage", get: (a) => a.shrinkagePct, className: "px-2 py-1.5 text-center font-semibold text-amber-600" },
+];
+const AGENT_PROD_FILTER_COLS: Array<FilterColumn<AgentRow>> = AGENT_PROD_COLS.map((c) => ({ key: c.key, get: c.get }));
+const agentProdColGetter = (a: AgentRow, key: string) => AGENT_PROD_COLS.find((c) => c.key === key)?.get(a);
+
+function ClearFiltersBar({ count, onClear }: { count: number; onClear: () => void }) {
+  if (count === 0) return null;
+  return (
+    <div className="mb-2 flex justify-end">
+      <button type="button" onClick={onClear} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+        Clear {count} filter{count > 1 ? "s" : ""}
+      </button>
+    </div>
+  );
+}
+
 export function LpCallDashboard({
   apiPath, eyebrow, title, unavailableLabel,
 }: {
@@ -280,6 +363,62 @@ export function LpCallDashboard({
       },
     ];
   }, [data, dailyEnriched, weeklyEnriched]);
+
+  // ── Excel-style sort + filter state for the genuine per-row list tables (must stay above the early returns below). ──
+  const overallCallsForShare = data?.headline?.overallCalls ?? 0;
+
+  const topDispositions = useMemo(() => (data?.byDisposition ?? []).slice(0, 8), [data]);
+  const dispTopFilters = useColumnFilters(topDispositions, DISPOSITION_FILTER_COLS);
+  const { sorted: sortedTopDispositions, sortKey: dispTopSortKey, sortDir: dispTopSortDir, toggleSort: toggleDispTopSort } =
+    useSortableRows(dispTopFilters.filtered, dispositionColGetter);
+
+  const allDispositions = useMemo(() => data?.byDisposition ?? [], [data]);
+  const dispAllFilters = useColumnFilters(allDispositions, DISPOSITION_FILTER_COLS);
+  const { sorted: sortedAllDispositions, sortKey: dispAllSortKey, sortDir: dispAllSortDir, toggleSort: toggleDispAllSort } =
+    useSortableRows(dispAllFilters.filtered, dispositionColGetter);
+
+  const weekFilters = useColumnFilters(weeklyEnriched, WEEK_FILTER_COLS);
+  const { sorted: sortedWeeks, sortKey: weekSortKey, sortDir: weekSortDir, toggleSort: toggleWeekSort } =
+    useSortableRows(weekFilters.filtered, weekColGetter);
+
+  // Agent-wise Performance (Agents tab): sort/filter on top of the existing name/ID search (filteredAgents).
+  const agentMainFilters = useColumnFilters(filteredAgents, AGENT_MAIN_FILTER_COLS);
+  const { sorted: sortedAgentsMain, sortKey: agentMainSortKey, sortDir: agentMainSortDir, toggleSort: toggleAgentMainSort } =
+    useSortableRows(agentMainFilters.filtered, agentMainColGetter);
+
+  const SERVICE_COLS: Array<ColDef<ServiceRow>> = useMemo(() => ([
+    { key: "campaign", label: "Campaign", get: (r) => r.service, className: "px-2 py-1.5 text-left font-medium text-slate-700" },
+    { key: "calls", label: "Calls", get: (r) => r.calls, className: "px-2 py-1.5 text-slate-600" },
+    { key: "share", label: "Share", get: (r) => pct1(r.calls, overallCallsForShare), className: "px-2 py-1.5 text-slate-600" },
+    { key: "connected", label: "Connected", get: (r) => r.connected, className: "px-2 py-1.5 text-emerald-600" },
+    { key: "connectedPct", label: "Con %", get: (r) => r.connectedPct, className: "px-2 py-1.5 font-semibold text-amber-600" },
+    { key: "uniqueLeads", label: "Unique Leads", get: (r) => r.uniqueLeads, className: "px-2 py-1.5 text-slate-600" },
+  ]), [overallCallsForShare]);
+  const serviceFilterCols: Array<FilterColumn<ServiceRow>> = useMemo(() => SERVICE_COLS.map((c) => ({ key: c.key, get: c.get })), [SERVICE_COLS]);
+  const serviceColGetter = useCallback((r: ServiceRow, key: string) => SERVICE_COLS.find((c) => c.key === key)?.get(r), [SERVICE_COLS]);
+  const serviceFilters = useColumnFilters(data?.byService ?? [], serviceFilterCols);
+  const { sorted: sortedServices, sortKey: serviceSortKey, sortDir: serviceSortDir, toggleSort: toggleServiceSort } =
+    useSortableRows(serviceFilters.filtered, serviceColGetter);
+
+  // "perf" info drawer: two ranked agent tables.
+  const rankedByCalls = useMemo(() => [...(data?.agents ?? [])].sort((a, b) => b.totalCalls - a.totalCalls), [data]);
+  const rankedByConnect = useMemo(() => {
+    const ag = data?.agents ?? [];
+    if (!ag.length) return [];
+    const avg = ag.reduce((s, a) => s + a.totalCalls, 0) / ag.length;
+    return ag.filter((a) => a.totalCalls >= avg * 0.5).sort((a, b) => b.connectedPct - a.connectedPct);
+  }, [data]);
+  const rankedByCallsFilters = useColumnFilters(rankedByCalls, AGENT_RANK_FILTER_COLS);
+  const { sorted: sortedRankedByCalls, sortKey: rankByCallsSortKey, sortDir: rankByCallsSortDir, toggleSort: toggleRankByCallsSort } =
+    useSortableRows(rankedByCallsFilters.filtered, agentRankColGetter);
+  const rankedByConnectFilters = useColumnFilters(rankedByConnect, AGENT_RANK_FILTER_COLS);
+  const { sorted: sortedRankedByConnect, sortKey: rankByConnectSortKey, sortDir: rankByConnectSortDir, toggleSort: toggleRankByConnectSort } =
+    useSortableRows(rankedByConnectFilters.filtered, agentRankColGetter);
+
+  // "prod" info drawer: agent-wise breakdown table.
+  const prodAgentFilters = useColumnFilters(data?.agents ?? [], AGENT_PROD_FILTER_COLS);
+  const { sorted: sortedProdAgents, sortKey: prodAgentSortKey, sortDir: prodAgentSortDir, toggleSort: toggleProdAgentSort } =
+    useSortableRows(prodAgentFilters.filtered, agentProdColGetter);
 
   if (loading && !data) return <Spinner tone="blue" />;
   if (error && !data) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;

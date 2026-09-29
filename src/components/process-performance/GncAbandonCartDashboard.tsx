@@ -14,6 +14,8 @@ import {
   KPI_TONES, type KpiTone, type ExportSlide,
 } from "./DashboardKit";
 import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * GNC's Abandon Cart Dashboard -- a dedicated cart-recovery view, separate
@@ -169,6 +171,17 @@ export function GncAbandonCartDashboard() {
   }, [from, to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Excel-style sort + filter for the Top Products table -- hooks must run every render, so this is computed before
+  // the early returns further down that guard on `data` being loaded.
+  type TopProductRow = AbandonCartData["topProducts"][number];
+  const TOP_PRODUCT_FILTER_COLS: Array<FilterColumn<TopProductRow>> = [
+    { key: "product", get: (p) => p.product }, { key: "saleCount", get: (p) => p.saleCount },
+    { key: "revenue", get: (p) => p.revenue }, { key: "aov", get: (p) => p.aov },
+  ];
+  const topProductColGetter = (p: TopProductRow, key: string) => TOP_PRODUCT_FILTER_COLS.find((c) => c.key === key)?.get(p);
+  const topProductFilters = useColumnFilters(data?.topProducts ?? [], TOP_PRODUCT_FILTER_COLS);
+  const { sorted: sortedTopProducts, sortKey: topProductSortKey, sortDir: topProductSortDir, toggleSort: toggleTopProductSort } = useSortableRows(topProductFilters.filtered, topProductColGetter);
 
   // One enriched daily/weekly dataset backs every "View details" drawer --
   // connectedPct/aov aren't in the raw API rows, so they're derived once
@@ -466,25 +479,32 @@ export function GncAbandonCartDashboard() {
           </ResponsiveContainer>
         </SectionCard>
 
-        <SectionCard icon={Package} title="Top Products" tone="sky" footnote="Whole-range totals only -- no daily breakdown per product exists in this app, so this table has no View details drill-down.">
+        <SectionCard
+          icon={Package} title="Top Products" tone="sky" footnote="Whole-range totals only -- no daily breakdown per product exists in this app, so this table has no View details drill-down."
+          action={topProductFilters.activeCount > 0 ? (
+            <button type="button" onClick={topProductFilters.clearAll} className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/20">
+              Clear {topProductFilters.activeCount} filter{topProductFilters.activeCount > 1 ? "s" : ""}
+            </button>
+          ) : undefined}
+        >
           <div className="max-h-44 overflow-y-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="sticky top-0 z-10 bg-sky-800 text-[10px] uppercase tracking-wide text-white">
-                  <th className="py-1.5 px-2 text-left font-bold text-white">Product</th>
-                  <th className="py-1.5 px-2 text-right font-bold text-white">Sales</th>
-                  <th className="py-1.5 px-2 text-right font-bold text-white">Revenue</th>
+                  <FilterSortTh label="Product" columnKey="product" sortKey={topProductSortKey} sortDir={topProductSortDir} onSort={toggleTopProductSort} filters={topProductFilters} className="py-1.5 px-2 text-left font-bold text-white" />
+                  <FilterSortTh label="Sales" columnKey="saleCount" sortKey={topProductSortKey} sortDir={topProductSortDir} onSort={toggleTopProductSort} filters={topProductFilters} className="py-1.5 px-2 text-right font-bold text-white" />
+                  <FilterSortTh label="Revenue" columnKey="revenue" sortKey={topProductSortKey} sortDir={topProductSortDir} onSort={toggleTopProductSort} filters={topProductFilters} className="py-1.5 px-2 text-right font-bold text-white" />
                 </tr>
               </thead>
               <tbody>
-                {data.topProducts.map((p, i) => (
+                {sortedTopProducts.map((p, i) => (
                   <tr key={p.product} className={`border-b border-slate-50 last:border-0 ${i % 2 === 1 ? "bg-sky-50/30" : "bg-white"}`}>
                     <td className="max-w-[140px] truncate py-1.5 px-2 font-medium text-slate-700" title={p.product}>{p.product}</td>
                     <td className="py-1.5 px-2 text-right text-slate-600">{p.saleCount}</td>
                     <td className="py-1.5 px-2 text-right font-semibold text-slate-800">{formatINR(p.revenue)}</td>
                   </tr>
                 ))}
-                {data.topProducts.length === 0 && <tr><td colSpan={3} className="py-6 text-center text-slate-400">No data for this period.</td></tr>}
+                {sortedTopProducts.length === 0 && <tr><td colSpan={3} className="py-6 text-center text-slate-400">{(data?.topProducts.length ?? 0) === 0 ? "No data for this period." : "No products match the current filters."}</td></tr>}
               </tbody>
             </table>
           </div>

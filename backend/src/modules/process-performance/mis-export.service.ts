@@ -11,7 +11,7 @@ import { getGncChatDashboard } from "./gnc-chat-dashboard.service.js";
 import { getNeemansPerformanceDashboard } from "./neemans-performance-dashboard.service.js";
 import { getNeemansCartDashboard } from "./neemans-cart-dashboard.service.js";
 import { getHousingOwnerDashboard } from "./housing-owner-dashboard.service.js";
-import { getHousingPremiumOverview } from "./housing-premium-dashboard.service.js";
+import { getHousingPremiumOverview, type OverviewValues } from "./housing-premium-dashboard.service.js";
 import { getCloviaChannelsDashboard } from "./clovia-channels-dashboard.service.js";
 import { getBirlanuDashboard } from "./birlanu-dashboard.service.js";
 import { getLpFeedbackDashboard } from "./lp-feedback-dashboard.service.js";
@@ -19,6 +19,7 @@ import { getLpOnboardingDashboard } from "./lp-onboarding-dashboard.service.js";
 import { getSatyaRetailDashboard } from "./satya-retail-dashboard.service.js";
 import { getAppreciateWealthDashboard, parseFilters as parseAwFilters } from "./appreciate-wealth-dashboard.service.js";
 import { getInboundInsights, isInsightProject } from "../call-master/inbound-insights.service.js";
+import { buildPeriodColumns, proratedTarget, eachDay, type PeriodColumn } from "./mis-period-columns.js";
 
 /**
  * "MIS" -- one consolidated, formatted workbook per process/company, bundling
@@ -53,7 +54,37 @@ const num = (v: unknown): number => { const n = Number(v); return Number.isFinit
 const fmtNum = (v: unknown): string => num(v).toLocaleString("en-IN");
 const fmtInr = (v: unknown): string =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(num(v));
-const fmtPct = (v: unknown): string => `${num(v)}%`;
+const round1 = (v: number): number => Math.round(v * 10) / 10;
+// Several headline percentages this module reads straight off a dashboard service (e.g. Housing
+// Owner's connectedPct) are stored unrounded ((part/whole)*100 with no .toFixed of their own -- the
+// on-screen React component rounds at render time, but this Excel layer renders the raw number), so
+// this formatter always rounds to 1 decimal itself rather than trusting the caller already did.
+const fmtPct = (v: unknown): string => `${round1(num(v))}%`;
+const round2 = (v: number): number => Math.round(v * 100) / 100;
+const pct = (part: number, whole: number): number => (whole > 0 ? round1((part / whole) * 100) : 0);
+/** Seconds -> "H:MM:SS", for the average-talk-time row of a KPI matrix. */
+const fmtHms = (totalSeconds: number): string => {
+  const t = Math.max(0, Math.round(totalSeconds));
+  return `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+};
+
+/**
+ * Turns a set of KPI-row definitions + period columns into one "rows = metrics, columns = MTD / week /
+ * day" table -- the professional MIS layout every process's KPI Summary sheet below uses, so week-wise
+ * and date-wise figures sit in the SAME sheet as the MTD total instead of being spread across separate
+ * tabs. `T` is whatever per-column aggregate object the caller already has one of per PeriodColumn key
+ * (e.g. Housing Premium's own OverviewValues, or a locally rolled-up object for a dashboard that has
+ * no such per-column aggregate yet).
+ */
+function kpiMatrixTable<T>(
+  title: string, columns: PeriodColumn[], valuesByColumn: Record<string, T>, rows: Array<{ label: string; get: (v: T) => string | number }>,
+): { title: string; columns: string[]; rows: Array<Array<string | number>> } {
+  return {
+    title,
+    columns: ["KPI", ...columns.map((c) => c.label)],
+    rows: rows.map((r) => [r.label, ...columns.map((c) => r.get(valuesByColumn[c.key]))]),
+  };
+}
 
 /** Splits camelCase/snake_case into "Title Case" for an auto-generated label. */
 function humanize(key: string): string {
@@ -288,10 +319,48 @@ async function neemansCartSlides(from: string, to: string): Promise<ExportSlideI
   return [flattenToSlide("Abandon Cart", d as unknown as Record<string, unknown>, { skip: ["from", "to", "records", "recordsTotal", "recordsTruncated"] })];
 }
 
+interface OwnerColVals { totalCalls: number; connected: number; notConnected: number; connectedPct: number; saleCount: number; revenue: number; target: number; achPct: number; aov: number }
+const OWNER_KPI_ROWS: Array<{ label: string; get: (v: OwnerColVals) => string | number }> = [
+  { label: "Total Calls", get: (v) => v.totalCalls },
+  { label: "Connected Calls", get: (v) => v.connected },
+  { label: "Not Connected Calls", get: (v) => v.notConnected },
+  { label: "Connected %", get: (v) => `${v.connectedPct}%` },
+  { label: "Sale Count", get: (v) => v.saleCount },
+  { label: "Revenue", get: (v) => fmtInr(v.revenue) },
+  { label: "Target", get: (v) => (v.target > 0 ? fmtInr(v.target) : "—") },
+  { label: "Achievement %", get: (v) => (v.target > 0 ? `${v.achPct}%` : "—") },
+  { label: "AOV", get: (v) => (v.saleCount > 0 ? fmtInr(v.aov) : "—") },
+];
+
 async function housingOwnerSlides(from: string, to: string): Promise<ExportSlideInput[]> {
   const d = await getHousingOwnerDashboard(from, to);
+
+  // getHousingOwnerDashboard has no day/week/MTD column grid of its own (unlike Housing Premium's
+  // Overview endpoint) -- built here from its own dailyTrend + roster target total, using the same
+  // MTD/Week/Day columns and fair-share-of-the-month target proration every other process's KPI
+  // Summary sheet below uses, so all these MIS files read the same way.
+  const columns = buildPeriodColumns(from, to);
+  const byDate = new Map(d.dailyTrend.map((r) => [r.date, r]));
+  const overall: Record<string, OwnerColVals> = {};
+  for (const col of columns) {
+    const span = eachDay(col.from, col.to);
+    let revenue = 0, saleCount = 0, totalCalls = 0, connected = 0;
+    for (const day of span) {
+      const r = byDate.get(day);
+      if (r) { revenue += r.revenue; saleCount += r.saleCount; totalCalls += r.totalCalls; connected += r.connectedCalls; }
+    }
+    const target = col.kind === "mtd" && col.from.endsWith("-01")
+      ? Math.round(d.headline.totalTarget)
+      : proratedTarget(d.headline.totalTarget, col.from, col.to);
+    const notConnected = totalCalls - connected;
+    overall[col.key] = {
+      totalCalls, connected, notConnected, connectedPct: pct(connected, totalCalls),
+      saleCount, revenue: round2(revenue), target, achPct: pct(revenue, target), aov: saleCount > 0 ? Math.round(revenue / saleCount) : 0,
+    };
+  }
+
   return [{
-    title: "Sale Performance",
+    title: "Overview",
     kpis: [
       { label: "Revenue", value: fmtInr(d.headline.totalRevenue) },
       { label: "Sale Count", value: fmtNum(d.headline.totalSaleCount) },
@@ -301,18 +370,36 @@ async function housingOwnerSlides(from: string, to: string): Promise<ExportSlide
       { label: "Active Agents", value: fmtNum(d.headline.activeAgents) },
     ],
     tables: [
+      kpiMatrixTable("KPI Summary (MTD, Weekly & Daily)", columns, overall, OWNER_KPI_ROWS),
       { title: "AM-wise", columns: ["AM", "Sale Count", "Revenue", "Target", "Achievement %"], rows: d.byAm.map((r) => [r.name, r.saleCount, fmtInr(r.revenue), r.target > 0 ? fmtInr(r.target) : "—", r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—"]) },
       { title: "TL-wise", columns: ["TL", "Sale Count", "Revenue", "Target", "Achievement %"], rows: d.byTl.map((r) => [r.name, r.saleCount, fmtInr(r.revenue), r.target > 0 ? fmtInr(r.target) : "—", r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—"]) },
     ],
   }];
 }
 
+const PREMIUM_KPI_ROWS: Array<{ label: string; get: (v: OverviewValues) => string | number }> = [
+  { label: "Total Calls", get: (v) => v.totalCalls },
+  { label: "Connected Calls", get: (v) => v.connected },
+  { label: "Not Connected Calls", get: (v) => v.notConnected },
+  { label: "Unique Connected", get: (v) => v.uniqueConnected },
+  { label: "Connected %", get: (v) => `${v.connectedPct}%` },
+  { label: "Sale Count", get: (v) => v.saleCount },
+  { label: "Revenue", get: (v) => fmtInr(v.revenue) },
+  { label: "Target", get: (v) => (v.target > 0 ? fmtInr(v.target) : "—") },
+  { label: "Achievement %", get: (v) => (v.target > 0 ? `${v.achievedPct}%` : "—") },
+  { label: "AOV", get: (v) => (v.saleCount > 0 ? fmtInr(v.aov) : "—") },
+  { label: "Present Count", get: (v) => v.presentCount },
+  { label: "Per Agent Dial Count", get: (v) => v.perAgentDialCount },
+  { label: "Avg Sale per Agent", get: (v) => v.avgSalePerAgent },
+  { label: "Avg Talk Time / Agent", get: (v) => fmtHms(v.avgTalkPerAgentSec) },
+];
+
 async function housingPremiumSlides(from: string, to: string): Promise<ExportSlideInput[]> {
   const d = await getHousingPremiumOverview(from, to);
   const mtdKey = d.columns.find((c) => c.kind === "mtd")?.key ?? d.columns[0]?.key;
   const mtd = mtdKey ? d.overall[mtdKey] : undefined;
   return [{
-    title: "Sale Performance",
+    title: "Overview",
     kpis: mtd ? [
       { label: "Total Calls (MTD)", value: fmtNum(mtd.totalCalls) },
       { label: "Connected %", value: fmtPct(mtd.connectedPct) },
@@ -322,14 +409,20 @@ async function housingPremiumSlides(from: string, to: string): Promise<ExportSli
       { label: "Achievement %", value: fmtPct(mtd.achievedPct) },
       { label: "AOV", value: fmtInr(mtd.aov) },
     ] : [],
-    tables: [{
-      title: "TL-wise (MTD)",
-      columns: ["TL", "Agents", "Calls", "Connected %", "Revenue", "Achievement %"],
-      rows: d.byTl.map((t) => {
-        const v = mtdKey ? t.values[mtdKey] : undefined;
-        return [t.tlName, t.agentCount, v?.totalCalls ?? 0, v ? `${v.connectedPct}%` : "—", v ? fmtInr(v.revenue) : "—", v ? `${v.achievedPct}%` : "—"];
-      }),
-    }],
+    tables: [
+      // Housing Premium's own Overview endpoint already computes this same MTD/Week/Day column grid
+      // (buildOverviewColumns / rollUpOverview), so this reuses its real per-column figures rather
+      // than re-deriving them -- week-wise and date-wise sit in the same sheet as the MTD total here.
+      kpiMatrixTable("KPI Summary (MTD, Weekly & Daily)", d.columns, d.overall, PREMIUM_KPI_ROWS),
+      {
+        title: "TL-wise (MTD)",
+        columns: ["TL", "Agents", "Calls", "Connected %", "Revenue", "Achievement %"],
+        rows: d.byTl.map((t) => {
+          const v = mtdKey ? t.values[mtdKey] : undefined;
+          return [t.tlName, t.agentCount, v?.totalCalls ?? 0, v ? `${v.connectedPct}%` : "—", v ? fmtInr(v.revenue) : "—", v ? `${v.achievedPct}%` : "—"];
+        }),
+      },
+    ],
   }];
 }
 
@@ -439,10 +532,10 @@ async function buildRegistry(): Promise<Record<string, MisBundleEntry[]>> {
       { dashboardKey: "neemans_cart", title: "Abandon Cart", build: neemansCartSlides },
     ],
     housing_owner: [
-      { dashboardKey: "housing_owner", title: "Sale Performance", build: housingOwnerSlides },
+      { dashboardKey: "housing_owner", title: "Overview", build: housingOwnerSlides },
     ],
     housing_premium: [
-      { dashboardKey: "housing_premium", title: "Sale Performance", build: housingPremiumSlides },
+      { dashboardKey: "housing_premium", title: "Overview", build: housingPremiumSlides },
     ],
     clovia: [
       { dashboardKey: "clovia", title: "Channels", build: cloviaSlides },

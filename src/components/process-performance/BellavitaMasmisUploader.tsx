@@ -5,6 +5,9 @@ import { pollBatchJob, isBatchJobStarted } from "@/lib/bulkBatchJob";
 import { apiUrl } from "@/lib/apiBase";
 import { TONE_SOLID_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { Upload, Loader2, CheckCircle2, XCircle, Trash2, UploadCloud, Download, CheckCircle } from "lucide-react";
+import { UploadCoverageBanner, useRefreshUploadCoverage, useUploadCoverage } from "./UploadCoverage";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Inline uploader embedded directly on Process Performance V2's Bellavita and
@@ -95,6 +98,20 @@ function getNormalized(row: Record<string, unknown>, column: string): string {
   return "";
 }
 
+/** A required column that may be satisfied by another column when the file
+ * doesn't carry it. LP Feedback/Onboarding APR exports arrive without a
+ * LoginId column (the SOP deletes it before the sheet is pasted), so Agent
+ * stands in -- mirrored by lp-*-apr-bulk.service.ts, which stores it as
+ * login_id. Kept in code rather than in upload_template_master so no live
+ * template row has to change. */
+const REQUIRED_COLUMN_FALLBACKS: Record<string, Record<string, string>> = {
+  LP_FEEDBACK_APR_MASMIS: { loginid: "Agent" },
+  LP_ONBOARDING_APR_MASMIS: { loginid: "Agent" },
+  // The Bellavita Chat sheet has no Ticket ID; its row key is Unique ID
+  // (see bb-chat-masmis-bulk.service.ts).
+  BB_CHAT_MASMIS: { ticketid: "Unique ID" },
+};
+
 const STAGE_CHUNK_SIZE = 500;
 
 interface UploadTemplate {
@@ -146,6 +163,17 @@ const STATUS_LABELS: Record<string, string> = {
 
 const RECENT_UPLOADS_PAGE_SIZE = 5;
 
+/** Excel-style sort + filter for the Recent Uploads table -- shared by every company's uploader instance. */
+interface LogCol { key: string; label: string; get: (r: UploadBatchLogRow) => string | number; className?: string }
+const LOG_COLS: LogCol[] = [
+  { key: "fileName", label: "File Name", get: (r) => r.original_file_name || "(no file name)", className: "py-2 pr-3 font-semibold" },
+  { key: "uploadedBy", label: "Uploaded By", get: (r) => r.uploaded_by_name || "—", className: "py-2 pr-3 font-semibold" },
+  { key: "dateTime", label: "Date & Time", get: (r) => r.created_at, className: "py-2 pr-3 font-semibold" },
+  { key: "status", label: "Status", get: (r) => STATUS_LABELS[r.batch_status] ?? r.batch_status, className: "py-2 pr-3 font-semibold" },
+];
+const LOG_FILTER_COLS: Array<FilterColumn<UploadBatchLogRow>> = LOG_COLS.map((c) => ({ key: c.key, get: c.get }));
+const logColGetter = (r: UploadBatchLogRow, key: string) => LOG_COLS.find((c) => c.key === key)?.get(r);
+
 export function BellavitaMasmisUploader({
   templateCode, label, tone = "slate",
 }: { templateCode: string; label: string; tone?: Tone }) {
@@ -162,6 +190,9 @@ export function BellavitaMasmisUploader({
   const [showAllLog, setShowAllLog] = useState(false);
   const [lastBatchId, setLastBatchId] = useState<string | null>(null);
   const [downloadingErrorsId, setDownloadingErrorsId] = useState<string | null>(null);
+  const [downloadingAllId, setDownloadingAllId] = useState<string | null>(null);
+  const coverageQ = useUploadCoverage([templateCode]);
+  const refreshCoverage = useRefreshUploadCoverage();
 
   function loadLog() {
     setLogLoading(true);
@@ -187,11 +218,14 @@ export function BellavitaMasmisUploader({
   }, [templateCode]);
 
   async function handleDelete(id: string) {
-    if (!window.confirm("Remove this entry from the upload log? The data it already imported will NOT be affected.")) return;
+    if (!window.confirm("Delete this upload? The rows it imported into the database will also be permanently removed. This cannot be undone.")) return;
     setDeletingId(id);
     try {
-      await hrmsApi.delete(`/api/bulk-upload/batches/${id}`);
+      const res = await hrmsApi.delete<{ success: boolean; destinationRowsDeleted: number | null; warning: string | null }>(
+        `/api/bulk-upload/batches/${id}`,
+      );
       setLog((prev) => prev.filter((b) => b.id !== id));
+      if (res?.warning) window.alert(`Upload log entry removed.\n\n${res.warning}`);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Failed to delete this log entry.");
     } finally {
@@ -242,6 +276,45 @@ export function BellavitaMasmisUploader({
     }
   }
 
+  /** Downloads EVERY row of an earlier upload exactly as it was staged (original columns, straight from
+   * upload_batch_row.raw_data) plus a Status and Error Reason column, so a past file can be re-checked or
+   * re-used without hunting for the original. Same endpoint and access as the failed-rows download. */
+  async function downloadUploadedRows(batchId: string, fileName: string | null) {
+    setDownloadingAllId(batchId);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: Array<Record<string, unknown>> }>(`/api/bulk-upload/batches/${batchId}/rows`);
+      const parseJsonField = (v: unknown): unknown => {
+        if (typeof v !== "string") return v;
+        try { return JSON.parse(v); } catch { return v; }
+      };
+      const all = (res.data || []).slice().sort((a, b) => Number(a.row_no) - Number(b.row_no));
+      if (all.length === 0) {
+        window.alert("No rows are stored for this upload.");
+        return;
+      }
+      const sheetRows = all.map((r) => {
+        const raw = parseJsonField(r.raw_data);
+        const rawObj = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
+        const errors = (parseJsonField(r.error_messages) ?? []) as unknown;
+        return {
+          "Row #": r.row_no,
+          ...rawObj,
+          "Status": r.row_status,
+          "Error Reason": Array.isArray(errors) ? errors.join("; ") : errors ? String(errors) : "",
+        };
+      });
+      const worksheet = XLSX.utils.json_to_sheet(sheetRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Uploaded Rows");
+      const base = (fileName || label).replace(/.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+      XLSX.writeFile(workbook, `${base}_uploaded_rows.xlsx`);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to load the rows of this upload.");
+    } finally {
+      setDownloadingAllId(null);
+    }
+  }
+
   /** Builds a real blank template file from this type's actual registered
    * columns (required first, then optional) — not a static asset, so it
    * can never drift from what the backend importer expects. */
@@ -262,13 +335,52 @@ export function BellavitaMasmisUploader({
     setLastBatchId(null);
   }
 
+  /** Picks the sheet whose header row best matches this template's expected
+   * columns, rather than always the first — a workbook can ship its real
+   * data sheet anywhere in the tab order (confirmed live: an LP Feedback
+   * CDR export whose first sheet held APR-shaped columns like Total_Calls/
+   * Login_Time/Talk_Duration, with the real Call_Number/CDR sheet second).
+   * Blindly reading SheetNames[0] staged the wrong sheet, so every row
+   * failed the Call_Number requirement even though the real data was right
+   * there in the same file. Same fix already applied in BulkUploadHub.tsx's
+   * excelFileToCsvText — ported here using this file's own normalized
+   * header match (normalizeHeaderKey) instead of an exact-string match,
+   * consistent with this uploader's existing tolerant-header philosophy. */
+  function pickBestSheet(workbook: XLSX.WorkBook, tmpl: UploadTemplate | null): string {
+    const sheetNames = workbook.SheetNames;
+    if (sheetNames.length === 0) throw new Error("The file has no sheets.");
+    const expected = new Set(
+      [...(tmpl?.required_columns || []), ...(tmpl?.optional_columns || [])].map(normalizeHeaderKey),
+    );
+    if (expected.size === 0) return sheetNames[0]!;
+
+    let bestSheetName = sheetNames[0]!;
+    let bestScore = -1;
+    let bestExtra = Infinity;
+    for (const name of sheetNames) {
+      const sheet = workbook.Sheets[name];
+      if (!sheet) continue;
+      const firstRow = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 })[0] as unknown[] | undefined;
+      if (!firstRow) continue;
+      const headerCells = firstRow.map((cell) => String(cell ?? "").trim()).filter((c) => c !== "");
+      const normalizedHeaders = headerCells.map(normalizeHeaderKey);
+      const score = normalizedHeaders.filter((h) => expected.has(h)).length;
+      const extra = normalizedHeaders.filter((h) => !expected.has(h)).length;
+      if (score > bestScore || (score === bestScore && extra < bestExtra)) {
+        bestScore = score;
+        bestExtra = extra;
+        bestSheetName = name;
+      }
+    }
+    return bestSheetName;
+  }
+
   async function fileToRows(f: File): Promise<Record<string, string>[]> {
     const lower = f.name.toLowerCase();
     const workbook = lower.endsWith(".csv")
       ? XLSX.read(await f.text(), { type: "string" })
       : XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: "array" });
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) throw new Error("The file has no sheets.");
+    const sheetName = pickBestSheet(workbook, template);
     return XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[sheetName]!, {
       defval: "", raw: false,
     });
@@ -288,9 +400,12 @@ export function BellavitaMasmisUploader({
 
       const required = template.required_columns || [];
       const stagedRows = rows.map((row, index) => {
-        const errors = required.filter(
-          (col) => getNormalized(row, col) === "",
-        ).map((col) => `${col} is required`);
+        const fallbacks = REQUIRED_COLUMN_FALLBACKS[template.upload_type_code] ?? {};
+        const errors = required.filter((col) => {
+          if (getNormalized(row, col) !== "") return false;
+          const alt = fallbacks[normalizeHeaderKey(col)];
+          return !alt || getNormalized(row, alt) === "";
+        }).map((col) => `${col} is required`);
         return {
           rowNo: index + 1,
           rawData: row,
@@ -372,6 +487,7 @@ export function BellavitaMasmisUploader({
       }
 
       setResult({ imported, errors: errored });
+      void refreshCoverage([templateCode]);
       setPhase("done");
       setMessage(null);
       setFile(null);
@@ -384,10 +500,13 @@ export function BellavitaMasmisUploader({
   }
 
   const busy = phase === "staging" || phase === "importing";
-  const visibleLog = showAllLog ? log : log.slice(0, RECENT_UPLOADS_PAGE_SIZE);
+  const logFilters = useColumnFilters(log, LOG_FILTER_COLS);
+  const { sorted: sortedLog, sortKey: logSortKey, sortDir: logSortDir, toggleSort: toggleLogSort } = useSortableRows(logFilters.filtered, logColGetter);
+  const visibleLog = showAllLog ? sortedLog : sortedLog.slice(0, RECENT_UPLOADS_PAGE_SIZE);
 
   return (
     <div className="space-y-4">
+      <UploadCoverageBanner coverage={coverageQ.data?.[templateCode]} loading={coverageQ.isLoading} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Dropzone + status */}
         <div className="lg:col-span-2">
@@ -509,9 +628,16 @@ export function BellavitaMasmisUploader({
 
       {/* Recent uploads */}
       <div id={`recent-uploads-${templateCode}`} className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-bold text-slate-900">Recent Uploads</div>
-          {log.length > RECENT_UPLOADS_PAGE_SIZE && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-bold text-slate-900">Recent Uploads</div>
+            {logFilters.activeCount > 0 && (
+              <button type="button" onClick={logFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                Clear {logFilters.activeCount} filter{logFilters.activeCount > 1 ? "s" : ""}
+              </button>
+            )}
+          </div>
+          {sortedLog.length > RECENT_UPLOADS_PAGE_SIZE && (
             <button
               type="button"
               onClick={() => setShowAllLog((v) => !v)}
@@ -530,11 +656,11 @@ export function BellavitaMasmisUploader({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">File Name</th>
+                  <FilterSortTh label="File Name" columnKey="fileName" sortKey={logSortKey} sortDir={logSortDir} onSort={toggleLogSort} filters={logFilters} className="py-2 pr-3 font-semibold" />
                   <th className="py-2 pr-3 font-semibold">Type</th>
-                  <th className="py-2 pr-3 font-semibold">Uploaded By</th>
-                  <th className="py-2 pr-3 font-semibold">Date &amp; Time</th>
-                  <th className="py-2 pr-3 font-semibold">Status</th>
+                  <FilterSortTh label="Uploaded By" columnKey="uploadedBy" sortKey={logSortKey} sortDir={logSortDir} onSort={toggleLogSort} filters={logFilters} className="py-2 pr-3 font-semibold" />
+                  <FilterSortTh label="Date & Time" columnKey="dateTime" sortKey={logSortKey} sortDir={logSortDir} onSort={toggleLogSort} filters={logFilters} className="py-2 pr-3 font-semibold" />
+                  <FilterSortTh label="Status" columnKey="status" sortKey={logSortKey} sortDir={logSortDir} onSort={toggleLogSort} filters={logFilters} className="py-2 pr-3 font-semibold" />
                   <th className="py-2 pr-0 text-right font-semibold">Actions</th>
                 </tr>
               </thead>
@@ -554,6 +680,15 @@ export function BellavitaMasmisUploader({
                     </td>
                     <td className="py-2.5 pr-0 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          disabled={downloadingAllId === b.id}
+                          onClick={() => downloadUploadedRows(b.id, b.original_file_name)}
+                          title="Download all rows of this upload (as uploaded, with status)"
+                          className="rounded p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 disabled:opacity-40"
+                        >
+                          {downloadingAllId === b.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                        </button>
                         {Number(b.error_rows ?? 0) > 0 && (
                           <button
                             type="button"
@@ -578,6 +713,9 @@ export function BellavitaMasmisUploader({
                     </td>
                   </tr>
                 ))}
+                {visibleLog.length === 0 && (
+                  <tr><td colSpan={6} className="py-6 text-center text-slate-400">No uploads match the current filters.</td></tr>
+                )}
               </tbody>
             </table>
           </div>

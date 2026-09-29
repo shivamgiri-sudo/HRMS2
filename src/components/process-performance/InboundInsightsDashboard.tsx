@@ -16,6 +16,8 @@ import {
   localDateStr, formatShortDate,
   type ExportSlide, type DrawerSheet,
 } from "./DashboardKit";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /** Right-side drawer: one agent's performance date by date (volume, SL, AHT, hold, ACW, transfers and FCR %). A date row opens
  * that agent's calls for the day in the existing call drawer. */
@@ -29,6 +31,24 @@ function AgentDailyDrawer({
     () => (agent ? rows.filter((r) => r.agentId === agent.agentId).sort((a, b) => a.date.localeCompare(b.date)) : []),
     [agent, rows],
   );
+  // Excel-style sort + filter on the date-wise table (header only -- the summary tiles above and the Excel export always use the full `days` list).
+  const dayCols = useMemo(() => {
+    const cols: Array<{ key: string; label: string; get: (r: AgentDailyRow) => string | number | null; className: string }> = [
+      { key: "date", label: "Date", get: (r) => r.date, className: "py-2 pl-3 pr-3 font-bold text-slate-500" },
+      { key: "handled", label: "Handled", get: (r) => r.calls, className: th },
+      { key: "sl", label: `SL ≤${slSec}s`, get: (r) => r.slWithinPct, className: th },
+      { key: "aht", label: "AHT", get: (r) => r.aht, className: th },
+      { key: "avgHold", label: "Avg hold", get: (r) => r.avgHold, className: th },
+      { key: "avgAcw", label: "Avg ACW", get: (r) => r.avgAcw, className: th },
+      { key: "transfers", label: "Transfers", get: (r) => r.transfers, className: th },
+    ];
+    if (showFcr) cols.push({ key: "fcr", label: "FCR %", get: (r) => r.fcrPct, className: th });
+    return cols;
+  }, [slSec, showFcr]);
+  const dayFilterCols: Array<FilterColumn<AgentDailyRow>> = useMemo(() => dayCols.map((c) => ({ key: c.key, get: c.get })), [dayCols]);
+  const dayColGetter = useCallback((r: AgentDailyRow, key: string) => dayCols.find((c) => c.key === key)?.get(r), [dayCols]);
+  const dayFilters = useColumnFilters(days, dayFilterCols);
+  const { sorted: filteredDays, sortKey: daySortKey, sortDir: daySortDir, toggleSort: toggleDaySort } = useSortableRows(dayFilters.filtered, dayColGetter);
   const sheets = (): DrawerSheet[] => agent ? [{
     name: "Date-wise",
     columns: ["Date", "Handled", `SL ≤${slSec}s %`, "AHT", "Avg Talk", "Avg Hold", "Avg ACW", "Transfers", ...(showFcr ? ["FCR %", "FCR tagged calls"] : [])],
@@ -57,18 +77,26 @@ function AgentDailyDrawer({
                 </div>
               ))}
             </div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise performance</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise performance</p>
+              {dayFilters.activeCount > 0 && (
+                <button type="button" onClick={dayFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                  Clear {dayFilters.activeCount} filter{dayFilters.activeCount > 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
             {days.length === 0 ? (
               <div className="py-6 text-center text-xs text-slate-400">None</div>
             ) : (
               <div className="overflow-x-auto rounded-xl border border-slate-100">
                 <table className="w-full min-w-[560px] border-collapse text-xs">
                   <thead><tr className={THEAD}>
-                    <Head first>Date</Head><Head>Handled</Head><Head>SL ≤{slSec}s</Head><Head>AHT</Head><Head>Avg hold</Head><Head>Avg ACW</Head><Head>Transfers</Head>
-                    {showFcr && <Head>FCR %</Head>}
+                    {dayCols.map((c) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={daySortKey} sortDir={daySortDir} onSort={toggleDaySort} filters={dayFilters} className={c.className} />
+                    ))}
                   </tr></thead>
                   <tbody>
-                    {days.map((d, i) => (
+                    {filteredDays.map((d, i) => (
                       <tr key={d.date} className={rowCls(i)} onClick={() => onOpenCalls(`${agent.agentName} · ${fmtDate(d.date)}`, { agentId: agent.agentId, date: d.date })} title="Click for this day's calls">
                         <td className="py-2 pl-3 pr-3 font-medium text-slate-700">{fmtDate(d.date)}</td>
                         <td className={`${td} font-bold text-slate-700`}>{fmtNum(d.calls)}</td>
@@ -80,6 +108,9 @@ function AgentDailyDrawer({
                         {showFcr && <td className={`${td} font-bold`} title={d.fcrTagged ? `${d.fcrTagged} tagged calls` : undefined}>{d.fcrPct != null ? `${d.fcrPct}%` : "—"}</td>}
                       </tr>
                     ))}
+                    {filteredDays.length === 0 && (
+                      <tr><td colSpan={dayCols.length} className="py-6 text-center text-slate-400">No dates match the filters.</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -362,6 +393,78 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
     const list = data?.agents ?? [];
     return q ? list.filter((a) => a.agentName.toLowerCase().includes(q) || a.agentId.toLowerCase().includes(q)) : list;
   }, [data, agentSearch]);
+
+  // ── Excel-style sort + filter for the three genuine per-row list tables (Date-wise, Agent-wise, LOB-wise). ──
+  // Date-wise call performance (datewise tab): default order is latest-first, same as the original `[...data.daily].reverse()`.
+  const dateRowsDesc = useMemo(() => [...(data?.daily ?? [])].reverse(), [data]);
+  const DATE_COLS = useMemo(() => {
+    const cols: Array<{ key: string; label: string; get: (r: DailyRow) => string | number | null; className: string }> = [
+      { key: "date", label: "Date", get: (r) => r.date, className: "py-2.5 pl-3 pr-3 font-bold text-slate-500" },
+      { key: "day", label: "Day", get: (r) => r.weekday, className: `${th} text-left` },
+      { key: "agents", label: "Agents", get: (r) => r.agents, className: th },
+      { key: "offered", label: "Offered", get: (r) => r.offered, className: th },
+      { key: "answered", label: "Answered", get: (r) => r.answered, className: th },
+      { key: "abandoned", label: "Abandoned", get: (r) => r.abandoned, className: th },
+      { key: "answerPct", label: "Answer %", get: (r) => r.answeredPct, className: th },
+      { key: "alPct", label: "AL %", get: (r) => r.abandonPct, className: th },
+      { key: "slPct", label: "SL %", get: (r) => r.slPct, className: th },
+      { key: "aht", label: "AHT", get: (r) => r.aht, className: th },
+      { key: "asa", label: "ASA", get: (r) => r.asa, className: th },
+      { key: "uniqueCallers", label: "Unique callers", get: (r) => r.uniqueCallers, className: th },
+    ];
+    if (data?.headline?.fcrPct != null) cols.push({ key: "fcr", label: "FCR %", get: (r) => r.fcrPct, className: th });
+    return cols;
+  }, [data?.headline?.fcrPct]);
+  const dateFilterCols: Array<FilterColumn<DailyRow>> = useMemo(() => DATE_COLS.map((c) => ({ key: c.key, get: c.get })), [DATE_COLS]);
+  const dateColGetter = useCallback((r: DailyRow, key: string) => DATE_COLS.find((c) => c.key === key)?.get(r), [DATE_COLS]);
+  const dateFilters = useColumnFilters(dateRowsDesc, dateFilterCols);
+  const { sorted: sortedDateRows, sortKey: dateSortKey, sortDir: dateSortDir, toggleSort: toggleDateSort } = useSortableRows(dateFilters.filtered, dateColGetter);
+
+  // Agent-wise call performance (agents tab): filters/sorts on top of the existing name/ID search.
+  const AGENT_COLS = useMemo(() => {
+    const cols: Array<{ key: string; label: string; get: (r: AgentRow) => string | number | null; className: string }> = [
+      { key: "agent", label: "Agent", get: (r) => r.agentName, className: "py-2.5 pl-3 pr-3 font-bold text-slate-500" },
+      { key: "handled", label: "Handled", get: (r) => r.handled, className: th },
+      { key: "share", label: "Share", get: (r) => r.sharePct, className: th },
+      { key: "sl", label: `SL ≤${data?.headline?.slThresholdSec ?? 0}s`, get: (r) => r.slWithinPct, className: th },
+      { key: "aht", label: "AHT", get: (r) => r.aht, className: th },
+      { key: "avgTalk", label: "Avg talk", get: (r) => r.avgTalk, className: th },
+      { key: "avgHold", label: "Avg hold", get: (r) => r.avgHold, className: th },
+      { key: "avgAcw", label: "Avg ACW", get: (r) => r.avgAcw, className: th },
+      { key: "days", label: "Days", get: (r) => r.daysActive, className: th },
+      { key: "callsPerDay", label: "Calls/day", get: (r) => r.callsPerDay, className: th },
+      { key: "short", label: "Short", get: (r) => r.shortCalls, className: th },
+      { key: "long", label: "Long", get: (r) => r.longCalls, className: th },
+      { key: "transfers", label: "Transfers", get: (r) => r.transfers, className: th },
+    ];
+    if (data?.headline?.fcrPct != null) cols.push({ key: "fcr", label: "FCR %", get: (r) => r.fcrPct, className: th });
+    cols.push({ key: "callSpan", label: "First → last call", get: (r) => r.firstCall, className: th });
+    return cols;
+  }, [data?.headline?.slThresholdSec, data?.headline?.fcrPct]);
+  const agentFilterCols: Array<FilterColumn<AgentRow>> = useMemo(() => AGENT_COLS.map((c) => ({ key: c.key, get: c.get })), [AGENT_COLS]);
+  const agentColGetter = useCallback((r: AgentRow, key: string) => AGENT_COLS.find((c) => c.key === key)?.get(r), [AGENT_COLS]);
+  const agentFilters = useColumnFilters(filteredAgents, agentFilterCols);
+  const { sorted: sortedAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
+
+  // LOB / campaign-wise performance (lobs tab).
+  const lobRows = useMemo(() => data?.lobs ?? [], [data]);
+  const LOB_COLS = useMemo(() => ([
+    { key: "campaign", label: "Campaign", get: (r: LobRow) => r.campaign, className: "py-2.5 pl-3 pr-3 font-bold text-slate-500" },
+    { key: "offered", label: "Offered", get: (r: LobRow) => r.offered, className: th },
+    { key: "share", label: "Share", get: (r: LobRow) => r.sharePct, className: th },
+    { key: "answered", label: "Answered", get: (r: LobRow) => r.answered, className: th },
+    { key: "abandoned", label: "Abandoned", get: (r: LobRow) => r.abandoned, className: th },
+    { key: "al", label: "AL %", get: (r: LobRow) => r.abandonPct, className: th },
+    { key: "sl", label: "SL %", get: (r: LobRow) => r.slPct, className: th },
+    { key: "aht", label: "AHT", get: (r: LobRow) => r.aht, className: th },
+    { key: "asa", label: "ASA", get: (r: LobRow) => r.asa, className: th },
+    { key: "uniqueCallers", label: "Unique callers", get: (r: LobRow) => r.uniqueCallers, className: th },
+    { key: "agents", label: "Agents", get: (r: LobRow) => r.agents, className: th },
+  ]), []);
+  const lobFilterCols: Array<FilterColumn<LobRow>> = useMemo(() => LOB_COLS.map((c) => ({ key: c.key, get: c.get })), [LOB_COLS]);
+  const lobColGetter = useCallback((r: LobRow, key: string) => LOB_COLS.find((c) => c.key === key)?.get(r), [LOB_COLS]);
+  const lobFilters = useColumnFilters(lobRows, lobFilterCols);
+  const { sorted: sortedLobs, sortKey: lobSortKey, sortDir: lobSortDir, toggleSort: toggleLobSort } = useSortableRows(lobFilters.filtered, lobColGetter);
 
   // date x hour grid
   const heat = useMemo(() => {
@@ -887,14 +990,21 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
               </SectionCard>
 
               <SectionCard icon={PhoneCall} title="Date-wise call performance" tone="blue" footnote="Click a row to see that day's calls.">
+                {dateFilters.activeCount > 0 && (
+                  <div className="mb-2 flex justify-end">
+                    <button type="button" onClick={dateFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                      Clear {dateFilters.activeCount} filter{dateFilters.activeCount > 1 ? "s" : ""}
+                    </button>
+                  </div>
+                )}
                 <TableShell minWidth={980}>
                   <thead><tr className={THEAD}>
-                    <Head first>Date</Head><Head>Day</Head><Head>Agents</Head><Head>Offered</Head><Head>Answered</Head><Head>Abandoned</Head>
-                    <Head>Answer %</Head><Head>AL %</Head><Head>SL %</Head><Head>AHT</Head><Head>ASA</Head><Head>Unique callers</Head>
-                    {h.fcrPct != null && <Head>FCR %</Head>}
+                    {DATE_COLS.map((c) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={dateSortKey} sortDir={dateSortDir} onSort={toggleDateSort} filters={dateFilters} className={c.className} />
+                    ))}
                   </tr></thead>
                   <tbody>
-                    {[...data.daily].reverse().map((r, i) => (
+                    {sortedDateRows.map((r, i) => (
                       <tr key={r.date} className={rowCls(i)} onClick={() => openDrill(`Calls on ${fmtDate(r.date)}`, { date: r.date })}>
                         <td className="py-2.5 pl-3 pr-3 font-medium text-slate-700">{fmtDate(r.date)}</td>
                         <td className={`${td} text-left`}>{r.weekday}</td>
@@ -911,6 +1021,9 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                         {h.fcrPct != null && <td className={td}>{r.fcrPct != null ? `${r.fcrPct}%` : "—"}</td>}
                       </tr>
                     ))}
+                    {sortedDateRows.length === 0 && (
+                      <tr><td colSpan={DATE_COLS.length} className="py-6 text-center text-slate-400">No dates match the filters.</td></tr>
+                    )}
                     <tr className="border-t-2 border-slate-200 bg-slate-100/70 font-bold text-slate-700">
                       <td className="py-2.5 pl-3 pr-3">Total</td><td /><td className={td}>{h.agentsActive}</td>
                       <td className={td}>{fmtNum(h.offered)}</td><td className={td}>{fmtNum(h.answered)}</td><td className={td}>{fmtNum(h.abandoned)}</td>
@@ -966,22 +1079,29 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
               </div>
 
               <SectionCard icon={Users} title="Agent-wise call performance" tone="indigo" footnote={`SL ≤${h.slThresholdSec}s = share of the agent's answered calls picked up within ${h.slThresholdSec}s of queueing. Short = under 10s, Long = 10 min or more. Click a row for the agent's calls.`}>
-                <div className="relative mb-3 w-full max-w-sm">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text" value={agentSearch} onChange={(e) => setAgentSearch(e.target.value)}
-                    placeholder="Search agent name or ID..."
-                    className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm focus:border-blue-400 focus:outline-none"
-                  />
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="relative w-full max-w-sm">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text" value={agentSearch} onChange={(e) => setAgentSearch(e.target.value)}
+                      placeholder="Search agent name or ID..."
+                      className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm focus:border-blue-400 focus:outline-none"
+                    />
+                  </div>
+                  {agentFilters.activeCount > 0 && (
+                    <button type="button" onClick={agentFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                      Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+                    </button>
+                  )}
                 </div>
                 <TableShell minWidth={1100}>
                   <thead><tr className={THEAD}>
-                    <Head first>Agent</Head><Head>Handled</Head><Head>Share</Head><Head>SL ≤{h.slThresholdSec}s</Head><Head>AHT</Head><Head>Avg talk</Head>
-                    <Head>Avg hold</Head><Head>Avg ACW</Head><Head>Days</Head><Head>Calls/day</Head><Head>Short</Head><Head>Long</Head>
-                    <Head>Transfers</Head>{h.fcrPct != null && <Head>FCR %</Head>}<Head>First → last call</Head>
+                    {AGENT_COLS.map((c) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className={c.className} />
+                    ))}
                   </tr></thead>
                   <tbody>
-                    {filteredAgents.map((a, i) => (
+                    {sortedAgents.map((a, i) => (
                       <tr key={a.agentId} className={rowCls(i)} onClick={() => setAgentView(a)} title="Click for this agent's date-wise performance">
                         <td className="py-2.5 pl-3 pr-3">
                           <div className="font-medium text-slate-700">{a.agentName}</div>
@@ -1003,7 +1123,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                         <td className={td}>{a.firstCall.slice(0, 5)} → {a.lastCall.slice(0, 5)}</td>
                       </tr>
                     ))}
-                    {filteredAgents.length === 0 && <tr><td colSpan={h.fcrPct != null ? 15 : 14} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>}
+                    {sortedAgents.length === 0 && <tr><td colSpan={AGENT_COLS.length} className="py-6 text-center text-slate-400">No agents match this search / filters.</td></tr>}
                   </tbody>
                 </TableShell>
               </SectionCard>
@@ -1094,13 +1214,21 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                 </div>
               )}
               <SectionCard icon={Layers} title="LOB / campaign-wise performance" tone="violet" footnote="Each campaign is a language / line of business. Click a row for its calls.">
+                {lobFilters.activeCount > 0 && (
+                  <div className="mb-2 flex justify-end">
+                    <button type="button" onClick={lobFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                      Clear {lobFilters.activeCount} filter{lobFilters.activeCount > 1 ? "s" : ""}
+                    </button>
+                  </div>
+                )}
                 <TableShell minWidth={980}>
                   <thead><tr className={THEAD}>
-                    <Head first>Campaign</Head><Head>Offered</Head><Head>Share</Head><Head>Answered</Head><Head>Abandoned</Head><Head>AL %</Head>
-                    <Head>SL %</Head><Head>AHT</Head><Head>ASA</Head><Head>Unique callers</Head><Head>Agents</Head>
+                    {LOB_COLS.map((c) => (
+                      <FilterSortTh key={c.key} label={c.label} columnKey={c.key} sortKey={lobSortKey} sortDir={lobSortDir} onSort={toggleLobSort} filters={lobFilters} className={c.className} />
+                    ))}
                   </tr></thead>
                   <tbody>
-                    {data.lobs.map((l, i) => (
+                    {sortedLobs.map((l, i) => (
                       <tr key={l.campaign} className={rowCls(i)} onClick={() => { setCampaign(l.campaign); setTab("overview"); }}>
                         <td className="py-2.5 pl-3 pr-3 font-medium text-slate-700">{l.campaign}</td>
                         <td className={`${td} font-semibold`}>{fmtNum(l.offered)}</td>
@@ -1115,6 +1243,9 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                         <td className={td}>{l.agents}</td>
                       </tr>
                     ))}
+                    {sortedLobs.length === 0 && (
+                      <tr><td colSpan={LOB_COLS.length} className="py-6 text-center text-slate-400">No campaigns match the filters.</td></tr>
+                    )}
                   </tbody>
                 </TableShell>
                 <p className="mt-2 text-[11px] text-slate-400">Clicking a campaign filters the whole dashboard to it (use the LOB dropdown to go back to all).</p>

@@ -6,6 +6,8 @@ import { formatINR } from "./DashboardKit";
 import {
   type HPAgentDetail, HP_API, fmtDate, fmtMdy, fmtN, weekBucket,
 } from "./housingPremiumShared";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 const TOOLTIP_PROPS = {
   contentStyle: { fontSize: 12, borderRadius: 10, border: "1px solid #334155", background: "#0f172a", boxShadow: "0 8px 24px rgba(15,23,42,0.4)", padding: "8px 12px" },
@@ -30,6 +32,21 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
     </div>
   );
 }
+
+/** Day/Week table row shape shared by both granularities so one set of Excel-style sort/filter columns covers both. */
+interface DrawerPeriodRow { key: string; label: string; saleCount: number; revenue: number; calls: number; connected: number }
+interface PeriodCol { key: string; label: string; get: (r: DrawerPeriodRow) => string | number | null; cell: (r: DrawerPeriodRow) => ReactNode; thClassName: string; tdClassName: string }
+
+type HPOrder = HPAgentDetail["orders"][number];
+interface OrderCol { key: string; label: string; get: (o: HPOrder) => string | number | null; cell: (o: HPOrder) => ReactNode; thClassName: string; tdClassName: string }
+const ORDER_COLS: OrderCol[] = [
+  { key: "orderId", label: "Order id", get: (o) => o.orderId, cell: (o) => o.orderId, thClassName: "px-3 py-2 font-semibold", tdClassName: "px-3 py-2 font-medium text-slate-700" },
+  { key: "date", label: "Date", get: (o) => o.date, cell: (o) => fmtDate(o.date), thClassName: "px-3 py-2 font-semibold", tdClassName: "px-3 py-2 text-slate-600" },
+  { key: "amount", label: "Amount", get: (o) => o.amount, cell: (o) => formatINR(o.amount), thClassName: "px-3 py-2 text-right font-semibold", tdClassName: "px-3 py-2 text-right text-slate-600" },
+  { key: "partnerName", label: "Partner", get: (o) => o.partnerName, cell: (o) => o.partnerName, thClassName: "px-3 py-2 font-semibold", tdClassName: "px-3 py-2 text-slate-600" },
+];
+const ORDER_FILTER_COLS: Array<FilterColumn<HPOrder>> = ORDER_COLS.map((c) => ({ key: c.key, get: c.get }));
+const orderColGetter = (o: HPOrder, key: string) => ORDER_COLS.find((c) => c.key === key)?.get(o);
 
 export function HousingPremiumAgentDrawer({
   agent, from, to, onClose,
@@ -71,6 +88,27 @@ export function HousingPremiumAgentDrawer({
     }
     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, v]) => ({ key, ...v }));
   }, [data]);
+
+  /** Day/Week table: Excel-style sort + filter. Sort/filter on the raw `key` (ISO date or week-bucket key, both chronological) rather than the formatted `label`, so ordering stays correct. */
+  const periodRows = useMemo<DrawerPeriodRow[]>(() => {
+    if (period === "day") return (data?.daily ?? []).map((d) => ({ key: d.date, label: fmtDate(d.date), saleCount: d.saleCount, revenue: d.revenue, calls: d.calls, connected: d.connected }));
+    return weeklyRows.map((w) => ({ key: w.key, label: w.label, saleCount: w.saleCount, revenue: w.revenue, calls: w.calls, connected: w.connected }));
+  }, [period, data, weeklyRows]);
+  const periodCols = useMemo<PeriodCol[]>(() => ([
+    { key: "period", label: period === "day" ? "Date" : "Week", get: (r) => r.key, cell: (r) => r.label, thClassName: "px-3 py-2 font-semibold", tdClassName: "px-3 py-2 font-medium text-slate-700" },
+    { key: "saleCount", label: "Sales", get: (r) => r.saleCount, cell: (r) => fmtN(r.saleCount), thClassName: "px-3 py-2 text-right font-semibold", tdClassName: "px-3 py-2 text-right text-slate-600" },
+    { key: "revenue", label: "Revenue", get: (r) => r.revenue, cell: (r) => formatINR(r.revenue), thClassName: "px-3 py-2 text-right font-semibold", tdClassName: "px-3 py-2 text-right font-semibold text-slate-800" },
+    { key: "calls", label: "Calls", get: (r) => r.calls, cell: (r) => fmtN(r.calls), thClassName: "px-3 py-2 text-right font-semibold", tdClassName: "px-3 py-2 text-right text-slate-600" },
+    { key: "connected", label: "Connected", get: (r) => r.connected, cell: (r) => fmtN(r.connected), thClassName: "px-3 py-2 text-right font-semibold", tdClassName: "px-3 py-2 text-right text-slate-600" },
+  ]), [period]);
+  const periodFilterCols = useMemo<Array<FilterColumn<DrawerPeriodRow>>>(() => periodCols.map((c) => ({ key: c.key, get: c.get })), [periodCols]);
+  const periodColGetter = (r: DrawerPeriodRow, key: string) => periodCols.find((c) => c.key === key)?.get(r);
+  const periodFilters = useColumnFilters(periodRows, periodFilterCols);
+  const { sorted: sortedPeriodRows, sortKey: periodSortKey, sortDir: periodSortDir, toggleSort: togglePeriodSort } = useSortableRows(periodFilters.filtered, periodColGetter);
+
+  /** Orders table: Excel-style sort + filter. */
+  const orderFilters = useColumnFilters(data?.orders ?? [], ORDER_FILTER_COLS);
+  const { sorted: sortedOrders, sortKey: orderSortKey, sortDir: orderSortDir, toggleSort: toggleOrderSort } = useSortableRows(orderFilters.filtered, orderColGetter);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Agent detail">
@@ -118,19 +156,26 @@ export function HousingPremiumAgentDrawer({
               <Section title="Day by day">
                 {data.daily.length === 0 ? <None /> : (
                   <>
-                    <div className="mb-2 inline-flex rounded-lg bg-slate-100 p-1">
-                      <button
-                        type="button" onClick={() => setPeriod("day")}
-                        className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${period === "day" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
-                      >
-                        Day-wise
-                      </button>
-                      <button
-                        type="button" onClick={() => setPeriod("week")}
-                        className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${period === "week" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
-                      >
-                        Week-wise
-                      </button>
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <div className="inline-flex rounded-lg bg-slate-100 p-1">
+                        <button
+                          type="button" onClick={() => setPeriod("day")}
+                          className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${period === "day" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
+                        >
+                          Day-wise
+                        </button>
+                        <button
+                          type="button" onClick={() => setPeriod("week")}
+                          className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${period === "week" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
+                        >
+                          Week-wise
+                        </button>
+                      </div>
+                      {periodFilters.activeCount > 0 && (
+                        <button type="button" onClick={periodFilters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+                          Clear {periodFilters.activeCount} filter{periodFilters.activeCount > 1 ? "s" : ""}
+                        </button>
+                      )}
                     </div>
                     {period === "day" ? (
                       <ResponsiveContainer width="100%" height={180}>
@@ -161,31 +206,23 @@ export function HousingPremiumAgentDrawer({
                       <table className="w-full text-left text-xs">
                         <thead>
                           <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                            <th className="px-3 py-2 font-semibold">{period === "day" ? "Date" : "Week"}</th>
-                            <th className="px-3 py-2 text-right font-semibold">Sales</th>
-                            <th className="px-3 py-2 text-right font-semibold">Revenue</th>
-                            <th className="px-3 py-2 text-right font-semibold">Calls</th>
-                            <th className="px-3 py-2 text-right font-semibold">Connected</th>
+                            {periodCols.map((c) => (
+                              <FilterSortTh
+                                key={c.key} label={c.label} columnKey={c.key} sortKey={periodSortKey} sortDir={periodSortDir} onSort={togglePeriodSort}
+                                filters={periodFilters} className={c.thClassName}
+                              />
+                            ))}
                           </tr>
                         </thead>
                         <tbody>
-                          {period === "day" ? data.daily.map((d) => (
-                            <tr key={d.date} className="border-t border-slate-50">
-                              <td className="px-3 py-2 font-medium text-slate-700">{fmtDate(d.date)}</td>
-                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(d.saleCount)}</td>
-                              <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatINR(d.revenue)}</td>
-                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(d.calls)}</td>
-                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(d.connected)}</td>
-                            </tr>
-                          )) : weeklyRows.map((w) => (
-                            <tr key={w.key} className="border-t border-slate-50">
-                              <td className="px-3 py-2 font-medium text-slate-700">{w.label}</td>
-                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(w.saleCount)}</td>
-                              <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatINR(w.revenue)}</td>
-                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(w.calls)}</td>
-                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(w.connected)}</td>
+                          {sortedPeriodRows.map((r) => (
+                            <tr key={r.key} className="border-t border-slate-50">
+                              {periodCols.map((c) => <td key={c.key} className={c.tdClassName}>{c.cell(r)}</td>)}
                             </tr>
                           ))}
+                          {sortedPeriodRows.length === 0 && (
+                            <tr><td colSpan={periodCols.length} className="px-3 py-4 text-center text-slate-400">No rows match the current filters.</td></tr>
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -195,28 +232,39 @@ export function HousingPremiumAgentDrawer({
 
               <Section title={`Orders (${data.orders.length})`}>
                 {data.orders.length === 0 ? <None /> : (
-                  <div className="overflow-x-auto rounded-xl border border-slate-100">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                          <th className="px-3 py-2 font-semibold">Order id</th>
-                          <th className="px-3 py-2 font-semibold">Date</th>
-                          <th className="px-3 py-2 text-right font-semibold">Amount</th>
-                          <th className="px-3 py-2 font-semibold">Partner</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.orders.map((o, i) => (
-                          <tr key={`${o.orderId}-${i}`} className="border-t border-slate-50">
-                            <td className="px-3 py-2 font-medium text-slate-700">{o.orderId}</td>
-                            <td className="px-3 py-2 text-slate-600">{fmtDate(o.date)}</td>
-                            <td className="px-3 py-2 text-right text-slate-600">{formatINR(o.amount)}</td>
-                            <td className="px-3 py-2 text-slate-600">{o.partnerName}</td>
+                  <>
+                    <div className="overflow-x-auto rounded-xl border border-slate-100">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
+                            {ORDER_COLS.map((c) => (
+                              <FilterSortTh
+                                key={c.key} label={c.label} columnKey={c.key} sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort}
+                                filters={orderFilters} className={c.thClassName}
+                              />
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {sortedOrders.map((o, i) => (
+                            <tr key={`${o.orderId}-${i}`} className="border-t border-slate-50">
+                              {ORDER_COLS.map((c) => <td key={c.key} className={c.tdClassName}>{c.cell(o)}</td>)}
+                            </tr>
+                          ))}
+                          {sortedOrders.length === 0 && (
+                            <tr><td colSpan={ORDER_COLS.length} className="px-3 py-4 text-center text-slate-400">No rows match the current filters.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    {orderFilters.activeCount > 0 && (
+                      <div className="mt-1.5 flex justify-end">
+                        <button type="button" onClick={orderFilters.clearAll} className="text-[10px] font-semibold text-indigo-600 hover:underline">
+                          Clear {orderFilters.activeCount} filter{orderFilters.activeCount > 1 ? "s" : ""}
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </Section>
             </>

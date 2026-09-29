@@ -109,7 +109,7 @@ import { eventsRouter } from "./modules/org/events.routes.js";
 import { orgSettingsRouter } from "./modules/org/org_settings.routes.js";
 import { bulkUploadRouter } from "./modules/bulk-upload/bulk-upload.routes.js";
 import { tpzAccessRouter } from "./modules/tpz-access/tpz-access.routes.js";
-import { tpzPerformanceGate, tpzInsightsGate, tpzInboundProjectGate } from "./modules/tpz-access/tpz-access.middleware.js";
+import { tpzPerformanceGate, tpzInsightsGate, tpzInboundProjectGate, tpzUploadGate } from "./modules/tpz-access/tpz-access.middleware.js";
 import { bulkApprovalRouter } from "./modules/bulk-upload/bulk-approval.routes.js";
 import { workflowRouter } from "./modules/workflow/workflow.routes.js";
 import { lifecycleRouter } from "./modules/lifecycle/lifecycle.routes.js";
@@ -236,6 +236,7 @@ import { processMetricDefinitionRouter } from "./modules/kpi/process-metric-defi
 import { qualityAggregationRouter } from "./modules/quality-dashboard/quality-aggregation.routes.js";
 import { callMasterRouter } from "./modules/call-master/call-master.routes.js";
 import { inboundRouter } from "./modules/call-master/inbound.routes.js";
+import { inboundInsightsRouter } from "./modules/call-master/inbound-insights.routes.js";
 import { salesUploadRouter } from "./modules/sales-upload/sales-upload.routes.js";
 import { housingDashboardsRouter } from "./modules/housing-dashboards/housing-dashboards.routes.js";
 import { blaBliBluDashboardRouter } from "./modules/bla-bli-blu-dashboard/bla-bli-blu-dashboard.routes.js";
@@ -279,27 +280,26 @@ import { payrollHeadReviewRouter } from "./modules/payroll-head-review/payroll-h
 import { processPerformanceRouter } from "./modules/process-performance/process-performance.routes.js";
 import { bellavitaSaleDashboardRouter } from "./modules/process-performance/bellavita-sale-dashboard.routes.js";
 import { housingOwnerDashboardRouter } from "./modules/process-performance/housing-owner-dashboard.routes.js";
-import { gncSaleDashboardRouter } from "./modules/process-performance/gnc-sale-dashboard.routes.js";
-import { neemansCartDashboardRouter } from "./modules/process-performance/neemans-cart-dashboard.routes.js";
-import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.routes.js";
-import { bellavitaCartDashboardRouter } from "./modules/process-performance/bellavita-cart-dashboard.routes.js";
-import { bellavitaChatDashboardRouter } from "./modules/process-performance/bellavita-chat-dashboard.routes.js";
-import { birlanuDashboardRouter } from "./modules/process-performance/birlanu-dashboard.routes.js";
 import { cloviaChannelsDashboardRouter } from "./modules/process-performance/clovia-channels-dashboard.routes.js";
 import { cloviaInboundSnapshotRouter } from "./modules/process-performance/clovia-inbound-snapshot.routes.js";
+import { cloviaLobDashboardRouter } from "./modules/process-performance/clovia-lob-dashboard.routes.js";
+import { birlanuDashboardRouter } from "./modules/process-performance/birlanu-dashboard.routes.js";
+import { gncSaleDashboardRouter } from "./modules/process-performance/gnc-sale-dashboard.routes.js";
 import { gncChatDashboardRouter } from "./modules/process-performance/gnc-chat-dashboard.routes.js";
 import { housingPremiumDashboardRouter } from "./modules/process-performance/housing-premium-dashboard.routes.js";
 import { lpFeedbackDashboardRouter } from "./modules/process-performance/lp-feedback-dashboard.routes.js";
 import { lpOnboardingDashboardRouter } from "./modules/process-performance/lp-onboarding-dashboard.routes.js";
-import { neemansPerformanceDashboardRouter } from "./modules/process-performance/neemans-performance-dashboard.routes.js";
 import { satyaRetailDashboardRouter } from "./modules/process-performance/satya-retail-dashboard.routes.js";
 import { satyaRetailReportRouter } from "./modules/process-performance/satya-retail-report.routes.js";
-import { cloviaLobDashboardRouter } from "./modules/process-performance/clovia-lob-dashboard.routes.js";
+import { neemansCartDashboardRouter } from "./modules/process-performance/neemans-cart-dashboard.routes.js";
+import { neemansPerformanceDashboardRouter } from "./modules/process-performance/neemans-performance-dashboard.routes.js";
+import { bellavitaChatDashboardRouter } from "./modules/process-performance/bellavita-chat-dashboard.routes.js";
 import { dalmiaDashboardRouter } from "./modules/process-performance/dalmia-dashboard.routes.js";
+import { bellavitaCartDashboardRouter } from "./modules/process-performance/bellavita-cart-dashboard.routes.js";
 import { appreciateWealthDashboardRouter } from "./modules/process-performance/appreciate-wealth-dashboard.routes.js";
 import { dashboardExportRouter } from "./modules/process-performance/dashboard-export.routes.js";
-import { inboundInsightsRouter } from "./modules/call-master/inbound-insights.routes.js";
 import { misExportRouter } from "./modules/process-performance/mis-export.routes.js";
+import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.routes.js";
 import { processDataSourceRouter } from "./modules/process-data-source/process-data-source.routes.js";
 import { dashboardBuilderRouter } from "./modules/dashboard-builder/dashboard-builder.routes.js";
 import { processOperationsRouter } from "./modules/process-operations/process-operations.routes.js";
@@ -736,6 +736,8 @@ app.use("/api/onboarding/name-validation", nameValidationRouter);
 // Mounted BEFORE bulkUploadRouter so its more specific /approvals/* paths are not
 // shadowed by a looser pattern there — the router-shadowing failure mode that has
 // silently disabled guards elsewhere in this codebase.
+// TPZ Process grants: the gate runs first and only acts on TPZ upload types (see modules/tpz-access).
+app.use("/api/bulk-upload", tpzUploadGate);
 app.use("/api/bulk-upload", bulkApprovalRouter);
 app.use("/api/bulk-upload", bulkUploadRouter);
 app.use("/api/admin/email-templates", emailTemplatesRouter);

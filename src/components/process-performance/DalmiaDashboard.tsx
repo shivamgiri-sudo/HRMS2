@@ -10,6 +10,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { PeriodSection, type PeriodWeek, type PeriodRow } from "./DashboardKit";
 import { TOOLTIP_PROPS, fmtN, fmtDate, fmtShortDay } from "./lpCallShared";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Dalmia Cement -- Inbound & Outbound Performance Dashboard (Process Performance V2 -> Dalmia).
@@ -215,6 +217,32 @@ export function DalmiaDashboard() {
 
   // The chosen view must exist in the loaded range (e.g. W-4 is absent for a range ending on the 20th).
   useEffect(() => { if (data && !data.buckets.some((b) => b.key === view)) setView("MTD"); }, [data, view]);
+
+  // Excel-style sort + filter for the Language Wise, Lead Source and Leads-by-Type tables -- hooks must run every
+  // render, so these are computed before the `!data` early return further down.
+  const LANG_FILTER_COLS: Array<FilterColumn<LanguageRow>> = [
+    { key: "language", get: (l) => l.language }, { key: "abandon", get: (l) => l.abandon }, { key: "caller", get: (l) => l.caller },
+    { key: "total", get: (l) => l.total }, { key: "answered", get: (l) => l.answered }, { key: "alPct", get: (l) => l.alPct },
+    { key: "threshold", get: (l) => l.threshold }, { key: "abnPct", get: (l) => l.abnPct },
+  ];
+  const langColGetter = (l: LanguageRow, key: string) => LANG_FILTER_COLS.find((c) => c.key === key)?.get(l);
+  const langFilters = useColumnFilters(data?.languages[view] ?? [], LANG_FILTER_COLS);
+  const { sorted: sortedLangs, sortKey: langSortKey, sortDir: langSortDir, toggleSort: toggleLangSort } = useSortableRows(langFilters.filtered, langColGetter);
+
+  type LeadSourceRow = LeadsSummary["sources"][number];
+  const SOURCE_FILTER_COLS: Array<FilterColumn<LeadSourceRow>> = [
+    { key: "source", get: (s) => s.source }, { key: "dataReceived", get: (s) => s.dataReceived },
+    { key: "connected", get: (s) => s.connected }, { key: "qualified", get: (s) => s.qualified },
+  ];
+  const sourceColGetter = (s: LeadSourceRow, key: string) => SOURCE_FILTER_COLS.find((c) => c.key === key)?.get(s);
+  const sourceFilters = useColumnFilters(data?.leads[view]?.sources ?? [], SOURCE_FILTER_COLS);
+  const { sorted: sortedSources, sortKey: sourceSortKey, sortDir: sourceSortDir, toggleSort: toggleSourceSort } = useSortableRows(sourceFilters.filtered, sourceColGetter);
+
+  type LeadTypeRow = LeadsSummary["byType"][number];
+  const TYPE_FILTER_COLS: Array<FilterColumn<LeadTypeRow>> = [{ key: "type", get: (t) => t.type }, { key: "count", get: (t) => t.count }];
+  const typeColGetter = (t: LeadTypeRow, key: string) => TYPE_FILTER_COLS.find((c) => c.key === key)?.get(t);
+  const typeFilters = useColumnFilters(data?.leads[view]?.byType ?? [], TYPE_FILTER_COLS);
+  const { sorted: sortedTypes, sortKey: typeSortKey, sortDir: typeSortDir, toggleSort: toggleTypeSort } = useSortableRows(typeFilters.filtered, typeColGetter);
 
   if (!data) {
     return error
@@ -455,13 +483,36 @@ export function DalmiaDashboard() {
 
       {/* ------------------------------ language ------------------------------ */}
       <div className="grid gap-3 lg:grid-cols-[1.25fr_1fr]">
-        <Panel icon={Languages} title={`Language Wise Performance (${view})`} action={<DetailsBtn onClick={() => openLanguageAll("Language Wise Performance")} />}>
+        <Panel
+          icon={Languages} title={`Language Wise Performance (${view})`}
+          action={
+            <div className="flex items-center gap-2">
+              {langFilters.activeCount > 0 && (
+                <button type="button" onClick={langFilters.clearAll} className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold text-white hover:bg-white/20">
+                  Clear {langFilters.activeCount} filter{langFilters.activeCount > 1 ? "s" : ""}
+                </button>
+              )}
+              <DetailsBtn onClick={() => openLanguageAll("Language Wise Performance")} />
+            </div>
+          }
+        >
           <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr]">
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
-                <thead><tr>{["Language", "Abandon", "Caller", "Grand Total", "Answered", "AL %", "Threshold", "Abn %"].map((h) => <th key={h} className={TH}>{h}</th>)}</tr></thead>
+                <thead>
+                  <tr>
+                    <FilterSortTh label="Language" columnKey="language" sortKey={langSortKey} sortDir={langSortDir} onSort={toggleLangSort} filters={langFilters} className={TH} />
+                    <FilterSortTh label="Abandon" columnKey="abandon" sortKey={langSortKey} sortDir={langSortDir} onSort={toggleLangSort} filters={langFilters} className={TH} />
+                    <FilterSortTh label="Caller" columnKey="caller" sortKey={langSortKey} sortDir={langSortDir} onSort={toggleLangSort} filters={langFilters} className={TH} />
+                    <FilterSortTh label="Grand Total" columnKey="total" sortKey={langSortKey} sortDir={langSortDir} onSort={toggleLangSort} filters={langFilters} className={TH} />
+                    <FilterSortTh label="Answered" columnKey="answered" sortKey={langSortKey} sortDir={langSortDir} onSort={toggleLangSort} filters={langFilters} className={TH} />
+                    <FilterSortTh label="AL %" columnKey="alPct" sortKey={langSortKey} sortDir={langSortDir} onSort={toggleLangSort} filters={langFilters} className={TH} />
+                    <FilterSortTh label="Threshold" columnKey="threshold" sortKey={langSortKey} sortDir={langSortDir} onSort={toggleLangSort} filters={langFilters} className={TH} />
+                    <FilterSortTh label="Abn %" columnKey="abnPct" sortKey={langSortKey} sortDir={langSortDir} onSort={toggleLangSort} filters={langFilters} className={TH} />
+                  </tr>
+                </thead>
                 <tbody>
-                  {langs.map((l) => (
+                  {sortedLangs.map((l) => (
                     <tr key={l.campaign} onClick={() => openLanguage(l.campaign, l.language)} className="cursor-pointer hover:bg-sky-50">
                       <td className={`${TD} text-left font-semibold`}>{l.language}</td><td className={TD}>{l.abandon}</td><td className={TD}>{l.caller}</td>
                       <td className={`${TD} font-bold`}>{l.total}</td><td className={TD}>{l.answered}</td>
@@ -469,6 +520,7 @@ export function DalmiaDashboard() {
                       <td className={TD}>{l.threshold}</td><td className={TD}>{pct0(l.abnPct)}</td>
                     </tr>
                   ))}
+                  {sortedLangs.length === 0 && <tr><td colSpan={8} className={`${TD} py-4 text-center`}>No languages match the current filters.</td></tr>}
                   <tr className="bg-sky-100 font-bold">
                     <td className={`${TD} text-left`}>Total</td><td className={TD}>{langTotal.abandon}</td><td className={TD}>{langTotal.caller}</td><td className={TD}>{langTotal.total}</td>
                     <td className={TD}>{langTotal.answered}</td><td className={TD}>{pct0(div(langTotal.answered, langTotal.total))}</td><td className={TD}>{langTotal.threshold}</td><td className={TD}>{pct0(div(langTotal.abandon, langTotal.total))}</td>
@@ -573,16 +625,36 @@ export function DalmiaDashboard() {
           </ResponsiveContainer>
         </Panel>
 
-        <Panel icon={Target} title={`Lead Source & Qualification (${view})`} action={<DetailsBtn onClick={() => openLeadSource(null)} />}>
+        <Panel
+          icon={Target} title={`Lead Source & Qualification (${view})`}
+          action={
+            <div className="flex items-center gap-2">
+              {sourceFilters.activeCount > 0 && (
+                <button type="button" onClick={sourceFilters.clearAll} className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold text-white hover:bg-white/20">
+                  Clear {sourceFilters.activeCount} filter{sourceFilters.activeCount > 1 ? "s" : ""}
+                </button>
+              )}
+              <DetailsBtn onClick={() => openLeadSource(null)} />
+            </div>
+          }
+        >
           <div className="space-y-2">
             <table className="w-full border-collapse">
-              <thead><tr>{["Source", "Data Received", "Connected", "Qualified Leads"].map((h) => <th key={h} className={TH}>{h}</th>)}</tr></thead>
+              <thead>
+                <tr>
+                  <FilterSortTh label="Source" columnKey="source" sortKey={sourceSortKey} sortDir={sourceSortDir} onSort={toggleSourceSort} filters={sourceFilters} className={TH} />
+                  <FilterSortTh label="Data Received" columnKey="dataReceived" sortKey={sourceSortKey} sortDir={sourceSortDir} onSort={toggleSourceSort} filters={sourceFilters} className={TH} />
+                  <FilterSortTh label="Connected" columnKey="connected" sortKey={sourceSortKey} sortDir={sourceSortDir} onSort={toggleSourceSort} filters={sourceFilters} className={TH} />
+                  <FilterSortTh label="Qualified Leads" columnKey="qualified" sortKey={sourceSortKey} sortDir={sourceSortDir} onSort={toggleSourceSort} filters={sourceFilters} className={TH} />
+                </tr>
+              </thead>
               <tbody>
-                {leads.sources.map((s) => (
+                {sortedSources.map((s) => (
                   <tr key={s.source} onClick={() => openLeadSource(s.source)} className="cursor-pointer hover:bg-sky-50">
                     <td className={`${TD} text-left font-semibold`}>{s.source}</td><td className={TD}>{fmtN(s.dataReceived)}</td><td className={TD}>{fmtN(s.connected)}</td><td className={TD}>{fmtN(s.qualified)}</td>
                   </tr>
                 ))}
+                {sortedSources.length === 0 && <tr><td colSpan={4} className={`${TD} py-4 text-center`}>No sources match the current filters.</td></tr>}
                 <tr onClick={() => openLeadSource(null)} className="cursor-pointer bg-sky-100 font-bold hover:bg-sky-200">
                   <td className={`${TD} text-left`}>Total</td><td className={TD}>{fmtN(leads.total.dataReceived)}</td><td className={TD}>{fmtN(leads.total.connected)}</td><td className={TD}>{fmtN(leads.total.qualified)}</td>
                 </tr>
@@ -597,9 +669,26 @@ export function DalmiaDashboard() {
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             <div>
-              <p className="mb-1 rounded bg-[#1e3a6e] px-2 py-0.5 text-[10px] font-bold text-white">Leads by Type ({view})</p>
-              <table className="w-full border-collapse"><thead><tr><th className={TH}>Type of Leads</th><th className={TH}>Count</th></tr></thead>
-                <tbody>{leads.byType.map((t) => <tr key={t.type}><td className={`${TD} text-left font-semibold`}>{t.type}</td><td className={TD}>{fmtN(t.count)}</td></tr>)}</tbody></table>
+              <div className="mb-1 flex items-center justify-between gap-2 rounded bg-[#1e3a6e] px-2 py-0.5">
+                <p className="text-[10px] font-bold text-white">Leads by Type ({view})</p>
+                {typeFilters.activeCount > 0 && (
+                  <button type="button" onClick={typeFilters.clearAll} className="rounded-full bg-white/10 px-2 py-0.5 text-[9px] font-semibold text-white hover:bg-white/20">
+                    Clear {typeFilters.activeCount}
+                  </button>
+                )}
+              </div>
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr>
+                    <FilterSortTh label="Type of Leads" columnKey="type" sortKey={typeSortKey} sortDir={typeSortDir} onSort={toggleTypeSort} filters={typeFilters} className={TH} />
+                    <FilterSortTh label="Count" columnKey="count" sortKey={typeSortKey} sortDir={typeSortDir} onSort={toggleTypeSort} filters={typeFilters} className={TH} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedTypes.map((t) => <tr key={t.type}><td className={`${TD} text-left font-semibold`}>{t.type}</td><td className={TD}>{fmtN(t.count)}</td></tr>)}
+                  {sortedTypes.length === 0 && <tr><td colSpan={2} className={`${TD} py-3 text-center`}>No types match the current filters.</td></tr>}
+                </tbody>
+              </table>
             </div>
             <div>
               <p className="mb-1 rounded bg-[#1e3a6e] px-2 py-0.5 text-[10px] font-bold text-white">Ticket Status ({view})</p>
