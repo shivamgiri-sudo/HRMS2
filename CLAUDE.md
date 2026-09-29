@@ -28,6 +28,18 @@ This is non-negotiable. A bug that reaches the production server is harder to fi
 
 **If local testing is impossible** (no local DB, credentials not available), say so explicitly and list what was verified and what was not, rather than silently skipping verification.
 
+## ⛔ MANDATORY — VERIFY IN A REAL BROWSER, AND RECORD IT (2026-09-29, owner directive)
+
+**After every build that changes UI or an API a page depends on, open the affected page in a real browser and check it before saying "done". Then log the result in `audit_reports/BROWSER_VERIFICATION_LOG.md`.** `tsc`, `vite build` and unit tests are not a substitute — on 2026-09-29 a browser run caught an invalid-XML Excel export that all of them passed.
+
+Steps, every time:
+1. `npm run build` (and `cd backend && npx tsc --noEmit`).
+2. Drive the page with a browser (project Playwright: `node_modules/.bin/playwright`, or the Playwright / Chrome DevTools MCP). If the MCP browsers are locked by another session, launch Playwright's `chromium` directly. Use a temporary harness page with mocked `/api` responses when there is no login or backend available — delete it afterwards.
+3. Check: the changed page renders, data shows, no "Failed to load" text, zero console/page errors, and any download opens as a valid file.
+4. Where SQL changed, also run the real service function against a throwaway MySQL (`docker run mysql:8`) seeded with sample rows.
+5. Append an entry to `audit_reports/BROWSER_VERIFICATION_LOG.md`: date, commit, pages checked, what was seen, what could NOT be verified (e.g. real production data, login-gated pages).
+6. Only then report done. State honestly anything not verified.
+
 ## Product Goal
 
 Build a production-grade MAS Callnet workforce platform for a multi-branch BPO/call-centre organisation, while preserving the modules that already work.
