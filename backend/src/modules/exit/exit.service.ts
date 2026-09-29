@@ -454,10 +454,15 @@ export const exitService = {
         LIMIT 1`,
       [input.employeeId],
     );
-    if (openRows.length)
-      throw new Error(
-        "An active exit request already exists for this employee",
+    if (openRows.length) {
+      const conflict = Object.assign(
+        new Error(
+          "An active exit request already exists for this employee. Revoke or reject it before submitting a new one.",
+        ),
+        { statusCode: 409 },
       );
+      throw conflict;
+    }
 
     /**
      * Notice period at creation.
