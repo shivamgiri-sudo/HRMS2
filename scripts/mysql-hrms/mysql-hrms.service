@@ -1,0 +1,21 @@
+[Unit]
+Description=MySQL Community Server (dedicated HRMS instance, port 3307, localhost only)
+After=network.target
+
+[Service]
+Type=notify
+User=mysql
+Group=mysql
+RuntimeDirectory=mysqld-hrms
+RuntimeDirectoryMode=0755
+ExecStart=/usr/sbin/mysqld --defaults-file=/etc/mysql-hrms/hrms.cnf
+LimitNOFILE=65535
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=900
+TimeoutStopSec=900
+# If memory runs short, let the kernel pick a Node process before the database.
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
