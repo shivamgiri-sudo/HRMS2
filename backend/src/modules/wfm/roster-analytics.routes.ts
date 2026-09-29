@@ -641,7 +641,8 @@ router.get(
          -- duration_minutes; see sql/005_attendance_wfm.sql). This LEFT JOIN's subquery
          -- still fails to parse regardless of join type, so this 500'd the whole endpoint.
          SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break_minutes
-         FROM wfm_break_log GROUP BY employee_id, DATE(break_start)
+         FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, DATE(break_start)
        ) wb ON ra.employee_id = wb.employee_id AND ra.roster_date = wb.session_date
        ${whereClause}
        GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time
@@ -701,6 +702,7 @@ router.get(
 router.get(
   "/break-compliance",
   requireRole(...ANALYTICS_ROLES),
+  analyticsCache("roster-analytics-break-compliance"),
   async (req, res) => {
     try {
       const lob = readLobFilter(req, res);
@@ -1424,6 +1426,7 @@ router.get(
 router.get(
   "/process-shrinkage-mtd",
   requireRole(...ANALYTICS_ROLES),
+  analyticsCache("roster-analytics-process-shrinkage-mtd"),
   async (req, res) => {
     try {
       const { db } = await import("../../db/mysql.js");
@@ -1521,6 +1524,7 @@ router.get(
 router.get(
   "/process-member-mtd",
   requireRole(...ANALYTICS_ROLES, "manager", "process_manager"),
+  analyticsCache("roster-analytics-process-member-mtd"),
   async (req, res) => {
     try {
       const { db } = await import("../../db/mysql.js");
