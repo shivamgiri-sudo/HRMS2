@@ -13,6 +13,6 @@ describe("business datapoints window", () => {
     expect(windowFor("wtd", new Date(2026, 8, 27)).from).toBe("2026-09-21");
   });
   it("names the supported processes", () => {
-    expect([...SUPPORTED_PROCESS_CODES]).toEqual(["BELLA_VITA", "BLA_BLI_BLU", "NEEMANS", "GNC"]);
+    expect([...SUPPORTED_PROCESS_CODES]).toEqual(["BELLA_VITA", "BLA_BLI_BLU", "NEEMANS", "GNC", "HOUSING_OWNER", "HOUSING_PREMIUM", "CLOVIA", "BIRLANU", "DALMIA_CEMENT", "APPRICIATE_WEALTH", "ERESOLUTION", "DU_DIGITAL", "EXICOM", "VIEGA"]);
   });
 });

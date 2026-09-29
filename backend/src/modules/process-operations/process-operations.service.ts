@@ -3430,6 +3430,10 @@ export interface ProcessBusinessHealth {
     agentSalaryIsRealThisMonth: boolean;
     ebit: number | null;
     operatingProfitPct: number | null;
+    /** The month agentSalary / ebit / operatingProfitPct belong to. Normally periodCode; the previous month
+     *  when this month has no payroll run yet (then operatingFromPriorMonth is true and the UI must say so). */
+    operatingPeriod: string | null;
+    operatingFromPriorMonth: boolean;
   };
   headcount: {
     available: boolean;
@@ -3498,6 +3502,9 @@ export async function getProcessBusinessHealthForPortal(
   return computeProcessBusinessHealth(processId);
 }
 
+/** How long this panel waits for the org-wide P&L allocation before degrading honestly. 8s by default; overridable for slow links (tests / remote checks). */
+const PNL_WAIT_MS = Math.max(1000, Number(process.env.BUSINESS_HEALTH_PNL_WAIT_MS) || 8000);
+
 async function computeProcessBusinessHealth(processId: string): Promise<ProcessBusinessHealth | null> {
   const [processRows] = await db.execute<RowDataPacket[]>(
     `SELECT process_name FROM process_master WHERE id = ?`, [processId],
@@ -3530,14 +3537,14 @@ async function computeProcessBusinessHealth(processId: string): Promise<ProcessB
     const summary: any = await Promise.race([
       getCachedAllocationSummary({ period: periodCode }),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("P&L allocation summary timed out after 8s")), 8000)),
+        setTimeout(() => reject(new Error(`P&L allocation summary timed out after ${PNL_WAIT_MS / 1000}s`)), PNL_WAIT_MS)),
     ]);
     const row = (summary?.rows as any[] | undefined)?.find((r) => r.processId === processId) ?? null;
     if (!row) {
       finance = {
         available: false, reason: "No P&L allocation row for this process this month.",
         revenue: null, revenueStatus: null, grn: null, agentSalary: null, agentSalaryIsRealThisMonth: false,
-        ebit: null, operatingProfitPct: null,
+        ebit: null, operatingProfitPct: null, operatingPeriod: null, operatingFromPriorMonth: false,
       };
     } else {
       finance = {
@@ -3549,6 +3556,7 @@ async function computeProcessBusinessHealth(processId: string): Promise<ProcessB
         agentSalaryIsRealThisMonth: true, // corrected below
         ebit: row.ebit ?? row.operatingProfit ?? null,
         operatingProfitPct: row.operatingProfitPct ?? null,
+        operatingPeriod: periodCode, operatingFromPriorMonth: false,
       };
 
       /*
@@ -3589,16 +3597,42 @@ async function computeProcessBusinessHealth(processId: string): Promise<ProcessB
         finance.agentSalary = null;
         finance.ebit = null;
         finance.operatingProfitPct = null;
+        finance.operatingPeriod = null;
         finance.reason =
           `No payroll run has been processed for ${periodCode} yet -- agent salary, EBIT and Op% ` +
           "withheld rather than shown from an unverifiable fallback. Revenue and GRN above are still real.";
+        // Show Op% for the most recent month that DID have a real payroll run for this process (previous month only:
+        // each month costs one org-wide P&L allocation), clearly labelled as that month, never passed off as this one's.
+        const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const prevCode = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+        try {
+          const [prevRun] = await db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) n FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id = spl.run_id
+               JOIN employees e ON e.id = spl.employee_id WHERE spr.run_month = ? AND e.process_id = ?`, [prevCode, processId]);
+          if (Number((prevRun as any[])[0]?.n ?? 0) > 0) {
+            const prevSummary: any = await Promise.race([
+              getCachedAllocationSummary({ period: prevCode }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("timed out")), PNL_WAIT_MS)),
+            ]);
+            const prow = (prevSummary?.rows as any[] | undefined)?.find((r) => r.processId === processId) ?? null;
+            const pct = prow?.operatingProfitPct ?? null;
+            if (prow && pct !== null) {
+              finance.agentSalary = prow.agentSalary ?? null;
+              finance.ebit = prow.ebit ?? prow.operatingProfit ?? null;
+              finance.operatingProfitPct = pct;
+              finance.operatingPeriod = prevCode;
+              finance.operatingFromPriorMonth = true;
+              finance.reason += ` Operating % shown is for ${prevCode}, the last month with a processed payroll.`;
+            }
+          }
+        } catch { /* keep it withheld; the reason above already says why */ }
       }
     }
   } catch (err) {
     finance = {
       available: false, reason: `P&L engine error: ${err instanceof Error ? err.message : "unknown"}`,
       revenue: null, revenueStatus: null, grn: null, agentSalary: null, agentSalaryIsRealThisMonth: false,
-      ebit: null, operatingProfitPct: null,
+      ebit: null, operatingProfitPct: null, operatingPeriod: null, operatingFromPriorMonth: false,
     };
   }
 

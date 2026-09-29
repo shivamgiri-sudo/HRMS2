@@ -6,6 +6,14 @@ import { getBellavitaCartSummary as _cartSummary } from "../process-performance/
 import { getGncSaleDashboard } from "../process-performance/gnc-sale-dashboard.service.js";
 import { getNeemansPerformanceDashboard } from "../process-performance/neemans-performance-dashboard.service.js";
 import { getDashboard as getBlaDashboard } from "../bla-bli-blu-dashboard/bla-bli-blu-dashboard.service.js";
+import { getHousingOwnerDashboard } from "../process-performance/housing-owner-dashboard.service.js";
+import { getHousingPremiumOverview } from "../process-performance/housing-premium-dashboard.service.js";
+import { getBirlanuDashboard } from "../process-performance/birlanu-dashboard.service.js";
+import { getDalmiaDashboard } from "../process-performance/dalmia-dashboard.service.js";
+import { getAppreciateWealthDashboard, parseFilters as parseAwFilters } from "../process-performance/appreciate-wealth-dashboard.service.js";
+import { getLpFeedbackDashboard } from "../process-performance/lp-feedback-dashboard.service.js";
+import { getLpOnboardingDashboard } from "../process-performance/lp-onboarding-dashboard.service.js";
+import { getProjectOverview } from "../call-master/inbound.service.js";
 
 /**
  * Business datapoints for the KPI Metrics page: the sales / revenue / payment-mix / RTO / funnel
@@ -17,20 +25,30 @@ import { getDashboard as getBlaDashboard } from "../bla-bli-blu-dashboard/bla-bl
  * (Bella-Vita's sale dashboard alone takes ~20-45s on production).
  */
 
-export type DatapointUnit = "currency" | "percentage" | "count";
+export type DatapointUnit = "currency" | "percentage" | "count" | "seconds";
+export type DatapointTheme = "sales" | "calls" | "leads" | "workforce" | "quality";
 export interface DatapointCard {
   key: string; label: string; value: number | null; unit: DatapointUnit;
   target?: number | null; direction?: "higher_is_better" | "lower_is_better"; hint?: string;
+  /** Daily series behind the number (drawn as a sparkline). */
+  trend?: Array<{ date: string; value: number }>;
+  /** One of the few headline figures shown large at the top. */
+  hero?: boolean;
 }
 export interface FunnelStage { stage: string; count: number; pctOfBase: number }
-export interface DatapointGroup { key: string; title: string; source: string; cards: DatapointCard[]; funnel?: FunnelStage[] }
+export interface DatapointGroup { key: string; title: string; source: string; theme?: DatapointTheme; cards: DatapointCard[]; funnel?: FunnelStage[] }
 export interface BusinessDatapoints {
   supported: boolean; available: boolean; reason: string | null;
   processCode: string | null; window: { from: string; to: string; label: string } | null;
   groups: DatapointGroup[];
+  /** Sources that could not be read while others could (the page still shows what worked). */
+  notes?: string[];
 }
 
-export const SUPPORTED_PROCESS_CODES = ["BELLA_VITA", "BLA_BLI_BLU", "NEEMANS", "GNC"] as const;
+export const SUPPORTED_PROCESS_CODES = [
+  "BELLA_VITA", "BLA_BLI_BLU", "NEEMANS", "GNC", "HOUSING_OWNER", "HOUSING_PREMIUM", "CLOVIA", "BIRLANU",
+  "DALMIA_CEMENT", "APPRICIATE_WEALTH", "ERESOLUTION", "DU_DIGITAL", "EXICOM", "VIEGA",
+] as const;
 type Period = "trend" | "today" | "wtd" | "mtd";
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -59,12 +77,12 @@ async function bella(from: string, to: string): Promise<DatapointGroup[]> {
   const groups: DatapointGroup[] = [{
     key: "sales", title: "Sales and revenue", source: "Bella-Vita sale upload (deduplicated orders)",
     cards: [
-      card("turnover", "Turnover", h.turnover, "currency", { direction: "higher_is_better" }),
+      card("turnover", "Turnover", h.turnover, "currency", { direction: "higher_is_better", hero: true, trend: series(sale.dateWiseTrend, (x) => x.turnover) }),
       card("netTurnover", "Net turnover (excl. RTO)", h.netTurnover, "currency", { direction: "higher_is_better" }),
-      card("saleCount", "Sales", h.saleCount, "count", { direction: "higher_is_better" }),
-      card("aov", "Average order value", h.aov, "currency", { direction: "higher_is_better" }),
+      card("saleCount", "Sales", h.saleCount, "count", { direction: "higher_is_better", hero: true, trend: series(sale.dateWiseTrend, (x) => x.saleCount) }),
+      card("aov", "Average order value", h.aov, "currency", { direction: "higher_is_better", hero: true }),
       card("prepaid", "Prepaid share", h.prepaidPct, "percentage", { direction: "higher_is_better" }),
-      card("rto", "RTO rate", h.rtoPct, "percentage", { direction: "lower_is_better", hint: `orders up to ${h.rtoPctThrough}` }),
+      card("rto", "RTO rate", h.rtoPct, "percentage", { direction: "lower_is_better", hero: true, hint: `orders up to ${h.rtoPctThrough}` }),
       card("agents", "Active agents", h.activeAgents, "count"),
     ],
   }];
@@ -103,8 +121,8 @@ async function bla(from: string, to: string): Promise<DatapointGroup[]> {
     return {
       key: `bla-${b.lob}`, title: `${b.lob}`, source: "Bla Bli Blu Overall Sales upload + Received Data",
       cards: [
-        card("sales", "Real-time sales", m.realTimeSale, "count", { target: b.hasTarget ? Math.round(m.targetSale) : null, direction: "higher_is_better", hint: b.hasTarget ? `${Math.round(m.saleAchievement * 100)}% of target` : "no target set" }),
-        card("revenue", "Revenue", m.revenue, "currency", { target: b.hasTarget ? Math.round(m.targetRevenue) : null, direction: "higher_is_better" }),
+        card("sales", "Real-time sales", m.realTimeSale, "count", { hero: true, target: b.hasTarget ? Math.round(m.targetSale) : null, direction: "higher_is_better", hint: b.hasTarget ? `${Math.round(m.saleAchievement * 100)}% of target` : "no target set" }),
+        card("revenue", "Revenue", m.revenue, "currency", { hero: true, target: b.hasTarget ? Math.round(m.targetRevenue) : null, direction: "higher_is_better" }),
         card("aov", "Average order value", m.aov, "currency", { target: b.hasTarget ? m.targetAov : null, direction: "higher_is_better" }),
         card("prepaid", "Prepaid share", m.deliveryPrepaid * 100, "percentage", { target: b.hasTarget ? m.prepaidTarget * 100 : null, direction: "higher_is_better" }),
         card("rto", "RTO rate", m.deliveryRto * 100, "percentage", { target: b.hasTarget ? m.rtoTarget * 100 : null, direction: "lower_is_better" }),
@@ -123,12 +141,12 @@ async function neemans(from: string, to: string): Promise<DatapointGroup[]> {
     {
       key: "sales", title: "Sales and revenue", source: "Neemans sale upload",
       cards: [
-        card("revenue", "Revenue", s.revenue, "currency", { target: s.target || null, direction: "higher_is_better", hint: s.target ? `${s.achievementPct}% of target` : undefined }),
-        card("sales", "Sales", s.saleCount, "count", { direction: "higher_is_better" }),
+        card("revenue", "Revenue", s.revenue, "currency", { target: s.target || null, direction: "higher_is_better", hero: true, trend: series(d.sale.dateWiseTrend as Loose[], (x) => x.revenue), hint: s.target ? `${s.achievementPct}% of target` : undefined }),
+        card("sales", "Sales", s.saleCount, "count", { direction: "higher_is_better", hero: true, trend: series(d.sale.dateWiseTrend as Loose[], (x) => x.saleCount) }),
         card("aov", "Average order value", s.aov, "currency", { direction: "higher_is_better" }),
         card("prepaid", "Prepaid share", s.prepaidPct, "percentage", { direction: "higher_is_better" }),
         card("cod", "COD share", s.codPct, "percentage"),
-        card("rto", "RTO rate", s.rtoPct, "percentage", { direction: "lower_is_better" }),
+        card("rto", "RTO rate", s.rtoPct, "percentage", { direction: "lower_is_better", hero: true }),
         card("agents", "Active agents", s.activeAgents, "count"),
       ],
     },
@@ -151,9 +169,9 @@ async function gnc(from: string, to: string): Promise<DatapointGroup[]> {
   return [{
     key: "sales", title: "Sales, revenue and allocation", source: "GNC sale and allocation uploads",
     cards: [
-      card("turnover", "Turnover", h.turnover, "currency", { direction: "higher_is_better" }),
-      card("sales", "Sales", h.saleCount, "count", { direction: "higher_is_better" }),
-      card("aov", "Average order value", h.aov, "currency", { direction: "higher_is_better" }),
+      card("turnover", "Turnover", h.turnover, "currency", { direction: "higher_is_better", hero: true, trend: series(d.dateWiseTrend as Loose[], (x) => x.turnover) }),
+      card("sales", "Sales", h.saleCount, "count", { direction: "higher_is_better", hero: true, trend: series(d.dateWiseTrend as Loose[], (x) => x.saleCount) }),
+      card("aov", "Average order value", h.aov, "currency", { direction: "higher_is_better", hero: true }),
       card("prepaid", "Prepaid share", h.prepaidPct, "percentage", { direction: "higher_is_better" }),
       card("cod", "COD share", h.codPct, "percentage"),
       card("alloc", "Total allocation", h.totalAllocation, "count"),
@@ -164,8 +182,203 @@ async function gnc(from: string, to: string): Promise<DatapointGroup[]> {
   }];
 }
 
-const ADAPTERS: Record<string, (from: string, to: string) => Promise<DatapointGroup[]>> = {
-  BELLA_VITA: bella, BLA_BLI_BLU: bla, NEEMANS: neemans, GNC: gnc,
+
+type Loose = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+const series = (rows: Loose[] | undefined, pick: (r: Loose) => unknown, last = 31): Array<{ date: string; value: number }> =>
+  (rows ?? []).slice(-last).map((r) => ({ date: String(r.date), value: Number(pick(r)) })).filter((p) => Number.isFinite(p.value));
+const round1 = (v: unknown) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 10) / 10);
+
+/** Shared dialler inbound figures (offered / answered / answer level / service level / handle time / staffing). */
+function inboundAdapter(projectKey: string, title = "Inbound calls") {
+  return async (from: string, to: string): Promise<DatapointGroup[]> => {
+    const r = await getProjectOverview({ startDate: from, endDate: to } as Parameters<typeof getProjectOverview>[0], projectKey);
+    const s: Loose = r.summary; const t: Loose[] = r.trend as Loose[];
+    const cards = [
+      card("in-offered", "Calls offered", s.total, "count", { trend: series(t, (d) => d.offered), hero: true }),
+      card("in-answered", "Calls answered", s.answered, "count", { direction: "higher_is_better" }),
+      card("in-al", "Answer level", s.ans_pct, "percentage", { direction: "higher_is_better", hint: "answered ÷ offered" }),
+      card("in-sl", "Service level", s.sl_pct, "percentage", { direction: "higher_is_better", hint: "answered within the threshold ÷ answered" }),
+      card("in-aht", "Average handle time", s.avg_handle, "seconds", { direction: "lower_is_better", trend: series(t, (d) => d.acht) }),
+      card("in-agents", "Agents logged in (peak day)", s.login_count, "count", { target: s.required ?? null, direction: "higher_is_better", hint: s.required ? `${s.required} required` : undefined }),
+      card("in-phones", "Unique callers (sum of daily)", s.unique_phones, "count"),
+      ...(s.hasFCR ? [card("in-fcr", "First-contact resolution", s.fcr_pct, "percentage", { direction: "higher_is_better" })] : []),
+    ];
+    return [{ key: `inbound-${projectKey}`, title, source: "Dialler inbound call records", theme: "calls", cards }];
+  };
+}
+
+async function housingOwner(from: string, to: string): Promise<DatapointGroup[]> {
+  const d = await getHousingOwnerDashboard(from, to, "", "");
+  const h = d.headline;
+  return [{
+    key: "ho-sales", title: "Sales and calling", source: "Housing Owner sale, CDR and agent uploads", theme: "sales",
+    cards: [
+      card("ho-rev", "Revenue", h.totalRevenue, "currency", { target: h.totalTarget || null, direction: "higher_is_better", hero: true, trend: series(d.dailyTrend, (x) => x.revenue), hint: h.totalTarget ? `${round1(h.achievementPct)}% of target` : undefined }),
+      card("ho-sales", "Sales", h.totalSaleCount, "count", { direction: "higher_is_better", hero: true, trend: series(d.dailyTrend, (x) => x.saleCount) }),
+      card("ho-aov", "Average sale value", h.aov, "currency", { direction: "higher_is_better" }),
+      card("ho-rpa", "Revenue per agent", h.revenuePerAgent, "currency", { direction: "higher_is_better" }),
+      card("ho-calls", "Calls made", h.totalCalls, "count", { trend: series(d.dailyTrend, (x) => x.totalCalls) }),
+      card("ho-conn", "Connected", h.connectedPct, "percentage", { direction: "higher_is_better", hero: true, hint: `${h.connectedCalls.toLocaleString("en-IN")} of ${h.totalCalls.toLocaleString("en-IN")} calls` }),
+      card("ho-talk", "Average talk time", h.avgTalkTimeSec, "seconds"),
+      card("ho-agents", "Active agents", h.activeAgents, "count"),
+    ],
+  }];
+}
+
+async function housingPremium(from: string, to: string): Promise<DatapointGroup[]> {
+  const d = await getHousingPremiumOverview(from, to);
+  const v: Loose = d.overall.mtd ?? Object.values(d.overall)[0];
+  if (!v) return [];
+  const cdrNote = d.cdrAvailable ? "calling covers the last 5 days of the range" : "no call records uploaded";
+  return [{
+    key: "hp-sales", title: "Sales and calling", source: "Housing Premium sale and CDR uploads", theme: "sales",
+    cards: [
+      card("hp-rev", "Revenue", v.revenue, "currency", { target: v.target || null, direction: "higher_is_better", hero: true, hint: v.target ? `${round1(v.achievedPct)}% of target` : undefined }),
+      card("hp-sales", "Sales", v.saleCount, "count", { direction: "higher_is_better", hero: true }),
+      card("hp-aov", "Average sale value", v.aov, "currency", { direction: "higher_is_better" }),
+      card("hp-avg", "Avg sales per agent", v.avgSalePerAgent, "count"),
+      card("hp-calls", "Calls made", d.cdrAvailable ? v.totalCalls : null, "count", { hint: cdrNote }),
+      card("hp-conn", "Connected", d.cdrAvailable ? v.connectedPct : null, "percentage", { direction: "higher_is_better", hero: true, hint: cdrNote }),
+      card("hp-talk", "Avg talk per agent per day", d.cdrAvailable ? v.avgTalkPerAgentSec : null, "seconds", { hint: cdrNote }),
+      card("hp-dial", "Dials per agent per day", d.cdrAvailable ? v.perAgentDialCount : null, "count", { hint: cdrNote }),
+    ],
+  }];
+}
+
+async function birlanu(from: string, to: string): Promise<DatapointGroup[]> {
+  const d: Loose = await getBirlanuDashboard();
+  const h = d.headline;
+  const window = (d.dailyTrend as Loose[] | undefined)?.filter((r) => String(r.date) >= from && String(r.date) <= to);
+  const latest = (d.monthlyFunnel as Loose[] | undefined)?.slice(-1)[0];
+  const allTime = "all uploaded data, not limited to the window";
+  const funnel = latest ? [
+    { stage: `Enquiries (${latest.month})`, count: latest.enquiriesReceived, pctOfBase: 100 },
+    { stage: "Connected", count: latest.connected, pctOfBase: latest.enquiriesReceived ? round1((100 * latest.connected) / latest.enquiriesReceived) ?? 0 : 0 },
+    { stage: "Validated", count: latest.validated, pctOfBase: latest.enquiriesReceived ? round1((100 * latest.validated) / latest.enquiriesReceived) ?? 0 : 0 },
+    { stage: "Qualified", count: latest.qualified, pctOfBase: latest.enquiriesReceived ? round1((100 * latest.qualified) / latest.enquiriesReceived) ?? 0 : 0 },
+    { stage: "Converted", count: latest.converted, pctOfBase: latest.enquiriesReceived ? round1((100 * latest.converted) / latest.enquiriesReceived) ?? 0 : 0 },
+  ] : undefined;
+  return [{
+    key: "bl-leads", title: "Leads to conversion", source: `Birlanu lead upload (${allTime})`, theme: "leads",
+    cards: [
+      card("bl-leads", "Total leads", h.totalLeads, "count", { hero: true, trend: series(window, (r) => r.leads), hint: allTime }),
+      card("bl-conn", "Connected", h.connectedPct, "percentage", { direction: "higher_is_better" }),
+      card("bl-int", "Interested", h.interestedPct, "percentage", { direction: "higher_is_better" }),
+      card("bl-conv", "Converted", h.conversionPct, "percentage", { direction: "higher_is_better", hero: true, hint: `${h.converted} leads` }),
+      card("bl-val", "Sale value", h.totalSaleValue, "currency", { direction: "higher_is_better", hero: true, trend: series(window, (r) => r.saleValue) }),
+      card("bl-aov", "Average order value", h.avgOrderValue, "currency"),
+      card("bl-tat", "Within turnaround time", h.tatCompliancePct, "percentage", { direction: "higher_is_better" }),
+      card("bl-vol", "Volume (metric tonnes)", h.totalVolumeMt, "count"),
+    ],
+    funnel,
+  }];
+}
+
+async function dalmia(from: string, to: string): Promise<DatapointGroup[]> {
+  const month = to.slice(0, 7);
+  const start = from < `${month}-01` ? `${month}-01` : from; // one calendar month at a time
+  const d: Loose = await getDalmiaDashboard(month, start, to);
+  const ib = d.inbound?.byBucket?.MTD; const ob = d.outbound?.byBucket?.MTD; const lead = d.leads?.MTD?.total;
+  const pct = (f: unknown) => (f === null || f === undefined ? null : Number(f) * 100); // Dalmia returns fractions 0-1
+  const groups: DatapointGroup[] = [];
+  if (ib) groups.push({
+    key: "dl-in", title: "Inbound calls", source: "Dalmia dialler inbound + dial-desk uploads", theme: "calls",
+    cards: [
+      card("dl-off", "Calls offered", ib.offered, "count", { hero: true, trend: series(d.inbound.daily, (x) => x.offered) }),
+      card("dl-ans", "Calls answered", ib.answered, "count"),
+      card("dl-al", "Answer level", pct(ib.alPct), "percentage", { direction: "higher_is_better", hero: true }),
+      card("dl-sl", "Service level", pct(ib.slPct), "percentage", { direction: "higher_is_better" }),
+      card("dl-abn", "Abandon rate", pct(ib.abnPct), "percentage", { direction: "lower_is_better" }),
+      card("dl-acht", "Average handle time", ib.achtSec, "seconds", { direction: "lower_is_better" }),
+      card("dl-rep", "Repeat callers", pct(ib.repeatPct), "percentage", { direction: "lower_is_better" }),
+      card("dl-tag", "Calls tagged", pct(ib.taggingPct), "percentage", { direction: "higher_is_better" }),
+    ],
+  });
+  if (ob || lead) groups.push({
+    key: "dl-lead", title: "Outbound and leads", source: "Dalmia outbound and lead uploads", theme: "leads",
+    cards: [
+      card("dl-out", "Outbound calls", ob?.overall, "count"),
+      card("dl-outc", "Outbound connected", pct(ob?.conPct), "percentage", { direction: "higher_is_better" }),
+      card("dl-lr", "Leads received", lead?.dataReceived, "count", { hero: true }),
+      card("dl-lc", "Leads connected", lead?.connected, "count"),
+      card("dl-lq", "Leads qualified", lead?.qualified, "count", { direction: "higher_is_better" }),
+    ],
+    funnel: lead && lead.dataReceived ? [
+      { stage: "Data received", count: lead.dataReceived, pctOfBase: 100 },
+      { stage: "Connected", count: lead.connected, pctOfBase: round1((100 * lead.connected) / lead.dataReceived) ?? 0 },
+      { stage: "Qualified", count: lead.qualified, pctOfBase: round1((100 * lead.qualified) / lead.dataReceived) ?? 0 },
+    ] : undefined,
+  });
+  return groups;
+}
+
+async function appreciateWealth(from: string, to: string): Promise<DatapointGroup[]> {
+  const d: Loose = await getAppreciateWealthDashboard(from, to, parseAwFilters({}));
+  const k: Loose = d.overview?.kpis ?? {}; const sk: Loose = d.sales?.kpis ?? {}; const daily = d.overview?.daily as Loose[] | undefined;
+  return [
+    {
+      key: "aw-sales", title: "Sales by product", source: "Appreciate Wealth outbound sales upload", theme: "sales",
+      cards: [
+        card("aw-total", "Total sales", k.salesTotal, "currency", { hero: true, direction: "higher_is_better", trend: series(daily, (x) => x.sales) }),
+        card("aw-lrs", "LRS", k.lrsA, "currency", { direction: "higher_is_better", hint: sk.lrsAttain != null ? `${round1(sk.lrsAttain)}% of target` : undefined }),
+        card("aw-tr", "Trade", k.trA, "currency", { direction: "higher_is_better", hint: sk.trAttain != null ? `${round1(sk.trAttain)}% of target` : undefined }),
+        card("aw-mf", "Mutual funds", k.mfA, "currency", { direction: "higher_is_better", hint: sk.mfAttain != null ? `${round1(sk.mfAttain)}% of target` : undefined }),
+        card("aw-cv", "Contract value", k.contractValue, "currency"),
+      ],
+    },
+    {
+      key: "aw-calls", title: "Calling and productivity", source: "Appreciate Wealth billing and call uploads", theme: "workforce",
+      cards: [
+        card("aw-calls", "Calls", k.calls, "count", { hero: true, trend: series(daily, (x) => x.calls) }),
+        card("aw-conn", "Connected", k.connectPct, "percentage", { direction: "higher_is_better", hero: true }),
+        card("aw-acht", "Average call time", k.acht, "seconds"),
+        card("aw-occ", "Net occupancy", k.netOccPct, "percentage", { direction: "higher_is_better" }),
+        card("aw-late", "Late logins", k.latePct, "percentage", { direction: "lower_is_better" }),
+        card("aw-agents", "Agents", k.agents, "count"),
+        card("aw-inb", "Inbound answered", k.inboundAnswerPct, "percentage", { direction: "higher_is_better", hint: `${Number(k.inboundAnswered ?? 0).toLocaleString("en-IN")} of ${Number(k.inboundOffered ?? 0).toLocaleString("en-IN")}` }),
+      ],
+    },
+  ];
+}
+
+async function lawyerPanel(from: string, to: string): Promise<DatapointGroup[]> {
+  const [fb, ob] = await Promise.all([getLpFeedbackDashboard(from, to), getLpOnboardingDashboard(from, to)]);
+  const one = (key: string, title: string, d: Loose, onboarding: boolean): DatapointGroup => {
+    const h: Loose = d.headline; const daily = d.daily as Loose[] | undefined;
+    return {
+      key, title, source: `Lawyer Panel ${onboarding ? "onboarding" : "feedback"} call and agent uploads`, theme: "leads",
+      cards: [
+        card(`${key}-calls`, "Calls", h.overallCalls, "count", { hero: true, trend: series(daily, (x) => x.calls) }),
+        card(`${key}-leads`, "Unique leads", h.uniqueLeadset, "count"),
+        card(`${key}-conn`, "Connected", h.overallConnectedPct, "percentage", { direction: "higher_is_better", hero: true }),
+        card(`${key}-uconn`, "Unique leads connected", h.uniqueConnectivityPct, "percentage", { direction: "higher_is_better" }),
+        card(`${key}-talk`, "Average talk per connected call", h.avgTalkPerConnectedSec, "seconds"),
+        card(`${key}-occ`, "Occupancy", h.occupancyPct, "percentage", { direction: "higher_is_better" }),
+        card(`${key}-shr`, "Shrinkage", h.shrinkagePct, "percentage", { direction: "lower_is_better" }),
+        card(`${key}-agents`, "Agents", h.loginCount, "count"),
+        ...(onboarding ? [card(`${key}-adv`, "Allocated to an advisor", h.advisorAllocatedLeads, "count")] : []),
+      ],
+    };
+  };
+  return [one("lp-fb", "Lawyer Panel: feedback calling", fb as Loose, false), one("lp-ob", "Lawyer Panel: onboarding calling", ob as Loose, true)];
+}
+
+type Adapter = (from: string, to: string) => Promise<DatapointGroup[]>;
+const ADAPTERS: Record<string, Adapter[]> = {
+  BELLA_VITA: [bella, inboundAdapter("bellavita")],
+  BLA_BLI_BLU: [bla],
+  NEEMANS: [neemans, inboundAdapter("neemans")],
+  GNC: [gnc, inboundAdapter("gnc")],
+  HOUSING_OWNER: [housingOwner],
+  HOUSING_PREMIUM: [housingPremium],
+  CLOVIA: [inboundAdapter("clovia")],
+  BIRLANU: [birlanu],
+  DALMIA_CEMENT: [dalmia],
+  APPRICIATE_WEALTH: [appreciateWealth],
+  ERESOLUTION: [lawyerPanel],
+  DU_DIGITAL: [inboundAdapter("dubangladesh")],
+  EXICOM: [inboundAdapter("exicom")],
+  VIEGA: [inboundAdapter("viega")],
 };
 
 /** Newest date the sales system holds, so a stopped upload shows its last real month instead of an empty window. */
@@ -180,23 +393,34 @@ const LATEST_DATA_FALLBACK_OK = true;
 const CACHE_MS = 5 * 60_000;
 const cache = new Map<string, { at: number; p: Promise<BusinessDatapoints> }>();
 
+async function runAdapters(processCode: string, from: string, to: string): Promise<{ groups: DatapointGroup[]; notes: string[] }> {
+  const settled = await Promise.allSettled(ADAPTERS[processCode].map((fn) => fn(from, to)));
+  const groups: DatapointGroup[] = []; const notes: string[] = [];
+  for (const r of settled) {
+    if (r.status === "fulfilled") groups.push(...r.value);
+    else notes.push(`One source could not be read: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+  }
+  groups.forEach((g) => { g.theme ??= g.key.startsWith("cart") || g.key === "ops" ? "workforce" : "sales"; });
+  const keep = groups.filter((g) => hasAny(g.cards) || (g.funnel?.length ?? 0) > 0);
+  return { groups: keep, notes };
+}
+
 async function compute(processCode: string, w: { from: string; to: string; label: string }): Promise<BusinessDatapoints> {
   const base = { supported: true, processCode, window: w };
   try {
-    const keep = (gs: DatapointGroup[]) => gs.filter((g) => hasAny(g.cards) || (g.funnel?.length ?? 0) > 0);
-    let groups = keep(await ADAPTERS[processCode](w.from, w.to));
-    if (!groups.length && LATEST_DATA_FALLBACK_OK && LATEST_DATE[processCode]) {
+    let { groups, notes } = await runAdapters(processCode, w.from, w.to);
+    if (!groups.length && LATEST_DATE[processCode]) {
       const latest = await LATEST_DATE[processCode]();
       if (latest && latest < w.from) {
         const end = new Date(latest + "T00:00:00"); const start = new Date(end); start.setDate(end.getDate() - 29);
         const fw = { from: iso(start), to: latest, label: `Last 30 days to ${latest} (latest upload, not today)` };
-        groups = keep(await ADAPTERS[processCode](fw.from, fw.to));
-        if (groups.length) return { supported: true, processCode, window: fw, available: true, reason: null, groups };
+        const again = await runAdapters(processCode, fw.from, fw.to);
+        if (again.groups.length) return { supported: true, processCode, window: fw, available: true, reason: null, groups: again.groups, notes: again.notes };
       }
     }
     return groups.length
-      ? { ...base, available: true, reason: null, groups }
-      : { ...base, available: false, reason: `The sales system for this process has no rows between ${w.from} and ${w.to}. Its uploads may have stopped; try a longer window.`, groups: [] };
+      ? { ...base, available: true, reason: null, groups, notes: notes.length ? notes : undefined }
+      : { ...base, available: false, reason: notes[0] ?? `The sales system for this process has no rows between ${w.from} and ${w.to}. Its uploads may have stopped; try a longer window.`, groups: [] };
   } catch (e) {
     return { ...base, available: false, reason: `Could not read the sales system: ${(e as Error).message}`, groups: [] };
   }
