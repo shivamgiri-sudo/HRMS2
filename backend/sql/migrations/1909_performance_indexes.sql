@@ -64,3 +64,15 @@ SET @sql5 = IF(@ix5 = 0,
   'ALTER TABLE exit_request ADD INDEX idx_exit_status_lwd (status, last_working_day_confirmed)',
   'SELECT 1');
 PREPARE s5 FROM @sql5; EXECUTE s5; DEALLOCATE PREPARE s5;
+
+-- ─── work_inbox_item: attendance missing-punch batch cleanup ─────────────────
+-- The auto-resolve batch runs: UPDATE work_inbox_item SET is_actioned=1
+-- WHERE type='attendance_missing_punch' AND is_actioned=0 AND action_url LIKE '%date=%' ...
+-- Without (type, is_actioned), MySQL scans all 120k rows for every batch run.
+SET @ix6 = (SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'work_inbox_item'
+    AND INDEX_NAME = 'idx_inbox_type_action');
+SET @sql6 = IF(@ix6 = 0,
+  'ALTER TABLE work_inbox_item ADD INDEX idx_inbox_type_action (type, is_actioned)',
+  'SELECT 1');
+PREPARE s6 FROM @sql6; EXECUTE s6; DEALLOCATE PREPARE s6;
