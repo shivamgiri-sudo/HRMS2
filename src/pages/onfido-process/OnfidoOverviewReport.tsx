@@ -23,7 +23,7 @@ type TrendKey = Exclude<keyof OverviewReport, "granularity" | "from" | "to" | "m
 
 interface TrendSpec {
   key: TrendKey; title: string; accent: string; format: MatrixFormat; labelHeader: string; emptyText: string;
-  subtitle?: string; formats?: MatrixFormat[]; chartRows?: number[]; secondAxisFrom?: number;
+  subtitle?: string; formats?: MatrixFormat[]; chartRows?: number[]; secondAxisFrom?: number; quality?: boolean;
 }
 
 const PCT: MatrixFormat = { unit: "percent", digits: 1 };
@@ -39,10 +39,10 @@ const TREND_SPECS: TrendSpec[] = [
   { key: "docProcessingTrend", title: "Doc Processing Time Trend", accent: "var(--blue)", format: SEC, formats: [SEC, CNT], secondAxisFrom: 1, labelHeader: "Metric", emptyText: "No DOC tasks in this range.", subtitle: "AHT excludes the process_labelling_document_raw_extraction task type." },
   { key: "taskVolumeContribution", title: "Task Type Wise - Volume Contribution %", accent: "var(--purple)", format: PCT, labelHeader: "Task type", emptyText: "No DOC tasks in this range." },
   { key: "taskAht", title: "Task Type Wise AHT", accent: "var(--purple)", format: SEC, labelHeader: "Task type", emptyText: "No DOC tasks in this range." },
-  { key: "internalQuality", title: "Task Type Wise Internal Quality", accent: "var(--orange)", format: PCT, labelHeader: "Task type", emptyText: "No internal QC audits in this range.", subtitle: "Error % per stage from the internal QC export (Yes / (Yes + No)); Overall = total error / total audits." },
-  { key: "externalQuality", title: "Task Type Wise External Quality", accent: "var(--red)", format: PCT, labelHeader: "Task type", emptyText: "No external audits in this range.", subtitle: "Error % per stage from the external audit export; Overall = audits with an error / audits." },
+  { key: "internalQuality", quality: true, title: "Task Type Wise Internal Quality", accent: "var(--orange)", format: PCT, labelHeader: "Task type", emptyText: "No internal QC audits in this range.", subtitle: "Error % per stage from the internal QC export (Yes / (Yes + No)); Overall = total error / total audits." },
+  { key: "externalQuality", quality: true, title: "Task Type Wise External Quality", accent: "var(--red)", format: PCT, labelHeader: "Task type", emptyText: "No external audits in this range.", subtitle: "Error % per stage from the external audit export; Overall = audits with an error / audits." },
   { key: "poaVolumeTime", title: "POA Volume & Processing Time Trend", accent: "var(--teal)", format: SEC, formats: [SEC, CNT], secondAxisFrom: 1, labelHeader: "Metric", emptyText: "No POA tasks in this range." },
-  { key: "poaQuality", title: "POA Quality Trend", accent: "var(--teal)", format: PCT, labelHeader: "Metric", emptyText: "No POA audits in this range." },
+  { key: "poaQuality", quality: true, title: "POA Quality Trend", accent: "var(--teal)", format: PCT, labelHeader: "Metric", emptyText: "No POA audits in this range." },
   { key: "etmTrend", title: "ETM Trend Task Type Wise", accent: "var(--purple)", format: CNT, labelHeader: "Task type", emptyText: "No ETM tasks in this range." },
   { key: "taskSkipTrend", title: "Task Skip Trend", accent: "var(--yellow)", format: CNT, labelHeader: "Task type", emptyText: "No skipped tasks in this range.", subtitle: "The Task Skip upload covers DOC tasks only, so there is no POA row." },
   { key: "gdMcnTrend", title: "GD & MCN Trend", accent: "var(--blue)", format: PCT, labelHeader: "Metric", emptyText: "No GD / MCN SLA data in this range." },
@@ -286,7 +286,7 @@ export default function OnfidoOverviewReport({ range, tlFilter, amFilter }: { ra
               {section?.data && picked && (
                 <>
                   <MatrixChart matrix={picked.matrix} granularity={g} format={s.format} formats={picked.formats} secondAxisFrom={s.secondAxisFrom} />
-                  <MatrixTable matrix={section.data} granularity={g} format={s.format} formats={s.formats} labelHeader={s.labelHeader} />
+                  <MatrixTable matrix={section.data} granularity={g} format={s.format} formats={s.formats} labelHeader={s.labelHeader} quality={s.quality} />
                 </>
               )}
             </SectionState>

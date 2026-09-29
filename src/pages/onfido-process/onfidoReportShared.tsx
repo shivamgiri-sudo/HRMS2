@@ -261,8 +261,10 @@ export function MatrixLineChart({ matrix, granularity, format, secondAxisFrom, f
 }
 
 /** The sheet's "row = task type / metric, column = period" grid. */
-export function MatrixTable({ matrix, granularity, format, formats, labelHeader }: {
+export function MatrixTable({ matrix, granularity, format, formats, labelHeader, quality = false }: {
   matrix: Matrix; granularity: Granularity; format: MatrixFormat; formats?: MatrixFormat[]; labelHeader: string;
+  /** Rows are error rates: fill percent cells green / amber / red. */
+  quality?: boolean;
 }) {
   return (
     <div style={{ overflowX: "auto", marginTop: 10 }}>
@@ -278,7 +280,7 @@ export function MatrixTable({ matrix, granularity, format, formats, labelHeader 
             <tr key={r.label}>
               <td>{r.label}</td>
               {r.values.map((v, i) => (
-                <td key={matrix.buckets[i]} className="oc-right">{formatMatrixValue(v, formats?.[idx] ?? format)}</td>
+                <td key={matrix.buckets[i]} className="oc-right" style={quality && (formats?.[idx] ?? format).unit === "percent" ? qualityPctStyle(v) : undefined}>{formatMatrixValue(v, formats?.[idx] ?? format)}</td>
               ))}
             </tr>
           ))}
