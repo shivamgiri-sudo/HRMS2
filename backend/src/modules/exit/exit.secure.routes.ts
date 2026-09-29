@@ -342,13 +342,19 @@ exitSecureRouter.get(
       params.push(q, q, q, q);
     }
     const where = `WHERE ${conds.join(" AND ")}`;
-    const fromSql = `FROM exit_request er LEFT JOIN employees e ON e.id = er.employee_id LEFT JOIN branch_master b ON b.id = e.branch_id LEFT JOIN process_master p ON p.id = e.process_id LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id LEFT JOIN (SELECT exit_request_id, COUNT(*) AS total_tasks, SUM(CASE WHEN status IN ('cleared','waived') THEN 1 ELSE 0 END) AS cleared_tasks FROM exit_clearance_task GROUP BY exit_request_id) clearance ON clearance.exit_request_id = er.id`;
+    // Base joins without clearance — used for COUNT (clearance data is not needed for counting).
+    const baseSql = `FROM exit_request er LEFT JOIN employees e ON e.id = er.employee_id LEFT JOIN branch_master b ON b.id = e.branch_id LEFT JOIN process_master p ON p.id = e.process_id LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id`;
+    // Clearance counts as correlated subqueries so MySQL only scans rows for the
+    // exits actually returned on this page, not the entire exit_clearance_task table.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT er.*, e.employee_code, COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name, b.branch_name, p.process_name, hs.engagement_score, hs.regrettable_exit, hs.risk_label, COALESCE(clearance.total_tasks, 0) AS clearance_total, COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared ${fromSql} ${where} ORDER BY er.created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      `SELECT er.*, e.employee_code, COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name, b.branch_name, p.process_name, hs.engagement_score, hs.regrettable_exit, hs.risk_label,
+              (SELECT COUNT(*) FROM exit_clearance_task ct WHERE ct.exit_request_id = er.id) AS clearance_total,
+              (SELECT COUNT(*) FROM exit_clearance_task ct WHERE ct.exit_request_id = er.id AND ct.status IN ('cleared','waived')) AS clearance_cleared
+         ${baseSql} ${where} ORDER BY er.created_at DESC LIMIT ${limit} OFFSET ${offset}`,
       params,
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total ${fromSql} ${where}`,
+      `SELECT COUNT(*) AS total ${baseSql} ${where}`,
       params,
     );
     return res.json({
@@ -373,77 +379,89 @@ exitSecureRouter.get(
  * hrms2-exit-status-router-shadowing memory for the full history.
  */
 async function handleExitStatusUpdate(req: any, res: any) {
-  if (!(await canActOnExit(req.authUser!.id, req.params.id))) {
-    return res.status(403).json({
-      success: false,
-      message: "Forbidden: exit request is outside your action scope",
-    });
+  const userId: string = req.authUser!.id;
+  const exitId: string = req.params.id;
+
+  // One combined query replaces 3–4 sequential user_roles + exit_request round-trips.
+  // Fetches: the caller's roles, the exit request's current status and employee scope,
+  // and whether the caller is the employee's reporting manager — all in a single DB hit.
+  const [prefetchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT er.status                                              AS current_status,
+            er.employee_id,
+            e.branch_id,
+            e.process_id,
+            e.lob_id,
+            e.department_id,
+            e.reporting_manager_id,
+            e.manager_id,
+            GROUP_CONCAT(DISTINCT ur.role_key ORDER BY ur.role_key) AS roles,
+            EXISTS (
+              SELECT 1 FROM employees mgr
+                JOIN auth_user au2 ON au2.email = mgr.official_email
+               WHERE mgr.id = e.reporting_manager_id AND au2.id = ?
+            ) AS is_reporting_manager
+       FROM exit_request er
+       JOIN employees e ON e.id = er.employee_id
+       LEFT JOIN user_roles ur ON ur.user_id = ? AND ur.active_status = 1
+      WHERE er.id = ?
+      LIMIT 1`,
+    [userId, userId, exitId],
+  );
+  const prefetch = prefetchRows[0] as any;
+  if (!prefetch?.current_status)
+    return res.status(404).json({ success: false, message: "Exit request not found" });
+
+  const userRoles: string[] = prefetch.roles ? String(prefetch.roles).split(",") : [];
+  const isSuperAdmin = userRoles.includes("super_admin");
+  const isAdminOrHr = isSuperAdmin || ["admin", "hr", "ceo", "branch_admin"].some((r) => userRoles.includes(r));
+  const isManager = isSuperAdmin || ["manager", "process_manager", "operations_manager", "branch_head"].some((r) => userRoles.includes(r));
+  const isReportingManager = Number(prefetch.is_reporting_manager) === 1;
+  const isPureAdminSuperCeo = isSuperAdmin || ["admin", "ceo"].some((r) => userRoles.includes(r));
+
+  // Scope check: admin/hr/super_admin always have access; others need in-scope access.
+  if (!isAdminOrHr) {
+    const scopeOk = await hasScopedAccess(
+      userId,
+      EXIT_SCOPE_ROLES,
+      {
+        branchId: prefetch.branch_id,
+        processId: prefetch.process_id,
+        lobId: prefetch.lob_id,
+        departmentId: prefetch.department_id,
+        managerEmployeeId: prefetch.reporting_manager_id ?? prefetch.manager_id,
+        employeeId: prefetch.employee_id,
+      },
+      { allowAdminBypass: true, requireScopeForNonAdmin: true },
+    );
+    if (!scopeOk)
+      return res.status(403).json({ success: false, message: "Forbidden: exit request is outside your action scope" });
   }
 
   const nextStatus = normalizeExitStatus(req.body?.status);
 
-  // Per-transition role gate. The scope check above confirms the user CAN see this exit;
-  // this gate enforces WHO is allowed to take each specific transition:
-  //   submitted → manager_review : reporting manager only (they received the resignation)
-  //   manager_review → accepted  : reporting manager only (they acknowledge and accept)
-  //   accepted / notice_serving → further : HR or admin (HR owns the clearance and F&F side)
+  // Per-transition role gate (same policy as before, evaluated in-memory from prefetched roles):
+  //   submitted → manager_review : reporting manager only
+  //   manager_review → accepted  : reporting manager only
+  //   accepted / notice_serving → further : HR or admin
   //   exited                              : HR or admin
-  //   revoked / withdrawn                 : HR, admin, or the employee themselves
-  {
-    const isAdminOrHr = await hasAnyRole(
-      req.authUser!.id,
-      "admin",
-      "hr",
-      "ceo",
-      "super_admin",
-      "branch_admin",
-    );
-    const isManager = await hasAnyRole(
-      req.authUser!.id,
-      "manager",
-      "process_manager",
-      "operations_manager",
-      "branch_head",
-    );
-
-    // Check if caller IS the employee's actual reporting manager (not just any manager-role user)
-    let isReportingManager = false;
-    if (isManager) {
-      const [mgrRows] = await db.execute<RowDataPacket[]>(
-        `SELECT 1 FROM exit_request er
-           JOIN employees e ON e.id = er.employee_id
-           JOIN employees mgr ON mgr.id = e.reporting_manager_id
-           JOIN auth_user au ON au.email = mgr.official_email
-          WHERE er.id = ? AND au.id = ?
-          LIMIT 1`,
-        [req.params.id, req.authUser!.id],
-      );
-      isReportingManager = (mgrRows as any[]).length > 0;
+  //   revoked / withdrawn                 : any in-scope user
+  if (["manager_review", "accepted"].includes(nextStatus)) {
+    if (!isReportingManager && !isPureAdminSuperCeo) {
+      return res.status(403).json({
+        success: false,
+        message: `Only the employee's reporting manager may move an exit to '${nextStatus}'. HR's role is via clearance tasks and exit interview, not this status gate.`,
+      });
     }
-
-    if (["manager_review", "accepted"].includes(nextStatus)) {
-      // Only the employee's actual reporting manager (or pure admin/super_admin/ceo) may move these.
-      // HR role is deliberately excluded: HR's involvement during the notice period happens through
-      // clearance tasks and exit interview, not through advancing the manager-stage statuses.
-      if (
-        !isReportingManager &&
-        !(await hasAnyRole(req.authUser!.id, "admin", "super_admin", "ceo"))
-      ) {
-        return res.status(403).json({
-          success: false,
-          message: `Only the employee's reporting manager may move an exit to '${nextStatus}'. HR's role is via clearance tasks and exit interview, not this status gate.`,
-        });
-      }
-    } else if (["notice_serving", "exited"].includes(nextStatus)) {
-      if (!isAdminOrHr) {
-        return res.status(403).json({
-          success: false,
-          message: `Only HR or Admin may move an exit to '${nextStatus}'.`,
-        });
-      }
+  } else if (["notice_serving", "exited"].includes(nextStatus)) {
+    if (!isAdminOrHr) {
+      return res.status(403).json({
+        success: false,
+        message: `Only HR or Admin may move an exit to '${nextStatus}'.`,
+      });
     }
-    // revoked / withdrawn: any in-scope user may initiate (employee self-service or HR)
   }
+  // revoked / withdrawn: any in-scope user may initiate (employee self-service or HR)
+
   // 'rejected' removed (owner ruling 2026-09-12): nobody may refuse a resignation. A manager who
   // disagrees records an objection via POST /:id/objection, which leaves the request active and
   // the notice period running. Refused here as well as in the FSM map so the API answers the
@@ -527,17 +545,8 @@ async function handleExitStatusUpdate(req: any, res: any) {
     noticePeriodDays = n;
   }
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
-    [req.params.id],
-  );
-  const current = rows[0];
-  if (!current)
-    return res
-      .status(404)
-      .json({ success: false, message: "Exit request not found" });
-
-  const currentStatus = normalizeExitStatus(current.status);
+  // currentStatus already fetched in the prefetch query above — no extra round-trip needed.
+  const currentStatus = normalizeExitStatus(prefetch.current_status);
   const allowedNext = ALLOWED_EXIT_TRANSITIONS[currentStatus] ?? [];
   if (!allowedNext.includes(nextStatus)) {
     return res.status(409).json({
