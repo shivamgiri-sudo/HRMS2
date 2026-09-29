@@ -1,8 +1,10 @@
 /**
  * CSV import for the Utilization tab's WFM inputs. The header row uses the same labels as
- * "Utilization Format.xlsx". Only the columns that are entered by hand are read; the report
- * columns (Actual Task, POA Live, AHT, GD%, ...) and every formula column are ignored, so a
- * sheet exported from the WFM workbook can be imported as-is.
+ * "Utilization Format.xlsx". The hand-entered columns are read, and so are the sheet's
+ * calculated columns (Utilization Forecast, with/without Adhoc and their %, POA Answering,
+ * Escalated %) - those are stored as the uploaded static values, no formula applied. The report
+ * columns (Actual Task, POA Live, AHT, GD%, ...) come from the uploaded reports and are ignored,
+ * so a sheet exported from the WFM workbook can be imported as-is.
  */
 
 export interface ImportRow {
@@ -15,6 +17,13 @@ export interface ImportRow {
   facialChecks: string;
   crossTrainingTaskPoa: string;
   poaLiveAuditsPq: string;
+  fixedUtilizationForecast: string;
+  fixedUtilizationWithAdhoc: string;
+  fixedUtilizationWithoutAdhoc: string;
+  fixedUtilizationWithAdhocPct: string;
+  fixedUtilizationWithoutAdhocPct: string;
+  fixedPoaAnsweringPct: string;
+  fixedEscalatedPct: string;
   remarks: string;
 }
 
@@ -30,8 +39,20 @@ const HEADER_TO_FIELD: Record<string, keyof ImportRow> = {
   "facial checks": "facialChecks",
   "cross training task poa": "crossTrainingTaskPoa",
   "poa live audits / poa pq audits": "poaLiveAuditsPq",
+  "utilization forecast": "fixedUtilizationForecast",
+  "utilization forecaste": "fixedUtilizationForecast", // the WFM workbook's own spelling
+  "utilization with adhoc": "fixedUtilizationWithAdhoc",
+  "utilization without adhoc": "fixedUtilizationWithoutAdhoc",
+  "utilization with adhoc %": "fixedUtilizationWithAdhocPct",
+  "utilization without adhoc %": "fixedUtilizationWithoutAdhocPct",
+  "poa answering": "fixedPoaAnsweringPct",
+  "poa answering %": "fixedPoaAnsweringPct",
+  "escalated %": "fixedEscalatedPct",
   "remarks": "remarks",
 };
+
+/** A "85.2%" cell from the sheet is the number 85.2 (percent columns are stored as percent points). */
+const stripPercent = (v: string): string => v.replace(/%\s*$/, "").trim();
 
 /** Splits one CSV record, honouring double-quoted fields and "" escapes. */
 export function splitCsvLine(line: string): string[] {
@@ -72,7 +93,7 @@ export function parseUtilizationCsv(text: string): ImportParse {
   const fieldAt = headers.map((h) => HEADER_TO_FIELD[h]);
   if (!fieldAt.includes("inputDate")) return { rows: [], errors: ["The header row must include a Date column."] };
   if (fieldAt.filter((f) => f && f !== "inputDate" && f !== "remarks").length === 0) {
-    return { rows: [], errors: ["None of the input columns (Forecasted Task, Adhoc Time, ...) were found in the header row."] };
+    return { rows: [], errors: ["None of the input columns (Forecasted Task, Adhoc Time, Utilization Forecast, ...) were found in the header row."] };
   }
   const rows: ImportRow[] = [];
   const errors: string[] = [];
@@ -80,9 +101,12 @@ export function parseUtilizationCsv(text: string): ImportParse {
     const cells = splitCsvLine(line);
     const row: ImportRow = {
       inputDate: "", forecastTask: "", forecastTaskPoa: "", manualFarCases: "", adhocTime: "",
-      analystQc: "", facialChecks: "", crossTrainingTaskPoa: "", poaLiveAuditsPq: "", remarks: "",
+      analystQc: "", facialChecks: "", crossTrainingTaskPoa: "", poaLiveAuditsPq: "",
+      fixedUtilizationForecast: "", fixedUtilizationWithAdhoc: "", fixedUtilizationWithoutAdhoc: "",
+      fixedUtilizationWithAdhocPct: "", fixedUtilizationWithoutAdhocPct: "", fixedPoaAnsweringPct: "", fixedEscalatedPct: "",
+      remarks: "",
     };
-    fieldAt.forEach((field, col) => { if (field) row[field] = cells[col] ?? ""; });
+    fieldAt.forEach((field, col) => { if (field) row[field] = field.endsWith("Pct") ? stripPercent(cells[col] ?? "") : (cells[col] ?? ""); });
     const date = normaliseImportDate(row.inputDate);
     if (!date) {
       // A blank-date line (a totals row, for instance) is skipped; a non-blank bad date is reported.

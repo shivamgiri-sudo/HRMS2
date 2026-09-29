@@ -33,6 +33,14 @@ export interface UtilizationInputRow {
   facialChecks: number | null;
   crossTrainingTaskPoa: number | null;
   poaLiveAuditsPq: number | null;
+  // Uploaded (static) values for the sheet's calculated columns; null = use the calculation.
+  fixedUtilizationForecast: number | null;
+  fixedUtilizationWithAdhoc: number | null;
+  fixedUtilizationWithoutAdhoc: number | null;
+  fixedUtilizationWithAdhocPct: number | null;
+  fixedUtilizationWithoutAdhocPct: number | null;
+  fixedPoaAnsweringPct: number | null;
+  fixedEscalatedPct: number | null;
   remarks: string | null;
 }
 
@@ -133,6 +141,13 @@ const UTILIZATION_FIELDS: {
     label: "POA Live Audits / POA PQ Audits",
     integer: true,
   },
+  { key: "fixedUtilizationForecast", label: "Utilization Forecast", integer: false },
+  { key: "fixedUtilizationWithAdhoc", label: "Utilization with Adhoc", integer: false },
+  { key: "fixedUtilizationWithoutAdhoc", label: "Utilization without Adhoc", integer: false },
+  { key: "fixedUtilizationWithAdhocPct", label: "Utilization with Adhoc %", integer: false },
+  { key: "fixedUtilizationWithoutAdhocPct", label: "Utilization without Adhoc %", integer: false },
+  { key: "fixedPoaAnsweringPct", label: "POA Answering", integer: false },
+  { key: "fixedEscalatedPct", label: "Escalated %", integer: false },
 ];
 
 export function parseUtilizationInputRow(
@@ -152,6 +167,13 @@ export function parseUtilizationInputRow(
     facialChecks: null,
     crossTrainingTaskPoa: null,
     poaLiveAuditsPq: null,
+    fixedUtilizationForecast: null,
+    fixedUtilizationWithAdhoc: null,
+    fixedUtilizationWithoutAdhoc: null,
+    fixedUtilizationWithAdhocPct: null,
+    fixedUtilizationWithoutAdhocPct: null,
+    fixedPoaAnsweringPct: null,
+    fixedEscalatedPct: null,
     remarks: null,
   };
   for (const f of UTILIZATION_FIELDS) {
