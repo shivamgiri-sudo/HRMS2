@@ -199,6 +199,7 @@ async function computeSourcing(period: OverviewPeriod) {
   const trend = new Map<string, Record<string, number | string>>();
   for (const r of monthly) {
     const m = String(r.m), src = leadSourceDisplay(r.src);
+    if (src === 'Walk-in') continue; // bulk historical import: would dwarf the live sources
     const row = trend.get(m) ?? { month: m };
     row[src] = num(row[src]) + num(r.sourced);
     trend.set(m, row);
@@ -216,7 +217,7 @@ async function computeSourcing(period: OverviewPeriod) {
       { stage: 'Selected', n: total.selected }, { stage: 'Joined', n: total.joined },
     ],
     sources,
-    seriesNames: sources.slice(0, 5).map((s) => s.name),
+    seriesNames: sources.filter((s) => s.name !== 'Walk-in').slice(0, 5).map((s) => s.name),
     trend: [...trend.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v),
     recruiters: byRecruiter.map((r) => ({
       name: String(r.rc), sourced: num(r.sourced), contacted: num(r.contacted), walkin: num(r.walkin), selected: num(r.selected), joined: num(r.joined),

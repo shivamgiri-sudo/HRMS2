@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2/promise';
+import { getJoinedInfo, joinedIdSql } from './dashboard.joined.js';
 import { branchDisplay, branchFilter, processDisplay, recruiterNamer, reportingScope, sourceDisplay } from './dashboard.scope.js';
 
 /**
@@ -22,7 +23,7 @@ const HOLD_STATUSES = ['Hold', 'Client Round - Pending'];
 const INTERVIEWED = ['Round 1- HR Screening', 'Interview - Skill Test', "Round 2- Op's", 'Round 3- Client', 'Selection Discussion', 'Interview', 'Offered', 'offer_approved', 'payroll_validated', 'Onboarded', 'converted', 'selected', 'bgv_pending'];
 export const OFFERED = ['Offered', 'offer_approved', 'payroll_validated', 'Onboarded', 'converted'];
 const APPROVED = ['offer_approved', 'payroll_validated', 'Onboarded', 'converted'];
-export const JOINED = ['Onboarded', 'converted'];
+export const JOINED = ['Onboarded', 'converted', 'payroll_validated'];
 const OPEN_STATUSES = ['Waiting', 'Hold', 'Client Round - Pending', 'profile_submitted', 'hr_approved', 'Pending', 'active', 'hr_pushback'];
 const SLA_MINUTES = 120;
 
@@ -76,18 +77,18 @@ export const sourceLabel = sourceDisplay;
 
 interface Tally { total: number; selected: number; rejected: number; joined: number }
 const blank = (): Tally => ({ total: 0, selected: 0, rejected: 0, joined: 0 });
-function add(t: Tally, status: string, stage: string, n: number) {
+function add(t: Tally, status: string, stage: string, n: number, joined = false) {
   t.total += n;
   if (isSelected(status, stage)) t.selected += n;
   if (status === 'Rejected') t.rejected += n;
-  if (JOINED.includes(stage)) t.joined += n;
+  if (joined || JOINED.includes(stage)) t.joined += n;
 }
 
-function tallyBy<T>(rows: T[], keyOf: (r: T) => string, get: (r: T) => { status: string; stage: string; n: number }) {
+function tallyBy<T>(rows: T[], keyOf: (r: T) => string, get: (r: T) => { status: string; stage: string; n: number; joined?: boolean }) {
   const m = new Map<string, Tally>();
   for (const r of rows) {
     const k = keyOf(r), g = get(r), t = m.get(k) ?? blank();
-    add(t, g.status, g.stage, g.n);
+    add(t, g.status, g.stage, g.n, g.joined);
     m.set(k, t);
   }
   return [...m.entries()].map(([name, t]) => ({ name, ...t, selRate: pct(t.selected, t.total) })).sort((a, b) => b.total - a.total);
@@ -106,14 +107,16 @@ async function compute(period: OverviewPeriod, branch: string) {
   const brSql = bf ? `AND ${bf.sql}` : '';
   const brArgs = bf ? bf.params : [];
 
+  const joinedInfo = await getJoinedInfo();
+  const jsql = joinedIdSql('id', joinedInfo.ids);
   const [rows, dims, heat, aging, tth, offers, bgv, queue, dup] = await Promise.all([
     getCube(),
     // Recruiter / source / process / gender need columns the cube omits; engaged candidates only (~8k rows).
-    safe('dims', () => q<{ ch: string; pr: string; rc: string; g: string; status: string; stage: string; n: number }>(
+    safe('dims', () => q<{ ch: string; pr: string; rc: string; g: string; status: string; stage: string; jn: number; n: number }>(
       `SELECT sourcing_channel AS ch, applied_for_process AS pr,
-              COALESCE(NULLIF(recruiter_name,''),'Unassigned') AS rc, gender AS g, status, current_stage AS stage, COUNT(*) AS n
+              COALESCE(NULLIF(recruiter_name,''),'Unassigned') AS rc, gender AS g, status, current_stage AS stage, (${jsql.sql}) AS jn, COUNT(*) AS n
        FROM ats_candidate WHERE active_status = 1 AND ${reportingScope('ats_candidate')} AND status <> ? ${win} ${brSql}
-       GROUP BY ch, pr, rc, g, status, stage`, [LEAD, ...brArgs]), []),
+       GROUP BY ch, pr, rc, g, status, stage, jn`, [...jsql.params, LEAD, ...brArgs]), []),
     safe('heat', () => q<{ dow: number; hr: number; n: number }>(
       `SELECT DAYOFWEEK(created_at) AS dow, HOUR(created_at) AS hr, COUNT(*) AS n
        FROM ats_candidate WHERE active_status = 1 AND ${reportingScope('ats_candidate')} AND status <> ? ${win} ${brSql} GROUP BY dow, hr`, [LEAD, ...brArgs]), []),
@@ -154,11 +157,15 @@ async function compute(period: OverviewPeriod, branch: string) {
       if (isSelected(r.status, r.stage)) c.selected += r.n;
       if (OFFERED.includes(r.stage)) c.offered += r.n;
       if (APPROVED.includes(r.stage)) c.approved += r.n;
-      if (JOINED.includes(r.stage)) c.joined += r.n;
       if (r.status === 'Rejected') c.rejected += r.n;
       if (r.status === 'No Show') c.noShow += r.n;
       if (HOLD_STATUSES.includes(r.status)) c.hold += r.n;
       if (r.status === 'Waiting') c.waiting += r.n;
+    }
+    // Joined comes from the resolved id set (stage OR employee-mobile match), keyed by registration day + branch.
+    for (const [key, n] of joinedInfo.byDayBranch) {
+      const [d, b] = key.split('|');
+      if (pred(d) && (!branch || b === branch)) c.joined += n;
     }
     return c;
   };
@@ -191,7 +198,7 @@ async function compute(period: OverviewPeriod, branch: string) {
   const dropoff = [...dropMap.entries()].map(([stage, n]) => ({ stage, n })).sort((a, b) => b.n - a.n).slice(0, 8);
 
   const dim = (keyOf: (r: (typeof dims)[number]) => string) =>
-    tallyBy(dims, keyOf, (r) => ({ status: r.status, stage: r.stage, n: num(r.n) }));
+    tallyBy(dims, keyOf, (r) => ({ status: r.status, stage: r.stage, n: num(r.n), joined: !!num(r.jn) }));
   const sources = dim((r) => sourceLabel(r.ch)).slice(0, 12).map((s) => ({ name: s.name, total: s.total, selected: s.selected, joined: s.joined, convRate: s.selRate }));
   const processes = dim((r) => readable(r.pr)).slice(0, 12).map(({ name, total, selected, rejected, selRate }) => ({ name, total, selected, rejected, selRate }));
   const nameRc = recruiterNamer(dims.map((r) => r.rc));
@@ -319,13 +326,13 @@ export async function getAtsOverview(period: OverviewPeriod = '30d', branch?: st
   return refresh(key, period, b);
 }
 
-/** Call once after boot: fills the cache sequentially (gentle on the DB), then keeps it hot every 5 minutes. */
+/** Call once after boot: fills the common views sequentially (gentle on the DB), then keeps them hot every 10 minutes. */
 export function warmAtsOverview() {
   const run = async () => {
-    for (const p of ['30d', 'today', '7d', '90d', 'all'] as OverviewPeriod[]) {
+    for (const p of ['30d', 'today', '7d'] as OverviewPeriod[]) {
       try { await refresh(`${p}|`, p, ''); } catch (e) { console.error('[ats-overview] warm failed:', (e as Error).message); }
     }
   };
   void run();
-  setInterval(() => void run(), 5 * 60_000).unref();
+  setInterval(() => void run(), 10 * 60_000).unref();
 }

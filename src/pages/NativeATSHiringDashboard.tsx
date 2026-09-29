@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { HIRING_STAGE_FLAG, HiringDrillSheet, HiringTrendCard, type HiringDrill } from "@/components/ats/HiringDrillSheet";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   Sheet,
@@ -196,6 +197,7 @@ export default function NativeATSHiringDashboard() {
   const [filters, setFilters] = useState({ ...initialFilters });
   const [appliedFilters, setAppliedFilters] = useState({ ...initialFilters });
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [drill, setDrill] = useState<HiringDrill | null>(null);
   const didInitLoad = useRef(false);
 
   const set = (key: keyof typeof initialFilters, value: string) =>
@@ -517,7 +519,14 @@ export default function NativeATSHiringDashboard() {
                       </span>
                     </div>
                   )}
-                  <div className="flex items-center gap-3">
+                  {(() => {
+                    const flag = HIRING_STAGE_FLAG[stage.label];
+                    const open = () => setDrill({ title: `${stage.label} records`, extra: flag ?? {} });
+                    return (
+                  <div
+                    className={`flex items-center gap-3 rounded-md ${flag ? "cursor-pointer transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600" : ""}`}
+                    {...(flag ? { role: "button", tabIndex: 0, "aria-label": `${stage.label}: ${num(stage.value)} records, open list`, onClick: open, onKeyDown: (e: React.KeyboardEvent) => (e.key === "Enter" || e.key === " ") && open() } : {})}
+                  >
                     <span className="w-[120px] shrink-0 text-right text-xs font-semibold text-slate-700">
                       {stage.label}
                     </span>
@@ -545,11 +554,15 @@ export default function NativeATSHiringDashboard() {
                       </div>
                     </div>
                   </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
           )}
         </ChartCard>
+
+        <HiringTrendCard filters={appliedFilters as Record<string, string>} onDrill={setDrill} />
 
         {/* ── Interview rounds + pipeline health ─────────────────────────── */}
         {!callingView && (
@@ -648,6 +661,7 @@ export default function NativeATSHiringDashboard() {
           </div>
         )}
       </div>
+      {drill && <HiringDrillSheet drill={drill} filters={appliedFilters as Record<string, string>} onClose={() => setDrill(null)} />}
     </DashboardLayout>
   );
 }

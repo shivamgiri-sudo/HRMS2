@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { db } from '../../db/mysql.js';
 import { createSwrCache } from './dashboard.cache.js';
 import { BRANCH_EXPR, JOINED, LEAD, OFFERED, num, pct, q, safe } from './dashboard.overview.service.js';
+import { getJoinedInfo, joinedIdSql } from './dashboard.joined.js';
 import { branchDisplay, branchFilter, canonicalSourceSql, processDisplay, rawValues, recruiterNamer, reportingScope, sourceCode, sourceDisplay } from './dashboard.scope.js';
 import { bucketEducation, bucketExperience } from './dashboard.insights.service.js';
 
@@ -23,7 +24,7 @@ const inSql = (xs: string[]) => xs.map(() => '?').join(',');
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const cache = createSwrCache<Record<string, unknown>>({ freshMs: 30_000, staleMs: 5 * 60_000 });
 
-function where(f: PipelineFilters, opts: { skipStatus?: boolean; raw?: Awaited<ReturnType<typeof rawValues>> } = {}) {
+function where(f: PipelineFilters, opts: { skipStatus?: boolean; raw?: Awaited<ReturnType<typeof rawValues>>; joinedIds?: readonly string[] } = {}) {
   const c = ['c.active_status = 1', reportingScope('c')];
   const p: unknown[] = [];
   if (!f.includeLeads) { c.push('c.status <> ?'); p.push(LEAD); }
@@ -62,7 +63,7 @@ function where(f: PipelineFilters, opts: { skipStatus?: boolean; raw?: Awaited<R
       case 'noShow': c.push("c.status = 'No Show'"); break;
       case 'hold': c.push(`c.status IN (${inSql(HOLD)})`); p.push(...HOLD); break;
       case 'waiting': c.push("c.status = 'Waiting'"); break;
-      case 'joined': c.push(`c.current_stage IN (${inSql(JOINED)})`); p.push(...JOINED); break;
+      case 'joined': { const j = joinedIdSql('c.id', opts.joinedIds ?? []); c.push(j.sql); p.push(...j.params); break; }
       case 'offered': c.push(`c.current_stage IN (${inSql(OFFERED)})`); p.push(...OFFERED); break;
     }
   }
@@ -103,7 +104,8 @@ function where(f: PipelineFilters, opts: { skipStatus?: boolean; raw?: Awaited<R
 
 async function compute(f: PipelineFilters) {
   const raw = f.experience || f.education || f.process || f.recruiter ? await rawValues() : undefined;
-  const w = where(f, { raw }), wf = where(f, { skipStatus: true, raw });
+  const joinedIds = f.outcome === 'joined' ? (await getJoinedInfo()).ids : undefined;
+  const w = where(f, { raw, joinedIds }), wf = where(f, { skipStatus: true, raw, joinedIds });
   const limit = Math.min(Math.max(f.limit, 1), 100), offset = (Math.max(f.page, 1) - 1) * limit;
   const [rows, total, facets] = await Promise.all([
     q<RowDataPacket>(
@@ -132,15 +134,17 @@ export const listPipeline = (f: PipelineFilters) => cache.get(JSON.stringify({ .
 /* ───────────── Drill: trend + splits for any slice ───────────── */
 const drillCache = createSwrCache<Record<string, unknown>>({ freshMs: 60_000, staleMs: 10 * 60_000 });
 
-interface DrillRow { d: string; branch: string; process: string | null; source: string | null; recruiter: string | null; status: string; stage: string; dow: number; n: number }
+interface DrillRow { d: string; branch: string; process: string | null; source: string | null; recruiter: string | null; status: string; stage: string; dow: number; jn: number; n: number }
 
 async function computeDrill(f: PipelineFilters) {
   const raw = f.experience || f.education || f.process || f.recruiter ? await rawValues() : undefined;
-  const w = where(f, { raw });
+  const joinedIds = (await getJoinedInfo()).ids;
+  const jsql = joinedIdSql('c.id', joinedIds);
+  const w = where(f, { raw, joinedIds });
   const rows = await q<DrillRow>(
     `SELECT DATE_FORMAT(c.created_at,'%Y-%m-%d') d, ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, 'c.$1')} branch, c.applied_for_process process,
-            c.sourcing_channel source, c.recruiter_name recruiter, c.status, c.current_stage stage, DAYOFWEEK(c.created_at) dow, COUNT(*) n
-     FROM ats_candidate c WHERE ${w.sql} GROUP BY d, branch, process, source, recruiter, status, stage, dow`, w.params);
+            c.sourcing_channel source, c.recruiter_name recruiter, c.status, c.current_stage stage, DAYOFWEEK(c.created_at) dow, (${jsql.sql}) jn, COUNT(*) n
+     FROM ats_candidate c WHERE ${w.sql} GROUP BY d, branch, process, source, recruiter, status, stage, dow, jn`, [...jsql.params, ...w.params]);
 
   const drillNamer = recruiterNamer(rows.map((r) => r.recruiter ?? ''));
   const selected = (r: DrillRow) => r.status === 'Selected' || OFFERED.includes(r.stage);
@@ -160,7 +164,7 @@ async function computeDrill(f: PipelineFilters) {
     if (r.status === 'No Show') t.noShow += n;
     if (HOLD.includes(r.status)) t.hold += n;
     if (r.status === 'Waiting') t.waiting += n;
-    if (JOINED.includes(r.stage)) t.joined += n;
+    if (r.jn || JOINED.includes(r.stage)) t.joined += n;
     const dd = day.get(r.d) ?? { total: 0, selected: 0, rejected: 0 };
     dd.total += n; if (selected(r)) dd.selected += n; if (r.status === 'Rejected') dd.rejected += n; day.set(r.d, dd);
     const dw = dow.get(num(r.dow)) ?? { total: 0, selected: 0 }; dw.total += n; if (selected(r)) dw.selected += n; dow.set(num(r.dow), dw);
