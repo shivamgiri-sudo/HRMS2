@@ -43,7 +43,7 @@ export interface PayslipData {
   tds_amount?: number;
   basic?: number;
   hra?: number;
-  other_allowances?: number;
+  special_allowance?: number;
   lwp_deduction?: number;
   advance_recovery?: number;
   working_days?: number;
@@ -185,7 +185,6 @@ export const payslipService = {
               spl.basic,
               spl.hra,
               spl.special_allowance,
-              spl.special_allowance AS other_allowances,
               spl.lwp_deduction,
               spl.advance_recovery,
               spl.pf_employer,
@@ -365,6 +364,16 @@ export const payslipService = {
       (component) =>
         (component.component_type || "").toLowerCase() === "earning",
     );
+    // Derive special_allowance from the SPECIAL component when components exist,
+    // so the stale structure-time flat column is never used on modern payslip runs.
+    if (rec.earnings.length > 0) {
+      const specialComp = rec.earnings.find(
+        (e: any) =>
+          e.component_code === "SPECIAL" ||
+          e.component_code === "SPECIAL_ALLOWANCE",
+      );
+      rec.special_allowance = specialComp ? Number(specialComp.amount) : 0;
+    }
     rec.deductions = rec.components.filter(
       (component) =>
         (component.component_type || "").toLowerCase() === "deduction",
