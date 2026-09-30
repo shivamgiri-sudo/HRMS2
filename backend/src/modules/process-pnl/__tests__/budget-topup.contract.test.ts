@@ -187,4 +187,44 @@ describe("budget top-up request workflow", () => {
     expect(lockIdx).toBeGreaterThan(fhIdx);
     expect(lockIdx).toBeLessThan(applyIdx);
   });
+
+  it("lets the raiser cancel a pending request, and edit its amount only before Branch Head approval", () => {
+    const sql = read("sql/1962_budget_topup_cancel.sql");
+    const runner = read("src/db/runPendingMigrations.ts");
+    expect(sql).toContain("''cancelled''");
+    expect(sql).toContain("ADD COLUMN cancelled_by");
+    expect(sql).not.toMatch(/DROP\s+(TABLE|COLUMN)/i);
+    expect(runner).toContain('"1962_budget_topup_cancel.sql"');
+
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    const cancelIdx = service.indexOf("async cancel(");
+    const editIdx = service.indexOf("async updateAmount(");
+    const directIdx = service.indexOf("async directApply(");
+    expect(cancelIdx).toBeGreaterThan(-1);
+    expect(editIdx).toBeGreaterThan(cancelIdx);
+    const cancelBody = service.slice(cancelIdx, editIdx);
+    const editBody = service.slice(editIdx, directIdx);
+    // Both are the raiser's own actions — never a reviewer's.
+    expect(cancelBody).toContain("TOPUP_NOT_OWNER");
+    expect(editBody).toContain("TOPUP_NOT_OWNER");
+    // Cancel is open at both pending stages; an applied/rejected request cannot be withdrawn.
+    expect(cancelBody).toContain('["submitted", "branch_head_approved"].includes(status)');
+    // Edit is locked the moment Branch Head approves.
+    expect(editBody).toContain('status !== "submitted"');
+    expect(editBody).toContain("TOPUP_EDIT_LOCKED");
+    // Quantity is re-derived server-side so the approved amount stays the applied amount.
+    expect(editBody).toContain("roundQuantity(requestedAmount / unitRate)");
+    expect(cancelBody).toContain('action: "cancel"');
+    expect(editBody).toContain('action: "edit_amount"');
+
+    const routes = read("src/modules/process-pnl/process-pnl.routes.ts");
+    for (const call of ["budgetTopupService.updateAmount(", "budgetTopupService.cancel("]) {
+      const idx = routes.indexOf(call);
+      expect(idx).toBeGreaterThan(-1);
+      expect(routes.slice(idx - 900, idx)).toContain("assertFinanceRecordBranch");
+    }
+
+    const panel = read("../src/components/finance/budget/BudgetTopupPanel.tsx");
+    expect(panel).toContain('const canEditAmount = isOwnRequest(request) && request.status === "submitted";');
+  });
 });

@@ -818,6 +818,55 @@ router.post(
   })
 );
 
+// The raiser's own two ways to change a request they submitted: correct its amount (only until
+// Branch Head approves) or withdraw it (until it is applied). Ownership and stage are enforced in
+// the service; the role gate is the same one that let them raise it.
+router.patch(
+  "/pnl/budget-topups/:id",
+  requireWriteAccess,
+  requireRole(...TOPUP_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const request = await budgetTopupService.get(req.params.id);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: String((request as any).branch_id),
+    });
+    const data = await budgetTopupService.updateAmount(
+      req.params.id,
+      Number(req.body?.requestedAmount ?? 0),
+      user.id,
+      user.role
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/budget-topups/:id/cancel",
+  requireWriteAccess,
+  requireRole(...TOPUP_CREATE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const request = await budgetTopupService.get(req.params.id);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: String((request as any).branch_id),
+    });
+    const data = await budgetTopupService.cancel(
+      req.params.id,
+      user.id,
+      user.role,
+      req.body?.reason ? String(req.body.reason) : undefined
+    );
+    res.json({ success: true, data });
+  })
+);
+
 // Finance Head direct budget increase (owner decision, 2026-08-21): bypasses the 2-stage
 // branch_head -> finance_head top-up request/review chain above. finance_head + super_admin
 // only — deliberately excludes branch_admin/branch_head/accounts_head, unlike TOPUP_REVIEW_ROLES.

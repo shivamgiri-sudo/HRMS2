@@ -9012,6 +9012,9 @@
       "finance_head_reviewed_at",
       "finance_head_review_note",
       "rejection_reason",
+      "cancelled_by",
+      "cancelled_at",
+      "cancellation_reason",
       "applied_at",
       "created_at",
       "updated_at"
