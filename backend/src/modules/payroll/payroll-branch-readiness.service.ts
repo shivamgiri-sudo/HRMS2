@@ -10,6 +10,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { cachedReadinessSummary } from "./payroll-readiness-summary-cache.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 import {
   triggerPayrollBranchSignOff,
@@ -1256,6 +1257,10 @@ export const payrollBranchReadinessService = {
   // -------------------------------------------------------------------------
 
   async getHOSummary(month: string): Promise<BranchReadinessRecord[]> {
+    return cachedReadinessSummary(`ho:${month}`, () => this.getHOSummaryUncached(month));
+  },
+
+  async getHOSummaryUncached(month: string): Promise<BranchReadinessRecord[]> {
     let branches: Array<{ id: string; branch_name: string }> = [];
 
     try {
@@ -1508,6 +1513,13 @@ export const payrollBranchReadinessService = {
     month: string,
     branchId: string
   ): Promise<BranchReadinessRecord[]> {
+    return cachedReadinessSummary(`branch:${month}:${branchId}`, () => this.getSummaryForBranchUncached(month, branchId));
+  },
+
+  async getSummaryForBranchUncached(
+    month: string,
+    branchId: string
+  ): Promise<BranchReadinessRecord[]> {
     let processes: Array<{ id: string; process_name: string }> = [];
     try {
       // UNION of two sources, not process_master alone.
@@ -1577,6 +1589,10 @@ export const payrollBranchReadinessService = {
   // -------------------------------------------------------------------------
 
   async getHOSummaryGrouped(month: string): Promise<ProcessReadinessBranchGroup[]> {
+    return cachedReadinessSummary(`grouped:${month}`, () => this.getHOSummaryGroupedUncached(month));
+  },
+
+  async getHOSummaryGroupedUncached(month: string): Promise<ProcessReadinessBranchGroup[]> {
     let branches: Array<{ id: string; branch_name: string }> = [];
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
