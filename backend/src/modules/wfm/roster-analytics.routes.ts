@@ -762,7 +762,7 @@ router.get(
          FROM db_audit.call_quality_assessment
          WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
-       ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
+       ) qa ON UPPER(TRIM(COALESCE(NULLIF(TRIM(e.call_centre_code), ''), e.employee_code))) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter} ${branchFilter}
        GROUP BY m.id, m.full_name, p.process_name, b.branch_name
        HAVING team_size >= 3
@@ -823,7 +823,7 @@ router.get(
          FROM db_audit.call_quality_assessment
          WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
-       ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
+       ) qa ON UPPER(TRIM(COALESCE(NULLIF(TRIM(e.call_centre_code), ''), e.employee_code))) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter} ${branchFilter}
        GROUP BY p.id, p.process_name, b.branch_name
        ORDER BY adherence_pct DESC`,
@@ -876,7 +876,7 @@ router.get(
          FROM db_audit.call_quality_assessment
          WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
-       ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
+       ) qa ON UPPER(TRIM(COALESCE(NULLIF(TRIM(e.call_centre_code), ''), e.employee_code))) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter}
        GROUP BY b.id, b.branch_name
        ORDER BY adherence_pct DESC`,
