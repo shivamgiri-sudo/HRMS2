@@ -413,11 +413,14 @@ export async function backfillBbbReadModel(): Promise<{ batches: number; months:
   }
 }
 
+// Well clear of startup: a slow boot (pending migrations on a busy database) can itself take several minutes, and
+// this catch-up must never compete with it.
+const BACKFILL_DELAY_MS = 15 * 60_000;
 if (!process.env.VITEST && process.env.NODE_ENV !== "test" && process.env.BBB_READ_MODEL_BACKFILL !== "false") {
   setTimeout(() => {
     backfillBbbReadModel()
       .then((r) => { if (r.batches || r.months) console.log(`[bbb-uploads] read model backfilled: ${r.batches} batch(es), ${r.months} month(s)`); })
       .catch((e) => console.warn("[bbb-uploads] read model backfill failed:", e instanceof Error ? e.message : e));
-  }, 90_000).unref();
+  }, BACKFILL_DELAY_MS).unref();
 }
 
