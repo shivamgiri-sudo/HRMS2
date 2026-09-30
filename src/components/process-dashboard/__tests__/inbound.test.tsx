@@ -101,8 +101,8 @@ describe("breadcrumb label registry", () => {
     setBreadcrumbLabel(href, null);
     expect(renderToStaticMarkup(<Crumb href={href} />)).toContain("raw");
   });
-  it("TopBar prefers a registered page label and the page registers one", () => {
+  it("TopBar prefers a registered page label and the dashboard registers one", () => {
     expect(read("src/components/layout/TopBar.tsx")).toContain("pageLabels.get(crumb.href) ||");
-    expect(read("src/pages/ProcessDashboardPage.tsx")).toContain("useBreadcrumbLabel(`/performance/process-dashboard/${processId}`");
+    expect(read("src/components/process-dashboard/ProcessDashboard.tsx")).toContain("useBreadcrumbLabel(`/performance/process-dashboard/${processId}`");
   });
 });

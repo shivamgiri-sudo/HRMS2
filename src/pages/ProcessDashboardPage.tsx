@@ -1,18 +1,11 @@
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ProcessDashboard } from "@/components/process-dashboard/ProcessDashboard";
-import { fetchConfigs } from "@/components/process-dashboard/api";
-import { useBreadcrumbLabel } from "@/lib/breadcrumbLabel";
 
 /** /performance/process-dashboard/:processId — config-driven dashboard for any registered process. */
 export default function ProcessDashboardPage() {
   const { processId = "" } = useParams<{ processId: string }>();
-  // The TopBar breadcrumb would otherwise end in the raw process id.
-  const configs = useQuery({ queryKey: ["process-dashboard", "configs"], queryFn: fetchConfigs, staleTime: 60_000 });
-  const cfg = configs.data?.find((c) => c.processId === processId);
-  useBreadcrumbLabel(`/performance/process-dashboard/${processId}`, cfg ? cfg.label || cfg.processName : null);
   return (
     <DashboardLayout>
       <main className="mx-auto max-w-[1600px] space-y-4 p-4 sm:p-6">

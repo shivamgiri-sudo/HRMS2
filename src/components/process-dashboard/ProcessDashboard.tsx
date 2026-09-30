@@ -12,6 +12,7 @@ import { TrendPanel } from "./TrendPanel";
 import { downloadCsv, fetchConfigs, fetchInboundTab, probeProcess } from "./api";
 import { formatValue } from "./format";
 import { Empty, ErrorBox, FOCUS, Skeleton } from "./ui";
+import { useBreadcrumbLabel } from "@/lib/breadcrumbLabel";
 import { parseUrlState, serializeUrlState, type DashUrlState } from "./urlState";
 import { useDashboardData } from "./useDashboardData";
 import type { BreakdownRow } from "./types";
@@ -60,6 +61,9 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
   const probe = useQuery({ queryKey: ["process-dashboard", processId, "probe"], queryFn: () => probeProcess(processId), enabled: loaded && !config, retry: false, staleTime: 60_000 });
   const mayHaveInbound = loaded && (config ? config.category === "support_inbound" || config.category === "unconfigured" : probe.isSuccess && probe.data !== "forbidden");
   const inbound = useQuery({ queryKey: ["process-dashboard", processId, "inbound"], queryFn: () => fetchInboundTab(processId), enabled: mayHaveInbound, retry: false, staleTime: 30_000 });
+
+  // The TopBar breadcrumb would otherwise end in the raw process id (standalone page only; the embedded tile has no such crumb).
+  useBreadcrumbLabel(`/performance/process-dashboard/${processId}`, embedded ? null : config ? config.label || config.processName : inbound.data?.name ?? null);
 
   if (configs.isLoading) return <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-16" /><Skeleton className="h-64" /></div>;
   if (configs.isError) return <ErrorBox message="Could not load dashboard configuration." onRetry={() => void configs.refetch()} />;

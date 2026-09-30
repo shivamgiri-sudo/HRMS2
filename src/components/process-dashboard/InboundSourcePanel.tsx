@@ -121,7 +121,7 @@ export function InboundSourcePanel({ processId }: { processId: string }) {
 
           <div className="flex flex-wrap items-center gap-3">
             <button type="button" className={btn} disabled={!form.dialerTable || runPreview.isPending} onClick={() => runPreview.mutate(form)}><Eye className="h-3.5 w-3.5" aria-hidden="true" />{runPreview.isPending ? "Loading..." : "Preview"}</button>
-            <button type="button" className={`${btn} border-blue-700 bg-blue-700 text-white hover:bg-blue-800`} disabled={errors.length > 0 || save.isPending} onClick={() => save.mutate(form)}><Save className="h-3.5 w-3.5" aria-hidden="true" />{save.isPending ? "Saving..." : "Save inbound source"}</button>
+            <button type="button" className={`${btn} border-blue-700 !bg-blue-700 !text-white hover:!bg-blue-800`} disabled={errors.length > 0 || save.isPending} onClick={() => save.mutate(form)}><Save className="h-3.5 w-3.5" aria-hidden="true" />{save.isPending ? "Saving..." : "Save inbound source"}</button>
             <div role="status" aria-live="polite" className="text-xs font-semibold text-emerald-800">{saved}</div>
           </div>
           {save.isError && <ErrorBox message={msg(save.error)} />}
