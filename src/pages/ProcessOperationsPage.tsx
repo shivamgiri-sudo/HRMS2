@@ -673,6 +673,11 @@ function LivePanel({ title, sub, children }: { title: string; sub?: string; chil
 
 type TrendDir = "positive" | "negative" | "action" | "neutral";
 
+/** True while the server is still working out the P&L (its first calculation after a restart takes longer than the wait limit). */
+function isFinanceWarming(f: { available?: boolean; reason?: string | null } | null | undefined): boolean {
+  return Boolean(f && f.available === false && /timed out/i.test(f.reason ?? ""));
+}
+
 function TrendChip({ trend, label, onDark = false }: { trend: TrendDir; label: string; onDark?: boolean }) {
   const Icon = trend === "positive" ? ArrowUpRight : trend === "negative" ? ArrowDownRight : trend === "action" ? AlertTriangle : Minus;
   const col = trend === "positive"
@@ -5215,6 +5220,8 @@ export default function ProcessOperationsPage() {
       `/api/process-operations/${current}/business-health`),
     enabled: Boolean(current),
     staleTime: 60_000,
+    // The P&L figure is still being calculated (cold server): ask again shortly instead of leaving a blank tile.
+    refetchInterval: (q) => (isFinanceWarming(q.state.data?.data?.finance) ? 15_000 : false),
   });
   const actionItems = useMemo(() => {
     const items: Array<{ severity: "critical" | "warning" | "positive"; title: string; body: string }> = [];
@@ -5431,7 +5438,7 @@ export default function ProcessOperationsPage() {
                       color="linear-gradient(135deg,#1e3a5f,#2f6fed)"
                       onClick={() => setSummaryDrill("ceo_revenue")}
                       trend={!h?.finance?.available ? "action" : h?.finance?.revenue && h.finance.revenue > 0 ? "positive" : "action"}
-                      trendLabel={!h?.finance?.available ? "Data gap" : h?.finance?.revenueStatus === "accounting_fallback" ? "Fallback" : "On track"} />
+                      trendLabel={isFinanceWarming(h?.finance) ? "Calculating…" : !h?.finance?.available ? "Data gap" : h?.finance?.revenueStatus === "accounting_fallback" ? "Fallback" : "On track"} />
                     <LiveKpiCard label="Operating %"
                       value={hasPayroll(h?.finance) && h.finance.operatingProfitPct !== null
                         ? `${h.finance.operatingProfitPct.toFixed(1)}%` : "—"}
@@ -5441,7 +5448,7 @@ export default function ProcessOperationsPage() {
                         : "linear-gradient(135deg,#334155,#64748b)"}
                       onClick={() => setSummaryDrill("ceo_op_pct")}
                       trend={!hasPayroll(h?.finance) || h?.finance?.operatingProfitPct === null ? "action" : h.finance.operatingProfitPct >= 12 ? "positive" : h.finance.operatingProfitPct >= 0 ? "action" : "negative"}
-                      trendLabel={!hasPayroll(h?.finance) ? "Payroll pending" : h?.finance?.operatingProfitPct === null ? "No data" : h.finance.operatingProfitPct >= 12 ? "Healthy" : h.finance.operatingProfitPct >= 0 ? "Below target" : "Loss"} />
+                      trendLabel={isFinanceWarming(h?.finance) ? "Calculating…" : !hasPayroll(h?.finance) ? "Payroll pending" : h?.finance?.operatingProfitPct === null ? "No data" : h.finance.operatingProfitPct >= 12 ? "Healthy" : h.finance.operatingProfitPct >= 0 ? "Below target" : "Loss"} />
                     <LiveKpiCard label="Quality Score"
                       value={qualityPct !== null ? `${qualityPct}%` : "—"}
                       ringPct={qualityPct}

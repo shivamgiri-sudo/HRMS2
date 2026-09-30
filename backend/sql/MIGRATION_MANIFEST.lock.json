@@ -938,7 +938,8 @@
     "migrations/1916_onfido_utilization_static_values.sql",
     "migrations/1917_onfido_manpower_plan_total_queue.sql",
     "migrations/1919_ats_dashboard_indexes.sql",
-    "migrations/1920_satya_retail_process.sql"
+    "migrations/1920_satya_retail_process.sql",
+    "migrations/1930_gnc_apr_kpi_source_own_table.sql"
   ],
   "approvedDeletions": [
     {
@@ -1170,7 +1171,8 @@
     "migrations/1916_onfido_utilization_static_values.sql",
     "migrations/1917_onfido_manpower_plan_total_queue.sql",
     "migrations/1919_ats_dashboard_indexes.sql",
-    "migrations/1920_satya_retail_process.sql"
+    "migrations/1920_satya_retail_process.sql",
+    "migrations/1930_gnc_apr_kpi_source_own_table.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
