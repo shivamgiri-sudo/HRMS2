@@ -1237,6 +1237,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1919_ats_dashboard_indexes.sql", // Registered 2026-09-30. ATS dashboard indexes (covering aggregate index incl. record_type/candidate_code, recruiter and channel drill-down indexes, queue arrival). Additive online CREATE INDEX, each guarded by an information_schema check.
   "migrations/1920_satya_retail_process.sql", // Registered 2026-09-30, at the owner's request. Adds one active "Satya Retail" process (code SATYA_RETAIL) when no process with that code or a "satya" name exists, so its existing dashboards' data can be selected on Process Operations and shown by Business datapoints. Additive and idempotent: one guarded INSERT, no ALTER, no DELETE.
   "migrations/1930_gnc_apr_kpi_source_own_table.sql", // Registered 2026-09-30, at the owner's request. Repoints the GNC_APR KPI data source from the stale db_masmis.gnc_apr mirror (no pause_seconds column) to our own gnc_apr_daily_actual. Data-only UPDATE, idempotent.
+  "migrations/1921_capacity_mandate_editors.sql", // Registered 2026-09-30. Grants WFM_CAPACITY_DASHBOARD view to finance_head, finance, branch_admin, operations_manager. Additive INSERT IGNORE.
 ];
 
 export type MigrationHealth = {

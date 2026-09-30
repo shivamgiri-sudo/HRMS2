@@ -15,7 +15,13 @@
  * 5. Shrinkage impact on capacity
  */
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useToast } from "@/hooks/use-toast";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { EmbeddableLayout as DashboardLayout } from "@/components/wfm/console/EmbeddableLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +38,7 @@ import {
   Clock,
   GraduationCap,
   MinusCircle,
+  Pencil,
   PlusCircle,
   RefreshCw,
   Target,
@@ -62,6 +69,22 @@ const ALL = "__all__";
  * Mapped here rather than reshaping the endpoint: this page is its only consumer, and the
  * server-side names match the rest of the workforce-mandate module.
  */
+interface ApiMandate {
+  id: string; mandatedHc: number; shrinkagePct: number; attritionBufferPct: number; trainingBufferPct: number;
+}
+interface ApiProcessRow {
+  processId: string; processName: string; branchId: string | null; branchName: string | null;
+  mandatedHc: number; requiredHc: number; activeHc: number; onNoticeHc: number; longLeaveHc: number;
+  inTrainingHc: number; availableHc: number; gap: number; coveragePct: number;
+  riskSignal: "green" | "amber" | "red"; mandates: ApiMandate[];
+}
+
+/** Roles that may change a mandate; the server re-checks this and narrows scoped roles to their own branch/process. */
+const MANDATE_EDIT_ROLES = [
+  "super_admin", "admin", "hr", "finance_head", "finance",
+  "process_manager", "branch_admin", "branch_head", "operations_manager", "branch_wfm",
+];
+
 interface CapacitySummaryApi {
   summary?: {
     totalMandatedHc?: number; requiredStaffedHc?: number; activeHc?: number;
@@ -73,6 +96,7 @@ interface CapacitySummaryApi {
     mandatedHc?: number; shrinkagePct?: number;
     attritionBufferPct?: number; trainingBufferPct?: number;
   };
+  byProcess?: ApiProcessRow[];
   headcountByLob?: Array<{ lobId: string | null; lobName: string | null; activeHc: number }>;
   hiringByProcess?: Array<{
     processId: string; processName: string; branchName?: string;
@@ -108,12 +132,15 @@ interface CapacitySummary {
   byProcess: Array<{
     processId: string;
     processName: string;
+    branchName: string | null;
     mandatedHC: number;
+    requiredHC: number;
     activeHC: number;
     availableHC: number;
     gap: number;
     coveragePct: number;
     riskLevel: "GREEN" | "AMBER" | "RED";
+    mandates: ApiMandate[];
   }>;
   byBranch: Array<{
     branchId: string;
@@ -375,7 +402,7 @@ function FormulaCard({ data }: { data: CapacitySummary }) {
   );
 }
 
-function ProcessCapacityRow({ process }: { process: CapacitySummary["byProcess"][0] }) {
+function ProcessCapacityRow({ process, onEdit }: { process: CapacitySummary["byProcess"][0]; onEdit?: () => void }) {
   const riskConfig = RISK_CONFIG[process.riskLevel];
   const colors = TONE[riskConfig.tone];
 
@@ -391,8 +418,11 @@ function ProcessCapacityRow({ process }: { process: CapacitySummary["byProcess"]
           </div>
           <div>
             <span className="font-semibold text-slate-800">{process.processName}</span>
+            {process.branchName && <span className="ml-2 text-xs text-slate-400">{process.branchName}</span>}
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span>Mandated: {process.mandatedHC}</span>
+              <span>•</span>
+              <span>Required: {process.requiredHC}</span>
               <span>•</span>
               <span>Active: {process.activeHC}</span>
               <span>•</span>
@@ -409,11 +439,16 @@ function ProcessCapacityRow({ process }: { process: CapacitySummary["byProcess"]
           <div className={`text-right font-bold ${process.gap > 0 ? "text-red-600" : "text-green-600"}`}>
             {process.gap > 0 ? `-${process.gap}` : `+${Math.abs(process.gap)}`}
           </div>
+          {onEdit && (
+            <Button variant="outline" size="sm" onClick={onEdit} title="Update mandate">
+              <Pencil className="h-3.5 w-3.5 mr-1" /> Mandate
+            </Button>
+          )}
         </div>
       </div>
       <Progress
         value={process.coveragePct}
-        className={`h-2 [&>div]:${riskConfig.tone === "green" ? "bg-emerald-500" : riskConfig.tone === "amber" ? "bg-amber-500" : "bg-red-500"}`}
+        className={`h-2 ${riskConfig.tone === "green" ? "[&>div]:bg-emerald-500" : riskConfig.tone === "amber" ? "[&>div]:bg-amber-500" : "[&>div]:bg-red-500"}`}
       />
     </div>
   );
@@ -480,18 +515,118 @@ function TrendChart({ data }: { data: CapacitySummary["trend"] }) {
   );
 }
 
+function EditMandateDialog({
+  process, onClose, onSaved,
+}: { process: CapacitySummary["byProcess"][0] | null; onClose: () => void; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [mandateId, setMandateId] = useState<string>("");
+  const [hc, setHc] = useState("");
+  const [shrink, setShrink] = useState("");
+  const [attr, setAttr] = useState("");
+  const [train, setTrain] = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [openedFor, setOpenedFor] = useState<CapacitySummary["byProcess"][0] | null>(null);
+
+  // Load the picked mandate row into the form whenever a (new) process is opened.
+  if (process !== openedFor) {
+    setOpenedFor(process);
+    const m = process?.mandates[0];
+    setMandateId(m?.id ?? "");
+    setHc(m ? String(m.mandatedHc) : "");
+    setShrink(m ? String(m.shrinkagePct) : "");
+    setAttr(m ? String(m.attritionBufferPct) : "");
+    setTrain(m ? String(m.trainingBufferPct) : "");
+    setReason("");
+  }
+  const pickMandate = (id: string) => {
+    const m = process?.mandates.find((x) => x.id === id);
+    if (!m) return;
+    setMandateId(id); setHc(String(m.mandatedHc)); setShrink(String(m.shrinkagePct));
+    setAttr(String(m.attritionBufferPct)); setTrain(String(m.trainingBufferPct));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await hrmsApi.patch(`/api/workforce-mandate/${mandateId}`, {
+        mandatedHc: Number(hc), shrinkagePct: Number(shrink),
+        attritionBufferPct: Number(attr), trainingBufferPct: Number(train), reason,
+      });
+      toast({ title: "Mandate updated" });
+      onSaved();
+      onClose();
+    } catch (e: any) {
+      toast({ title: "Could not update mandate", description: e?.message ?? "Request failed", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const valid = mandateId && hc !== "" && Number.isInteger(Number(hc)) && Number(hc) >= 0 && reason.trim().length >= 3;
+
+  return (
+    <Dialog open={!!process} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Update mandate — {process?.processName}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          {(process?.mandates.length ?? 0) > 1 && (
+            <div>
+              <Label>Mandate row</Label>
+              <Select value={mandateId} onValueChange={pickMandate}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {process!.mandates.map((m, i) => (
+                    <SelectItem key={m.id} value={m.id}>Row {i + 1} — {m.mandatedHc} HC</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div>
+            <Label>Mandated HC</Label>
+            <Input type="number" min={0} value={hc} onChange={(e) => setHc(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div><Label>Shrinkage %</Label><Input type="number" min={0} max={49} value={shrink} onChange={(e) => setShrink(e.target.value)} /></div>
+            <div><Label>Attrition %</Label><Input type="number" min={0} max={49} value={attr} onChange={(e) => setAttr(e.target.value)} /></div>
+            <div><Label>Training %</Label><Input type="number" min={0} max={49} value={train} onChange={(e) => setTrain(e.target.value)} /></div>
+          </div>
+          <div>
+            <Label>Reason for change</Label>
+            <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Client revised mandate from 120 to 150 (email 28/09)" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={!valid || saving}>{saving ? "Saving…" : "Save mandate"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function WFMCapacityDashboard() {
   const [branchFilter, setBranchFilter] = useState(ALL);
+  const [editing, setEditing] = useState<CapacitySummary["byProcess"][0] | null>(null);
+  const queryClient = useQueryClient();
+  const { hasAnyRole, isResolved } = useWorkforceAccess();
+  const canEditMandate = isResolved && hasAnyRole(...MANDATE_EDIT_ROLES);
 
   const { data: branchData } = useQuery({
     queryKey: ["capacity", "branches"],
+    staleTime: 10 * 60 * 1000,
     queryFn: () => hrmsApi.get<{ data: Array<{ id: string; branch_name: string }> }>("/api/org/branches"),
   });
 
   const { data: capacityData, isLoading, refetch, isError } = useQuery({
     queryKey: ["capacity", "summary", branchFilter],
+    staleTime: 30 * 1000,
+    placeholderData: (prev) => prev,
     queryFn: () => {
       const params = new URLSearchParams();
       if (branchFilter !== ALL) params.set("branchId", branchFilter);
@@ -553,7 +688,19 @@ export default function WFMCapacityDashboard() {
       inTrainingHC: Number(s?.inTrainingHc ?? 0),
       pipHC: 0,
     },
-    byProcess: [],
+    byProcess: (capacityData?.byProcess ?? []).map((r) => ({
+      processId: r.processId,
+      processName: r.processName,
+      branchName: r.branchName,
+      mandatedHC: Number(r.mandatedHc ?? 0),
+      requiredHC: Number(r.requiredHc ?? 0),
+      activeHC: Number(r.activeHc ?? 0),
+      availableHC: Number(r.availableHc ?? 0),
+      gap: Number(r.gap ?? 0),
+      coveragePct: Number(r.coveragePct ?? 0),
+      riskLevel: String(r.riskSignal ?? "green").toUpperCase() as "GREEN" | "AMBER" | "RED",
+      mandates: r.mandates ?? [],
+    })),
     byBranch: [],
     trend: [],
   };
@@ -756,10 +903,20 @@ export default function WFMCapacityDashboard() {
                 </div>
               ) : (
                 capacity.byProcess.map((process) => (
-                  <ProcessCapacityRow key={process.processId} process={process} />
+                  <ProcessCapacityRow
+                    key={`${process.processId}|${process.branchName ?? ""}`}
+                    process={process}
+                    onEdit={canEditMandate && process.mandates.length > 0 ? () => setEditing(process) : undefined}
+                  />
                 ))
               )}
             </GlassCard>
+
+            <EditMandateDialog
+              process={editing}
+              onClose={() => setEditing(null)}
+              onSaved={() => queryClient.invalidateQueries({ queryKey: ["capacity", "summary"] })}
+            />
 
             {/* Headcount by LOB (read-only; mandates are per process, not per LOB) */}
             {(capacityData?.headcountByLob?.length ?? 0) > 0 && (

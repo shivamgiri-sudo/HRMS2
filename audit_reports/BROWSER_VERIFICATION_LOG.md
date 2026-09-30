@@ -319,3 +319,9 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - Manual dry-run of `computeStudioKpis` for 2026-09-29 on prod (nothing written): 1040 definitions, 592 would be written, 87 no-data, 0 errors (the pause_seconds error is gone). One source failure: dialler table `vicidial_agent_log_11_5` is marked crashed (BELLA_AGENT_LOG) -- dialler DBA must repair.
 - The compute only handles yesterday, so it does not backfill the ~20 stale days.
 - Finance tiles now say "Calculating…" and re-check every 15s while the server's first P&L calculation runs (not reproduced visually after deploy).
+
+## 2026-09-30 — WFM Capacity Dashboard: per-process coverage, mandate edit, speed
+- Files: workforce.mandate.routes.ts, WFMCapacityDashboard.tsx, ops-command.indexes.ts, migration 1921.
+- Checked (Playwright chromium, temp harness page, mocked /api, harness deleted): per-process rows render (mandated/required/active/available/coverage/gap), no "Failed to load", zero console/page errors. finance_head: Mandate buttons shown, Save disabled until reason entered, PATCH body correct. team_leader: no edit buttons.
+- Live DB (read-only): 21 active mandates; long-leave query measured ~3.6s without a covering index.
+- NOT verified: per-process GROUP BY queries and PATCH scope check against a DB through the real handler; migration 1921 and index idx_lr_capacity_cover not yet applied; login-gated real page; production data.

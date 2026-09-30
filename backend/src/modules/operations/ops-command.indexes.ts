@@ -31,6 +31,15 @@ export const OPS_INDEXES: OpsIndexSpec[] = [
   { table: "kpi_daily_actual", name: "idx_ops_kda_cover", columns: "score_date, employee_id, metric_id, actual_value, numerator_value, denominator_value" },
 ];
 
+/**
+ * WFM Capacity Dashboard (/api/workforce-mandate/capacity-summary). Kept apart from OPS_INDEXES, which a test pins.
+ * The long-leave count reads leave_request by status + to_date + total_days; without a covering index it fetches ~15k
+ * wide rows to find none (measured 3.6s on a 30k-row table). Deliberately no `employees` index — see above.
+ */
+export const CAPACITY_INDEXES: OpsIndexSpec[] = [
+  { table: "leave_request", name: "idx_lr_capacity_cover", columns: "status, to_date, total_days, employee_id" },
+];
+
 const BUSY_QUERY_SECONDS = 15;
 const ALTER_LOCK_WAIT_SECONDS = 3;
 
@@ -118,7 +127,7 @@ export function scheduleOpsIndexes(): void {
   if (timer || process.env.OPS_INDEXES === "false" || process.env.NODE_ENV === "test") return;
   const tick = async () => {
     try {
-      const r = await ensureOpsIndexes();
+      const r = await ensureOpsIndexes([...OPS_INDEXES, ...CAPACITY_INDEXES]);
       if (r.created.length) logger.info(`[ops-command] indexes created: ${r.created.join(", ")}`);
       if (r.failed.length) logger.warn(`[ops-command] index creation deferred: ${r.failed.map((f) => `${f.name} (${f.reason})`).join("; ")}`);
       if (!r.skippedBusy.length && !r.failed.length && timer) {

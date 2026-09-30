@@ -8,8 +8,41 @@ import { getHcFormula } from "./hc-formula.service.js";
 import { lmsDb } from "../../db/lms-mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { lookupLobNames } from "../../shared/lobNames.js";
+import { assertScopedAccessOrThrow, hasAnyRole } from "../../shared/scopeAccess.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
+
+/**
+ * Roles allowed to CHANGE a mandate. Org-wide roles edit anything; the scoped roles are held to
+ * their own branch/process through user_assignment_scope (same rule as roster publication).
+ */
+const MANDATE_EDIT_ROLES = [
+  "super_admin", "admin", "hr", "finance_head", "finance",
+  "process_manager", "branch_admin", "branch_head", "operations_manager", "branch_wfm",
+];
+const MANDATE_ORG_WIDE_ROLES = ["super_admin", "admin", "hr", "finance_head", "finance"];
+
+async function assertCanEditMandate(userId: string, target: { branchId?: string | null; processId?: string | null }) {
+  if (await hasAnyRole(userId, ...MANDATE_ORG_WIDE_ROLES)) return;
+  await assertScopedAccessOrThrow(
+    userId,
+    MANDATE_EDIT_ROLES,
+    target,
+    "Forbidden: you can only change mandates for your own branch/process",
+  );
+}
 
 const router = Router();
+
+// 30s in-memory cache of the (user-independent) capacity payload, per branch filter. Mandate
+// edits clear it so the editor sees their change immediately.
+const capacityCache = new Map<string, { at: number; body: unknown }>();
+const CAPACITY_TTL_MS = 30_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let t: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, rej) => { t = setTimeout(() => rej(new Error(`timed out after ${ms}ms`)), ms); });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(t));
+}
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
@@ -37,11 +70,11 @@ router.get(
 /**
  * POST /api/workforce-mandate
  * Upsert a mandate record.
- * Roles: admin | hr
+ * Roles: MANDATE_EDIT_ROLES (scoped roles limited to their own branch/process)
  */
 router.post(
   "/",
-  requireRole("admin", "hr"),
+  requireRole(...MANDATE_EDIT_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const {
       processId, branchId, roleGroup, hcType, mandatedHc,
@@ -59,6 +92,9 @@ router.post(
         error: "processId, roleGroup, hcType, mandatedHc, and effectiveFrom are required",
       });
     }
+
+    await assertCanEditMandate(req.authUser!.id, { branchId: branchId ?? null, processId });
+    capacityCache.clear();
 
     const record = await workforceMandateService.upsertMandate(
       {
@@ -79,6 +115,83 @@ router.post(
 
     return res.json({ data: record });
   })
+);
+
+/**
+ * PATCH /api/workforce-mandate/:id
+ * Change headcount / buffers of an existing mandate (e.g. client revised the mandate).
+ * A reason is mandatory and the before/after values are audited.
+ */
+router.patch(
+  "/:id",
+  requireRole(...MANDATE_EDIT_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { mandatedHc, shrinkagePct, attritionBufferPct, trainingBufferPct, reason } = req.body as Record<string, unknown>;
+    const reasonText = String(reason ?? "").trim();
+    if (reasonText.length < 3) return res.status(400).json({ error: "reason is required" });
+
+    const pct = (v: unknown) => (v === undefined || v === null || v === "" ? undefined : Number(v));
+    const next = {
+      mandated_hc: pct(mandatedHc),
+      shrinkage_pct: pct(shrinkagePct),
+      attrition_buffer_pct: pct(attritionBufferPct),
+      training_buffer_pct: pct(trainingBufferPct),
+    };
+    if (next.mandated_hc === undefined && next.shrinkage_pct === undefined
+      && next.attrition_buffer_pct === undefined && next.training_buffer_pct === undefined) {
+      return res.status(400).json({ error: "nothing to update" });
+    }
+    if (next.mandated_hc !== undefined && (!Number.isInteger(next.mandated_hc) || next.mandated_hc < 0 || next.mandated_hc > 100000)) {
+      return res.status(400).json({ error: "mandatedHc must be a whole number between 0 and 100000" });
+    }
+    for (const k of ["shrinkage_pct", "attrition_buffer_pct", "training_buffer_pct"] as const) {
+      const v = next[k];
+      if (v !== undefined && (!Number.isFinite(v) || v < 0 || v >= 50)) {
+        return res.status(400).json({ error: `${k} must be between 0 and 50` });
+      }
+    }
+
+    const { db } = await import("../../db/mysql.js");
+    const [rows] = await db.execute<any[]>(
+      `SELECT id, process_id, branch_id, role_group, mandated_hc, shrinkage_pct, attrition_buffer_pct, training_buffer_pct
+         FROM workforce_mandate WHERE id = ? AND active_status = 1 LIMIT 1`,
+      [req.params.id],
+    );
+    const before = rows[0];
+    if (!before) return res.status(404).json({ error: "Mandate not found" });
+
+    await assertCanEditMandate(req.authUser!.id, { branchId: before.branch_id, processId: before.process_id });
+
+    await db.execute(
+      `UPDATE workforce_mandate SET
+         mandated_hc          = COALESCE(?, mandated_hc),
+         shrinkage_pct        = COALESCE(?, shrinkage_pct),
+         attrition_buffer_pct = COALESCE(?, attrition_buffer_pct),
+         training_buffer_pct  = COALESCE(?, training_buffer_pct)
+       WHERE id = ?`,
+      [next.mandated_hc ?? null, next.shrinkage_pct ?? null, next.attrition_buffer_pct ?? null, next.training_buffer_pct ?? null, req.params.id],
+    );
+
+    capacityCache.clear();
+    await logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "WORKFORCE_MANDATE_UPDATED",
+      module_key: "WORKFORCE_MANDATE",
+      entity_type: "workforce_mandate",
+      entity_id: String(req.params.id),
+      reason: reasonText,
+      change_summary: {
+        process_id: before.process_id,
+        before: {
+          mandated_hc: before.mandated_hc, shrinkage_pct: before.shrinkage_pct,
+          attrition_buffer_pct: before.attrition_buffer_pct, training_buffer_pct: before.training_buffer_pct,
+        },
+        after: next,
+      },
+    });
+
+    return res.json({ data: { id: req.params.id, ...next } });
+  }),
 );
 
 /**
@@ -163,11 +276,15 @@ router.get(
     "hr", "admin", "super_admin", "wfm", "ceo",
     "branch_wfm", "branch_head", "process_manager", "manager", "assistant_manager",
     "team_leader", "tl", "tq_head", "trainer", "qa",
+    "finance_head", "finance", "branch_admin", "operations_manager",
     // Designation-based audience that no existing role can express - see migration 1689.
     "capacity_viewer",
   ),
   h(async (req: AuthenticatedRequest & Request, res: Response) => {
     const { branchId } = req.query as { branchId?: string };
+    const cacheKey = branchId ?? "__all__";
+    const hit = capacityCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < CAPACITY_TTL_MS) return res.json(hit.body);
 
     const [mandates] = await (await import("../../db/mysql.js")).db.execute<any[]>(
       `SELECT
@@ -195,39 +312,11 @@ router.get(
     )`;
     const processIds = Array.from(new Set(mandates.map((m: any) => String(m.process_id))));
 
-    const zeroRow = [{ cnt: 0 }];
-    const [activeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
-      `SELECT COUNT(*) AS cnt FROM employees e
-       JOIN designation_master d   ON d.id    = e.designation_id
-       LEFT JOIN department_master dept ON dept.id = e.department_id
-       WHERE e.active_status = 1 AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
-       ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [processIds, branchId] : [processIds]
-    );
-    const [onNoticeRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
-      `SELECT COUNT(*) AS cnt FROM exit_request er
-       JOIN employees e ON er.employee_id = e.id
-       JOIN designation_master d   ON d.id    = e.designation_id
-       LEFT JOIN department_master dept ON dept.id = e.department_id
-       WHERE er.status IN ('accepted','notice_serving')
-         AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
-         ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [processIds, branchId] : [processIds]
-    );
-    const [longLeaveRows] = processIds.length === 0 ? [zeroRow] : await db.query<any[]>(
-      `SELECT COUNT(*) AS cnt FROM leave_request lr
-       JOIN employees e ON lr.employee_id = e.id
-       JOIN designation_master d   ON d.id    = e.designation_id
-       LEFT JOIN department_master dept ON dept.id = e.department_id
-       WHERE lr.status = 'approved' AND lr.to_date >= CURDATE() AND lr.total_days >= 5
-         AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
-         ${branchId ? 'AND e.branch_id = ?' : ''}`,
-      branchId ? [processIds, branchId] : [processIds]
-    );
     // Read-only breakdown of the same active production seats by LOB (employees.lob_id). Mandates are
     // per process/branch and are NOT LOB-keyed, so this is informational and changes no total above.
     // LOB names come from a separate parameterised lookup (never a JOIN: mixed collations).
     let headcountByLob: Array<{ lobId: string | null; lobName: string | null; activeHc: number }> = [];
+    const lobTask = (async () => {
     if (processIds.length > 0) {
       try {
         const [lobRows] = await db.query<any[]>(
@@ -249,6 +338,53 @@ router.get(
         console.error("[capacity-summary] headcount-by-LOB lookup failed, omitting:", err);
       }
     }
+    })();
+    // Per process+branch split of the same three populations, so the dashboard can show coverage
+    // per process instead of one org-wide number. Same PROD_SEAT_SQL / same filters as the totals.
+    type PB = { active: number; notice: number; leave: number; training: number };
+    const pbKey = (pid: unknown, bid: unknown) => `${pid ?? ""}|${bid ?? ""}`;
+    const pb = new Map<string, PB>();
+    const pbGet = (pid: unknown, bid: unknown): PB => {
+      const k = pbKey(pid, bid);
+      let v = pb.get(k);
+      if (!v) { v = { active: 0, notice: 0, leave: 0, training: 0 }; pb.set(k, v); }
+      return v;
+    };
+    // The three counts are independent — run them together. They also supply the org-wide totals
+    // (sum of the per-process rows), so there is no second pass over `employees`. Not swallowed:
+    // without them the page has nothing true to show, same as the old total queries.
+    const pbTask = (async () => {
+      if (processIds.length === 0) return;
+      const scopeSql = branchId ? 'AND e.branch_id = ?' : '';
+      const scopeParams = (): unknown[] => (branchId ? [processIds, branchId] : [processIds]);
+      const [[a], [n], [l]] = await Promise.all([
+        db.query<any[]>(
+          `SELECT e.process_id pid, e.branch_id bid, COUNT(*) cnt FROM employees e
+           JOIN designation_master d ON d.id = e.designation_id
+           LEFT JOIN department_master dept ON dept.id = e.department_id
+           WHERE e.active_status = 1 AND ${PROD_SEAT_SQL} AND e.process_id IN (?) ${scopeSql}
+           GROUP BY e.process_id, e.branch_id`, scopeParams()),
+        db.query<any[]>(
+          `SELECT e.process_id pid, e.branch_id bid, COUNT(*) cnt FROM exit_request er
+           JOIN employees e ON er.employee_id = e.id
+           JOIN designation_master d ON d.id = e.designation_id
+           LEFT JOIN department_master dept ON dept.id = e.department_id
+           WHERE er.status IN ('accepted','notice_serving') AND ${PROD_SEAT_SQL} AND e.process_id IN (?) ${scopeSql}
+           GROUP BY e.process_id, e.branch_id`, scopeParams()),
+        db.query<any[]>(
+          `SELECT e.process_id pid, e.branch_id bid, COUNT(*) cnt FROM leave_request lr
+           JOIN employees e ON lr.employee_id = e.id
+           JOIN designation_master d ON d.id = e.designation_id
+           LEFT JOIN department_master dept ON dept.id = e.department_id
+           WHERE lr.status = 'approved' AND lr.to_date >= CURDATE() AND lr.total_days >= 5
+             AND ${PROD_SEAT_SQL} AND e.process_id IN (?) ${scopeSql}
+           GROUP BY e.process_id, e.branch_id`, scopeParams()),
+      ]);
+      for (const r of a) pbGet(r.pid, r.bid).active += Number(r.cnt);
+      for (const r of n) pbGet(r.pid, r.bid).notice += Number(r.cnt);
+      for (const r of l) pbGet(r.pid, r.bid).leave += Number(r.cnt);
+    })();
+
     // In Training = live headcount sitting in an active NHT (New Hire Training) batch in the
     // LMS, for the processes actually in view — not the whole ats_candidate table (every
     // process, every branch, the platform's entire application history: 34,905 rows, which
@@ -266,16 +402,18 @@ router.get(
     // Read-only, wrapped and never thrown: an LMS outage must not take down the rest of this
     // dashboard, which is otherwise entirely HRMS-local. Failure -> 0, same as "no data yet".
     let inTrainingHc = 0;
+    const lmsTask = (async () => {
     if (processIds.length > 0) {
       try {
-        const [lmsRows] = await lmsDb.query<RowDataPacket[]>(
+        // Bounded: a slow LMS must not hold the whole dashboard open.
+        const [lmsRows] = await withTimeout(lmsDb.query<RowDataPacket[]>(
           `SELECT tm.process_hrms_id, tm.branch_hrms_id, tm.process AS process_name,
                   tm.branch AS branch_name, COUNT(*) AS cnt
            FROM trainee_master tm
            JOIN batch_master bm ON bm.batch_no = tm.batch_no
            WHERE bm.batch_type = 'NHT' AND bm.batch_status = 'Active'
            GROUP BY tm.process_hrms_id, tm.branch_hrms_id, tm.process, tm.branch`
-        );
+        ), 4000);
 
         const inScopeProcessIds = new Set<string>(processIds);
         const inScopeProcessNames = new Set<string>(
@@ -303,16 +441,24 @@ router.get(
           }
 
           inTrainingHc += Number(row.cnt ?? 0);
+          // Attribute to the mandate row(s) of that process (by id, else by name) for the per-process view.
+          const target = mandates.find((m: any) =>
+            (rowProcessId ? String(m.process_id) === rowProcessId
+              : String(m.process_name ?? "").trim().toLowerCase() === String(row.process_name ?? "").trim().toLowerCase())
+            && (!m.branch_id || !row.branch_hrms_id || String(m.branch_id) === String(row.branch_hrms_id)));
+          if (target) pbGet(target.process_id, target.branch_id).training += Number(row.cnt ?? 0);
         }
       } catch (err: unknown) {
         console.error("[capacity-summary] LMS in-training lookup failed, defaulting to 0:", err);
         inTrainingHc = 0;
       }
     }
+    })();
 
-    const activeHc = Number(activeRows[0]?.cnt ?? 0);
-    const onNoticeHc = Number(onNoticeRows[0]?.cnt ?? 0);
-    const longLeaveHc = Number(longLeaveRows[0]?.cnt ?? 0);
+    await Promise.all([lobTask, pbTask, lmsTask]);
+
+    let activeHc = 0, onNoticeHc = 0, longLeaveHc = 0;
+    for (const v of pb.values()) { activeHc += v.active; onNoticeHc += v.notice; longLeaveHc += v.leave; }
     const availableProductionHc = Math.max(0, activeHc - onNoticeHc - longLeaveHc - inTrainingHc);
 
     // Aggregate mandate totals
@@ -353,7 +499,43 @@ router.get(
       };
     }).sort((a: any, b: any) => b.requiredHc - a.requiredHc);
 
-    return res.json({
+    // One row per process+branch; mandate rows of the same key (different role_group) are summed and
+    // kept under `mandates` so the UI can edit the exact row.
+    const grouped = new Map<string, any>();
+    for (const m of mandates as any[]) {
+      const k = pbKey(m.process_id, m.branch_id);
+      let g = grouped.get(k);
+      if (!g) {
+        g = { processId: m.process_id, processName: m.process_name, branchId: m.branch_id ?? null,
+              branchName: m.branch_name ?? null, mandatedHc: 0, mandates: [] as any[] };
+        grouped.set(k, g);
+      }
+      g.mandatedHc += Number(m.mandated_hc || 0);
+      g.mandates.push({
+        id: m.id, mandatedHc: Number(m.mandated_hc || 0), shrinkagePct: Number(m.shrinkage_pct ?? 15),
+        attritionBufferPct: Number(m.attrition_buffer_pct ?? 5), trainingBufferPct: Number(m.training_buffer_pct ?? 5),
+      });
+    }
+    const byProcess = Array.from(grouped.entries()).map(([k, g]) => {
+      const c = pb.get(k) ?? { active: 0, notice: 0, leave: 0, training: 0 };
+      const ms = g.mandates as any[];
+      const avg = (f: string) => ms.reduce((t, x) => t + x[f], 0) / ms.length;
+      const denom = 1 - avg("attritionBufferPct") / 100 - avg("trainingBufferPct") / 100;
+      const required = Math.round(g.mandatedHc * (1 + avg("shrinkagePct") / 100) / (denom > 0 ? denom : 0.01));
+      const available = Math.max(0, c.active - c.notice - c.leave - c.training);
+      const coverage = required > 0 ? Math.round((available / required) * 100) : 100;
+      return {
+        processId: g.processId, processName: g.processName, branchId: g.branchId, branchName: g.branchName,
+        mandatedHc: g.mandatedHc, requiredHc: required, activeHc: c.active, onNoticeHc: c.notice,
+        longLeaveHc: c.leave, inTrainingHc: c.training, availableHc: available,
+        gap: required - available, coveragePct: coverage,
+        riskSignal: coverage >= 95 ? 'green' : coverage >= 80 ? 'amber' : 'red',
+        mandates: ms,
+      };
+    }).sort((a, b) => b.gap - a.gap);
+
+    const payload = {
+      byProcess,
       summary: {
         totalMandatedHc,
         requiredStaffedHc,
@@ -375,7 +557,9 @@ router.get(
       },
       hiringByProcess,
       headcountByLob,
-    });
+    };
+    capacityCache.set(cacheKey, { at: Date.now(), body: payload });
+    return res.json(payload);
   })
 );
 
