@@ -945,12 +945,15 @@
     "migrations/1951_analytics_dashboards.sql",
     "migrations/1960_upload_batch_retention.sql",
     "migrations/1961_bbb_upload_rules.sql",
+    "migrations/1952_process_inbound_config.sql",
     "migrations/1964_bbb_received_summary.sql",
     "migrations/1921_capacity_mandate_editors.sql",
     "1931_bank_exception_email_template.sql",
     "1932_sbi_card_collections.sql",
     "1941_process_dashboard_config.sql",
-    "1962_budget_topup_cancel.sql"
+    "1962_budget_topup_cancel.sql",
+    "migrations/1970_process_dashboard_alerts.sql",
+    "migrations/1971_process_sales_outbound_source_config.sql"
   ],
   "approvedDeletions": [
     {
@@ -1189,8 +1192,11 @@
     "migrations/1951_analytics_dashboards.sql",
     "migrations/1960_upload_batch_retention.sql",
     "migrations/1961_bbb_upload_rules.sql",
+    "migrations/1952_process_inbound_config.sql",
     "migrations/1964_bbb_received_summary.sql",
-    "migrations/1921_capacity_mandate_editors.sql"
+    "migrations/1921_capacity_mandate_editors.sql",
+    "migrations/1970_process_dashboard_alerts.sql",
+    "migrations/1971_process_sales_outbound_source_config.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

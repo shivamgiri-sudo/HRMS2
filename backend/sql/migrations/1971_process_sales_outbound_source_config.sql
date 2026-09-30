@@ -1,4 +1,4 @@
--- Migration 1961: process_sales_source_config + process_outbound_source_config -- the order/CDR sources of a SALES or OUTBOUND process, so a NEW
+-- Migration 1971: process_sales_source_config + process_outbound_source_config -- the order/CDR sources of a SALES or OUTBOUND process, so a NEW
 -- process of those categories gets a data-driven dashboard (Sales / Outbound tabs of the Process Dashboard) without a code change.
 --
 -- process_sales_source_config: one row per process. orders_schema/orders_table name a table in db_masmis or mas_hrms; column_map maps canonical
@@ -12,6 +12,9 @@
 -- Nothing stored here is trusted: the read path (process-dashboard/shared) re-validates every name against information_schema and
 -- refuses personal-data columns before any SQL is built. ADDITIVE ONLY: two new tables, no seed rows. Idempotent: re-running changes nothing.
 
+-- No foreign key to process_master, deliberately: creating one takes a metadata lock on that very busy table, and on
+-- 2026-09-30 that wait timed out at startup (Lock wait timeout exceeded) for migrations 1952 and 1970 and rolled the deploy back.
+-- process_id is still uniquely indexed; rows of a deleted process are simply never read.
 CREATE TABLE IF NOT EXISTS process_sales_source_config (
   id                  CHAR(36)     NOT NULL DEFAULT (UUID()),
   process_id          CHAR(36)     NOT NULL,
@@ -33,8 +36,7 @@ CREATE TABLE IF NOT EXISTS process_sales_source_config (
   updated_at          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_pssc_process (process_id),
-  KEY idx_pssc_enabled (enabled),
-  CONSTRAINT fk_pssc_process FOREIGN KEY (process_id) REFERENCES process_master (id) ON DELETE CASCADE
+  KEY idx_pssc_enabled (enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS process_outbound_source_config (
@@ -54,6 +56,5 @@ CREATE TABLE IF NOT EXISTS process_outbound_source_config (
   updated_at                TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_posc_process (process_id),
-  KEY idx_posc_enabled (enabled),
-  CONSTRAINT fk_posc_process FOREIGN KEY (process_id) REFERENCES process_master (id) ON DELETE CASCADE
+  KEY idx_posc_enabled (enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
