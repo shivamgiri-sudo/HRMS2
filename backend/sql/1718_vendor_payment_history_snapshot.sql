@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS vendor_payment_run_snapshot (
   UNIQUE KEY uq_payment_run_source (bill_source_id),
   INDEX idx_run_branch_fy (branch_name, financial_year),
   INDEX idx_run_pay_date (pay_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Read-only mirror of db_bill.tbl_payment — vendor payment run headers (money that actually went out)';
 
 -- 2. vendor_bill_payment_snapshot — from db_bill.bill_pay_particulars
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS vendor_bill_payment_snapshot (
   INDEX idx_bp_bill_no (bill_no(80)),
   INDEX idx_bp_branch_fy (branch_name, financial_year),
   INDEX idx_bp_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Read-only mirror of db_bill.bill_pay_particulars — per-bill paid history: TDS deducted, net amount paid, pass/reject status';
 
 -- 3. vendor_bill_deduction_snapshot — from db_bill.other_deductions_bill
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS vendor_bill_deduction_snapshot (
   UNIQUE KEY uq_bill_deduction_source (bill_source_id),
   INDEX idx_bd_bill_no (bill_no(80)),
   INDEX idx_bd_branch_fy (branch_name, financial_year)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Read-only mirror of db_bill.other_deductions_bill — extra deductions applied on vendor bills before payment';
 
 -- 4. billing_client_ledger_snapshot — from db_bill.billing_ledger
@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS billing_client_ledger_snapshot (
   UNIQUE KEY uq_ledger_source (bill_source_id),
   INDEX idx_ledger_client (client_source_id),
   INDEX idx_ledger_fy (finance_year, finance_month)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Read-only mirror of db_bill.billing_ledger — client subscription/talktime/topup/setup-cost billing ledger';
 
 -- 5. billing_opening_balance_snapshot — from db_bill.billing_opening_balance
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS billing_opening_balance_snapshot (
   synced_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_ob_source (bill_source_id),
   INDEX idx_ob_client (client_source_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Read-only mirror of db_bill.billing_opening_balance — client opening balances carried into the billing system';
 
 -- 6. bill_no_master_snapshot — from db_bill.bill_no_master
@@ -188,5 +188,5 @@ CREATE TABLE IF NOT EXISTS bill_no_master_snapshot (
   synced_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_bnm_source (bill_source_id),
   INDEX idx_bnm_fy (finance_year)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Read-only mirror of db_bill.bill_no_master — bill numbering sequence master';

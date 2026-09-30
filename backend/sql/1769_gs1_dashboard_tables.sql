@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS gs1_email_daily_actual (
   created_at        DATETIME         DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_gs1_email_daily (process_id, report_date, analyst_name, mail_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS gs1_datakart_daily_actual (
   id                VARCHAR(36)      NOT NULL,
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS gs1_datakart_daily_actual (
   created_at        DATETIME         DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_gs1_datakart_daily (process_id, report_date, analyst_name, task_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS gs1_approval_audit_raw (
   id                VARCHAR(36)      NOT NULL,
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS gs1_approval_audit_raw (
   created_by        VARCHAR(36)      DEFAULT NULL,
   created_at        DATETIME         DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO upload_template_master
   (upload_type_code, upload_type_name, target_table, required_columns, optional_columns, active_status)

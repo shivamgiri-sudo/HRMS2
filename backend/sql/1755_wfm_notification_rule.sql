@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS wfm_notification_rule (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_wfm_notification_rule_alert_type (alert_type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Seed with the same 8 rules the mock UI already showed, so the page's first real load looks
 -- identical to what users have been seeing — nothing changes visually, only "Save" now works.
