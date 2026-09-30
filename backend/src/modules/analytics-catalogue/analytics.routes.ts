@@ -7,7 +7,7 @@ import { fieldValues, runQuery, scopeOptions } from "./query.service.js";
 import { ANALYTICS_VIEWER_ROLES } from "./scope.js";
 
 /**
- * /api/analytics — the catalogue and its query endpoint. Role gates only decide who may call; which ROWS come back is
+ * /api/analytics-catalogue — the catalogue and its query endpoint. Role gates only decide who may call; which ROWS come back is
  * always the viewer's own branch/process scope, applied inside the query service.
  */
 const router = Router();
@@ -68,4 +68,4 @@ router.delete("/admin/datasets/:code", requireRole(...ADMIN), h(async (req, res)
   res.json({ success: true });
 }));
 
-export { router as analyticsRouter };
+export { router as analyticsCatalogueRouter };

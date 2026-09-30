@@ -3,7 +3,7 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Route contracts for /api/analytics. requireRole is NOT mocked, so the role lists are exercised for real.
+ * Route contracts for /api/analytics-catalogue. requireRole is NOT mocked, so the role lists are exercised for real.
  * The guarantees pinned here: who may register datasets, that a viewer's mistake is a 400 with a readable message,
  * that the SQL sent to the database always carries the viewer's scope clause, and that an org-wide dataset is
  * refused to a scoped viewer.
@@ -26,14 +26,14 @@ vi.mock("../../../shared/scopeAccess.js", () => ({
   hasOrgWideScope: (...a: unknown[]) => orgWide(...a),
 }));
 
-import { analyticsRouter } from "../analytics.routes.js";
+import { analyticsCatalogueRouter } from "../analytics.routes.js";
 import { invalidateCatalogue } from "../catalogue.service.js";
 
 function appFor(role: string) {
   actor = { id: `user-${role}-${Math.random()}`, role, roles: [role] };
   const app = express();
   app.use(express.json());
-  app.use("/api/analytics", analyticsRouter);
+  app.use("/api/analytics-catalogue", analyticsCatalogueRouter);
   return app;
 }
 
@@ -59,14 +59,14 @@ beforeEach(() => {
   });
 });
 
-describe("/api/analytics", () => {
+describe("/api/analytics-catalogue", () => {
   it("refuses roles outside the viewer list", async () => {
-    const res = await request(appFor("employee")).get("/api/analytics/datasets");
+    const res = await request(appFor("employee")).get("/api/analytics-catalogue/datasets");
     expect(res.status).toBe(403);
   });
 
   it("hides organisation-wide datasets and physical column names from a scoped viewer", async () => {
-    const res = await request(appFor("process_manager")).get("/api/analytics/datasets");
+    const res = await request(appFor("process_manager")).get("/api/analytics-catalogue/datasets");
     expect(res.status).toBe(200);
     expect(res.body.data.map((d: any) => d.code)).toEqual(["process_kpi_daily"]);
     expect(res.body.data[0].sourceTable).toBeUndefined();
@@ -74,7 +74,7 @@ describe("/api/analytics", () => {
   });
 
   it("always sends the viewer's scope clause to the database", async () => {
-    const res = await request(appFor("process_manager")).post("/api/analytics/query")
+    const res = await request(appFor("process_manager")).post("/api/analytics-catalogue/query")
       .send({ dataset: "process_kpi_daily", dimensions: [{ field: "date", grain: "day" }], measures: [{ field: "value" }], dateRange: { preset: "custom", from: "2026-09-01", to: "2026-09-30" } });
     expect(res.status).toBe(200);
     const dataCall = query.mock.calls.find(([sql]) => /FROM `process_metric_actual` t/.test(sql) && /GROUP BY/.test(sql))!;
@@ -84,21 +84,21 @@ describe("/api/analytics", () => {
   });
 
   it("turns a viewer's mistake into a 400 with a readable message", async () => {
-    const res = await request(appFor("manager")).post("/api/analytics/query")
+    const res = await request(appFor("manager")).post("/api/analytics-catalogue/query")
       .send({ dataset: "process_kpi_daily", dimensions: [{ field: "password" }], measures: [{ agg: "count" }] });
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/Unknown field "password"/);
   });
 
   it("unknown dataset is 404; org dataset is 403 for a scoped viewer", async () => {
-    expect((await request(appFor("manager")).post("/api/analytics/query").send({ dataset: "nope", dimensions: [], measures: [{ agg: "count" }] })).status).toBe(404);
-    expect((await request(appFor("manager")).post("/api/analytics/query").send({ dataset: "org_thing", dimensions: [], measures: [{ field: "n" }] })).status).toBe(403);
+    expect((await request(appFor("manager")).post("/api/analytics-catalogue/query").send({ dataset: "nope", dimensions: [], measures: [{ agg: "count" }] })).status).toBe(404);
+    expect((await request(appFor("manager")).post("/api/analytics-catalogue/query").send({ dataset: "org_thing", dimensions: [], measures: [{ field: "n" }] })).status).toBe(403);
   });
 
   it("only admins may register datasets or list tables", async () => {
-    expect((await request(appFor("process_manager")).post("/api/analytics/admin/datasets").send({})).status).toBe(403);
-    expect((await request(appFor("ceo")).get("/api/analytics/admin/tables")).status).toBe(403);
-    const res = await request(appFor("admin")).post("/api/analytics/admin/datasets").send({ code: "Bad Code" });
+    expect((await request(appFor("process_manager")).post("/api/analytics-catalogue/admin/datasets").send({})).status).toBe(403);
+    expect((await request(appFor("ceo")).get("/api/analytics-catalogue/admin/tables")).status).toBe(403);
+    const res = await request(appFor("admin")).post("/api/analytics-catalogue/admin/datasets").send({ code: "Bad Code" });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("INVALID_DATASET");
   });

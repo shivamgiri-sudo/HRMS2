@@ -44,7 +44,7 @@ Seeded datasets (all `hrms`): process KPI actuals (`process_metric_actual`), emp
 
 ### Query spec and compiler
 
-`POST /api/analytics/query` takes a `QuerySpec`:
+`POST /api/analytics-catalogue/query` takes a `QuerySpec`:
 `{ dataset, dimensions: [{ field, grain? }], measures: [{ field, agg, alias? }], filters: [{ field, op, value }],
 dateRange: { preset } | { from, to }, compare?: 'previous_period' | 'previous_year', scope?: { branchIds?, processIds? },
 sort?: [{ key, dir }], limit? }`
@@ -66,7 +66,7 @@ sort?: [{ key, dir }], limit? }`
 
 ### Endpoints
 
-`GET /api/analytics/datasets`, `GET /datasets/:code`, `POST /query`, `GET /scope-options` (branches and processes the
+`GET /api/analytics-catalogue/datasets`, `GET /datasets/:code`, `POST /query`, `GET /scope-options` (branches and processes the
 viewer can read). Admin (super_admin, admin): `POST/PUT/DELETE /datasets`, `POST /datasets/introspect` (column list of a
 table with guessed roles).
 

@@ -4,7 +4,7 @@
 
 **Goal:** A registry of datasets plus one safe, scope-enforcing query compiler that Dashboard Studio and KPI Studio both query.
 
-**Architecture:** Two tables (`analytics_dataset`, `analytics_dataset_field`). A pure compiler turns a `QuerySpec` + dataset + scope clause into parameterised SQL. A thin service resolves the viewer's scope with the existing `buildScopeWhereClause`, runs the SQL on the right pool with a 20 s execution cap, and caches 60 s. An Express router exposes it at `/api/analytics`.
+**Architecture:** Two tables (`analytics_dataset`, `analytics_dataset_field`). A pure compiler turns a `QuerySpec` + dataset + scope clause into parameterised SQL. A thin service resolves the viewer's scope with the existing `buildScopeWhereClause`, runs the SQL on the right pool with a 20 s execution cap, and caches 60 s. An Express router exposes it at `/api/analytics-catalogue`.
 
 **Tech Stack:** Express + TypeScript, mysql2, vitest; existing `buildScopeWhereClause` (`backend/src/shared/scopeAccess.ts:248`), `assertSafeIdentifier` (`backend/src/modules/integration-hub/adapters/databaseAdapter.ts:26`), `NAMED_POOLS` (`backend/src/modules/kpi/kpi-studio.pools.ts`).
 
@@ -15,15 +15,15 @@
 | File | Responsibility |
 |---|---|
 | `backend/sql/migrations/1950_analytics_catalogue.sql` | Tables + 5 seeded datasets |
-| `backend/src/modules/analytics/analytics.types.ts` | `Dataset`, `DatasetField`, `QuerySpec`, `QueryResult` types, enums as const arrays |
-| `backend/src/modules/analytics/date-range.ts` | Preset -> `{from,to}`, previous-period / previous-year shift (pure) |
-| `backend/src/modules/analytics/query-compiler.ts` | `validateSpec`, `compileQuery(dataset, spec, scope)` (pure) |
-| `backend/src/modules/analytics/scope.ts` | Viewer scope -> SQL clause per `scope_mode` (uses `buildScopeWhereClause`) |
-| `backend/src/modules/analytics/catalogue.service.ts` | Dataset CRUD, validation, introspection |
-| `backend/src/modules/analytics/query.service.ts` | Run a spec: scope, compile, execute, lookups, compare, cache |
-| `backend/src/modules/analytics/analytics.routes.ts` | HTTP surface |
-| `backend/src/modules/analytics/__tests__/*.test.ts` | compiler, date-range, scope, catalogue validation |
-| `backend/src/app.ts` | mount `/api/analytics` |
+| `backend/src/modules/analytics-catalogue/analytics.types.ts` | `Dataset`, `DatasetField`, `QuerySpec`, `QueryResult` types, enums as const arrays |
+| `backend/src/modules/analytics-catalogue/date-range.ts` | Preset -> `{from,to}`, previous-period / previous-year shift (pure) |
+| `backend/src/modules/analytics-catalogue/query-compiler.ts` | `validateSpec`, `compileQuery(dataset, spec, scope)` (pure) |
+| `backend/src/modules/analytics-catalogue/scope.ts` | Viewer scope -> SQL clause per `scope_mode` (uses `buildScopeWhereClause`) |
+| `backend/src/modules/analytics-catalogue/catalogue.service.ts` | Dataset CRUD, validation, introspection |
+| `backend/src/modules/analytics-catalogue/query.service.ts` | Run a spec: scope, compile, execute, lookups, compare, cache |
+| `backend/src/modules/analytics-catalogue/analytics.routes.ts` | HTTP surface |
+| `backend/src/modules/analytics-catalogue/__tests__/*.test.ts` | compiler, date-range, scope, catalogue validation |
+| `backend/src/app.ts` | mount `/api/analytics-catalogue` |
 | `backend/src/db/runPendingMigrations.ts`, `backend/sql/MIGRATION_MANIFEST.lock.json` | register migration |
 
 ## Contracts (all later tasks rely on these names)
