@@ -154,9 +154,9 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
             <Card icon={Users} label="Fresh Workable" value={fmt(m.freshWorkable)} sub={`Base ${fmt(m.freshBase)} · DND ${fmt(m.dnd)}`} />
             <Card icon={TrendingUp} label="Real Time Sales" value={fmt(m.realTimeSale)} sub={`Target ${fmt(m.targetSale)}`} />
-            <Card icon={Target} label="Sale Achievement" value={pct(m.saleAchievement)} sub={block.hasTarget ? undefined : "No target set"} />
-            <Card icon={IndianRupee} label="Revenue" value={inr(m.revenue)} sub={`Target ${inr(m.targetRevenue)} · ${pct(m.revenueAchievement)}`} />
-            <Card icon={TrendingUp} label="Delivery Conversion" value={pct(m.deliveryConversion)} sub={`Target ${pct(m.conversionTarget)}`} />
+            <Card icon={Target} label="Sale Achievement" value={m.targetSale > 0 ? pct(m.saleAchievement) : "—"} sub={m.targetSale > 0 ? undefined : block.hasTarget ? "Needs Received Data (workable base) to set the target" : "No target set"} />
+            <Card icon={IndianRupee} label="Revenue" value={inr(m.revenue)} sub={m.targetRevenue > 0 ? `Target ${inr(m.targetRevenue)} · ${pct(m.revenueAchievement)}` : "No target yet"} />
+            <Card icon={TrendingUp} label="Delivery Conversion" value={m.cappedData > 0 ? pct(m.deliveryConversion) : "—"} sub={m.cappedData > 0 ? `Target ${pct(m.conversionTarget)}` : "Needs Received Data"} />
             <Card icon={IndianRupee} label="AOV" value={inr(m.aov)} sub={`Prepaid ${pct(m.deliveryPrepaid)} · RTO ${pct(m.deliveryRto)}`} />
           </div>
 
@@ -187,7 +187,7 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
               ] as const).map(([l, v, s]) => (
                 <div key={l} className="rounded-xl bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">{l} Achievement</p>
-                  <p className={`text-xl font-bold ${achClass(v)}`}>{pct(v)}</p>
+                  <p className={`text-xl font-bold ${m.targetSale > 0 || l === "Prepaid" ? achClass(v) : "text-slate-300"}`}>{m.targetSale > 0 || l === "Prepaid" ? pct(v) : "—"}</p>
                   <p className="text-[11px] text-slate-400">{s}</p>
                 </div>
               ))}

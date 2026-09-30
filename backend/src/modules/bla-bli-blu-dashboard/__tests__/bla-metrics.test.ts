@@ -40,3 +40,16 @@ describe("bla-metrics", () => {
     expect(d.all.mtd.freshWorkable).toBe(230);
   });
 });
+
+describe("blended targets across LOBs", () => {
+  it("does not dilute prepaid / RTO targets with LOBs that have no target", () => {
+    const cfg = { lob: "Cart ABC", requiredPerDay: 100, capPct: 1.1, conversionTarget: 0.135, prepaidTarget: 0.85, rtoTarget: 0.05, targetAov: 600 };
+    const sales = [
+      { date: "2026-08-01", campaign: "Cart ABC", realTimeSale: 80, prepaid: 60, rto: 4, revenue: 48000, ptp: 0, h24: 0 },
+      { date: "2026-08-01", campaign: "Inbound", realTimeSale: 20, prepaid: 10, rto: 1, revenue: 12000, ptp: 0, h24: 0 },
+    ];
+    const r = buildDashboard([], sales, [cfg]);
+    expect(r.all.mtd.prepaidTarget).toBeCloseTo(0.85, 6);
+    expect(r.all.mtd.rtoTarget).toBeCloseTo(0.05, 6);
+  });
+});
