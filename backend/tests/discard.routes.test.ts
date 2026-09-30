@@ -118,7 +118,12 @@ describe("/api/discard — role gate", () => {
     ["hr", ["hr"], 403],
     ["manager", ["manager"], 403],
     ["employee", ["employee"], 403],
-    ["payroll_head", ["payroll_head"], 403],
+    // e81bfa00a (2026-09-03) added payroll_head on purpose: whoever corrects a day in
+    // Attendance Lookup must be able to reverse the leave behind it. Owner confirmed
+    // 2026-09-30. The payroll and finance rows keep the negative case on that side.
+    ["payroll_head", ["payroll_head"], 200],
+    ["payroll", ["payroll"], 403],
+    ["finance", ["finance"], 403],
   ];
 
   for (const [label, roles, expected] of cases) {

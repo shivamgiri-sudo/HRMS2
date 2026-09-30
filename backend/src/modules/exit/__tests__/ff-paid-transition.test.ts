@@ -357,22 +357,16 @@ describe("approveFF — approval is guarded on the state it was decided on", () 
     await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(/already paid/i);
   });
 
-  it("no longer gates approval on the provisional flag (2-step F&F, ee3a7b80e)", async () => {
-    // This asserted the opposite until ee3a7b80e (2026-09-23) deliberately removed the
-    // is_ff_provisional gate: F&F approves in two steps (prepare -> approve), not three.
-    // exitFF.twoStep.contract.test.ts pins the same decision. What must still hold for a
-    // provisional row is everything else approveFF guarantees: the status-guarded UPDATE
-    // and an audit entry for the approval.
+  it("refuses to approve a provisional calculation, and writes nothing", async () => {
+    // ee3a7b80e (2026-09-23) removed this gate from the service while the HTTP route kept
+    // it. Owner decision 2026-09-30: the service refuses too.
     stub(ffRow({ status: "draft", is_ff_provisional: 1, approved_by: null }));
-    // The stub does not answer getFF's re-read, so the call rejects AFTER the approval.
-    await ffService.approveFF(FF_ID, APPROVER).catch(() => undefined);
+    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(/provisional statutory values/);
 
     const update = execute.mock.calls.find(([s]) => String(s).includes("SET status = 'approved'"));
-    expect(update, "no approval UPDATE was issued for a provisional calculation").toBeTruthy();
-    expect(String(update![0])).toContain("AND status = ?");
-    expect(update![1]).toEqual([APPROVER, FF_ID, "draft"]);
-    expect(logSensitiveAction).toHaveBeenCalledWith(
-      expect.objectContaining({ action_type: "FULL_FINAL_APPROVED", entity_id: FF_ID }),
+    expect(update, "an approval UPDATE was issued for a provisional calculation").toBeUndefined();
+    expect(logSensitiveAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_type: "FULL_FINAL_APPROVED" }),
     );
   });
 });

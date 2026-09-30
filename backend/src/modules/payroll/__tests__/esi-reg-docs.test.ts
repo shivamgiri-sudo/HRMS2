@@ -239,7 +239,7 @@ describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
 describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("returns CSV with BOM, all 12 column headers, and masked account number", async () => {
+  it("returns CSV with BOM, all 12 column headers, and the full account number", async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([
       [{
         emp_code: "EMP001",
@@ -264,13 +264,15 @@ describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
     expect(res.text.charCodeAt(0)).toBe(0xfeff);
     const expectedColumns = [
       "Emp Code", "Name", "Branch", "ESIC Number", "PAN Number",
-      "Bank Name", "Account Number (Masked)", "IFSC Code",
+      "Bank Name", "Account Number", "IFSC Code",
       "Account Type", "PAN Ready", "Photo Ready", "Bank Ready",
     ];
     for (const col of expectedColumns) {
       expect(res.text).toContain(col);
     }
-    expect(res.text).toContain("****3210");
-    expect(res.text).not.toContain("9876543210");
+    // b2eba3ed2 (2026-09-17): ESI registration needs the usable number, so this
+    // role-gated HR export carries it in full. Owner confirmed 2026-09-30.
+    expect(res.text).toContain("9876543210");
+    expect(res.text).not.toContain("****3210");
   });
 });
