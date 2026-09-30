@@ -36,6 +36,11 @@
   "modules/performance-feedback/quality-upload.service.ts": [
     "quality_audit"
   ],
+  "modules/process-dashboard/alerts/alerts.repo.ts": [
+    "process_dashboard_alert_event",
+    "process_dashboard_alert_rule",
+    "process_dashboard_digest"
+  ],
   "modules/process-dashboard/pd.config.service.ts": [
     "process_dashboard_config"
   ],

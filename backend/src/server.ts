@@ -72,6 +72,7 @@ import { startBranchHealthReportScheduler } from "./modules/branch-health-report
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
 import { startQualityGapDetectorWorker } from "./workers/quality-gap-detector.worker.js";
+import { startProcessDashboardAlertsWorker } from "./modules/process-dashboard/alerts/alerts.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
 import { startLeaveApprovalReminderWorker } from "./workers/leave-approval-reminder.worker.js";
 import { startGrnApprovalReminderWorker } from "./workers/grn-approval-reminder.worker.js";
@@ -343,6 +344,7 @@ function startServer() {
         // QA skill gaps; tat-escalation above drives TAT/escalation for the task_type it
         // creates, so this worker sends no notification of its own.
         startQualityGapDetectorWorker();
+        startProcessDashboardAlertsWorker(); // Process Dashboard alerts + digests (dual registration, see all-workers.ts)
         // Same dual registration. This one was in NEITHER file: the worker was written
         // and the report_subscription table shipped, but nothing ever imported it, so a
         // scheduled report could never have run however it was configured. Gated by

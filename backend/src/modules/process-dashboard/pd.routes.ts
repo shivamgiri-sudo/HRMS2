@@ -12,6 +12,7 @@ import { getAgentDrill, getAgents, getDay, getOverview, categoryProfileOut } fro
 import { getLive, liveEtag, streamCsv } from "./pd.live.js";
 import { getWhy } from "./rootcause/why.service.js";
 import { getForecast } from "./forecast/fc.service.js";
+import { alertsRouter } from "./alerts/alerts.routes.js";
 
 /**
  * /api/process-dashboard -- config-driven dashboards for any process whose APR table has been registered (see sql/1941).
@@ -112,6 +113,7 @@ const scoped = (fn: (l: Awaited<ReturnType<typeof loadConfigOrThrow>>, req: Auth
     return fn(await loadConfigOrThrow(processId, opts), req, res);
   });
 
+router.use("/:processId/alerts", alertsRouter); // alerts + digests (own role/scope guards, rate limits)
 router.get("/:processId/config", viewer, h(async (req, res) => {
   const { processId } = req.params;
   if (!UUID_RE.test(processId)) throw new PdError(400, "BAD_PROCESS", "Invalid process id");

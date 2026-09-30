@@ -80,6 +80,7 @@ import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from ".
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
 import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
 import { startQualityGapDetectorWorker, stopQualityGapDetectorWorker } from "./quality-gap-detector.worker.js";
+import { startProcessDashboardAlertsWorker, stopProcessDashboardAlertsWorker } from "../modules/process-dashboard/alerts/alerts.worker.js";
 import { startLeaveApprovalReminderWorker, stopLeaveApprovalReminderWorker } from "./leave-approval-reminder.worker.js";
 import { startGrnApprovalReminderWorker, stopGrnApprovalReminderWorker } from "./grn-approval-reminder.worker.js";
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
@@ -446,6 +447,11 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startQualityGapDetectorWorker(); return Promise.resolve(); },
   },
   {
+    // Process Dashboard alert rules + digests. Registered in BOTH this file and server.ts.
+    name: "process-dashboard-alerts",
+    start: () => { startProcessDashboardAlertsWorker(); return Promise.resolve(); },
+  },
+  {
     // Owner directive 2026-09-16: every pending/actionable item must generate a reminder
     // if it stays unresolved. Registered in BOTH this file and server.ts from the start —
     // see the note by its server.ts call site on noc-sla-reminder.worker.ts, whose start
@@ -629,6 +635,7 @@ function shutdown(): void {
   stopReportStaleRecoveryWorker();
   stopTatEscalationWorker();
   stopQualityGapDetectorWorker();
+  stopProcessDashboardAlertsWorker();
   stopAtsDailyReportScheduler();
   stopBranchActivityReportScheduler();
   stopBranchHealthReportScheduler();

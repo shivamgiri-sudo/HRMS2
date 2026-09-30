@@ -15,6 +15,8 @@ import { Empty, ErrorBox, FOCUS, Skeleton } from "./ui";
 import { useBreadcrumbLabel } from "@/lib/breadcrumbLabel";
 import { parseUrlState, serializeUrlState, type DashUrlState } from "./urlState";
 import { useDashboardData } from "./useDashboardData";
+import { AlertsChip } from "./alerts/AlertsChip";
+import { AlertsTab } from "./alerts/AlertsTab";
 import type { BreakdownRow } from "./types";
 import { WhyDrawer } from "./rootcause/WhyDrawer";
 import { openWhyState, parseWhy, writeWhy, type WhyState } from "./rootcause/whyState";
@@ -136,12 +138,14 @@ function AprDashboard({ processId, embedded = false }: { processId: string; embe
   if (!d.config || !d.config.configured) return <NotConfigured processId={processId} reason="missing" />;
   if (!d.config.enabled) return <NotConfigured processId={processId} reason="disabled" />;
 
+  if (sp.get("view") === "alerts") return <AlertsTab processId={processId} config={d.config} />;
   const cols = resolveColumns(ov);
   const agentsRes = d.agents.data;
   const rows = agentsRes?.rows ?? [];
   const live = d.live?.kpis ?? [];
   return (
     <div className="space-y-4">
+      <AlertsChip processId={processId} />
       <DashboardHeader config={d.config} freshness={ov?.freshness ?? d.live?.freshness} now={d.now} lastCheckedAt={d.lastCheckedAt} poll={d.poll}
         onRefresh={() => void d.refreshAll()} onExport={(v) => void onExport(v)} exporting={exporting} embedded={embedded} fetching={d.overview.isFetching} />
       {exportError && <ErrorBox message={exportError} />}

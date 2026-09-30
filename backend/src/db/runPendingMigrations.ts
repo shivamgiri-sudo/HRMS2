@@ -1249,6 +1249,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1932_sbi_card_collections.sql", // Registered 2026-09-30. SBI Card Collections process (SBI_CARD): process_master row + sbi_card_dialer_mis / agent_mis / account_file / downtime / pen_estimation tables (upsert on natural keys) and their five SBI_CARD_* upload templates. Additive: new tables and template rows only.
   "1941_process_dashboard_config.sql", // Registered 2026-09-30. Config-driven Process Dashboard: process_dashboard_config (APR table + column_map per process, category profile), page codes PROCESS_DASHBOARD / PROCESS_DASHBOARD_ADMIN with role access, and a DISABLED collections config row for SBI_CARD. Additive, idempotent; no backfill of existing processes.
   "1962_budget_topup_cancel.sql", // Registered 2026-09-30. Lets the raiser withdraw a budget top-up request: widens finance_budget_topup_request.status ENUM with 'cancelled' and adds nullable cancelled_by/cancelled_at/cancellation_reason. Amount edits (allowed only while status=submitted) need no schema. Additive, information_schema-guarded, re-runnable.
+  "migrations/1970_process_dashboard_alerts.sql", // Registered 2026-09-30. Process Dashboard alerts + digests: process_dashboard_alert_rule / _alert_event / _digest. Three new tables only, idempotent, no backfill.
 ];
 
 export type MigrationHealth = {
