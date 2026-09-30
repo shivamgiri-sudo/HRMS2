@@ -78,12 +78,20 @@ const INSIGHTS_ROLES = ["super_admin", "admin", "hr", "manager", "ceo"] as const
 
 export default function NativeATSFullParityCommandCenter() {
   const { hasAnyRole } = useWorkforceAccess();
-  const tabIds = hasAnyRole(...INSIGHTS_ROLES) ? [...TAB_IDS, "Insights"] : TAB_IDS;
+  const canSeeInsights = hasAnyRole(...INSIGHTS_ROLES);
+  // Insights sits right after Cover, not at the end of 12 tabs where it went unnoticed.
+  const tabIds = canSeeInsights ? [TAB_IDS[0], "Insights", ...TAB_IDS.slice(1)] : TAB_IDS;
   const [data, setData] = useState<CommandCenterData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [tab, setTab] = useState("Cover");
+  // Roles resolve after first render, so the default is applied once they do. The user can still switch to Cover, and
+  // switching is never overridden afterwards.
+  const openedInsights = useRef(false);
+  useEffect(() => {
+    if (canSeeInsights && !openedInsights.current) { openedInsights.current = true; setTab("Insights"); }
+  }, [canSeeInsights]);
   const [period, setPeriod] = useState("ALL");
   const [branch, setBranch] = useState("");
   const [process, setProcess] = useState("");
@@ -304,6 +312,7 @@ export default function NativeATSFullParityCommandCenter() {
                   className="cursor-pointer whitespace-nowrap rounded-lg px-3.5 py-1.5 text-sm font-semibold text-slate-600 transition-colors duration-150 hover:text-slate-900 data-[state=active]:bg-blue-700 data-[state=active]:text-white"
                 >
                   {t}
+                  {t === "Insights" && <span className="ml-1.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">New</span>}
                 </TabsTrigger>
               ))}
             </TabsList>
