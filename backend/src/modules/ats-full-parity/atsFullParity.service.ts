@@ -138,12 +138,12 @@ function formatDateKey(d: Date): string {
 }
 
 /** Calendar date (YYYY-MM-DD) in IST. Period boundaries are business days in India, not UTC days. */
-function istDateKey(d: Date): string {
+export function istDateKey(d: Date): string {
   return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
 /** IST Monday of the week containing `d`, as YYYY-MM-DD (the daily branch report also weeks Monday-first). */
-function istWeekStartKey(d: Date): string {
+export function istWeekStartKey(d: Date): string {
   const [y, m, day] = istDateKey(d).split("-").map(Number);
   const utc = new Date(Date.UTC(y, m - 1, day));
   utc.setUTCDate(utc.getUTCDate() - ((utc.getUTCDay() + 6) % 7));
