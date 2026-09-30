@@ -69,6 +69,8 @@ function useBreadcrumbs() {
     ...crumb,
     label:
       labelByHref.get(crumb.href) ||
+      // A record id in the URL (e.g. an open dashboard) is not a readable crumb.
+      (/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(crumb.href) ? "Details" : "") ||
       crumb.href
         .split("/")
         .filter(Boolean)

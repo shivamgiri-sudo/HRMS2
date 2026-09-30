@@ -114,19 +114,32 @@ export interface Matrix { rows: string[]; cols: string[]; cells: Array<Array<num
 export function toMatrix(r: QueryResult): Matrix {
   const ds = dims(r), m = measures(r)[0];
   const rows: string[] = [], cols: string[] = []; const ri = new Map<string, number>(), ci = new Map<string, number>();
+  const colRaw: Cell[] = [];
   const cells: Array<Array<number | null>> = [];
   let min = Infinity, max = -Infinity;
   for (const row of r.rows) {
     const rl = ds[0] ? formatCategory(row[ds[0].key], ds[0]) : "Total";
     const cl = ds[1] ? formatCategory(row[ds[1].key], ds[1]) : m?.label ?? "Value";
     if (!ri.has(rl)) { ri.set(rl, rows.length); rows.push(rl); cells.push([]); }
-    if (!ci.has(cl)) { ci.set(cl, cols.length); cols.push(cl); }
+    if (!ci.has(cl)) { ci.set(cl, cols.length); cols.push(cl); colRaw.push(ds[1] ? row[ds[1].key] : null); }
     const v = m ? num(row[m.key]) : null;
     cells[ri.get(rl)!][ci.get(cl)!] = v;
     if (v !== null) { min = Math.min(min, v); max = Math.max(max, v); }
   }
   for (const c of cells) for (let i = 0; i < cols.length; i++) if (c[i] === undefined) c[i] = null;
+  // Time buckets (hour, weekday, dates) read left to right in order, not in the order rows happened to arrive.
+  const order = sortedOrder(colRaw, ds[1]?.grain);
+  if (order) return { rows, cols: order.map((i) => cols[i]), cells: cells.map((r) => order.map((i) => r[i])), min: Number.isFinite(min) ? min : 0, max: Number.isFinite(max) ? max : 0 };
   return { rows, cols, cells, min: Number.isFinite(min) ? min : 0, max: Number.isFinite(max) ? max : 0 };
+}
+
+/** Index order that sorts raw column values ascending when they are all numbers or a time grain; null = keep as is. */
+function sortedOrder(raw: Cell[], grain: string | undefined): number[] | null {
+  const allNum = raw.every((v) => typeof v === "number");
+  if (!grain && !allNum) return null;
+  const idx = raw.map((_, i) => i);
+  idx.sort((a, b) => (allNum ? (raw[a] as number) - (raw[b] as number) : String(raw[a]).localeCompare(String(raw[b]))));
+  return idx.some((v, i) => v !== i) ? idx : null;
 }
 
 export interface FlowGraph { nodes: Array<{ name: string }>; links: Array<{ source: number; target: number; value: number }> }

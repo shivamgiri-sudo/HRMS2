@@ -67,6 +67,14 @@ describe("transforms", () => {
     const g = toFlow(twoDim);
     expect(g.nodes.map((n) => n.name)).toEqual(["Jan", "X", "Y", "Feb"]); expect(g.links).toHaveLength(3);
   });
+  it("matrix sorts time-bucket columns in order", () => {
+    const r = res([col("d0", "dimension"), col("d1", "dimension", { grain: "hour" }), col("m0", "measure")], [
+      { d0: "Mon", d1: 10, m0: 1 }, { d0: "Mon", d1: 11, m0: 2 }, { d0: "Tue", d1: 9, m0: 3 }, { d0: "Tue", d1: 10, m0: 4 },
+    ]);
+    const m = toMatrix(r);
+    expect(m.cols).toEqual(["09:00", "10:00", "11:00"]);
+    expect(m.cells).toEqual([[null, 1, 2], [3, 4, null]]);
+  });
   it("table export labels dimensions", () => {
     const t = toTable(res([col("d0", "dimension", { grain: "weekday" }), col("m0", "measure")], [{ d0: 0, m0: 3 }]));
     expect(t.rows).toEqual([["Mon", 3]]);

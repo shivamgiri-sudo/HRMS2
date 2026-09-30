@@ -96,10 +96,11 @@ export function applyLayout(widgets: Widget[], bp: Breakpoint, layout: RglItem[]
   if (bp === "xs") return widgets;
   const by = new Map(layout.map((l) => [l.i, l]));
   let changed = false;
-  const next = widgets.map((w) => {
+  const next = widgets.map((w, index) => {
     const l = by.get(w.id); if (!l) return w;
-    const cur = w.layout[bp];
-    if (cur && cur.x === l.x && cur.y === l.y && cur.w === l.w && cur.h === l.h) return w;
+    // Compare with where the widget already is (stored, or derived from lg): a click is a zero-distance drag, not a change.
+    const cur = posAt(w, bp, index);
+    if (cur.x === l.x && cur.y === l.y && cur.w === l.w && cur.h === l.h) return w;
     changed = true;
     return { ...w, layout: { ...w.layout, [bp]: { x: l.x, y: l.y, w: l.w, h: l.h } } };
   });

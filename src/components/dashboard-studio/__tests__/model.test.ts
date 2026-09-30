@@ -69,6 +69,8 @@ describe("layout", () => {
     expect(moved[0].layout.lg).toEqual({ x: 0, y: 0, w: 4, h: 7 }); expect(moved[1]).toBe(b);
     const same = [a, b]; expect(applyLayout(same, "lg", [{ i: "a", x: 6, y: 0, w: 6, h: 7 }])).toBe(same);
     expect(applyLayout(same, "xs", [{ i: "a", x: 0, y: 0, w: 1, h: 1 }])).toBe(same);
+    // A click on a breakpoint the user never arranged is a zero-distance drag: nothing is stored, nothing becomes unsaved.
+    expect(applyLayout(same, "md", [{ i: "a", ...posAt(a, "md", 0) }, { i: "b", ...posAt(b, "md", 1) }])).toBe(same);
   });
 });
 

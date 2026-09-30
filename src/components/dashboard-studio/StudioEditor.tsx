@@ -38,8 +38,10 @@ export default function StudioEditor({ detail, startEditing, onBack, onOpen }: P
   const wide = useIsWide();
   const canEdit = detail.canEdit;
 
-  const [hist, setHist] = useState<History<Doc>>(() => initHistory(docOf(detail)));
-  const [saved, setSaved] = useState<Doc>(() => docOf(detail));
+  // One object for both: "unsaved" means the present document is not the saved one (identity), so they must start equal.
+  const [initial] = useState<Doc>(() => docOf(detail));
+  const [hist, setHist] = useState<History<Doc>>(() => initHistory(initial));
+  const [saved, setSaved] = useState<Doc>(initial);
   const [version, setVersion] = useState(detail.dashboard.version);
   const [editing, setEditing] = useState(!!startEditing && canEdit);
   const [selectedId, setSelectedId] = useState<string | null>(null);
