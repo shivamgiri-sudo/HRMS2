@@ -50,6 +50,21 @@ vi.mock("../../../shared/accessGuard.js", () => ({
   hasProcessScope: (...args: unknown[]) => processScope(...args),
 }));
 
+// The caller's assignment scope comes from auth tables this suite does not stand up. The pure decisions
+// (authorDecision / computeDecision) stay real; only "what can this user read" is steered per test.
+const viewer = vi.hoisted(() => ({ current: { orgWide: true, processIds: new Set<string>(), fullBranchIds: new Set<string>() } }));
+vi.mock("../kpi-studio.scope.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../kpi-studio.scope.js")>();
+  const guard = (d: { ok: boolean; message?: string }) => { if (!d.ok) throw new real.StudioForbiddenError(d.message ?? "Not allowed"); };
+  return {
+    ...real,
+    studioViewerFor: async () => viewer.current,
+    assertCanAuthor: async (_u: string, t: any) => guard(real.authorDecision({ ...t, employeeProcessId: t.employee_id ? "process-1" : null }, viewer.current)),
+    assertCanCompute: async (_u: string, t: any) => guard(real.computeDecision(t, viewer.current)),
+    definitionTarget: async () => ({ process_id: "process-1" }),
+  };
+});
+
 import { kpiStudioRouter } from "../kpi-studio.routes.js";
 import { resetStudioCapability } from "../kpi-studio.service.js";
 
@@ -80,6 +95,7 @@ function schemaMissing() {
 }
 
 beforeEach(() => {
+  viewer.current = { orgWide: true, processIds: new Set<string>(), fullBranchIds: new Set<string>() };
   execute.mockReset();
   getConnection.mockReset();
   employeeForUser.mockReset();
@@ -414,5 +430,50 @@ describe("read endpoints available to viewing roles", () => {
     const response = await request(appFor("admin")).get("/api/kpi-studio/employees");
     expect(response.status).toBe(200);
     expect(response.body.data).toEqual([]);
+  });
+});
+
+describe("authoring and computing are limited to the caller's own processes", () => {
+  const scoped = () => { viewer.current = { orgWide: false, processIds: new Set(["process-1"]), fullBranchIds: new Set<string>() }; };
+
+  it("refuses a definition for somebody else's process, with a reason, but not for their own", async () => {
+    scoped(); schemaInstalled(); resetStudioCapability();
+    const other = await request(appFor("process_manager")).post("/api/kpi-studio/definitions").send({ metric_id: "m", process_id: "process-2", target_value: 1 });
+    expect(other.status).toBe(403);
+    expect(other.body).toMatchObject({ code: "OUT_OF_SCOPE" });
+    expect(other.body.message).toMatch(/processes you manage/);
+    const own = await request(appFor("process_manager")).post("/api/kpi-studio/definitions").send({ metric_id: "m", process_id: "process-1", target_value: 1 });
+    expect(own.status).not.toBe(403);
+  });
+
+  it("refuses a company-wide definition from a scoped author", async () => {
+    scoped(); schemaInstalled(); resetStudioCapability();
+    const res = await request(appFor("qa")).post("/api/kpi-studio/definitions").send({ metric_id: "m", target_value: 1 });
+    expect(res.status).toBe(403);
+    expect(res.body.message).toMatch(/organisation-wide/);
+  });
+
+  it("refuses a company-wide compute, and a range for another process, from a scoped caller", async () => {
+    scoped(); schemaInstalled(); resetStudioCapability();
+    expect((await request(appFor("process_manager")).post("/api/kpi-studio/compute").send({ date: "2026-08-01" })).status).toBe(403);
+    expect((await request(appFor("process_manager")).post("/api/kpi-studio/compute").send({ date: "2026-08-01", process_id: "process-2" })).status).toBe(403);
+    const range = await request(appFor("process_manager")).post("/api/kpi-studio/compute-range").send({ from: "2026-08-01", to: "2026-08-03", process_id: "process-2" });
+    expect(range.status).toBe(403);
+  });
+
+  it("a range is a dry run unless dry_run is explicitly false, and a bad range is a 400", async () => {
+    schemaInstalled(); resetStudioCapability();
+    const bad = await request(appFor("admin")).post("/api/kpi-studio/compute-range").send({ from: "2026-08-10", to: "2026-08-01" });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toMatch(/after the end/);
+    const ok = await request(appFor("admin")).post("/api/kpi-studio/compute-range").send({ from: "2026-08-01", to: "2026-08-01" });
+    expect(ok.status).toBe(202);
+    expect(ok.body.data.dryRun).toBe(true);
+    expect(ok.body.data.days).toHaveLength(1);
+  });
+
+  it("qa may not start a range at all", async () => {
+    schemaInstalled(); resetStudioCapability();
+    expect((await request(appFor("qa")).post("/api/kpi-studio/compute-range").send({ from: "2026-08-01", to: "2026-08-01" })).status).toBe(403);
   });
 });

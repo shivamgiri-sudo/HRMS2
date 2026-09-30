@@ -1011,7 +1011,9 @@ export async function listDefinitions(filters: DefinitionFilters = {}) {
        d.data_source_id, s.source_name, s.source_type,
        d.formula_expression, d.aggregation_method, d.scoring_type,
        d.target_value, d.min_threshold, d.max_achievement, d.weightage, d.target_source,
-       d.effective_from, d.effective_to, d.notes, d.created_at, d.updated_at
+       d.effective_from, d.effective_to, d.notes, d.created_at, d.updated_at,
+       (d.effective_from <= CURDATE() AND (d.effective_to IS NULL OR d.effective_to >= CURDATE())) AS in_force,
+       (d.effective_from > CURDATE()) AS starts_later
      FROM kpi_studio_definition d
      JOIN kpi_metric_master m ON m.id = d.metric_id
      LEFT JOIN branch_master b       ON b.id = d.branch_id
@@ -1351,9 +1353,12 @@ export async function retireDefinition(id: string, effectiveTo?: string) {
   if (!ISO_DATE.test(endDate)) throw new Error('End date must be YYYY-MM-DD');
 
   const [result] = await db.execute<ResultSetHeader>(
+    // Ends the definition on a date; it is NOT switched off. active_status = 0 made compute skip it for every
+    // date, so a future-dated retire stopped the KPI at once and recomputing a past day silently dropped it.
+    // Effective dating alone decides whether a definition applies on a given day.
     `UPDATE kpi_studio_definition
-        SET effective_to = ?, active_status = 0, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?`,
+        SET effective_to = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND active_status = 1`,
     [endDate, id],
   );
   if (!result.affectedRows) throw new Error('Definition not found');
