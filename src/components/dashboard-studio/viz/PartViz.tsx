@@ -41,14 +41,19 @@ const sliceTip = (theme: Theme, s0: Pick<Series, "format" | "label"> | undefined
   };
 
 interface PieLabelArgs { x?: number; y?: number; textAnchor?: string; index?: number }
-const pieLabel = (slices: Slice[], theme: Theme) =>
-  function renderPieLabel(a: PieLabelArgs): ReactElement {
+/** Outside labels show the share only (names are in the legend); slices under 4% are left unlabelled so labels never collide. */
+const pieLabel = (slices: Slice[], theme: Theme) => {
+  const total = slices.reduce((a, s) => a + s.value, 0);
+  return function renderPieLabel(a: PieLabelArgs): ReactElement {
+    const v = slices[a.index ?? 0]?.value ?? 0;
+    if (!total || v / total < 0.04) return <g />;
     return (
-      <text x={a.x} y={a.y} textAnchor={a.textAnchor as "start" | "middle" | "end" | undefined} dominantBaseline="central" fill={theme.text} fontSize={10}>
-        {slices[a.index ?? 0]?.lbl ?? ""}
+      <text x={a.x} y={a.y} textAnchor={a.textAnchor as "start" | "middle" | "end" | undefined} dominantBaseline="central" fill={theme.text} fontSize={11} fontWeight={600}>
+        {pctOf(v, total)}
       </text>
     );
   };
+};
 
 function PieLike({ result, style, theme, colors, onSelect, donut }: VizProps & { donut: boolean }) {
   const [ref, width] = useWidth<HTMLDivElement>();
@@ -63,7 +68,7 @@ function PieLike({ result, style, theme, colors, onSelect, donut }: VizProps & {
         <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
           <Pie data={slices} dataKey="value" nameKey="name" innerRadius={donut ? "55%" : 0} outerRadius={outer} paddingAngle={slices.length > 1 ? 1 : 0}
             stroke={theme.card} strokeWidth={1} startAngle={90} endAngle={-270}
-            label={style.dataLabels ? pieLabel(slices, theme) : false} labelLine={style.dataLabels ? { stroke: theme.muted } : false}
+            label={style.dataLabels ? pieLabel(slices, theme) : false} labelLine={false}
             onClick={canSelect ? (d: unknown) => selectRow(frame, onSelect, d) : undefined}>
             {slices.map((s, i) => <Cell key={i} fill={s.fill} />)}
             {donut ? <Label value={formatValue(total, s0?.format ?? "number", style)} position="center" fill={theme.text} fontSize={16} fontWeight={600} /> : null}

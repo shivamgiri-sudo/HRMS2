@@ -22,7 +22,11 @@ export default function DashboardCanvas({ widgets, theme, datasets, settings, ru
   // The grid reports a "drag stop" for a plain click too (and re-compacts positions when it does). Only a drag or
   // resize that actually moved the item is a change worth storing.
   const commit = (layout: Layout[], before?: Layout, after?: Layout) => {
-    if (before && after && before.x === after.x && before.y === after.y && before.w === after.w && before.h === after.h) return;
+    if (before && after && before.x === after.x && before.y === after.y && before.w === after.w && before.h === after.h) {
+      // The drag handle swallows the click, so a press-and-release without movement is the selection gesture.
+      if (editing) onSelect(after.i);
+      return;
+    }
     onWidgets(applyLayout(widgets, bp, layout.map((l) => ({ i: l.i, x: l.x, y: l.y, w: l.w, h: l.h }))));
   };
   return (
