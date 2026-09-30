@@ -330,3 +330,8 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - Measured after warm-up: Bella-Vita business-datapoints 36-75s -> 0.2s; Clovia/Dalmia/Satya 0.1-0.4s; Operating % Bella-Vita 35.5% (2026-08 payroll, labelled), Neemans 3.3%, Clovia -0.9%, Dalmia -10.1%, Guardian 26.0%.
 - Still blank by data, not code: GNC and Bla Bli Blu (no accounting revenue and no processed payroll). Any API restart (also by other people's deploys) resets the caches; first ~5 min after a restart can still be slow.
 - Not verified: dark mode, phone width on prod, non-Manager roles.
+
+## 2026-09-30 — Phone width + dark mode on production (deploy run 36674901908, build v2ebdd73)
+- Dark mode: not applicable, the app is locked to light (`forcedTheme="light"` in main.tsx).
+- Phone (390x844 emulated): header selects overlapped the title -> fixed (topbar wraps, selects `min(…,100%)`). Status chips on the coloured KPI cards were unreadable -> white-on-glass chip. No page-level horizontal scroll (scrollWidth 390); the wide day tables scroll inside their own container.
+- Right after a deploy restart Revenue/Operating % show "Data gap"/"Payroll pending" until the P&L cache warms (~1-2 min).
