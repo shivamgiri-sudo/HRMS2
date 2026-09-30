@@ -4,7 +4,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 
 interface Batch {
   batchId: string; kind: "received" | "sales"; uploadedAt: string | null; uploadedBy: string | null;
-  liveRows: number; trashedRows: number; dateFrom: string | null; dateTo: string | null; trashedAt: string | null;
+  liveRows: number; trashedRows: number; dateFrom: string | null; dateTo: string | null; trashedAt: string | null; state?: string;
 }
 interface Listing { received: Batch[]; sales: Batch[] }
 
@@ -31,16 +31,27 @@ export default function BbbUploadedFiles({ refreshKey, onChanged }: { refreshKey
     catch (e) { setErr(e instanceof Error ? e.message : "Could not load the uploaded files"); }
   }, []);
   useEffect(() => { void load(); }, [load, refreshKey]);
+  // A large file keeps being worked on after the request returns (statuses, dashboard totals). Re-check until done.
+  const updating = !!data?.received.some((b) => b.state === "updating");
+  useEffect(() => {
+    if (!updating) return;
+    const t = setInterval(() => { void load(); onChanged(); }, 10_000);
+    return () => clearInterval(t);
+  }, [updating, load, onChanged]);
 
   const act = async (batch: Batch, action: "trash" | "restore" | "delete") => {
     setBusy(batch.batchId); setNote(null); setErr(null);
     try {
       if (action === "trash") {
-        const r = await hrmsApi.post<{ data: { trashed: number } }>(`${BASE}/received/${batch.batchId}/trash`);
-        setNote(`${n(r.data.trashed)} rows moved to the trash. Fresh / NC was worked out again for the days after.`);
+        const r = await hrmsApi.post<{ data: { trashed: number; pending: boolean } }>(`${BASE}/received/${batch.batchId}/trash`, undefined, 60_000);
+        setNote(r.data.pending
+          ? "This upload is being moved to the trash. It is a large file, so the dashboard totals will catch up in a few minutes."
+          : `${n(r.data.trashed)} rows moved to the trash. Fresh / NC was worked out again for the days after.`);
       } else if (action === "restore") {
-        const r = await hrmsApi.post<{ data: { restored: number; keptInTrash: number } }>(`${BASE}/received/${batch.batchId}/restore`);
-        setNote(`${n(r.data.restored)} rows restored.${r.data.keptInTrash ? ` ${n(r.data.keptInTrash)} stayed in the trash because the same number now exists for that date.` : ""}`);
+        const r = await hrmsApi.post<{ data: { restored: number; keptInTrash: number; pending: boolean } }>(`${BASE}/received/${batch.batchId}/restore`, undefined, 60_000);
+        setNote(r.data.pending
+          ? "This upload is being restored. It is a large file, so the dashboard totals will catch up in a few minutes."
+          : `${n(r.data.restored)} rows restored.${r.data.keptInTrash ? ` ${n(r.data.keptInTrash)} stayed in the trash because the same number now exists for that date.` : ""}`);
       } else {
         const r = await hrmsApi.delete<{ data: { reverted: number; removed: number } }>(`${BASE}/sales/${batch.batchId}`);
         setNote(`${n(r.data.removed)} orders removed and ${n(r.data.reverted)} put back to their previous version.`);
@@ -82,7 +93,8 @@ export default function BbbUploadedFiles({ refreshKey, onChanged }: { refreshKey
             </thead>
             <tbody>
               {rows.map((b) => {
-                const trashed = b.kind === "received" && b.liveRows === 0 && b.trashedRows > 0;
+                const trashed = b.kind === "received" && (!!b.trashedAt || (b.liveRows === 0 && b.trashedRows > 0));
+                const working = b.state === "updating";
                 const asking = confirm?.batch.batchId === b.batchId;
                 return (
                   <tr key={b.batchId} className="border-t border-slate-100 align-top">
@@ -91,7 +103,13 @@ export default function BbbUploadedFiles({ refreshKey, onChanged }: { refreshKey
                     <td className="whitespace-nowrap px-2 py-2 text-slate-600">{b.dateFrom === b.dateTo ? b.dateFrom ?? "—" : `${b.dateFrom} to ${b.dateTo}`}</td>
                     <td className="px-2 py-2 tabular-nums text-slate-800">{n(b.liveRows)}{b.trashedRows > 0 && <span className="block text-slate-400">{n(b.trashedRows)} in trash</span>}</td>
                     <td className="px-2 py-2">
-                      <span className={`rounded px-1.5 py-0.5 font-semibold ${trashed ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-800"}`}>{trashed ? `In trash since ${when(b.trashedAt)}` : "In use"}</span>
+                      {working ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-900"><Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />Updating totals…</span>
+                      ) : b.state === "failed" ? (
+                        <span className="rounded bg-rose-100 px-1.5 py-0.5 font-semibold text-rose-800" title="The rows are stored, but Fresh / NC or the dashboard totals could not be refreshed. Trash and restore the upload to retry.">Totals not refreshed</span>
+                      ) : (
+                        <span className={`rounded px-1.5 py-0.5 font-semibold ${trashed ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-800"}`}>{trashed ? `In trash since ${when(b.trashedAt)}` : "In use"}</span>
+                      )}
                     </td>
                     <td className="px-2 py-2 text-right">
                       {asking ? (
@@ -106,6 +124,8 @@ export default function BbbUploadedFiles({ refreshKey, onChanged }: { refreshKey
                             </button>
                           </span>
                         </div>
+                      ) : working ? (
+                        <span className="text-slate-400">Please wait</span>
                       ) : trashed ? (
                         <button type="button" disabled={busy === b.batchId} className={`${btn} border-slate-300 text-slate-700 hover:bg-slate-50`} onClick={() => void act(b, "restore")}>
                           {busy === b.batchId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" aria-hidden />}Restore

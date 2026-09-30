@@ -39,7 +39,7 @@ export async function uploadReceivedData(buffer: Buffer, userId: string) {
   return {
     batchId, fileType: "received_data", totalRows: parsed.totalRows, validRows: parsed.validRows,
     storedRows: result.inserted, duplicateSameDay: result.duplicateSameDay, skippedNoNumber: result.noNumber, skippedNoDate: result.noDate,
-    fresh: result.fresh, nc: result.nc, datesReplaced: 0, dateFrom: result.dateFrom, dateTo: result.dateTo,
+    fresh: result.fresh, nc: result.nc, pending: result.pending, datesReplaced: 0, dateFrom: result.dateFrom, dateTo: result.dateTo,
     recognizedColumns: parsed.recognizedColumns, additionalColumns: parsed.additionalColumns,
     missingOptionalColumns: parsed.missingOptionalColumns, preview: parsed.previewRaw,
   };
@@ -76,18 +76,12 @@ export async function saveTarget(t: TargetCfg, userId: string) {
 
 /** Formula Demo rows 7-15: every count is a COUNTIFS on Date + LOB (+ filters). Bucket labels keep the source's "Grater" typo, matched loosely. */
 async function loadReceived(from: string, to: string): Promise<ReceivedAgg[]> {
+  // Read from the daily summary, not the raw rows: summing a month of bla_dash_received takes over a minute on the
+  // production database. bbb-uploads.service.ts keeps the summary in step with uploads, trash and restore.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(report_date,'%Y-%m-%d') AS d, lob,
-       SUM(data_type='Fresh') AS fresh_base,
-       SUM(data_type='Fresh' AND workable='Workable') AS fresh_workable,
-       SUM(workable='Workable') AS total_workable,
-       SUM(workable='DND') AS dnd,
-       SUM(same_day_attempt>0 AND workable='Workable') AS unique_attempt,
-       SUM(data_type='Fresh' AND final_dispo='Connected') AS connected,
-       SUM(data_type='Fresh' AND final_dispo='Connected' AND call_answer='Less Than 30 Sec') AS le30,
-       SUM(data_type='Fresh' AND final_dispo='Connected' AND call_answer='Less Than 1 Min') AS lt1m,
-       SUM(data_type='Fresh' AND final_dispo='Connected' AND call_answer IN ('Grater Than 1 Min','Greater Than 1 Min')) AS ge1m
-     FROM bla_dash_received WHERE live_key = 0 AND report_date BETWEEN ? AND ? AND lob IS NOT NULL GROUP BY d, lob`, [from, to]);
+    `SELECT DATE_FORMAT(report_date,'%Y-%m-%d') AS d, lob, fresh_base, fresh_workable, total_workable, dnd,
+            unique_attempt, connected, le30, lt1m, ge1m
+       FROM bla_dash_received_daily WHERE report_date BETWEEN ? AND ?`, [from, to]);
   return rows.map((r) => ({
     date: String(r.d), lob: String(r.lob), freshBase: n(r.fresh_base), freshWorkable: n(r.fresh_workable), totalWorkable: n(r.total_workable),
     dnd: n(r.dnd), uniqueAttempt: n(r.unique_attempt), connected: n(r.connected), le30: n(r.le30), lt1m: n(r.lt1m), ge1m: n(r.ge1m),
@@ -118,7 +112,7 @@ async function loadSales(from: string, to: string): Promise<SalesAgg[]> {
 async function latestDataDate(): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(GREATEST(COALESCE((SELECT MAX(report_date) FROM bla_bli_blu_overall_sales_raw), '1000-01-01'),
-                                 COALESCE((SELECT MAX(report_date) FROM bla_dash_received WHERE live_key = 0), '1000-01-01')), '%Y-%m-%d') AS d`);
+                                 COALESCE((SELECT MAX(report_date) FROM bla_dash_received_daily), '1000-01-01')), '%Y-%m-%d') AS d`);
   const d = rows[0]?.d ? String(rows[0].d) : null;
   return d && d > "1000-01-01" ? d : null;
 }

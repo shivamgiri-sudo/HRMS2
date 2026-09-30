@@ -25,7 +25,7 @@ interface Block { lob: string; hasTarget: boolean; daily: Row[]; weekly: Row[]; 
 interface Overview { from: string; to: string; latestDataDate?: string | null; lobs: string[]; blocks: Block[]; all: Block }
 interface Product { product: string; cartAbc: number; inbound: number; upgrade: number; other?: number; total: number; contributionPct: number; paid: number; cod: number }
 interface ProductWise { grandTotal: number; products: Product[] }
-interface UploadResult { validRows: number; totalRows: number; storedRows: number; dateFrom: string | null; dateTo: string | null; skippedNoDate: number; duplicateSameDay?: number; skippedNoNumber?: number; fresh?: number; nc?: number }
+interface UploadResult { validRows: number; totalRows: number; storedRows: number; dateFrom: string | null; dateTo: string | null; skippedNoDate: number; duplicateSameDay?: number; skippedNoNumber?: number; fresh?: number; nc?: number; pending?: boolean }
 
 const ALL = "All LOBs";
 const fmt = (n: number) => Math.round(n).toLocaleString("en-IN");
@@ -66,7 +66,7 @@ function UploadBox({ title, hint, endpoint, onDone }: { title: string; hint: str
       const d = res.data;
       const parts = [
         `${fmt(d.storedRows)} of ${fmt(d.totalRows)} rows added${d.dateFrom ? ` (${d.dateFrom}${d.dateTo && d.dateTo !== d.dateFrom ? ` to ${d.dateTo}` : ""})` : ""}`,
-        d.fresh !== undefined ? `${fmt(d.fresh)} Fresh, ${fmt(d.nc ?? 0)} NC` : "",
+        d.pending ? "Fresh / NC and the dashboard totals are still being worked out for this file; they will appear in a few minutes" : d.fresh !== undefined && d.storedRows > 0 ? `${fmt(d.fresh)} Fresh, ${fmt(d.nc ?? 0)} NC` : "",
         d.duplicateSameDay ? `${fmt(d.duplicateSameDay)} skipped: number already uploaded for that date` : "",
         d.skippedNoNumber ? `${fmt(d.skippedNoNumber)} skipped: no 10-digit mobile number` : "",
         d.skippedNoDate ? `${fmt(d.skippedNoDate)} skipped: no valid date` : "",
