@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { fetchAgent, fetchAgents, fetchConfigs, fetchDay, fetchLive, fetchOverview } from "./api";
 import { usePolling } from "./usePolling";
 import { apiUrl } from "@/lib/apiBase";
@@ -10,6 +10,10 @@ import type { LiveResponse } from "./types";
 
 const KEY = "process-dashboard";
 const STALE = 10_000;
+// A data change only affects the numbers; the tab probes (sales/inbound/outbound), the alerts chip and /configs have their own cadence.
+const DATA_SCOPES = new Set(["overview", "agents", "agent", "day", "forecast", "forecast-agents", "why"]);
+export const invalidateData = (qc: QueryClient, processId: string) =>
+  qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === KEY && q.queryKey[1] === processId && DATA_SCOPES.has(String(q.queryKey[2])) });
 
 export function useDashboardData(processId: string, s: DashUrlState) {
   const qc = useQueryClient();
@@ -34,10 +38,12 @@ export function useDashboardData(processId: string, s: DashUrlState) {
     const res = await fetchLive(processId, etag.current);
     setLastCheckedAt(Date.now());
     if (res.changed === false) return;
+    // The SSE stream may already have applied this very snapshot while this request was in flight: do not refetch everything twice.
+    if (res.etag !== undefined && res.etag === etag.current) return;
     const had = etag.current !== undefined;
     if (res.etag !== undefined) etag.current = res.etag;
     setLive(res);
-    if (had || res.etag === undefined) void qc.invalidateQueries({ queryKey: [KEY, processId] });
+    if (had || res.etag === undefined) void invalidateData(qc, processId);
   }, [processId, qc]);
 
   const poll = usePolling(tick, config?.refreshSeconds ?? 30, ready);
@@ -57,7 +63,7 @@ export function useDashboardData(processId: string, s: DashUrlState) {
         const had = etag.current !== undefined;
         if (res.etag !== undefined) etag.current = res.etag;
         setLive(res); setLastCheckedAt(Date.now());
-        if (had) void qc.invalidateQueries({ queryKey: [KEY, processId] });
+        if (had) void invalidateData(qc, processId);
       } catch { /* malformed frame: ignore */ }
     };
     void (async () => {
