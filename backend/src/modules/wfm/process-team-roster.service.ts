@@ -17,10 +17,12 @@
  */
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { isShiftDueYet } from "./shift-due.util.js";
 import { lobAnd, type LobFilter } from "../../shared/lobFilter.js";
+import { classifyMember, dedupeByEmployee } from "./process-team-roster.util.js";
 
-const GRACE_MINUTES = 5;
+/** Excludes the synthetic 2026-06-11 roster cohort (see roster-analytics.routes.ts realRoster). */
+const REAL_ROSTER =
+  "NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)";
 
 export type ProcessTeamRosterStatus =
   "ON_TIME" | "LATE" | "ABSENT" | "ON_LEAVE" | "WEEK_OFF_HOLIDAY" | "UPCOMING";
@@ -58,17 +60,15 @@ export interface ProcessTeamRosterView {
   };
 }
 
-function timeToMinutes(t: string): number {
-  const parts = t.split(":").map(Number);
-  return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
-}
-
 export async function getProcessTeamRosterView(
   processId: string,
   date: string,
   lob: LobFilter = { kind: "none" },
+  branchId?: string,
 ): Promise<ProcessTeamRosterView> {
   const lobSql = lobAnd(lob);
+  const branchSql = branchId ? " AND e.branch_id = ?" : "";
+  const branchParams = branchId ? [branchId] : [];
 
   // Run process-name lookup and the main employee query in parallel — previously sequential.
   const [processResult, employeeResult] = await Promise.all([
@@ -91,6 +91,10 @@ export async function getProcessTeamRosterView(
          st.shift_name,
          st.start_time AS template_start,
          st.end_time AS template_end,
+         st.grace_minutes,
+         att.attendance_status AS att_status,
+         att.late_mark AS att_late_mark,
+         att.late_by_minutes AS att_late_by,
          TIME_FORMAT(COALESCE(att.clock_in_time, bal.first_punch_in),  '%H:%i:%s') AS first_in,
          TIME_FORMAT(COALESCE(att.clock_out_time, bal.last_punch_out), '%H:%i:%s') AS last_out,
          lr.leave_type_id,
@@ -110,16 +114,18 @@ export async function getProcessTeamRosterView(
        LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
        WHERE e.process_id = ?
          AND e.active_status = 1
-         AND e.employment_status = 'Active'${lobSql.sql}
+         AND e.employment_status = 'Active'
+         AND ${REAL_ROSTER}${lobSql.sql}${branchSql}
        ORDER BY e.full_name`,
-      [date, date, date, date, processId, ...lobSql.params],
+      [date, date, date, date, processId, ...lobSql.params, ...branchParams],
     ),
   ]);
 
   const processName = processResult[0][0]?.process_name
     ? String(processResult[0][0].process_name)
     : null;
-  const rows = employeeResult[0];
+  // leave_request can match >1 row per employee (overlapping approved leaves) — one member each.
+  const rows = dedupeByEmployee(employeeResult[0] as RowDataPacket[]);
 
   const counts = {
     onTime: 0,
@@ -133,8 +139,10 @@ export async function getProcessTeamRosterView(
 
   const members: ProcessTeamRosterMember[] = rows.map((r: RowDataPacket) => {
     const type = String(r.assignment_type ?? "").toUpperCase();
-    const shiftStart = r.template_start || r.shift_start_time;
-    const shiftEnd = r.template_end || r.shift_end_time;
+    // Assignment-level times (manual overrides) win over the template defaults.
+    const hasOwn = r.shift_start_time && r.shift_end_time;
+    const shiftStart = hasOwn ? r.shift_start_time : r.template_start || r.shift_start_time;
+    const shiftEnd = hasOwn ? r.shift_end_time : r.template_end || r.shift_end_time;
     const shiftTime =
       shiftStart && shiftEnd
         ? `${String(shiftStart).slice(0, 5)}-${String(shiftEnd).slice(0, 5)}`
@@ -143,41 +151,25 @@ export async function getProcessTeamRosterView(
     // first_in is now "HH:MM:SS" (TIME_FORMAT ensures this); timeToMinutes is safe.
     const firstIn: string | null = r.first_in ? String(r.first_in) : null;
 
-    let status: ProcessTeamRosterStatus;
-    let minutesLate: number | null = null;
-
-    if (type === "WEEK_OFF" || type === "HOLIDAY") {
-      status = "WEEK_OFF_HOLIDAY";
-      counts.weekOffHoliday++;
-    } else if (type === "LEAVE") {
-      status = "ON_LEAVE";
-      counts.onLeave++;
-    } else if (firstIn) {
-      const loginMin = timeToMinutes(firstIn);
-      const shiftStartMin = shiftStart
-        ? timeToMinutes(String(shiftStart).slice(0, 8))
-        : 0;
-      if (shiftStart && loginMin > shiftStartMin + GRACE_MINUTES) {
-        status = "LATE";
-        minutesLate = loginMin - shiftStartMin;
-        counts.late++;
-      } else {
-        status = "ON_TIME";
-        counts.onTime++;
-      }
-    } else if (
-      !isShiftDueYet(
-        shiftStart ? String(shiftStart) : null,
-        date,
-        GRACE_MINUTES,
-      )
-    ) {
-      status = "UPCOMING";
-      counts.upcoming++;
-    } else {
-      status = "ABSENT";
-      counts.absent++;
-    }
+    const { status, minutesLate } = classifyMember(
+      {
+        assignmentType: type,
+        shiftStart: shiftStart ? String(shiftStart) : null,
+        firstIn,
+        attStatus: r.att_status ? String(r.att_status) : null,
+        attLateMark: r.att_late_mark != null ? Number(r.att_late_mark) : null,
+        attLateByMinutes: r.att_late_by != null ? Number(r.att_late_by) : null,
+        hasApprovedLeave: r.leave_type_id != null,
+        graceMinutes: r.grace_minutes != null ? Number(r.grace_minutes) : null,
+      },
+      date,
+    );
+    if (status === "WEEK_OFF_HOLIDAY") counts.weekOffHoliday++;
+    else if (status === "ON_LEAVE") counts.onLeave++;
+    else if (status === "LATE") counts.late++;
+    else if (status === "ON_TIME") counts.onTime++;
+    else if (status === "UPCOMING") counts.upcoming++;
+    else counts.absent++;
 
     counts.total++;
 
@@ -197,7 +189,7 @@ export async function getProcessTeamRosterView(
       minutesLate,
       leaveType: r.leave_name
         ? String(r.leave_name)
-        : type === "LEAVE"
+        : status === "ON_LEAVE"
           ? "Leave"
           : null,
     };

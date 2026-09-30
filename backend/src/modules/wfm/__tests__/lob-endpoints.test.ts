@@ -66,6 +66,6 @@ describe('unplanned-absences narrows within RBAC scope', () => {
     const x = calls[0];
     const sql = norm(x.sql);
     expect(sql).toContain('e.branch_id IN (?,?) AND e.branch_id = ? AND e.process_id = ? AND e.lob_id = ?');
-    expect(x.params.slice(2)).toEqual(['scope-b1', 'scope-b2', 'b1', 'p1', LOB_UUID]);
+    expect(x.params.slice(1)).toEqual(['scope-b1', 'scope-b2', 'b1', 'p1', LOB_UUID]);
   });
 });

@@ -302,36 +302,14 @@ Verified on production data via the localhost preview API + Playwright (zero con
 | Server: Bella-Vita chat / cart, GNC abandon cart | Load with funnels (4 and 5 stages) |
 
 **Not verified:** a real production login and per-role scoping; the new sections were not re-rendered in a browser this round (same component as the earlier verified layout); Satya Retail cannot appear on the KPI page until a process record for it exists (none in process_master); Puresta has no dashboard in V2 either.
+## 2026-09-30 - Roster Command Center modernisation (all tabs) - mocked-API browser run + real MySQL 8 run
 
----
+**Method:** real app under Vite, Playwright Chromium at 1440 px and 375 px, fake JWT (super_admin), `/api` mocked with payload shapes read from the panels' types; ok / empty / error variants. Backend SQL exercised separately on a throwaway MySQL 8.0 (docker) with seeded edge cases: about 820 GET calls over every roster-analytics / roster-intelligence / roster-audit / wfm-compliance / intervention / roster-imports route, plus the amendment POST, intervention PATCH and digest sends.
 
-## 2026-09-30 — Hour-by-hour calls view, plain-language source failures
+**Pages checked:** `/wfm/roster-command-center` tabs live, team-roster, analytics, trends, compliance, shifts, interventions, audit, roster-view, comparison, capacity, fairness; old URLs `/wfm/roster-view`, `/wfm/team-comparison`, `/wfm/capacity-dashboard`, `/wfm/weekoff-fairness`, `/wfm/roster-analytics` redirect to the matching `?tab=`.
 
-**Method:** GNC Business datapoints rendered in a browser on live data through the read-only harness (harness removed afterwards); hour-by-hour view run on the production server with the deployed build.
+**Seen:** every tab renders with data, zero console/page errors, no "Failed to load", no horizontal overflow, one sidebar (merged pages render bare inside the console). One row per tab opens the right-hand drawer by click and Enter; empty sections show "None". Error variants show a banner with Retry. Real MySQL run: 0 SQL errors; totals agree across summary / list / detail endpoints; no NaN; percentages within 0-100.
 
-| Check | Result |
-|---|---|
-| GNC Business datapoints (browser) | Headline strip (turnover ₹38.93L, 981 sales, AOV ₹3,968, recovered sales 940) with sparklines; Sales/Abandon-cart/Chat sections with funnels; each headline figure shown once |
-| Source-failure banner | Found showing a raw database error twice ("Access denied for user ''@..."). Fixed: one plain sentence; technical reason now goes to the server log only |
-| Hour-by-hour (server, 8 processes) | Bella-Vita peak 10:00 = 2,449 calls, weakest answer level 19:00 = 64.5%; Neemans peak 10:00 = 744; GNC peak 10:00 = 1,807, weakest service level 12:00 = 53.7%; Clovia, Dalmia, DU Bangladesh, Exicom (weakest answer level 20:00 = 14.3%, small volume) and Viega all return 10-16 hourly bars |
-| Root cause of the stopped KPI feeds | The nightly KPI compute worker is disabled by design (KPI_STUDIO_COMPUTE_ENABLED unset; the code requires an operator to enable it). Not changed; awaiting the owner's decision |
+**Bugs found by these runs and fixed:** Audit tab read a non-existent `.data` field (whole tab dead); sticky filter bar hidden under the top bar; merged tabs scrolled off-screen at 1440 px; Live tab showed "All clear" on error; `GET /wfm/roster-imports/status-summary` was shadowed by `/:batchId` (400); `workforce_mandate.shrinkage_buffer_pct` does not exist (budget silently stuck at 8%).
 
-**Not verified:** a real production login and per-role scoping; dark mode.
-
-## 2026-09-30 — Satya Retail process + KPI compute report-only
-- Migration 1920 inserted `SATYA_RETAIL` / "Satya Retail" into `process_master` (id 031129fa-…, active). Verified on prod via read-only query; Business datapoints adapter resolves to `SATYA_RETAIL`. Deploy run 36670627626 succeeded.
-- KPI Studio nightly compute enabled on prod in DRY-RUN (`KPI_STUDIO_COMPUTE_ENABLED=true`, `KPI_STUDIO_COMPUTE_DRY_RUN=true`; `.env` backup `.env.bak-20260930-101150`). Review `pm2 logs hrms2-workers | grep KpiStudioCompute` after the 02:00 run before setting DRY_RUN=false.
-- Known: a KPI source references non-existent column `pause_seconds`; ~70% of metrics have no target.
-- Not verified: real-login per-role scoping, dark mode.
-
-## 2026-09-30 — Production browser audit + speed fixes (deploy run 36672530773)
-- Logged in on https://mcnhrms.teammas.in as a Manager; called the page's own APIs for all 393 process entries (45 have KPI metrics, 682 metrics). Deck, All Processes, drill-down popup (56% width), Voice of the Customer, Business datapoints all render with real data.
-- Fixes shipped: Business datapoints served stale-while-revalidate (6h) with a background warm-up; P&L warm-up starts 10s after boot; drill-down percent gaps now read "pt" and the volume axis is compact.
-- Measured after warm-up: Bella-Vita business-datapoints 36-75s -> 0.2s; Clovia/Dalmia/Satya 0.1-0.4s; Operating % Bella-Vita 35.5% (2026-08 payroll, labelled), Neemans 3.3%, Clovia -0.9%, Dalmia -10.1%, Guardian 26.0%.
-- Still blank by data, not code: GNC and Bla Bli Blu (no accounting revenue and no processed payroll). Any API restart (also by other people's deploys) resets the caches; first ~5 min after a restart can still be slow.
-- Not verified: dark mode, phone width on prod, non-Manager roles.
-
-## 2026-09-30 — Phone width + dark mode on production (deploy run 36674901908, build v2ebdd73)
-- Dark mode: not applicable, the app is locked to light (`forcedTheme="light"` in main.tsx).
-- Phone (390x844 emulated): header selects overlapped the title -> fixed (topbar wraps, selects `min(…,100%)`). Status chips on the coloured KPI cards were unreadable -> white-on-glass chip. No page-level horizontal scroll (scrollWidth 390); the wide day tables scroll inside their own container.
-- Right after a deploy restart Revenue/Operating % show "Data gap"/"Payroll pending" until the P&L cache warms (~1-2 min).
+**NOT verified:** production data and volumes (the unbounded quality query took ~115 s on a large range in an earlier measurement); real login and per-role tab visibility (only super_admin); write actions against production; dark theme; screen reader; `db_audit` collation in production (`intervention-cases.service.ts` joins `cqa.User` to `employees.employee_code` without COLLATE, as existing code does). Mock payloads are my reading of the types, not captured responses.

@@ -18,6 +18,13 @@ import { v4 as uuidv4 } from 'uuid';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { db as pool } from '../../db/mysql.js';
 import { lobWhere, readLobFilter } from '../../shared/lobFilter.js';
+import { writeAuditLog } from '../../shared/auditLog.js';
+import { buildCasesQuery, getSummaryExtras, parseRecommendations } from './intervention-cases.service.js';
+import {
+  NON_WORKING_STATUSES, clampLimit, isValidDateOnly, normalizeOwner, normalizeTier, pctOf, tierFromScore,
+} from './intervention-calc.js';
+
+const NON_WORKING_SQL = NON_WORKING_STATUSES.map((x) => `'${x}'`).join(',');
 
 /**
  * Optional branch / process / LOB narrowing, on the employee alias `e`. Purely additive: an
@@ -210,6 +217,7 @@ const SIGNALS_QUERY = `
     FROM mas_hrms.attendance_daily_record
     WHERE record_date >= DATE_SUB(NOW(), INTERVAL 60 DAY)
       AND employee_id = ?
+      AND attendance_status NOT IN (${NON_WORKING_SQL})
     GROUP BY employee_id
   ),
   -- Quality velocity and has_quality_data flag
@@ -298,6 +306,7 @@ const SIGNALS_QUERY = `
         , 2) AS att_pct
       FROM mas_hrms.attendance_daily_record adr
       WHERE adr.record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        AND adr.attendance_status NOT IN (${NON_WORKING_SQL})
       GROUP BY adr.employee_id
     ) dr ON dr.employee_id = rpts.id
     LEFT JOIN (
@@ -599,7 +608,9 @@ export async function generateRecommendationsForEmployee(
       reason
     }));
 
-  const riskTier = row.risk_tier as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  // The SQL's own risk_tier CASE omits some score terms (quality-average, late-mark) that
+  // prediction_score includes, so the two could disagree. Derive the tier from the score.
+  const riskTier = tierFromScore(signals.prediction_score);
   const recommendationsJson = JSON.stringify(matched);
   const newId = uuidv4();
 
@@ -648,69 +659,26 @@ export async function generateRecommendationsForEmployee(
  */
 export async function getPendingInterventions(req: Request, res: Response) {
   try {
-    const owner = (req.query.owner as string | undefined)?.trim() ?? null;
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const rawOwner = (req.query.owner as string | undefined)?.trim();
+    const owner = normalizeOwner(rawOwner);
+    if (rawOwner && !owner) {
+      return res.status(400).json({ success: false, error: 'Invalid owner. Must be one of: hr_admin, manager, wfm, process_head' });
+    }
+    const tier = normalizeTier(req.query.tier);
+    const limit = clampLimit(req.query.limit);
     const lob = readLobFilter(req, res);
     if (!lob) return;
     const empFilter = buildInterventionEmployeeFilter(req.query, lob);
 
-    // Build owner filter as a JSON_SEARCH condition when supplied
-    const ownerClause = owner
-      ? `AND JSON_SEARCH(r.recommendations, 'one', ?, NULL, '$[*].owner') IS NOT NULL`
-      : '';
-    const params: (string | number)[] = [];
-    if (owner) params.push(owner);
-    params.push(...empFilter.params);
-    params.push(limit);
-
-    const sql = `
-      SELECT
-        r.id,
-        r.employee_id,
-        e.employee_code,
-        CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-        COALESCE(bm.branch_name, '')      AS branch_name,
-        COALESCE(p.process_name,  '')     AS process_name,
-        COALESCE(d.designation_name, '')  AS designation_name,
-        r.generated_at,
-        DATEDIFF(NOW(), r.generated_at)   AS days_since_generated,
-        r.risk_tier,
-        r.prediction_score,
-        r.recommendations
-      FROM mas_hrms.employee_retention_recommendation r
-      JOIN mas_hrms.employees e   ON e.id = r.employee_id
-      LEFT JOIN mas_hrms.branch_master bm       ON bm.id = e.branch_id
-      LEFT JOIN mas_hrms.process_master p       ON p.id  = e.process_id
-      LEFT JOIN mas_hrms.designation_master d   ON d.id  = e.designation_id
-      WHERE r.action_taken = 0
-        AND r.outcome = 'pending'
-        ${ownerClause}
-        ${empFilter.sql}
-      ORDER BY
-        FIELD(r.risk_tier, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
-        r.generated_at ASC
-      LIMIT ?
-    `;
-
+    // Open cases only: newest case per employee, employee still active (see bucketWhere).
+    const { sql, params } = buildCasesQuery({ bucket: 'open', tier, owner, limit, emp: empFilter });
     const [rows] = await pool.query<PendingInterventionRow[]>(sql, params);
-
-    const data = rows.map((row) => ({
-      ...row,
-      recommendations: (() => {
-        try {
-          return typeof row.recommendations === 'string'
-            ? JSON.parse(row.recommendations)
-            : row.recommendations;
-        } catch {
-          return [];
-        }
-      })()
-    }));
+    const data = rows.map((row) => ({ ...row, recommendations: parseRecommendations(row.recommendations) }));
 
     res.json({
       success: true,
       count: data.length,
-      filters: { owner: owner ?? null, limit, branchId: req.query.branchId ?? null, processId: req.query.processId ?? null, lobId: req.query.lobId ?? null },
+      filters: { owner, tier, limit, branchId: req.query.branchId ?? null, processId: req.query.processId ?? null, lobId: req.query.lobId ?? null },
       data,
       timestamp: new Date().toISOString()
     });
@@ -734,9 +702,10 @@ export async function getPendingInterventions(req: Request, res: Response) {
 export async function markInterventionActioned(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const { outcome, outcome_date } = req.body as {
+    const { outcome, outcome_date, notes } = req.body as {
       outcome?: 'retained' | 'exited' | 'pending';
       outcome_date?: string;
+      notes?: string;
     };
 
     const actorId = (req as Request & { authUser?: { id: string } }).authUser?.id ?? null;
@@ -752,19 +721,30 @@ export async function markInterventionActioned(req: Request, res: Response) {
         error: `Invalid outcome. Must be one of: ${validOutcomes.join(', ')}`
       });
     }
+    if (outcome_date !== undefined && outcome_date !== null && outcome_date !== '' && !isValidDateOnly(outcome_date)) {
+      return res.status(400).json({ success: false, error: 'outcome_date must be a valid YYYY-MM-DD date' });
+    }
+    const cleanNotes = typeof notes === 'string' ? notes.trim().slice(0, 2000) : '';
 
+    // COALESCE keeps the FIRST actioner/time: a later outcome update must not rewrite who acted
+    // or when (that skewed avg_days_to_action).
     const setClauses: string[] = [
       'action_taken    = 1',
-      'action_taken_at = NOW()',
-      'action_taken_by = ?'
+      'action_taken_at = COALESCE(action_taken_at, NOW())',
+      'action_taken_by = COALESCE(action_taken_by, ?)'
     ];
     const params: (string | null)[] = [actorId];
 
     if (outcome) {
       setClauses.push('outcome = ?');
       params.push(outcome);
-    }
-    if (outcome_date) {
+      if (outcome === 'pending') {
+        setClauses.push('outcome_date = NULL');
+      } else {
+        setClauses.push('outcome_date = ?');
+        params.push(outcome_date && isValidDateOnly(outcome_date) ? outcome_date : new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)); // IST calendar date
+      }
+    } else if (outcome_date) {
       setClauses.push('outcome_date = ?');
       params.push(outcome_date);
     }
@@ -783,6 +763,18 @@ export async function markInterventionActioned(req: Request, res: Response) {
       return res.status(404).json({
         success: false,
         error: `Recommendation not found: ${id}`
+      });
+    }
+
+    if (actorId) {
+      await writeAuditLog({
+        actor_user_id: actorId,
+        action_type: 'intervention_action_taken',
+        module_key: 'wfm_roster',
+        entity_type: 'employee_retention_recommendation',
+        entity_id: id,
+        metadata: { notes: cleanNotes || null, outcome: outcome ?? null, outcome_date: outcome_date ?? null },
+        req,
       });
     }
 
@@ -849,9 +841,8 @@ export async function getInterventionOutcomes(req: Request, res: Response) {
     const retained = row?.retained_count ?? 0;
     const exited   = row?.exited_count   ?? 0;
     const resolved = retained + exited;
-    const retentionSuccessRate = resolved > 0
-      ? parseFloat(((retained / resolved) * 100).toFixed(1))
-      : null;
+    const retentionSuccessRate = pctOf(retained, resolved);
+    const extras = await getSummaryExtras(empFilter);
 
     res.json({
       success: true,
@@ -863,7 +854,8 @@ export async function getInterventionOutcomes(req: Request, res: Response) {
         exited_count:           exited,
         pending_count:          row?.pending_count         ?? 0,
         retention_success_rate: retentionSuccessRate,
-        avg_days_to_action:     row?.avg_days_to_action    ?? null
+        avg_days_to_action:     row?.avg_days_to_action    ?? null,
+        ...extras
       },
       timestamp: new Date().toISOString()
     });

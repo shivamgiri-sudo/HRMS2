@@ -23,13 +23,14 @@ export function buildRunners(legacy = false): Record<string, Runner> {
   const audit = () => import('../roster-audit.routes');
   const intel = () => import('../roster-intelligence.routes');
   const imports = () => import('../roster-import.routes');
-  const q = { branchId: 'b1', processId: 'p1', period: '2026-08' };
+  // refresh:'1' bypasses the compliance computation cache so every runner really reaches db.execute.
+  const q = { branchId: 'b1', processId: 'p1', period: '2026-08', refresh: '1' };
 
   return {
     'compliance summary': route(compliance, 'wfmComplianceAnalyticsRouter', '/summary', q),
-    'compliance summary (no branch)': route(compliance, 'wfmComplianceAnalyticsRouter', '/summary', { processId: 'p1', period: '2026-08' }),
-    'compliance violations': route(compliance, 'wfmComplianceAnalyticsRouter', '/violations', legacy ? { branchId: 'b1', period: '2026-08' } : q),
-    'compliance trend': route(compliance, 'wfmComplianceAnalyticsRouter', '/trend', legacy ? { branchId: 'b1' } : { branchId: 'b1', processId: 'p1' }),
+    'compliance summary (no branch)': route(compliance, 'wfmComplianceAnalyticsRouter', '/summary', { processId: 'p1', period: '2026-08', refresh: '1' }),
+    'compliance violations': route(compliance, 'wfmComplianceAnalyticsRouter', '/violations', legacy ? { branchId: 'b1', period: '2026-08', refresh: '1' } : q),
+    'compliance trend': route(compliance, 'wfmComplianceAnalyticsRouter', '/trend', legacy ? { branchId: 'b1', refresh: '1' } : { branchId: 'b1', processId: 'p1', refresh: '1' }),
     'audit trails': route(audit, 'rosterAuditRouter', '/trails', { branchId: 'b1', processId: 'p1', dateFrom: '2026-08-01', dateTo: '2026-08-31' }),
     'audit summary': route(audit, 'rosterAuditRouter', '/summary', legacy ? { branchId: 'b1', dateFrom: '2026-08-01', dateTo: '2026-08-31' } : { branchId: 'b1', processId: 'p1', dateFrom: '2026-08-01', dateTo: '2026-08-31' }),
     'unplanned-absences': route(intel, 'rosterIntelligenceRouter', '/unplanned-absences', legacy ? { date: '2026-09-01' } : { date: '2026-09-01', branchId: 'b1', processId: 'p1' }),

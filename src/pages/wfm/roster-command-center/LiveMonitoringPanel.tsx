@@ -1,728 +1,303 @@
 /**
- * Live Monitoring Panel — Real-Time Attendance Intelligence
+ * Live Monitoring — real-time attendance intelligence (tab=live).
  *
- * Moved verbatim (Phase A of the roster-console merge) from the old
- * src/pages/wfm/RosterCommandCenter.tsx, which is now the console shell at
- * src/pages/wfm/RosterCommandCenter.tsx (TAB_DEFS-based, see AttendanceIntegrityConsole.tsx
- * for the pattern). No behavior changes in this move — bug fixes (broken branch filter,
- * no-op digest filter, decorative buttons) land in Phase B against this file.
- *
- * Design System: MAS HRMS Frozen Patterns
- * - ConsoleCard containers with backdrop-blur
- * - Gradient headers (teal for attendance domain)
- * - Tone color system for KPIs
- * - Bento grid layout (density 8/10)
- * - Real-time pulse indicators
- * - Responsive: mobile-first grid
- *
- * Features:
- * 1. Live attendance monitoring with pulse indicators
- * 2. Manager effectiveness scores with progress rings
- * 3. Intervention tracking for at-risk employees
- * 4. Real-time shrinkage meter
+ * Data: /api/roster-intelligence/unplanned-absences (alerts) + /manager-digests (team roll-ups),
+ * both scoped server-side by the shared branch/process/LOB filters. Calculations live in
+ * live-monitoring/liveMonitoringCalc.ts (pooled, NaN-safe, unit-tested). Every alert row and
+ * team row opens a drawer backed by a dedicated detail endpoint (Drill-Down Mandate).
  */
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Suspense, lazy, useMemo, useState } from "react";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import { Activity, AlertTriangle, ArrowDown, ArrowUp, Bell, CheckCircle2, Clock, MessageSquare, RefreshCw, Target, TrendingDown, UserCheck, UserX, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
-import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
+import { ChartCard } from "@/components/wfm/console/ChartCard";
+import { KpiTile } from "@/components/wfm/console/KpiTile";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { StatusPill } from "@/components/wfm/console/StatusPill";
+import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import { scopeParams } from "./filterState";
+import { formatUpdatedAt } from "./heavyQuery";
+import { EmployeeDrawer, ManagerDrawer } from "./live-monitoring/LiveDrawers";
 import {
-  Activity,
-  AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
-  Bell,
-  CheckCircle2,
-  Clock,
-  Eye,
-  MessageSquare,
-  RefreshCw,
-  Target,
-  TrendingDown,
-  TrendingUp,
-  UserCheck,
-  UserX,
-  Users,
-  Zap,
-} from "lucide-react";
+  SHRINKAGE_TARGET, alertSeverity, effectivenessScore, fmtDuration, scoreTone, severityCounts, summarize,
+  type LiveAlert, type ManagerDigest, type Severity,
+} from "./live-monitoring/liveMonitoringCalc";
 
-const ALL = "__all__";
+const AttendanceMixDonut = lazy(() => import("./live-monitoring/LiveCharts").then((m) => ({ default: m.AttendanceMixDonut })));
+const ShrinkageByBranchBar = lazy(() => import("./live-monitoring/LiveCharts").then((m) => ({ default: m.ShrinkageByBranchBar })));
 
-// ── Types ────────────────────────────────────────────────────────────────────
+interface LiveAttendanceData { total: number; alerts: LiveAlert[] }
+interface DigestsData { digests: ManagerDigest[]; count: number; date?: string }
 
-interface LiveAttendanceData {
-  total: number;
-  alerts: Array<{
-    employeeId: string;
-    employeeCode: string;
-    employeeName: string;
-    date: string;
-    shiftTime: string;
-    managerId: string | null;
-    managerName: string | null;
-    processName: string | null;
-    branchName: string | null;
-    minutesSinceShiftStart: number;
-  }>;
-  byManager: Record<string, typeof this.alerts>;
-}
+const PAGE = 50;
+const SEV_LABEL: Record<Severity, string> = { critical: "Critical (1h+)", warning: "Warning (30-59m)", info: "New (<30m)" };
+const SEV_TONE: Record<Severity, "red" | "amber" | "neutral"> = { critical: "red", warning: "amber", info: "neutral" };
+const chartFallback = <div className="h-full animate-pulse rounded-md bg-slate-100" role="status" aria-label="Loading chart" />;
 
-interface ManagerDigest {
-  managerId: string;
-  managerName: string;
-  managerEmail: string | null;
-  date: string;
-  branchId: string | null;
-  branchName: string | null;
-  teamSize: number;
-  planned: number;
-  present: number;
-  shrinkagePct: number;
-  unplannedAbsences: Array<{ employeeId: string; employeeCode: string; employeeName: string }>;
-  lateArrivals: Array<{ employeeId: string; employeeCode: string; employeeName: string; lateMinutes: number | null }>;
-  incompleteShifts: Array<{ employeeId: string; employeeCode: string; employeeName: string; workedPct: number | null }>;
-  onTime: Array<{ employeeId: string; employeeCode: string; employeeName: string }>;
-  aprPending: number;
-}
+type SortKey = "managerName" | "teamSize" | "planned" | "present" | "late" | "absent" | "shrinkagePct" | "aprPending" | "score";
 
-// ── Design Tokens (MAS HRMS Frozen) ──────────────────────────────────────────
-
-const TONE = {
-  blue: { iconBg: "#edf4ff", value: "#0b63e5", border: "#dce8fb" },
-  green: { iconBg: "#eaf8ef", value: "#15803d", border: "#d7f0df" },
-  amber: { iconBg: "#fff4e8", value: "#ea580c", border: "#fee3c5" },
-  red: { iconBg: "#fff0f1", value: "#dc2626", border: "#ffdadd" },
-  violet: { iconBg: "#f3efff", value: "#6d28d9", border: "#e6ddff" },
-  teal: { iconBg: "#f0fdfa", value: "#0f766e", border: "#99f6e4" },
-  slate: { iconBg: "#f1f4f8", value: "#0b1f44", border: "#e3e9f2" },
-};
-
-// ── Subcomponents ────────────────────────────────────────────────────────────
-
-/** Pulsing live indicator */
-function LivePulse({ active = true }: { active?: boolean }) {
+function SortHead({ label, k, sort, onSort, right }: { label: string; k: SortKey; sort: { key: SortKey; dir: 1 | -1 }; onSort: (k: SortKey) => void; right?: boolean }) {
+  const active = sort.key === k;
   return (
-    <span className="relative flex h-3 w-3">
-      {active && (
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-      )}
-      <span className={`relative inline-flex h-3 w-3 rounded-full ${active ? "bg-emerald-500" : "bg-slate-300"}`} />
-    </span>
+    <th scope="col" aria-sort={active ? (sort.dir === 1 ? "ascending" : "descending") : "none"} className={`p-2 font-semibold ${right ? "text-right" : "text-left"}`}>
+      <button type="button" onClick={() => onSort(k)} className="inline-flex min-h-[44px] cursor-pointer items-center gap-1 sm:min-h-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        {label}
+        {active && (sort.dir === 1 ? <ArrowUp className="h-3 w-3" aria-hidden /> : <ArrowDown className="h-3 w-3" aria-hidden />)}
+      </button>
+    </th>
   );
 }
-
-/** KPI Metric Tile with tone color */
-function MetricTile({
-  label,
-  value,
-  helper,
-  tone = "slate",
-  trend,
-  icon,
-  pulse,
-}: {
-  label: string;
-  value: string | number;
-  helper?: string;
-  tone?: keyof typeof TONE;
-  trend?: number;
-  icon: React.ElementType;
-  pulse?: boolean;
-}) {
-  return (
-    <KpiTile
-      label={label}
-      value={value}
-      sub={helper}
-      tone={toKpiTone(tone)}
-      icon={icon}
-      delta={trend}
-      deltaBad="up"
-      adornment={pulse ? <LivePulse /> : undefined}
-    />
-  );
-}
-
-/** Circular progress ring for scores */
-function ScoreRing({ score, size = 80, strokeWidth = 8, label }: { score: number; size?: number; strokeWidth?: number; label?: string }) {
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (score / 100) * circumference;
-
-  const color = score >= 80 ? "#15803d" : score >= 60 ? "#ea580c" : "#dc2626";
-
-  return (
-    <div className="flex flex-col items-center">
-      <svg width={size} height={size} className="transform -rotate-90">
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="#e5e7eb"
-          strokeWidth={strokeWidth}
-        />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke={color}
-          strokeWidth={strokeWidth}
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          className="transition-all duration-500"
-        />
-      </svg>
-      <div className="absolute flex flex-col items-center justify-center" style={{ width: size, height: size }}>
-        <span className="text-xl font-bold" style={{ color }}>{score}</span>
-      </div>
-      {label && <span className="mt-1 text-xs font-medium text-slate-600">{label}</span>}
-    </div>
-  );
-}
-
-/** Manager effectiveness card */
-function ManagerEffectivenessCard({ digest }: { digest: ManagerDigest }) {
-  // Calculate effectiveness score: (present/planned)*40 + (onTime/present)*30 + (100-shrinkage)*20 + (aprPending<3?10:0)
-  const presentScore = digest.planned > 0 ? (digest.present / digest.planned) * 40 : 40;
-  const onTimeScore = digest.present > 0 ? (digest.onTime.length / digest.present) * 30 : 30;
-  const shrinkageScore = Math.max(0, (100 - digest.shrinkagePct) / 100 * 20);
-  const aprScore = digest.aprPending < 3 ? 10 : digest.aprPending < 5 ? 5 : 0;
-  const totalScore = Math.round(presentScore + onTimeScore + shrinkageScore + aprScore);
-
-  const tone = totalScore >= 80 ? "green" : totalScore >= 60 ? "amber" : "red";
-
-  return (
-    <ConsoleCard className="p-4">
-      <div className="flex items-center gap-4">
-        <div className="relative">
-          <ScoreRing score={totalScore} size={64} strokeWidth={6} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h4 className="font-semibold text-slate-800 truncate">{digest.managerName}</h4>
-          <p className="text-xs text-slate-500">{digest.teamSize} team members</p>
-        </div>
-        <Badge variant={tone === "green" ? "default" : tone === "amber" ? "secondary" : "destructive"}>
-          {digest.shrinkagePct}% shrinkage
-        </Badge>
-      </div>
-      <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-        <div>
-          <p className="text-lg font-bold text-emerald-600">{digest.onTime.length}</p>
-          <p className="text-[10px] text-slate-500 uppercase">On-time</p>
-        </div>
-        <div>
-          <p className="text-lg font-bold text-amber-600">{digest.lateArrivals.length}</p>
-          <p className="text-[10px] text-slate-500 uppercase">Late</p>
-        </div>
-        <div>
-          <p className="text-lg font-bold text-red-600">{digest.unplannedAbsences.length}</p>
-          <p className="text-[10px] text-slate-500 uppercase">Absent</p>
-        </div>
-        <div>
-          <p className="text-lg font-bold text-violet-600">{digest.aprPending}</p>
-          <p className="text-[10px] text-slate-500 uppercase">APR</p>
-        </div>
-      </div>
-    </ConsoleCard>
-  );
-}
-
-/** Alert row for unplanned absences */
-function AbsenceAlertRow({
-  alert,
-}: {
-  alert: LiveAttendanceData["alerts"][0];
-}) {
-  const navigate = useNavigate();
-  const urgency = alert.minutesSinceShiftStart > 60 ? "critical" : alert.minutesSinceShiftStart > 30 ? "warning" : "info";
-
-  return (
-    <div className={`flex items-center gap-3 p-3 rounded-xl border ${
-      urgency === "critical" ? "bg-red-50 border-red-200" :
-      urgency === "warning" ? "bg-amber-50 border-amber-200" :
-      "bg-slate-50 border-slate-200"
-    }`}>
-      <div className={`flex h-10 w-10 items-center justify-center rounded-full ${
-        urgency === "critical" ? "bg-red-100" :
-        urgency === "warning" ? "bg-amber-100" :
-        "bg-slate-100"
-      }`}>
-        <UserX className={`h-5 w-5 ${
-          urgency === "critical" ? "text-red-600" :
-          urgency === "warning" ? "text-amber-600" :
-          "text-slate-600"
-        }`} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-slate-800 truncate">{alert.employeeName}</span>
-          <span className="text-xs text-slate-500">{alert.employeeCode}</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <span>{alert.shiftTime}</span>
-          <span>•</span>
-          <span>{alert.processName || "—"}</span>
-          <span>•</span>
-          <span className={urgency === "critical" ? "text-red-600 font-medium" : ""}>{alert.minutesSinceShiftStart}m late</span>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        {/* Merge-plan Phase B bug #3: the Bell "Send reminder" button is removed — no
-            per-employee reminder endpoint exists, only a bulk one that emails every
-            manager with an open alert (wired to the Quick Actions "Send Mass Alert"
-            button below), so a per-row button here would be misleading. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0"
-          title="View employee roster"
-          onClick={() => navigate(`/wfm/employee-roster/${alert.employeeId}`)}
-        >
-          <Eye className="h-4 w-4 text-slate-500" />
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-// ── Main Component ───────────────────────────────────────────────────────────
 
 export default function LiveMonitoringPanel() {
   const { filters } = useRosterConsoleFilters();
-  const branchId = filters.branchId || ALL;
-  const { processId, lobId } = filters;
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [selectedManager, setSelectedManager] = useState<ManagerDigest | null>(null);
-  const [lastRefresh, setLastRefresh] = useState(new Date());
-  const navigate = useNavigate();
+  const { processId, lobId, branchId } = filters;
   const { toast } = useToast();
+  const [sevFilter, setSevFilter] = useState<Severity | null>(null);
+  const [alertLimit, setAlertLimit] = useState(PAGE);
+  const [teamLimit, setTeamLimit] = useState(PAGE);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "shrinkagePct", dir: -1 });
+  const [empId, setEmpId] = useState<string | null>(null);
+  const [mgrId, setMgrId] = useState<string | null>(null);
+  const scopeKey = [branchId, processId, lobId];
 
-  // Merge-plan Phase B bug #3: these were previously non-functional (Bell had no onClick,
-  // "Send Mass Alert"/"Notify All Managers" had none either). Both real endpoints already
-  // exist server-side and operate on the whole current alert/digest set (there is no
-  // per-row "remind this one manager" endpoint), so the per-row Bell button is removed —
-  // wiring it to a bulk endpoint would email every manager, not just this row's — while the
-  // two Quick Actions buttons below now call the real bulk endpoints.
+  // Both requests start in parallel; filters are applied server-side (branch/process/LOB narrow
+  // the RBAC scope for alerts AND digests). No client-side re-filtering.
+  const liveQ = useQuery({
+    queryKey: ["command-center", "live", ...scopeKey],
+    queryFn: () => hrmsApi.get<LiveAttendanceData>(`/api/roster-intelligence/unplanned-absences?${scopeParams({ branchId, processId, lobId }, { gracePeriod: "15" })}`),
+    refetchInterval: 60_000, staleTime: 30_000, placeholderData: keepPreviousData,
+  });
+  const digestQ = useQuery({
+    queryKey: ["command-center", "digests", ...scopeKey],
+    queryFn: () => hrmsApi.get<DigestsData>(`/api/roster-intelligence/manager-digests?${scopeParams({ branchId, processId, lobId })}`),
+    refetchInterval: 120_000, staleTime: 60_000, placeholderData: keepPreviousData,
+  });
+
+  const alerts = liveQ.data?.alerts ?? [];
+  const digests = digestQ.data?.digests ?? [];
+  const sum = useMemo(() => summarize(digests), [digests]);
+  const sev = useMemo(() => severityCounts(alerts), [alerts]);
+  const shownAlerts = useMemo(() => (sevFilter ? alerts.filter((a) => alertSeverity(a.minutesSinceShiftStart) === sevFilter) : alerts), [alerts, sevFilter]);
+
+  const rows = useMemo(() => {
+    const r = digests.map((d) => ({ d, late: d.lateArrivals.length, absent: d.unplannedAbsences.length, score: effectivenessScore(d) }));
+    const val = (x: (typeof r)[number]): number | string => {
+      switch (sort.key) {
+        case "managerName": return x.d.managerName.toLowerCase();
+        case "late": return x.late;
+        case "absent": return x.absent;
+        case "score": return x.score ?? -1;
+        default: return x.d[sort.key];
+      }
+    };
+    return r.sort((a, b) => { const A = val(a), B = val(b); return (A < B ? -1 : A > B ? 1 : 0) * sort.dir; });
+  }, [digests, sort]);
+
+  const mix = useMemo(() => [
+    { key: "onTime", name: "On time", value: sum.onTime, color: "hsl(var(--chart-2))" },
+    { key: "late", name: "Late", value: sum.late, color: "hsl(var(--chart-4))" },
+    { key: "incomplete", name: "Incomplete", value: sum.incomplete, color: "hsl(var(--chart-3))" },
+    { key: "absent", name: "Absent", value: sum.absent, color: "hsl(var(--chart-8))" },
+  ].filter((s) => s.value > 0), [sum]);
+
+  const byBranch = useMemo(() => {
+    const m = new Map<string, { planned: number; present: number }>();
+    for (const d of digests) {
+      const k = d.branchName ?? "No branch";
+      const e = m.get(k) ?? { planned: 0, present: 0 };
+      e.planned += d.planned; e.present += d.present; m.set(k, e);
+    }
+    return [...m].filter(([, v]) => v.planned > 0)
+      .map(([name, v]) => ({ name, planned: v.planned, shrinkagePct: Math.max(0, Math.round(((v.planned - v.present) / v.planned) * 100)) }))
+      .sort((a, b) => b.shrinkagePct - a.shrinkagePct).slice(0, 10);
+  }, [digests]);
+
+  const onSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: key === "managerName" ? 1 : -1 }));
+  const refresh = () => { void liveQ.refetch(); void digestQ.refetch(); };
+
   const sendMassAlert = useMutation({
-    mutationFn: () => hrmsApi.post<{ sent: number; skipped: number; totalAlerts: number }>(
-      "/api/roster-intelligence/send-unplanned-alerts",
-      {},
-    ),
-    onSuccess: (data) => toast({
-      title: "Mass alert sent",
-      description: `${data.sent} manager(s) notified, ${data.skipped} skipped (no email on file), ${data.totalAlerts} alert(s) total.`,
-    }),
-    onError: (err: any) => toast({
-      title: "Failed to send mass alert",
-      description: err?.message ?? "Unknown error",
-      variant: "destructive",
-    }),
+    mutationFn: () => hrmsApi.post<{ sent: number; skipped: number; totalAlerts: number }>("/api/roster-intelligence/send-unplanned-alerts", {}),
+    onSuccess: (r) => toast({ title: "Mass alert sent", description: `${r.sent} manager(s) notified, ${r.skipped} skipped (no email on file), ${r.totalAlerts} alert(s) total.` }),
+    onError: (e: any) => toast({ title: "Failed to send mass alert", description: e?.message ?? "Unknown error", variant: "destructive" }),
   });
-
-  const notifyAllManagers = useMutation({
-    mutationFn: () => hrmsApi.post<{ sent: number; skipped: number; total: number }>(
-      "/api/roster-intelligence/send-manager-digests",
-      {},
-    ),
-    onSuccess: (data) => toast({
-      title: "Manager digests sent",
-      description: `${data.sent} of ${data.total} manager(s) notified, ${data.skipped} skipped (no email on file).`,
-    }),
-    onError: (err: any) => toast({
-      title: "Failed to send manager digests",
-      description: err?.message ?? "Unknown error",
-      variant: "destructive",
-    }),
+  const notifyAll = useMutation({
+    mutationFn: () => hrmsApi.post<{ sent: number; skipped: number; total: number }>("/api/roster-intelligence/send-manager-digests", {}),
+    onSuccess: (r) => toast({ title: "Manager digests sent", description: `${r.sent} of ${r.total} manager(s) notified, ${r.skipped} skipped (no email on file).` }),
+    onError: (e: any) => toast({ title: "Failed to send manager digests", description: e?.message ?? "Unknown error", variant: "destructive" }),
   });
+  const confirmSend = (msg: string, run: () => void) => { if (window.confirm(msg)) run(); };
 
-  // Auto-refresh every 2 minutes
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setRefreshKey((k) => k + 1);
-      setLastRefresh(new Date());
-    }, 120000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const { data: branchData } = useQuery({
-    queryKey: ["command-center", "branches"],
-    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; branch_name: string }> }>("/api/org/branches"),
-  });
-
-  // Live unplanned absences
-  const { data: liveData, isLoading: liveLoading, refetch: refetchLive } = useQuery({
-    queryKey: ["command-center", "live", refreshKey, filters.branchId, processId, lobId],
-    queryFn: () => hrmsApi.get<LiveAttendanceData>(
-      `/api/roster-intelligence/unplanned-absences?${scopeParams({ branchId: filters.branchId, processId, lobId }, { gracePeriod: "15" })}`,
-    ),
-    refetchInterval: 60000,
-  });
-
-  // Manager digests for today
-  const { data: digestsData, isLoading: digestsLoading } = useQuery({
-    queryKey: ["command-center", "digests", refreshKey, filters.branchId, processId, lobId],
-    queryFn: () => hrmsApi.get<{ digests: ManagerDigest[]; count: number }>(
-      `/api/roster-intelligence/manager-digests?${scopeParams({ branchId: filters.branchId, processId, lobId })}`,
-    ),
-  });
-
-  const alerts = liveData?.alerts ?? [];
-  const digests = digestsData?.digests ?? [];
-
-  // Merge-plan Phase B bugs #1/#2: `branchId` state holds the branch UUID (the Select's
-  // `value={b.id}` below), but alerts only carry a branch NAME — comparing a name against a
-  // UUID via .includes() never matched, so this filter silently did nothing. Resolve the
-  // selected id to its real name from the already-fetched branch list first. Digests now
-  // carry a real branchId (backend fix, roster-intelligence.service.ts) instead of the old
-  // `return true` stub that ignored the filter entirely.
-  const selectedBranchName = branchId === ALL
-    ? null
-    : (branchData?.data ?? []).find((b) => b.id === branchId)?.branch_name ?? null;
-  const filteredAlerts = branchId === ALL || !selectedBranchName
-    ? alerts
-    : alerts.filter((a) => a.branchName?.toLowerCase() === selectedBranchName.toLowerCase());
-  const filteredDigests = branchId === ALL ? digests : digests.filter((d) => d.branchId === branchId);
-
-  // Calculate summary metrics
-  const totalAbsent = filteredAlerts.length;
-  const criticalAbsent = filteredAlerts.filter((a) => a.minutesSinceShiftStart > 60).length;
-  const totalManagers = filteredDigests.length;
-  const avgShrinkage = filteredDigests.length > 0
-    ? Math.round(filteredDigests.reduce((s, d) => s + d.shrinkagePct, 0) / filteredDigests.length)
-    : 0;
-  const totalPresent = filteredDigests.reduce((s, d) => s + d.present, 0);
-  const totalPlanned = filteredDigests.reduce((s, d) => s + d.planned, 0);
-
-  // Sort digests by effectiveness (worst first for intervention)
-  const sortedDigests = [...filteredDigests].sort((a, b) => b.shrinkagePct - a.shrinkagePct);
-
-  const handleRefresh = () => {
-    setRefreshKey((k) => k + 1);
-    setLastRefresh(new Date());
-    refetchLive();
-  };
+  const shrinkTone = sum.shrinkagePct === null ? "neutral" : sum.shrinkagePct > SHRINKAGE_TARGET * 2 ? "red" : sum.shrinkagePct > SHRINKAGE_TARGET ? "amber" : "green";
+  const err = liveQ.isError || digestQ.isError;
 
   return (
     <div>
       <PanelHeader
         icon={Activity}
         title="Live Monitoring"
-        description="Real-time attendance intelligence. Auto-refreshes every 2 minutes."
+        description="Today so far. Alerts refresh every minute, team roll-ups every 2 minutes."
         live
-        updatedLabel={`Updated ${lastRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+        updatedLabel={formatUpdatedAt(Math.max(liveQ.dataUpdatedAt, digestQ.dataUpdatedAt)) ? `Updated ${formatUpdatedAt(Math.max(liveQ.dataUpdatedAt, digestQ.dataUpdatedAt))}` : undefined}
         actions={
-          <Button variant="outline" size="sm" onClick={handleRefresh} className="cursor-pointer">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
+          <Button variant="outline" size="sm" onClick={refresh} className="min-h-[44px] cursor-pointer sm:min-h-0" aria-label="Refresh live data">
+            <RefreshCw className={`mr-2 h-4 w-4 ${liveQ.isFetching || digestQ.isFetching ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden /> Refresh
           </Button>
         }
       />
 
-      {/* KPI Tiles — Bento grid layout */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6">
-        <MetricTile
-          label="Present Now"
-          value={totalPresent}
-          helper={`of ${totalPlanned} planned`}
-          tone="green"
-          icon={UserCheck}
-          pulse
-        />
-        <MetricTile
-          label="Unplanned Absent"
-          value={totalAbsent}
-          helper={`${criticalAbsent} critical (>1hr)`}
-          tone="red"
-          icon={UserX}
-          pulse={totalAbsent > 0}
-        />
-        <MetricTile
-          label="Avg Shrinkage"
-          value={`${avgShrinkage}%`}
-          helper="Today so far"
-          tone={avgShrinkage > 10 ? "red" : avgShrinkage > 5 ? "amber" : "green"}
-          icon={TrendingDown}
-        />
-        <MetricTile
-          label="Managers"
-          value={totalManagers}
-          helper="With active teams"
-          tone="blue"
-          icon={Users}
-        />
-        <MetricTile
-          label="Coverage"
-          value={totalPlanned > 0 ? `${Math.round((totalPresent / totalPlanned) * 100)}%` : "—"}
-          helper="Present / Planned"
-          tone={totalPlanned > 0 && totalPresent / totalPlanned >= 0.9 ? "green" : "amber"}
-          icon={Target}
-        />
-        <MetricTile
-          label="Alerts Pending"
-          value={criticalAbsent}
-          helper="Need immediate action"
-          tone={criticalAbsent > 5 ? "red" : criticalAbsent > 0 ? "amber" : "green"}
-          icon={AlertTriangle}
-        />
+      {err && (
+        <div role="alert" className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+          Could not load {liveQ.isError ? "live alerts" : ""}{liveQ.isError && digestQ.isError ? " and " : ""}{digestQ.isError ? "team roll-ups" : ""}. Figures below may be incomplete.
+          <button type="button" className="cursor-pointer font-medium underline" onClick={refresh}>Retry</button>
+        </div>
+      )}
+
+      {/* Alert strip: severity counts, click to filter the alert list */}
+      <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Filter alerts by severity">
+        <span className="text-xs font-semibold text-slate-700">Alerts</span>
+        {(["critical", "warning", "info"] as Severity[]).map((s) => (
+          <button key={s} type="button" aria-pressed={sevFilter === s} onClick={() => { setSevFilter(sevFilter === s ? null : s); setAlertLimit(PAGE); }}
+            className={`inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full border px-3 text-xs font-medium sm:min-h-0 sm:py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${sevFilter === s ? "border-slate-900 bg-slate-900 text-white" : "border-border bg-card text-slate-800 hover:bg-muted"}`}>
+            {SEV_LABEL[s]} <span className="tabular-nums font-bold">{sev[s]}</span>
+          </button>
+        ))}
+        {sevFilter && <button type="button" onClick={() => setSevFilter(null)} className="cursor-pointer text-xs underline text-slate-700">Clear</button>}
       </div>
 
-      {/* Main content — two columns on desktop */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
-        {/* Left: Live Alerts (2 cols on xl) */}
-        <div className="xl:col-span-2 space-y-4">
-          <ConsoleCard>
-            <div className="p-4 border-b border-slate-100">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-100">
-                    <Zap className="h-5 w-5 text-red-600" />
-                  </div>
-                  <div>
-                    <h2 className="font-semibold text-slate-800">Live Absence Alerts</h2>
-                    <p className="text-xs text-slate-500">Employees rostered but not punched in</p>
-                  </div>
-                </div>
-                <Badge variant={totalAbsent > 10 ? "destructive" : totalAbsent > 0 ? "secondary" : "default"}>
-                  {totalAbsent} alerts
-                </Badge>
-              </div>
-            </div>
-            <div className="p-4 max-h-[400px] overflow-y-auto space-y-2">
-              {liveLoading ? (
-                <div className="py-8 text-center text-slate-400">
-                  <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
-                  Loading live data...
-                </div>
-              ) : filteredAlerts.length === 0 ? (
-                <div className="py-8 text-center">
-                  <CheckCircle2 className="h-12 w-12 text-emerald-400 mx-auto mb-3" />
-                  <p className="font-medium text-emerald-700">All Clear</p>
-                  <p className="text-sm text-slate-500">No unplanned absences detected</p>
-                </div>
-              ) : (
-                filteredAlerts.slice(0, 15).map((alert) => (
-                  <AbsenceAlertRow key={`${alert.employeeId}-${alert.date}`} alert={alert} />
-                ))
-              )}
-              {filteredAlerts.length > 15 && (
-                <p className="text-center text-sm text-slate-500 pt-2">
-                  +{filteredAlerts.length - 15} more alerts
-                </p>
-              )}
-            </div>
-          </ConsoleCard>
-
-          {/* Shrinkage Gauge */}
-          <ConsoleCard className="p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100">
-                <TrendingUp className="h-5 w-5 text-amber-600" />
-              </div>
-              <div>
-                <h2 className="font-semibold text-slate-800">Real-Time Shrinkage</h2>
-                <p className="text-xs text-slate-500">Today's workforce coverage vs planned</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-8">
-              <div className="flex-1">
-                <div className="flex items-baseline gap-2 mb-2">
-                  <span className={`text-4xl font-bold ${avgShrinkage > 10 ? "text-red-600" : avgShrinkage > 5 ? "text-amber-600" : "text-emerald-600"}`}>
-                    {avgShrinkage}%
-                  </span>
-                  <span className="text-slate-500">shrinkage</span>
-                </div>
-                <Progress
-                  value={avgShrinkage}
-                  className={`h-3 ${avgShrinkage > 10 ? "[&>div]:bg-red-500" : avgShrinkage > 5 ? "[&>div]:bg-amber-500" : "[&>div]:bg-emerald-500"}`}
-                />
-                <div className="flex justify-between text-xs text-slate-500 mt-1">
-                  <span>0%</span>
-                  <span className="text-amber-600">Target: 8%</span>
-                  <span>20%</span>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4 text-center">
-                <div>
-                  <p className="text-2xl font-bold text-emerald-600">{totalPresent}</p>
-                  <p className="text-xs text-slate-500">Present</p>
-                </div>
-                <div>
-                  <p className="text-2xl font-bold text-slate-400">{totalPlanned}</p>
-                  <p className="text-xs text-slate-500">Planned</p>
-                </div>
-              </div>
-            </div>
-          </ConsoleCard>
-        </div>
-
-        {/* Right: Manager Effectiveness */}
-        <div className="space-y-4">
-          <ConsoleCard>
-            <div className="p-4 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100">
-                  <Target className="h-5 w-5 text-violet-600" />
-                </div>
-                <div>
-                  <h2 className="font-semibold text-slate-800">Manager Effectiveness</h2>
-                  <p className="text-xs text-slate-500">Today's team performance</p>
-                </div>
-              </div>
-            </div>
-            <div className="p-4 max-h-[500px] overflow-y-auto space-y-3">
-              {digestsLoading ? (
-                <div className="py-8 text-center text-slate-400">
-                  <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
-                  Loading...
-                </div>
-              ) : sortedDigests.length === 0 ? (
-                <div className="py-8 text-center text-slate-400">
-                  No manager data available
-                </div>
-              ) : (
-                sortedDigests.slice(0, 8).map((digest) => (
-                  <div
-                    key={digest.managerId}
-                    className="cursor-pointer"
-                    onClick={() => setSelectedManager(digest)}
-                  >
-                    <ManagerEffectivenessCard digest={digest} />
-                  </div>
-                ))
-              )}
-            </div>
-          </ConsoleCard>
-
-          {/* Quick Actions */}
-          <ConsoleCard className="p-4">
-            <h3 className="font-semibold text-slate-800 mb-3">Quick Actions</h3>
-            <div className="space-y-2">
-              <Button variant="outline" className="w-full justify-start gap-2" onClick={handleRefresh}>
-                <RefreshCw className="h-4 w-4" />
-                Refresh All Data
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full justify-start gap-2"
-                onClick={() => sendMassAlert.mutate()}
-                disabled={sendMassAlert.isPending || totalAbsent === 0}
-              >
-                <Bell className="h-4 w-4" />
-                {sendMassAlert.isPending ? "Sending…" : `Send Mass Alert${totalAbsent > 0 ? ` (${totalAbsent})` : ""}`}
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full justify-start gap-2"
-                onClick={() => notifyAllManagers.mutate()}
-                disabled={notifyAllManagers.isPending}
-              >
-                <MessageSquare className="h-4 w-4" />
-                {notifyAllManagers.isPending ? "Sending…" : "Notify All Managers"}
-              </Button>
-            </div>
-          </ConsoleCard>
-        </div>
+      {/* KPI strip */}
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <KpiTile label="Present" value={digestQ.isLoading ? "…" : sum.present} sub={`of ${sum.planned} due so far`} tone="green" icon={UserCheck} progress={sum.coveragePct ?? 0} />
+        <KpiTile label="Coverage" value={sum.coveragePct === null ? "—" : `${sum.coveragePct}%`} sub="Present / due" tone={sum.coveragePct !== null && sum.coveragePct >= 90 ? "green" : "amber"} icon={Target} progress={sum.coveragePct ?? 0} />
+        <KpiTile label="Shrinkage" value={sum.shrinkagePct === null ? "—" : `${sum.shrinkagePct}%`} sub={`Target ${SHRINKAGE_TARGET}% · pooled`} tone={shrinkTone} icon={TrendingDown} progress={sum.shrinkagePct ?? 0} />
+        <KpiTile label="Unplanned absent" value={liveQ.isLoading ? "…" : alerts.length} sub={`${sev.critical} critical (1h+)`} tone={sev.critical > 0 ? "red" : alerts.length > 0 ? "amber" : "green"} icon={UserX} onClick={() => setSevFilter(sev.critical > 0 ? "critical" : null)} />
+        <KpiTile label="Late arrivals" value={sum.late} sub={`${sum.incomplete} incomplete shifts`} tone={sum.late > 0 ? "amber" : "green"} icon={Clock} />
+        <KpiTile label="Teams at risk" value={sum.atRiskManagers} sub={`of ${sum.managers} managers (score <60)`} tone={sum.atRiskManagers > 0 ? "red" : "green"} icon={Users} />
       </div>
 
-      {/* Manager Detail Sheet */}
-      <Sheet open={!!selectedManager} onOpenChange={(open) => !open && setSelectedManager(null)}>
-        <SheetContent className="w-[400px] sm:w-[540px]">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-violet-600" />
-              {selectedManager?.managerName}'s Team
-            </SheetTitle>
-          </SheetHeader>
-          {selectedManager && (
-            <div className="mt-6 space-y-6">
-              {/* Score ring */}
-              <div className="flex justify-center">
-                <div className="relative">
-                  <ScoreRing
-                    score={Math.round(
-                      (selectedManager.planned > 0 ? (selectedManager.present / selectedManager.planned) * 40 : 40) +
-                      (selectedManager.present > 0 ? (selectedManager.onTime.length / selectedManager.present) * 30 : 30) +
-                      Math.max(0, (100 - selectedManager.shrinkagePct) / 100 * 20) +
-                      (selectedManager.aprPending < 3 ? 10 : selectedManager.aprPending < 5 ? 5 : 0)
-                    )}
-                    size={120}
-                    strokeWidth={10}
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-xs text-slate-500 mt-8">Score</span>
-                  </div>
-                </div>
-              </div>
+      {/* Charts */}
+      <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ChartCard title="Attendance mix" subtitle="Today so far, all teams in view" height={220} loading={digestQ.isLoading} empty={mix.length === 0} emptyLabel="No shifts due yet today"
+          footer={<span>{sum.planned} planned shifts due · {sum.absent} absent, {sum.late} late, {sum.incomplete} incomplete, {sum.onTime} on time</span>}>
+          <Suspense fallback={chartFallback}>
+            <AttendanceMixDonut data={mix} />
+          </Suspense>
+        </ChartCard>
+        <ChartCard title="Shrinkage by branch" subtitle={`Top ${Math.min(10, byBranch.length)} by shrinkage · dashed line = ${SHRINKAGE_TARGET}% target`} height={220} loading={digestQ.isLoading} empty={byBranch.length === 0}>
+          <Suspense fallback={chartFallback}><ShrinkageByBranchBar data={byBranch} target={SHRINKAGE_TARGET} /></Suspense>
+        </ChartCard>
+      </div>
 
-              {/* Stats */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-center">
-                  <p className="text-2xl font-bold text-emerald-600">{selectedManager.onTime.length}</p>
-                  <p className="text-xs text-emerald-700">On-Time</p>
-                </div>
-                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-center">
-                  <p className="text-2xl font-bold text-amber-600">{selectedManager.lateArrivals.length}</p>
-                  <p className="text-xs text-amber-700">Late</p>
-                </div>
-                <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-center">
-                  <p className="text-2xl font-bold text-red-600">{selectedManager.unplannedAbsences.length}</p>
-                  <p className="text-xs text-red-700">Absent</p>
-                </div>
-                <div className="rounded-xl bg-violet-50 border border-violet-200 p-3 text-center">
-                  <p className="text-2xl font-bold text-violet-600">{selectedManager.aprPending}</p>
-                  <p className="text-xs text-violet-700">APR Pending</p>
-                </div>
-              </div>
-
-              {/* Lists */}
-              {selectedManager.unplannedAbsences.length > 0 && (
-                <div>
-                  <h4 className="font-semibold text-red-700 mb-2">Unplanned Absences</h4>
-                  <div className="space-y-1">
-                    {selectedManager.unplannedAbsences.map((e) => (
-                      <div key={e.employeeId} className="flex items-center gap-2 text-sm bg-red-50 rounded-lg px-3 py-2">
-                        <UserX className="h-4 w-4 text-red-500" />
-                        <span className="font-medium">{e.employeeName}</span>
-                        <span className="text-slate-500 text-xs">{e.employeeCode}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {selectedManager.lateArrivals.length > 0 && (
-                <div>
-                  <h4 className="font-semibold text-amber-700 mb-2">Late Arrivals</h4>
-                  <div className="space-y-1">
-                    {selectedManager.lateArrivals.map((e) => (
-                      <div key={e.employeeId} className="flex items-center justify-between text-sm bg-amber-50 rounded-lg px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <Clock className="h-4 w-4 text-amber-500" />
-                          <span className="font-medium">{e.employeeName}</span>
-                        </div>
-                        <span className="text-amber-600 font-medium">{e.lateMinutes}m</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {/* Alerts table */}
+        <ConsoleCard>
+          <div className="flex items-center justify-between border-b border-border p-4">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Live absence alerts</h2>
+              <p className="text-xs text-slate-600">Rostered, shift started 15+ minutes ago, no punch-in. Most overdue first.</p>
             </div>
-          )}
-        </SheetContent>
-      </Sheet>
+            <StatusPill tone={alerts.length > 10 ? "red" : alerts.length > 0 ? "amber" : "green"}>{shownAlerts.length} shown</StatusPill>
+          </div>
+          <div className="max-h-[440px] overflow-auto">
+            {liveQ.isLoading ? (
+              <div className="space-y-2 p-4" role="status" aria-label="Loading alerts">{[0, 1, 2, 3].map((i) => <div key={i} className="h-10 animate-pulse rounded bg-slate-100" />)}</div>
+            ) : liveQ.isError && !liveQ.data ? (
+              <div className="py-10 text-center text-sm text-red-800" role="alert">Alerts could not be loaded, so this is not an all-clear. <button type="button" className="cursor-pointer font-medium underline" onClick={refresh}>Retry</button></div>
+            ) : shownAlerts.length === 0 ? (
+              <div className="py-10 text-center"><CheckCircle2 className="mx-auto mb-2 h-10 w-10 text-emerald-600" aria-hidden /><p className="font-medium text-emerald-800">All clear</p><p className="text-sm text-slate-600">No unplanned absences detected</p></div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10 bg-muted text-xs"><tr><th scope="col" className="p-2 text-left font-semibold">Employee</th><th scope="col" className="p-2 text-left font-semibold">Process</th><th scope="col" className="p-2 text-left font-semibold">Shift</th><th scope="col" className="p-2 text-right font-semibold">Overdue</th><th scope="col" className="p-2 text-left font-semibold">Severity</th></tr></thead>
+                <tbody>
+                  {shownAlerts.slice(0, alertLimit).map((a) => {
+                    const s = alertSeverity(a.minutesSinceShiftStart);
+                    return (
+                      <tr key={`${a.employeeId}-${a.date}`} tabIndex={0} role="button" aria-label={`Open ${a.employeeName}`} onClick={() => setEmpId(a.employeeId)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setEmpId(a.employeeId); } }}
+                        className="cursor-pointer border-t border-border hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                        <td className="p-2"><div className="font-medium text-slate-900">{a.employeeName}</div><div className="text-xs text-slate-600">{a.employeeCode}{a.managerName ? ` · ${a.managerName}` : ""}</div></td>
+                        <td className="p-2 text-slate-700">{a.processName ?? "—"}</td>
+                        <td className="p-2 tabular-nums text-slate-700">{a.shiftTime}</td>
+                        <td className="p-2 text-right tabular-nums font-medium">{fmtDuration(a.minutesSinceShiftStart)}</td>
+                        <td className="p-2"><StatusPill tone={SEV_TONE[s]}>{s}</StatusPill></td>
+                      </tr>);
+                  })}
+                </tbody>
+              </table>
+            )}
+            {shownAlerts.length > alertLimit && (
+              <div className="p-3 text-center"><Button variant="outline" size="sm" className="cursor-pointer" onClick={() => setAlertLimit((n) => n + PAGE)}>Show {Math.min(PAGE, shownAlerts.length - alertLimit)} more of {shownAlerts.length - alertLimit}</Button></div>
+            )}
+          </div>
+        </ConsoleCard>
+
+        {/* Manager table */}
+        <ConsoleCard>
+          <div className="border-b border-border p-4">
+            <h2 className="text-sm font-semibold text-slate-900">Team effectiveness</h2>
+            <p className="text-xs text-slate-600">Score = coverage 40 + on-time 30 + (100-shrinkage) 20 + APR backlog 10. Click a row for detail.</p>
+          </div>
+          <div className="max-h-[440px] overflow-auto">
+            {digestQ.isLoading ? (
+              <div className="space-y-2 p-4" role="status" aria-label="Loading teams">{[0, 1, 2, 3].map((i) => <div key={i} className="h-10 animate-pulse rounded bg-slate-100" />)}</div>
+            ) : rows.length === 0 ? (
+              <p className="py-10 text-center text-sm text-slate-600">No rostered teams for the selected filters</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10 bg-muted text-xs"><tr>
+                  <SortHead label="Manager" k="managerName" sort={sort} onSort={onSort} />
+                  <SortHead label="Planned" k="planned" sort={sort} onSort={onSort} right />
+                  <SortHead label="Present" k="present" sort={sort} onSort={onSort} right />
+                  <SortHead label="Late" k="late" sort={sort} onSort={onSort} right />
+                  <SortHead label="Absent" k="absent" sort={sort} onSort={onSort} right />
+                  <SortHead label="Shrink" k="shrinkagePct" sort={sort} onSort={onSort} right />
+                  <SortHead label="APR" k="aprPending" sort={sort} onSort={onSort} right />
+                  <SortHead label="Score" k="score" sort={sort} onSort={onSort} right />
+                </tr></thead>
+                <tbody>
+                  {rows.slice(0, teamLimit).map(({ d, late, absent, score }) => (
+                    <tr key={d.managerId} tabIndex={0} role="button" aria-label={`Open ${d.managerName}'s team`} onClick={() => setMgrId(d.managerId)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setMgrId(d.managerId); } }}
+                      className="cursor-pointer border-t border-border hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                      <td className="p-2"><div className="font-medium text-slate-900">{d.managerName}</div><div className="text-xs text-slate-600">{d.branchName ?? "No branch"} · {d.teamSize} in team</div></td>
+                      <td className="p-2 text-right tabular-nums">{d.planned}</td>
+                      <td className="p-2 text-right tabular-nums">{d.present}</td>
+                      <td className="p-2 text-right tabular-nums">{late}</td>
+                      <td className="p-2 text-right tabular-nums">{absent}</td>
+                      <td className="p-2 text-right tabular-nums">{d.planned > 0 ? `${d.shrinkagePct}%` : "—"}</td>
+                      <td className="p-2 text-right tabular-nums">{d.aprPending}</td>
+                      <td className="p-2 text-right"><StatusPill tone={scoreTone(score)} dot={false}>{score ?? "—"}</StatusPill></td>
+                    </tr>))}
+                </tbody>
+              </table>
+            )}
+            {rows.length > teamLimit && (
+              <div className="p-3 text-center"><Button variant="outline" size="sm" className="cursor-pointer" onClick={() => setTeamLimit((n) => n + PAGE)}>Show more ({rows.length - teamLimit} left)</Button></div>
+            )}
+          </div>
+        </ConsoleCard>
+      </div>
+
+      {/* Bulk actions — operate on everything in the caller's RBAC scope, not on the filtered view. */}
+      <ConsoleCard className="mt-4 p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="mr-2 text-sm font-semibold text-slate-900">Notify managers</h3>
+          <Button variant="outline" size="sm" className="min-h-[44px] cursor-pointer gap-2 sm:min-h-0" disabled={sendMassAlert.isPending || alerts.length === 0}
+            onClick={() => confirmSend(`Email every manager with an open absence alert (${alerts.length} alert(s) in view)? This covers your full access scope, not just the filtered view.`, () => sendMassAlert.mutate())}>
+            <Bell className="h-4 w-4" aria-hidden /> {sendMassAlert.isPending ? "Sending…" : `Send absence alerts${alerts.length > 0 ? ` (${alerts.length})` : ""}`}
+          </Button>
+          <Button variant="outline" size="sm" className="min-h-[44px] cursor-pointer gap-2 sm:min-h-0" disabled={notifyAll.isPending}
+            onClick={() => confirmSend("Email the daily attendance summary to all managers in your access scope?", () => notifyAll.mutate())}>
+            <MessageSquare className="h-4 w-4" aria-hidden /> {notifyAll.isPending ? "Sending…" : "Send daily summaries"}
+          </Button>
+        </div>
+      </ConsoleCard>
+
+      <EmployeeDrawer employeeId={empId} onClose={() => setEmpId(null)} />
+      <ManagerDrawer managerId={mgrId} onClose={() => setMgrId(null)} />
     </div>
   );
 }

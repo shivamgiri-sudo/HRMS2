@@ -14,7 +14,11 @@ export type RosterCommandCenterTab =
   | "compliance"
   | "shifts"
   | "interventions"
-  | "audit";
+  | "audit"
+  | "roster-view"
+  | "comparison"
+  | "capacity"
+  | "fairness";
 
 export function RosterCommandCenterRedirect({ toTab }: { toTab: RosterCommandCenterTab }) {
   const { search } = useLocation();

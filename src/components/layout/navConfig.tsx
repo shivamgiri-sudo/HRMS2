@@ -27,16 +27,19 @@ export const navGroups: NavGroup[] = [
       { label: "Reports",       href: "/reports",       icon: ic(BarChart3),     roles: ["admin","hr","manager","ceo","coo","branch_head","wfm","operations_manager","qa","quality_analyst","payroll_head","finance","recruiter","super_admin","hr_admin","recruitment_hr","process_manager"], description: "Reports" },
       { label: "My Reports",    href: "/reports?view=requests", icon: ic(FileText),  public: true, description: "My report requests" },
       { label: "My Dashboard",        href: "/my-dashboard",        icon: ic(LayoutDashboard), pageCode: "EMPLOYEE_SELF_DASHBOARD", description: "Employee dashboard" },
-      { label: "CEO Dashboard",       href: "/ceo/dashboard",       icon: ic(Crown),           pageCode: "CEO_DASHBOARD", roles: ["ceo"], description: "CEO dashboard" },
-      { label: "HR Dashboard",        href: "/hr/dashboard",        icon: ic(Users),           pageCode: "HR_DASHBOARD", roles: ["hr", "admin", "branch_hr", "hr_branch", "ho_hr"], description: "HR dashboard" },
-      { label: "WFM Dashboard",       href: "/wfm/dashboard",       icon: ic(Calendar),        pageCode: "WFM_DASHBOARD", roles: ["wfm","wfm_spoc","ho_wfm","rta"], description: "WFM dashboard" },
-      { label: "WFM Attendance",      href: "/wfm-attendance",      icon: ic(Clock),           pageCode: "WFM_ATTENDANCE_DASHBOARD", roles: ["wfm","admin","super_admin","hr"], description: "WFM attendance detail dashboard" },
-      { label: "Payroll Dashboard",   href: "/payroll-hr/dashboard", icon: ic(Receipt),        pageCode: "PAYROLL_HR_DASHBOARD", roles: ["payroll_head", "payroll", "ho_payroll", "payroll_hr"], description: "Payroll dashboard" },
-      { label: "Manager Dashboard",   href: "/manager/dashboard",   icon: ic(Briefcase),       pageCode: "MANAGEMENT_DASHBOARD", roles: ["manager", "process_manager", "branch_head", "assistant_manager"], description: "Manager dashboard" },
-      { label: "Quality Dashboard",   href: "/quality-dashboard",   icon: ic(ShieldCheck),     pageCode: "QUALITY_DASHBOARD", roles: ["qa","quality_analyst","admin","super_admin","ceo","manager","process_manager","branch_head","operations_manager"], description: "QA role dashboard" },
-      { label: "Operations Dashboard", href: "/operations-dashboard", icon: ic(Activity),      pageCode: "OPERATIONS_DASHBOARD", roles: ["operations_manager","admin","super_admin","ceo","manager","process_manager","branch_head"], description: "Operations role dashboard" },
-      { label: "Recruiter Dashboard", href: "/recruiter-dashboard",  icon: ic(Users2),          pageCode: "RECRUITER_DASHBOARD", roles: ["recruiter","hr","admin","super_admin","manager"], description: "Recruiter role dashboard" },
-      { label: "IT Dashboard",        href: "/it/dashboard",         icon: ic(Server),          pageCode: "IT_MANAGER_DASHBOARD", roles: ["it","branch_it","it_admin"], description: "IT provisioning & asset dashboard" },
+      // ROLE DASHBOARDS: Removed from sidebar per 2026-09-30 dashboard redesign.
+      // Routes still live at original URLs — accessible via direct navigation or search.
+      // Uncomment to restore sidebar visibility if needed for rollback.
+      // { label: "CEO Dashboard",       href: "/ceo/dashboard",       icon: ic(Crown),           pageCode: "CEO_DASHBOARD", roles: ["ceo"], description: "CEO dashboard" },
+      // { label: "HR Dashboard",        href: "/hr/dashboard",        icon: ic(Users),           pageCode: "HR_DASHBOARD", roles: ["hr", "admin", "branch_hr", "hr_branch", "ho_hr"], description: "HR dashboard" },
+      // { label: "WFM Dashboard",       href: "/wfm/dashboard",       icon: ic(Calendar),        pageCode: "WFM_DASHBOARD", roles: ["wfm","wfm_spoc","ho_wfm","rta"], description: "WFM dashboard" },
+      // { label: "WFM Attendance",      href: "/wfm-attendance",      icon: ic(Clock),           pageCode: "WFM_ATTENDANCE_DASHBOARD", roles: ["wfm","admin","super_admin","hr"], description: "WFM attendance detail dashboard" },
+      // { label: "Payroll Dashboard",   href: "/payroll-hr/dashboard", icon: ic(Receipt),        pageCode: "PAYROLL_HR_DASHBOARD", roles: ["payroll_head", "payroll", "ho_payroll", "payroll_hr"], description: "Payroll dashboard" },
+      // { label: "Manager Dashboard",   href: "/manager/dashboard",   icon: ic(Briefcase),       pageCode: "MANAGEMENT_DASHBOARD", roles: ["manager", "process_manager", "branch_head", "assistant_manager"], description: "Manager dashboard" },
+      // { label: "Quality Dashboard",   href: "/quality-dashboard",   icon: ic(ShieldCheck),     pageCode: "QUALITY_DASHBOARD", roles: ["qa","quality_analyst","admin","super_admin","ceo","manager","process_manager","branch_head","operations_manager"], description: "QA role dashboard" },
+      // { label: "Operations Dashboard", href: "/operations-dashboard", icon: ic(Activity),      pageCode: "OPERATIONS_DASHBOARD", roles: ["operations_manager","admin","super_admin","ceo","manager","process_manager","branch_head"], description: "Operations role dashboard" },
+      // { label: "Recruiter Dashboard", href: "/recruiter-dashboard",  icon: ic(Users2),          pageCode: "RECRUITER_DASHBOARD", roles: ["recruiter","hr","admin","super_admin","manager"], description: "Recruiter role dashboard" },
+      // { label: "IT Dashboard",        href: "/it/dashboard",         icon: ic(Server),          pageCode: "IT_MANAGER_DASHBOARD", roles: ["it","branch_it","it_admin"], description: "IT provisioning & asset dashboard" },
     ],
   },
 
@@ -206,28 +209,19 @@ export const navGroups: NavGroup[] = [
         ],
       },
       {
-        label: "WFM & Roster",  href: "/wfm/roster", icon: ic(Clock), pageCode: "WFM_ROSTER", description: "Workforce management",
+        label: "WFM & Roster",  href: "/wfm/roster-command-center", icon: ic(Clock), pageCode: "WFM_ROSTER", description: "Workforce management",
         children: [
           // "Roster Planning" removed — duplicate of group header "/wfm/roster"
-          { label: "Team Roster",            href: "/wfm/team-roster",           icon: ic(UsersRound),    pageCode: "WFM_TEAM_ROSTER", managerGated: true, roles: ["wfm","wfm_spoc","wfm_analyst","branch_wfm","ho_wfm","admin","super_admin"], description: "Fill and change your team's roster; manager then WFM approve before it is applied" },
+          { label: "My Team Roster",         href: "/wfm/team-roster",           icon: ic(UsersRound),    pageCode: "WFM_TEAM_ROSTER", managerGated: true, roles: ["wfm","wfm_spoc","wfm_analyst","branch_wfm","ho_wfm","admin","super_admin"], description: "Fill and change your team's roster; manager then WFM approve before it is applied" },
           { label: "Roster Workspace",       href: "/wfm/roster-workspace",      icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "Weekly shift grid and acknowledgement tracker" },
           { label: "Roster Import",          href: "/wfm/roster-import",         icon: ic(Upload),        pageCode: "WFM_ROSTER",      description: "Upload Excel roster — auto-detect headers, 12h/24h, night shifts" },
-          { label: "Roster",                 href: "/wfm/roster-view",           icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "See who is working what — filter by branch, process or person" },
-          { label: "Roster Analytics",       href: "/wfm/roster-analytics",      icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Shrinkage intelligence, quality correlation, cost impact, forecasting" },
-          { label: "Roster Command Center", href: "/wfm/roster-command-center", icon: ic(Activity),      pageCode: "WFM_ROSTER",      description: "Real-time attendance monitoring, manager effectiveness, live alerts" },
-          { label: "Roster Interventions",  href: "/wfm/roster-interventions",  icon: ic(ShieldAlert),   pageCode: "WFM_ROSTER",      description: "Track and manage retention interventions for at-risk employees" },
-          { label: "Roster Compliance",     href: "/wfm/roster-compliance",     icon: ic(ShieldCheck),   pageCode: "WFM_ROSTER",      description: "WFM rule violations — rest policy, consecutive days, week-off fairness" },
+          { label: "Roster Command Center", href: "/wfm/roster-command-center", icon: ic(Activity),      pageCode: "WFM_ROSTER",      description: "Live monitoring, roster view, analytics, compliance, capacity, shifts, interventions and audit in one console" },
           // Linked 2026-08-28, once its endpoints were mounted. It was deliberately kept out of
           // the menu while /api/quality-dashboard/tni-* returned 401 — a sidebar entry to a page
           // that cannot load is worse than no entry. Verified serving live: August returns 58
           // agents, 51 of them flagged for coaching.
           { label: "Training Needs (TNI)",  href: "/wfm/tni-analysis",          icon: ic(GraduationCap), pageCode: "WFM_ROSTER",      description: "Agent × parameter quality heatmap — who needs coaching, on what" },
-          { label: "Shift Effectiveness",   href: "/wfm/shift-effectiveness",   icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Shift performance, break compliance, and optimization recommendations" },
-          { label: "Capacity Dashboard",    href: "/wfm/capacity-dashboard",    icon: ic(Users),         pageCode: "WFM_ROSTER",      description: "Headcount vs mandate, gap analysis, hiring demand projections" },
-          { label: "Team Comparison",       href: "/wfm/team-comparison",       icon: ic(Trophy),        pageCode: "WFM_ROSTER",      description: "Compare adherence across managers, processes, and branches" },
-          { label: "Roster Audit Trail",    href: "/wfm/roster-audit",          icon: ic(History),       pageCode: "WFM_ROSTER",      description: "Track who changed what roster, when, and why for compliance" },
           { label: "Notification Hub",      href: "/wfm/notification-hub",      icon: ic(Bell),          pageCode: "WFM_ROSTER",      description: "Configure roster alerts — manager digest, unplanned absence, compliance" },
-          { label: "Mobile Dashboard",      href: "/wfm/mobile-roster",         icon: ic(Users),         pageCode: "WFM_ROSTER",      description: "PWA-optimized team roster view for managers on the floor" },
           { label: "Roster Builder",         href: "/wfm/roster-builder",        icon: ic(CalendarDays),  pageCode: "WFM_ROSTER_BUILDER", description: "Build and publish a process's weekly roster — grid or bulk upload" },
           { label: "Roster Requests",        href: "/wfm/roster-requests",       icon: ic(ClipboardList), pageCode: "WFM_ROSTER",      description: "Review roster disputes and the week-offs employees have rejected" },
           { label: "Process LOB Mapping",   href: "/wfm/process-lob-mapping",   icon: ic(Target),        pageCode: "WFM_PROCESS_LOB_MAP", roles: ["wfm","wfm_spoc","branch_wfm","ho_wfm","admin","hr","super_admin"], description: "Map each process to its LOBs and assign employee LOBs" },
@@ -243,15 +237,10 @@ export const navGroups: NavGroup[] = [
           // { label: "WFM Planning Rules",     href: "/wfm/planning-rules",        icon: ic(Settings2),     roles: ["admin","hr","wfm","manager","super_admin"], description: "Shift planning rules" },
           // { label: "Slot Requirements",      href: "/wfm/slot-requirements",     icon: ic(Calendar),      roles: ["admin","hr","wfm","manager","super_admin"], description: "Slot capacity" },
           // { label: "Workforce Planning",     href: "/workforce-planning",        icon: ic(Users),         pageCode: "WFM_AUTO_ROSTER", description: "Headcount planning" },
-          { label: "WFM Manager Approvals", href: "/wfm-manager-approvals", icon: ic(ShieldCheck), pageCode: "WFM_ROSTER", description: "Manager roster approvals" },
-          { label: "Week-off Day Rules",     href: "/wfm/weekoff-day-rules",     icon: ic(CalendarDays),  roles: ["admin","hr","wfm","manager","super_admin"], description: "Day-level rules" },
+          { label: "RM Change Approvals", href: "/wfm-manager-approvals", icon: ic(ShieldCheck), pageCode: "WFM_ROSTER", description: "Manager roster approvals" },
           // roles match each route's own gate exactly (see workforce.routes.tsx's comment) —
           // not copy-pasted from the siblings above, since the two backends allow different
           // read access: rest-policy has no manager read; week-off-default allows it.
-          { label: "Minimum Rest Policy",    href: "/wfm/rest-policy",           icon: ic(ShieldAlert),   roles: ["admin","hr","wfm","super_admin"], description: "Minimum rest between shifts" },
-          { label: "Week-off Default Policy", href: "/wfm/week-off-default",     icon: ic(CalendarOff),   roles: ["admin","hr","wfm","manager","super_admin"], description: "Last-resort week-off day default" },
-          { label: "Week-off Fairness",      href: "/wfm/weekoff-fairness",      icon: ic(Target),        roles: ["admin","super_admin","wfm"], description: "Fairness scores & allocation" },
-          { label: "Branch SPOC Config",     href: "/wfm/branch-spoc-config",    icon: ic(ShieldCheck),   roles: ["admin","super_admin"], description: "Branch WFM final-approver assignment" },
         ],
       },
       {

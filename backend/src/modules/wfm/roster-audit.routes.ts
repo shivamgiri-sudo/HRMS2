@@ -10,391 +10,384 @@ import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
-import { lobCondition, readLobFilter } from '../../shared/lobFilter.js';
+import { lobCondition, readLobFilter, type LobFilter } from '../../shared/lobFilter.js';
+import {
+  AMENDABLE_CYCLE_STATUSES,
+  DECISION_TYPE_CODES,
+  ENGINE_ERROR_CODE,
+  clampInt,
+  deltaPct,
+  effectiveDecisionCode,
+  formatDecisionType,
+  isEngineErrorRule,
+  isIsoDate,
+  pct,
+  previousPeriod,
+  resolvePeriod,
+} from './roster-audit.helpers.js';
+import { actorName, resolveActors } from './roster-audit.actors.js';
+import { registerAuditDetailRoutes } from './roster-audit-detail.routes.js';
 
 const router = Router();
 const wrap = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+const ROLES = ['hr', 'wfm', 'admin', 'super_admin', 'operations_manager'] as const;
+const RUN_STATUSES = ['running', 'completed', 'failed', 'partial'];
+/** SQL predicate: rows the engine logged for a per-employee failure (not a real roster decision). */
+const NOT_ENGINE_ERROR = `(rda.rule_applied IS NULL OR rda.rule_applied NOT LIKE 'error:%')`;
 
 router.use(requireAuth);
 
+interface Scope { conds: string[]; params: (string | number)[] }
+
+/**
+ * Shared branch/process/LOB scope for roster_decision_audit (alias rda, LEFT JOIN employees e).
+ * Uses the audit row's own denormalised process/branch (what applied AT decision time) and falls back to
+ * the employee's CURRENT assignment for older rows that predate those columns.
+ */
+function auditScope(q: Record<string, unknown>, lob: LobFilter): Scope {
+  const conds: string[] = [];
+  const params: (string | number)[] = [];
+  if (q.branchId) { conds.push('COALESCE(rda.branch_id, e.branch_id) = ?'); params.push(String(q.branchId)); }
+  if (q.processId) { conds.push('COALESCE(rda.process_id, e.process_id) = ?'); params.push(String(q.processId)); }
+  const lobCond = lobCondition(lob);
+  if (lobCond) { conds.push(lobCond.sql); params.push(...lobCond.params); }
+  return { conds, params };
+}
+
+/** Scope for roster_generation_run (alias rgr). Runs carry process/branch but no LOB. */
+function runScope(q: Record<string, unknown>): Scope {
+  const conds: string[] = [];
+  const params: (string | number)[] = [];
+  if (q.branchId) { conds.push('rgr.branch_id = ?'); params.push(String(q.branchId)); }
+  if (q.processId) { conds.push('rgr.process_id = ?'); params.push(String(q.processId)); }
+  return { conds, params };
+}
+
+const runWindow = (from: string, to: string): Scope => ({
+  conds: ['rgr.started_at >= ?', 'rgr.started_at < DATE_ADD(?, INTERVAL 1 DAY)'],
+  params: [from, to],
+});
+
 /**
  * GET /api/roster-audit/trails
- * Returns audit trail entries with filters
+ * Returns audit trail entries with filters (server-side paged: limit/offset, total).
  */
 router.get(
   '/trails',
-  requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
+  requireRole(...ROLES),
   wrap(async (req: AuthenticatedRequest, res: Response) => {
-    const { employeeId, branchId, processId, dateFrom, dateTo, changeType, limit } = req.query;
-    const maxLimit = Math.min(parseInt(limit as string) || 100, 500);
+    const { employeeId, dateFrom, dateTo, changeType, cycleId, runId, q, overridesOnly } = req.query;
+    const limit = clampInt(req.query.limit, 100, 1, 500);
+    const offset = clampInt(req.query.offset, 0, 0, 1_000_000);
     const lob = readLobFilter(req, res);
     if (!lob) return;
-
-    const conditions: string[] = ['1=1'];
-    const params: (string | number)[] = [];
-
-    if (employeeId) {
-      conditions.push('rda.employee_id = ?');
-      params.push(String(employeeId));
+    if ((dateFrom && !isIsoDate(dateFrom)) || (dateTo && !isIsoDate(dateTo))) {
+      res.status(400).json({ error: 'dateFrom/dateTo must be YYYY-MM-DD' });
+      return;
     }
-    if (branchId) {
-      conditions.push('e.branch_id = ?');
-      params.push(String(branchId));
-    }
-    if (processId) {
-      conditions.push('e.process_id = ?');
-      params.push(String(processId));
-    }
-    // NOTE: roster_decision_audit is LEFT JOINed to employees, so a process/LOB filter drops audit rows
-    // that have no employee (employee_id NULL or deleted). Accepted: those rows cannot belong to a LOB.
-    const lobCond = lobCondition(lob);
-    if (lobCond) {
-      conditions.push(lobCond.sql);
-      params.push(...lobCond.params);
-    }
-    if (dateFrom) {
-      conditions.push('rda.roster_date >= ?');
-      params.push(String(dateFrom));
-    }
-    if (dateTo) {
-      conditions.push('rda.roster_date <= ?');
-      params.push(String(dateTo));
-    }
-    if (changeType) {
-      conditions.push('rda.decision_type = ?');
-      params.push(String(changeType));
-    }
-
-    // Merge-plan Phase B/D bug: this route (and /generation-runs below) 500'd in
-    // production with a generic "unexpected server error" — traced live to
-    // "Incorrect arguments to mysqld_stmt_execute" from mysql2's prepared-statement
-    // path when LIMIT is bound as a `?` placeholder (confirmed via a direct DB script:
-    // the identical query with LIMIT hardcoded works, the same query with `LIMIT ?`
-    // throws). Not a schema/collation issue — every other query in this file, and the
-    // established pattern across the rest of this codebase, interpolates a pre-
-    // validated integer limit directly (`LIMIT ${n}`) rather than binding it. maxLimit
-    // is always a real number here (Math.min(parseInt(...) || default, cap)), never
-    // raw user text, so this is not a SQL-injection risk.
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         rda.id,
-         rda.roster_date AS date,
-         rda.decision_type AS changeType,
-         rda.rule_applied AS reason,
-         rda.override_reason AS overrideReason,
-         rda.created_at AS timestamp,
-         e.id AS employeeId,
-         e.employee_code AS employeeCode,
-         e.full_name AS employeeName,
-         p.process_name AS processName,
-         b.branch_name AS branchName,
-         sm.shift_name AS shiftName,
-         actor.full_name AS changedByName,
-         rda.override_by AS changedById,
-         rgr.run_type AS runType,
-         rgr.triggered_by AS triggeredById,
-         trigger_user.full_name AS triggeredByName
-       FROM roster_decision_audit rda
-       LEFT JOIN employees e ON rda.employee_id = e.id
-       LEFT JOIN process_master p ON e.process_id = p.id
-       LEFT JOIN branch_master b ON e.branch_id = b.id
-       LEFT JOIN wfm_shift_master sm ON rda.assigned_shift_template_id = sm.id
-       LEFT JOIN employees actor ON rda.override_by = actor.id
-       LEFT JOIN roster_generation_run rgr ON rda.run_id = rgr.id
-       LEFT JOIN employees trigger_user ON rgr.triggered_by = trigger_user.id
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY rda.created_at DESC
-       LIMIT ${maxLimit}`,
-      params
-    );
-
-    const trails = rows.map((r: RowDataPacket) => ({
-      id: r.id,
-      date: r.date,
-      changeType: formatDecisionType(r.changeType),
-      changeTypeCode: r.changeType,
-      reason: r.overrideReason || r.reason || 'System generated',
-      timestamp: r.timestamp,
-      employee: {
-        id: r.employeeId,
-        code: r.employeeCode,
-        name: r.employeeName,
-      },
-      processName: r.processName,
-      branchName: r.branchName,
-      shiftName: r.shiftName,
-      changedBy: r.changedByName || r.triggeredByName || 'System',
-      changedById: r.changedById || r.triggeredById,
-      runType: r.runType,
-    }));
-
-    res.json({ trails, count: trails.length });
-  })
-);
-
-/**
- * GET /api/roster-audit/trails/:id
- * Merge-plan Phase B bug #17: dedicated full-detail record for the Audit Trail
- * table's row drill-down (Drill-Down Mandate) — never reuse the /trails list
- * payload. Includes "related changes" (other decisions for the same employee
- * within 7 days either side) as the mandated related-sub-records section.
- */
-router.get(
-  '/trails/:id',
-  requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
-  wrap(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
-
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         rda.id,
-         rda.roster_date AS date,
-         rda.decision_type AS changeType,
-         rda.rule_applied AS reason,
-         rda.override_reason AS overrideReason,
-         rda.created_at AS timestamp,
-         rda.employee_id AS employeeId,
-         e.employee_code AS employeeCode,
-         e.full_name AS employeeName,
-         p.process_name AS processName,
-         b.branch_name AS branchName,
-         sm.shift_name AS shiftName,
-         sm.start_time AS shiftStart,
-         sm.end_time AS shiftEnd,
-         actor.full_name AS changedByName,
-         actor.employee_code AS changedByCode,
-         rda.override_by AS changedById,
-         rda.run_id AS runId,
-         rgr.run_type AS runType,
-         rgr.status AS runStatus,
-         rgr.started_at AS runStartedAt,
-         rgr.completed_at AS runCompletedAt,
-         rgr.triggered_by AS triggeredById,
-         trigger_user.full_name AS triggeredByName
-       FROM roster_decision_audit rda
-       LEFT JOIN employees e ON rda.employee_id = e.id
-       LEFT JOIN process_master p ON e.process_id = p.id
-       LEFT JOIN branch_master b ON e.branch_id = b.id
-       LEFT JOIN wfm_shift_master sm ON rda.assigned_shift_template_id = sm.id
-       LEFT JOIN employees actor ON rda.override_by = actor.id
-       LEFT JOIN roster_generation_run rgr ON rda.run_id = rgr.id
-       LEFT JOIN employees trigger_user ON rgr.triggered_by = trigger_user.id
-       WHERE rda.id = ?`,
-      [id]
-    );
-
-    if (rows.length === 0) {
-      res.status(404).json({ error: 'Audit trail entry not found' });
+    if (changeType && changeType !== ENGINE_ERROR_CODE && !(DECISION_TYPE_CODES as readonly string[]).includes(String(changeType))) {
+      res.status(400).json({ error: 'Unknown changeType' });
       return;
     }
 
-    const r = rows[0];
+    const { conds, params } = auditScope(req.query, lob);
+    if (employeeId) { conds.push('rda.employee_id = ?'); params.push(String(employeeId)); }
+    if (cycleId) { conds.push('rda.cycle_id = ?'); params.push(String(cycleId)); }
+    if (runId) { conds.push('rda.run_id = ?'); params.push(String(runId)); }
+    if (dateFrom) { conds.push('rda.roster_date >= ?'); params.push(String(dateFrom)); }
+    if (dateTo) { conds.push('rda.roster_date <= ?'); params.push(String(dateTo)); }
+    if (changeType === ENGINE_ERROR_CODE) {
+      conds.push(`rda.rule_applied LIKE 'error:%'`);
+    } else if (changeType) {
+      conds.push('rda.decision_type = ?', NOT_ENGINE_ERROR);
+      params.push(String(changeType));
+    }
+    if (overridesOnly === '1' || overridesOnly === 'true') conds.push('rda.override_by IS NOT NULL');
+    if (typeof q === 'string' && q.trim()) {
+      const like = `%${q.trim().slice(0, 60).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      conds.push('(e.full_name LIKE ? OR e.employee_code LIKE ?)');
+      params.push(like, like);
+    }
+    const where = conds.length ? conds.join(' AND ') : '1=1';
 
-    const [relatedRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         rda.id,
-         rda.roster_date AS date,
-         rda.decision_type AS changeType,
-         rda.override_reason AS overrideReason,
-         rda.rule_applied AS reason,
-         rda.created_at AS timestamp,
-         actor.full_name AS changedByName
-       FROM roster_decision_audit rda
-       LEFT JOIN employees actor ON rda.override_by = actor.id
-       WHERE rda.employee_id = ?
-         AND rda.id != ?
-         AND rda.roster_date BETWEEN DATE_SUB(?, INTERVAL 7 DAY) AND DATE_ADD(?, INTERVAL 7 DAY)
-       ORDER BY rda.created_at DESC
-       LIMIT 10`,
-      [r.employeeId, id, r.date, r.date]
-    );
+    // LIMIT/OFFSET are interpolated, not bound: mysql2's prepared-statement path throws "Incorrect
+    // arguments to mysqld_stmt_execute" for `LIMIT ?` here. Both are clamp()ed integers, never raw text.
+    const [[rows], [countRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           rda.id,
+           rda.roster_date AS date,
+           rda.decision_type AS changeType,
+           rda.rule_applied AS reason,
+           rda.override_reason AS overrideReason,
+           rda.created_at AS timestamp,
+           rda.cycle_id AS cycleId,
+           rda.run_id AS runId,
+           rda.acted_by_role AS actedByRole,
+           e.id AS employeeId,
+           e.employee_code AS employeeCode,
+           e.full_name AS employeeName,
+           p.process_name AS processName,
+           b.branch_name AS branchName,
+           st.shift_name AS shiftName,
+           rda.override_by AS changedById,
+           rgr.run_type AS runType,
+           rgr.triggered_by AS triggeredById
+         FROM roster_decision_audit rda
+         LEFT JOIN employees e ON rda.employee_id = e.id
+         LEFT JOIN process_master p ON p.id = COALESCE(rda.process_id, e.process_id)
+         LEFT JOIN branch_master b ON b.id = COALESCE(rda.branch_id, e.branch_id)
+         LEFT JOIN wfm_shift_template st ON rda.assigned_shift_template_id = st.id
+         LEFT JOIN roster_generation_run rgr ON rda.run_id = rgr.id
+         WHERE ${where}
+         ORDER BY rda.created_at DESC, rda.id DESC
+         LIMIT ${limit} OFFSET ${offset}`,
+        params,
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total
+           FROM roster_decision_audit rda
+           LEFT JOIN employees e ON rda.employee_id = e.id
+          WHERE ${where}`,
+        params,
+      ),
+    ]);
 
-    res.json({
-      id: r.id,
-      date: r.date,
-      changeType: formatDecisionType(r.changeType),
-      changeTypeCode: r.changeType,
-      reason: r.overrideReason || r.reason || 'System generated',
-      ruleApplied: r.reason,
-      overrideReason: r.overrideReason,
-      timestamp: r.timestamp,
-      employee: {
-        id: r.employeeId,
-        code: r.employeeCode,
-        name: r.employeeName,
-      },
-      processName: r.processName,
-      branchName: r.branchName,
-      shift: r.shiftName ? { name: r.shiftName, startTime: r.shiftStart, endTime: r.shiftEnd } : null,
-      changedBy: r.changedByName || r.triggeredByName || 'System',
-      changedById: r.changedById || r.triggeredById,
-      changedByCode: r.changedByCode || null,
-      run: r.runId
-        ? {
-            id: r.runId,
-            runType: r.runType,
-            status: r.runStatus,
-            startedAt: r.runStartedAt,
-            completedAt: r.runCompletedAt,
-            triggeredBy: r.triggeredByName || 'System',
-          }
-        : null,
-      relatedChanges: relatedRows.map((rr: RowDataPacket) => ({
-        id: rr.id,
-        date: rr.date,
-        changeType: formatDecisionType(rr.changeType),
-        reason: rr.overrideReason || rr.reason || 'System generated',
-        timestamp: rr.timestamp,
-        changedBy: rr.changedByName || 'System',
-      })),
+    const actors = await resolveActors(rows.flatMap((r) => [r.changedById, r.triggeredById]));
+
+    const trails = rows.map((r: RowDataPacket) => {
+      const code = effectiveDecisionCode(r.changeType, r.reason);
+      const isError = code === ENGINE_ERROR_CODE;
+      return {
+        id: r.id,
+        date: r.date,
+        changeType: formatDecisionType(code),
+        changeTypeCode: code,
+        reason: r.overrideReason || r.reason || 'System generated',
+        ruleApplied: r.reason,
+        isOverride: !!r.changedById,
+        isEngineError: isError,
+        timestamp: r.timestamp,
+        cycleId: r.cycleId,
+        runId: r.runId,
+        actedByRole: r.actedByRole ?? null,
+        employee: { id: r.employeeId, code: r.employeeCode, name: r.employeeName },
+        processName: r.processName,
+        branchName: r.branchName,
+        shiftName: r.shiftName,
+        changedBy: r.changedById
+          ? actorName(actors, r.changedById)
+          : r.triggeredById ? actorName(actors, r.triggeredById) : 'System',
+        changedById: r.changedById || r.triggeredById,
+        runType: r.runType,
+      };
     });
-  })
+
+    const total = Number(countRows[0]?.total ?? trails.length);
+    res.json({ trails, count: trails.length, total, limit, offset });
+  }),
 );
 
 /**
  * GET /api/roster-audit/summary
- * Returns audit summary statistics
+ * Returns audit summary statistics for the period, the previous equal-length period (for deltas),
+ * a per-day series and the top override actors.
  */
 router.get(
   '/summary',
-  // Merge-plan Phase B bug #18: this endpoint lacked operations_manager while /trails (this
-  // same router, above) granted it — nothing suggested the narrower set was intentional, so
-  // aligned for consistency (2026-09-11).
-  requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
+  requireRole(...ROLES),
   wrap(async (req: AuthenticatedRequest, res: Response) => {
-    const { branchId, processId, dateFrom, dateTo } = req.query;
     const lob = readLobFilter(req, res);
     if (!lob) return;
-    const period = dateFrom && dateTo
-      ? [String(dateFrom), String(dateTo)]
-      : [
-          new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-          new Date().toISOString().slice(0, 10),
-        ];
+    const period = resolvePeriod(req.query.dateFrom, req.query.dateTo);
+    if ('error' in period) { res.status(400).json({ error: period.error }); return; }
+    const prev = previousPeriod(period);
 
-    let branchFilter = '';
-    const params: string[] = [...period];
-    if (branchId) {
-      branchFilter = 'AND e.branch_id = ?';
-      params.push(String(branchId));
-    }
-    if (processId) {
-      branchFilter += ' AND e.process_id = ?';
-      params.push(String(processId));
-    }
-    // LEFT JOIN employees: a process/LOB filter drops audit rows with no employee (documented, accepted).
-    // The roster_generation_run block below is not employee-keyed and stays unfiltered.
-    const lobCond = lobCondition(lob);
-    if (lobCond) {
-      branchFilter += ` AND ${lobCond.sql}`;
-      params.push(...lobCond.params);
-    }
+    const scope = auditScope(req.query, lob);
+    const scopeSql = scope.conds.length ? ` AND ${scope.conds.join(' AND ')}` : '';
+    const win = (p: { from: string; to: string }) => ({ sql: 'rda.roster_date BETWEEN ? AND ?', params: [p.from, p.to] });
+    const cur = win(period);
+    const prv = win(prev);
 
-    const [typeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         rda.decision_type,
-         COUNT(*) AS count
-       FROM roster_decision_audit rda
-       LEFT JOIN employees e ON rda.employee_id = e.id
-       WHERE rda.roster_date BETWEEN ? AND ?
-         ${branchFilter}
-       GROUP BY rda.decision_type`,
-      params
-    );
+    const rs = runScope(req.query);
+    const runScopeSql = rs.conds.length ? ` AND ${rs.conds.join(' AND ')}` : '';
+    const runCur = runWindow(period.from, period.to);
+    const runPrv = runWindow(prev.from, prev.to);
 
-    const [overrideRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS count
-       FROM roster_decision_audit rda
-       LEFT JOIN employees e ON rda.employee_id = e.id
-       WHERE rda.roster_date BETWEEN ? AND ?
-         AND rda.override_by IS NOT NULL
-         ${branchFilter}`,
-      params
-    );
+    const auditFrom = `FROM roster_decision_audit rda LEFT JOIN employees e ON rda.employee_id = e.id`;
+    const runAgg = `SELECT rgr.run_type, rgr.status, COUNT(*) AS count,
+                           SUM(rgr.assignments_created) AS assignments, SUM(rgr.conflicts_found) AS conflicts
+                    FROM roster_generation_run rgr WHERE ${runCur.conds.join(' AND ')}${runScopeSql}
+                    GROUP BY rgr.run_type, rgr.status`;
 
-    const [runRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         rgr.run_type,
-         COUNT(*) AS count,
-         SUM(rgr.assignments_created) AS assignments,
-         SUM(rgr.conflicts_found) AS conflicts
-       FROM roster_generation_run rgr
-       WHERE rgr.started_at BETWEEN ? AND DATE_ADD(?, INTERVAL 1 DAY)
-       GROUP BY rgr.run_type`,
-      [period[0], period[1]]
-    );
+    const [[typeRows], [dailyRows], [actorRows], [prevRows], [runRows], [prevRunRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT rda.decision_type, COALESCE(rda.rule_applied LIKE 'error:%', 0) AS is_error,
+                COUNT(*) AS count, SUM(rda.override_by IS NOT NULL) AS overrides
+         ${auditFrom}
+         WHERE ${cur.sql}${scopeSql}
+         GROUP BY rda.decision_type, is_error`,
+        [...cur.params, ...scope.params],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT rda.roster_date AS d, COUNT(*) AS total, SUM(rda.override_by IS NOT NULL) AS overrides
+         ${auditFrom}
+         WHERE ${cur.sql} AND ${NOT_ENGINE_ERROR}${scopeSql}
+         GROUP BY rda.roster_date ORDER BY rda.roster_date`,
+        [...cur.params, ...scope.params],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT rda.override_by AS actorId, COUNT(*) AS count
+         ${auditFrom}
+         WHERE ${cur.sql} AND rda.override_by IS NOT NULL AND ${NOT_ENGINE_ERROR}${scopeSql}
+         GROUP BY rda.override_by ORDER BY count DESC LIMIT 5`,
+        [...cur.params, ...scope.params],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS total, COALESCE(SUM(rda.override_by IS NOT NULL), 0) AS overrides
+         ${auditFrom}
+         WHERE ${prv.sql} AND ${NOT_ENGINE_ERROR}${scopeSql}`,
+        [...prv.params, ...scope.params],
+      ),
+      db.execute<RowDataPacket[]>(runAgg, [...runCur.params, ...rs.params]),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(rgr.conflicts_found), 0) AS conflicts
+         FROM roster_generation_run rgr WHERE ${runPrv.conds.join(' AND ')}${runScopeSql}`,
+        [...runPrv.params, ...rs.params],
+      ),
+    ]);
 
     const byType: Record<string, number> = {};
+    const byTypeDetail: Array<{ code: string; label: string; count: number; overrides: number }> = [];
+    let engineErrors = 0;
+    let totalChanges = 0;
+    let manualOverrides = 0;
     typeRows.forEach((r: RowDataPacket) => {
-      byType[formatDecisionType(r.decision_type)] = Number(r.count);
+      const count = Number(r.count);
+      if (Number(r.is_error) === 1) { engineErrors += count; return; }
+      const label = formatDecisionType(r.decision_type);
+      byType[label] = (byType[label] ?? 0) + count;
+      byTypeDetail.push({ code: r.decision_type, label, count, overrides: Number(r.overrides ?? 0) });
+      totalChanges += count;
+      manualOverrides += Number(r.overrides ?? 0);
     });
+    byTypeDetail.sort((a, b) => b.count - a.count);
 
-    const totalChanges = Object.values(byType).reduce((s, n) => s + n, 0);
-    const manualOverrides = Number(overrideRows[0]?.count ?? 0);
-
-    const runs = {
-      auto: 0,
-      manual: 0,
-      totalAssignments: 0,
-      totalConflicts: 0,
-    };
+    const runs = { auto: 0, manual: 0, total: 0, failed: 0, partial: 0, totalAssignments: 0, totalConflicts: 0 };
     runRows.forEach((r: RowDataPacket) => {
-      if (r.run_type === 'auto') runs.auto = Number(r.count);
-      else runs.manual += Number(r.count);
+      const n = Number(r.count);
+      if (r.run_type === 'auto') runs.auto += n; else runs.manual += n;
+      if (r.status === 'failed') runs.failed += n;
+      if (r.status === 'partial') runs.partial += n;
+      runs.total += n;
       runs.totalAssignments += Number(r.assignments ?? 0);
       runs.totalConflicts += Number(r.conflicts ?? 0);
     });
 
+    const actors = await resolveActors(actorRows.map((r) => r.actorId));
+    const prevTotal = Number(prevRows[0]?.total ?? 0);
+    const prevOverrides = Number(prevRows[0]?.overrides ?? 0);
+    const prevRuns = Number(prevRunRows[0]?.count ?? 0);
+    const prevConflicts = Number(prevRunRows[0]?.conflicts ?? 0);
+    const overrideRate = pct(manualOverrides, totalChanges);
+
     res.json({
-      period: { from: period[0], to: period[1] },
+      period,
+      previousPeriod: prev,
       totalChanges,
       manualOverrides,
-      overrideRate: totalChanges > 0 ? Math.round((manualOverrides / totalChanges) * 100) : 0,
+      overrideRate,
+      engineErrors,
       byType,
+      byTypeDetail,
+      daily: dailyRows.map((r: RowDataPacket) => ({ date: r.d, total: Number(r.total), overrides: Number(r.overrides ?? 0) })),
+      topActors: actorRows.map((r: RowDataPacket) => ({ id: r.actorId, name: actorName(actors, r.actorId), count: Number(r.count) })),
       generationRuns: runs,
+      previous: {
+        totalChanges: prevTotal,
+        manualOverrides: prevOverrides,
+        overrideRate: pct(prevOverrides, prevTotal),
+        runs: prevRuns,
+        conflicts: prevConflicts,
+      },
+      deltas: {
+        totalChanges: deltaPct(totalChanges, prevTotal),
+        manualOverrides: deltaPct(manualOverrides, prevOverrides),
+        runs: deltaPct(runs.total, prevRuns),
+        conflicts: deltaPct(runs.totalConflicts, prevConflicts),
+      },
+      // Decisions are windowed by roster_date; runs by started_at. Runs have no LOB, so LOB is not applied to them.
+      basis: { decisions: 'roster_date', runs: 'started_at', lobAppliedToRuns: false },
     });
-  })
+  }),
 );
 
 /**
  * GET /api/roster-audit/generation-runs
- * Returns list of roster generation runs
+ * Roster generation runs, filtered by branch/process/date window/status; paged (limit/offset, total).
  */
 router.get(
   '/generation-runs',
-  // Merge-plan Phase B bug #18: same alignment as /summary above.
-  requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
+  requireRole(...ROLES),
   wrap(async (req: AuthenticatedRequest, res: Response) => {
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const limit = clampInt(req.query.limit, 50, 1, 200);
+    const offset = clampInt(req.query.offset, 0, 0, 1_000_000);
+    const { dateFrom, dateTo, status } = req.query;
+    if ((dateFrom && !isIsoDate(dateFrom)) || (dateTo && !isIsoDate(dateTo))) {
+      res.status(400).json({ error: 'dateFrom/dateTo must be YYYY-MM-DD' });
+      return;
+    }
+    if (status && !RUN_STATUSES.includes(String(status))) {
+      res.status(400).json({ error: 'Unknown status' });
+      return;
+    }
 
-    // Same LIMIT-as-bound-parameter fix as /trails above — see that comment for the
-    // full diagnosis. limit is always a validated integer, never raw user text.
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         rgr.id,
-         rgr.cycle_id AS cycleId,
-         rgr.process_id AS processId,
-         p.process_name AS processName,
-         rgr.branch_id AS branchId,
-         b.branch_name AS branchName,
-         rgr.run_type AS runType,
-         rgr.status,
-         rgr.employees_processed AS employeesProcessed,
-         rgr.assignments_created AS assignmentsCreated,
-         rgr.weekoffs_allocated AS weekoffsAllocated,
-         rgr.conflicts_found AS conflictsFound,
-         rgr.started_at AS startedAt,
-         rgr.completed_at AS completedAt,
-         e.full_name AS triggeredByName
-       FROM roster_generation_run rgr
-       LEFT JOIN process_master p ON rgr.process_id = p.id
-       LEFT JOIN branch_master b ON rgr.branch_id = b.id
-       LEFT JOIN employees e ON rgr.triggered_by = e.id
-       ORDER BY rgr.started_at DESC
-       LIMIT ${limit}`
-    );
+    const { conds, params } = runScope(req.query);
+    if (dateFrom) { conds.push('rgr.started_at >= ?'); params.push(String(dateFrom)); }
+    if (dateTo) { conds.push('rgr.started_at < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(String(dateTo)); }
+    if (status) { conds.push('rgr.status = ?'); params.push(String(status)); }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+    // limit/offset: clamped integers interpolated (see /trails for why they are not bound).
+    const [[rows], [countRows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT
+           rgr.id,
+           rgr.cycle_id AS cycleId,
+           rgr.process_id AS processId,
+           p.process_name AS processName,
+           rgr.branch_id AS branchId,
+           b.branch_name AS branchName,
+           rgr.run_type AS runType,
+           rgr.status,
+           rgr.employees_processed AS employeesProcessed,
+           rgr.assignments_created AS assignmentsCreated,
+           rgr.weekoffs_allocated AS weekoffsAllocated,
+           rgr.conflicts_found AS conflictsFound,
+           rgr.started_at AS startedAt,
+           rgr.completed_at AS completedAt,
+           TIMESTAMPDIFF(SECOND, rgr.started_at, rgr.completed_at) AS durationSeconds,
+           rgr.triggered_by AS triggeredById,
+           wc.week_start_date AS weekStart,
+           wc.week_end_date AS weekEnd
+         FROM roster_generation_run rgr
+         LEFT JOIN process_master p ON rgr.process_id = p.id
+         LEFT JOIN branch_master b ON rgr.branch_id = b.id
+         LEFT JOIN weekly_roster_cycle wc ON rgr.cycle_id = wc.id
+         ${where}
+         ORDER BY rgr.started_at DESC, rgr.id DESC
+         LIMIT ${limit} OFFSET ${offset}`,
+        params,
+      ),
+      db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM roster_generation_run rgr ${where}`, params),
+    ]);
+
+    const actors = await resolveActors(rows.map((r) => r.triggeredById));
 
     res.json({
+      total: Number(countRows[0]?.total ?? rows.length),
+      limit,
+      offset,
       runs: rows.map((r: RowDataPacket) => ({
         id: r.id,
         cycleId: r.cycleId,
@@ -405,136 +398,92 @@ router.get(
         runType: r.runType,
         status: r.status,
         stats: {
-          employeesProcessed: r.employeesProcessed,
-          assignmentsCreated: r.assignmentsCreated,
-          weekoffsAllocated: r.weekoffsAllocated,
-          conflictsFound: r.conflictsFound,
+          employeesProcessed: Number(r.employeesProcessed ?? 0),
+          assignmentsCreated: Number(r.assignmentsCreated ?? 0),
+          weekoffsAllocated: Number(r.weekoffsAllocated ?? 0),
+          conflictsFound: Number(r.conflictsFound ?? 0),
         },
+        weekStart: r.weekStart ?? null,
+        weekEnd: r.weekEnd ?? null,
         startedAt: r.startedAt,
         completedAt: r.completedAt,
-        duration: r.completedAt && r.startedAt
-          ? Math.round((new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime()) / 1000)
-          : null,
-        triggeredBy: r.triggeredByName || 'System',
+        duration: r.durationSeconds === null || r.durationSeconds === undefined ? null : Math.max(0, Number(r.durationSeconds)),
+        triggeredBy: actorName(actors, r.triggeredById),
       })),
     });
-  })
+  }),
 );
 
 /**
- * GET /api/roster-audit/generation-runs/:id
- * Merge-plan Phase B bug #17: dedicated full-detail record for the Generation
- * Runs row drill-down (Drill-Down Mandate) — never reuse the list payload.
- * Includes the individual roster_decision_audit rows this run produced, as
- * the mandated related-sub-records / audit-trail section.
+ * GET /api/roster-audit/amendment-options?processId=&branchId=&cycleId=
+ * Feeds the "Record Amendment" form with dropdown domains: amendable (post-publication) cycles and,
+ * once a cycle is chosen, its employees and the shift templates valid for that cycle's process.
  */
 router.get(
-  '/generation-runs/:id',
-  requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
+  '/amendment-options',
+  requireRole(...ROLES),
   wrap(async (req: AuthenticatedRequest, res: Response) => {
-    const { id } = req.params;
+    const { processId, branchId, cycleId } = req.query;
+    const conds = [`c.status IN (${AMENDABLE_CYCLE_STATUSES.map(() => '?').join(',')})`];
+    const params: string[] = [...AMENDABLE_CYCLE_STATUSES];
+    if (processId) { conds.push('c.process_id = ?'); params.push(String(processId)); }
+    if (branchId) { conds.push('c.branch_id = ?'); params.push(String(branchId)); }
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         rgr.id,
-         rgr.cycle_id AS cycleId,
-         rgr.process_id AS processId,
-         p.process_name AS processName,
-         rgr.branch_id AS branchId,
-         b.branch_name AS branchName,
-         rgr.run_type AS runType,
-         rgr.status,
-         rgr.employees_processed AS employeesProcessed,
-         rgr.assignments_created AS assignmentsCreated,
-         rgr.weekoffs_allocated AS weekoffsAllocated,
-         rgr.conflicts_found AS conflictsFound,
-         rgr.started_at AS startedAt,
-         rgr.completed_at AS completedAt,
-         rgr.triggered_by AS triggeredById,
-         e.full_name AS triggeredByName,
-         e.employee_code AS triggeredByCode
-       FROM roster_generation_run rgr
-       LEFT JOIN process_master p ON rgr.process_id = p.id
-       LEFT JOIN branch_master b ON rgr.branch_id = b.id
-       LEFT JOIN employees e ON rgr.triggered_by = e.id
-       WHERE rgr.id = ?`,
-      [id]
+    const [cycleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT c.id, c.status, c.week_start_date AS weekStart, c.week_end_date AS weekEnd,
+              p.process_name AS processName, b.branch_name AS branchName
+         FROM weekly_roster_cycle c
+         LEFT JOIN process_master p ON c.process_id = p.id
+         LEFT JOIN branch_master b ON c.branch_id = b.id
+        WHERE ${conds.join(' AND ')}
+        ORDER BY c.week_start_date DESC
+        LIMIT 100`,
+      params,
     );
 
-    if (rows.length === 0) {
-      res.status(404).json({ error: 'Generation run not found' });
-      return;
+    let employees: RowDataPacket[] = [];
+    let shifts: RowDataPacket[] = [];
+    if (cycleId) {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT e.id, e.employee_code AS code, e.full_name AS name
+           FROM roster_daily_assignment rda
+           JOIN employees e ON e.id = rda.employee_id
+          WHERE rda.cycle_id = ?
+          ORDER BY e.full_name
+          LIMIT 1000`,
+        [String(cycleId)],
+      );
+      employees = empRows;
+      const [cycleRow] = await db.execute<RowDataPacket[]>(
+        `SELECT process_id FROM weekly_roster_cycle WHERE id = ? LIMIT 1`,
+        [String(cycleId)],
+      );
+      const cycleProcessId = cycleRow[0]?.process_id ?? null;
+      const [shiftRows] = await db.execute<RowDataPacket[]>(
+        `SELECT st.id, st.shift_code AS code, st.shift_name AS name, st.start_time AS startTime, st.end_time AS endTime
+           FROM wfm_shift_template st
+          WHERE st.active_status = 1
+            AND (st.process_id IS NULL OR st.process_id = ?)
+          ORDER BY st.shift_code
+          LIMIT 200`,
+        [cycleProcessId],
+      );
+      shifts = shiftRows;
     }
 
-    const r = rows[0];
-
-    const [decisionRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         rda.id,
-         rda.roster_date AS date,
-         rda.decision_type AS changeType,
-         rda.override_reason AS overrideReason,
-         rda.rule_applied AS reason,
-         rda.created_at AS timestamp,
-         e.employee_code AS employeeCode,
-         e.full_name AS employeeName
-       FROM roster_decision_audit rda
-       LEFT JOIN employees e ON rda.employee_id = e.id
-       WHERE rda.run_id = ?
-       ORDER BY rda.created_at DESC
-       LIMIT 100`,
-      [id]
-    );
-
     res.json({
-      id: r.id,
-      cycleId: r.cycleId,
-      processId: r.processId,
-      processName: r.processName,
-      branchId: r.branchId,
-      branchName: r.branchName,
-      runType: r.runType,
-      status: r.status,
-      stats: {
-        employeesProcessed: r.employeesProcessed,
-        assignmentsCreated: r.assignmentsCreated,
-        weekoffsAllocated: r.weekoffsAllocated,
-        conflictsFound: r.conflictsFound,
-      },
-      startedAt: r.startedAt,
-      completedAt: r.completedAt,
-      duration: r.completedAt && r.startedAt
-        ? Math.round((new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime()) / 1000)
-        : null,
-      triggeredBy: {
-        id: r.triggeredById,
-        name: r.triggeredByName || 'System',
-        code: r.triggeredByCode || null,
-      },
-      decisions: decisionRows.map((d: RowDataPacket) => ({
-        id: d.id,
-        date: d.date,
-        changeType: formatDecisionType(d.changeType),
-        reason: d.overrideReason || d.reason || 'System generated',
-        timestamp: d.timestamp,
-        employee: { code: d.employeeCode, name: d.employeeName },
+      cycles: cycleRows.map((c) => ({
+        id: c.id, status: c.status, weekStart: c.weekStart, weekEnd: c.weekEnd,
+        processName: c.processName, branchName: c.branchName,
       })),
+      employees,
+      shifts,
     });
-  })
+  }),
 );
 
-function formatDecisionType(type: string): string {
-  const map: Record<string, string> = {
-    shift_assigned: 'Shift Assigned',
-    weekoff_assigned: 'Week-off Assigned',
-    weekoff_denied: 'Week-off Denied',
-    weekoff_waitlisted: 'Week-off Waitlisted',
-    shift_frozen: 'Shift Frozen',
-    holiday_applied: 'Holiday Applied',
-    rejected_request: 'Request Rejected',
-    manager_override: 'Manager Override',
-  };
-  return map[type] || type;
-}
+registerAuditDetailRoutes(router, wrap, ROLES);
 
+// Re-exported for existing importers/tests.
+export { formatDecisionType, isEngineErrorRule };
 export const rosterAuditRouter = router;

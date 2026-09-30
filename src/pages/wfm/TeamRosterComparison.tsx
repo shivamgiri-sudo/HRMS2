@@ -17,7 +17,7 @@
 import { useState } from "react";
 import { LobSelect } from "@/components/wfm/LobSelect";
 import { useQuery } from "@tanstack/react-query";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { EmbeddableLayout as DashboardLayout } from "@/components/wfm/console/EmbeddableLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -376,7 +376,7 @@ export default function TeamRosterComparison() {
     queryFn: () => hrmsApi.get<{ data: Array<{ id: string; branch_name: string }> }>("/api/org/branches"),
   });
 
-  const { data: comparisonData, isLoading, refetch } = useQuery({
+  const { data: comparisonData, isLoading, isError, refetch } = useQuery({
     queryKey: ["team-comparison", "data", branchFilter, period, lobId],
     queryFn: () => {
       const params = new URLSearchParams();
@@ -453,6 +453,11 @@ export default function TeamRosterComparison() {
         {isLoading ? (
           <GlassCard className="py-12 text-center">
             <div className="animate-pulse">Loading comparison data...</div>
+          </GlassCard>
+        ) : isError ? (
+          <GlassCard className="py-12 text-center" >
+            <p role="alert" className="text-sm font-semibold text-rose-700">Could not load the team comparison. This is not an empty result.</p>
+            <button type="button" onClick={() => refetch()} className="mt-2 cursor-pointer text-sm text-blue-700 underline hover:no-underline">Retry</button>
           </GlassCard>
         ) : (
           <>

@@ -152,7 +152,7 @@ rosterImportRouter.get(
 
 // ── GET /api/wfm/roster-imports/:batchId ─────────────────────────────────
 rosterImportRouter.get(
-  '/:batchId',
+  '/:batchId(\\d+)',  // numeric only: a bare /:batchId shadowed GET /status-summary (400 Invalid batchId)
   requireRole(...WFM_ROLES),
   async (req, res) => {
     try {

@@ -1,723 +1,286 @@
 /**
- * Roster Audit Trail Dashboard
- * Track who changed what roster, when, and why
- * Follows MAS HRMS frozen design patterns
+ * Roster Audit Trail (Command Center tab=audit): who changed which roster, when and why, plus roster
+ * generation runs. Backend: /roster-audit/{summary,trails,generation-runs,...}; amendments POST /roster-gov.
+ * Sub-components live in ./audit-trail/.
  */
-
-import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, CheckCircle2, FileText, GitBranch, History, Info, PenLine, RefreshCw, Search, ShieldAlert, User, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ChartCard } from "@/components/wfm/console/ChartCard";
+import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
+import { FilterNote } from "@/components/wfm/console/FilterNote";
+import { KpiTile } from "@/components/wfm/console/KpiTile";
+import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { hrmsApi as api } from "@/lib/hrmsApi";
+import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
+import { formatUpdatedAt } from "./heavyQuery";
+import { scopeParams } from "./filterState";
+import { AmendmentDialog } from "./audit-trail/AmendmentDialog";
+import { RunDrawer, SegmentDrawer, TrailDrawer, type SegmentSpec } from "./audit-trail/AuditDrawers";
+import { RunsTable, TrailsTable } from "./audit-trail/AuditTables";
+import { Pager, TableSkeleton } from "./audit-trail/tableParts";
 import {
-  FileText,
-  Clock,
-  User,
-  Calendar,
-  RefreshCw,
-  Filter,
-  History,
-  GitBranch,
-  ChevronRight,
-  AlertTriangle,
-  CheckCircle,
-  Loader2,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { useRosterConsoleFilters } from './RosterConsoleFilterContext';
-import { KpiTile } from '@/components/wfm/console/KpiTile';
-import { PanelHeader } from '@/components/wfm/console/PanelHeader';
-import { FilterNote } from '@/components/wfm/console/FilterNote';
-import { scopeParams } from './filterState';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { hrmsApi as api } from '@/lib/hrmsApi';
+  CHANGE_TYPE_OPTIONS, RUN_STATUS_OPTIONS, buildAlerts, fmtDate, fmtNum,
+  type AuditAlert, type AuditSummary, type RunsResponse, type TrailsResponse,
+} from "./audit-trail/auditModel";
 
-interface AuditTrail {
-  id: string;
-  date: string;
-  changeType: string;
-  changeTypeCode: string;
-  reason: string;
-  timestamp: string;
-  employee: {
-    id: string;
-    code: string;
-    name: string;
-  };
-  processName: string;
-  branchName: string;
-  shiftName: string | null;
-  changedBy: string;
-  runType: string | null;
+const DailyChangesChart = lazy(() => import("./audit-trail/AuditCharts").then((m) => ({ default: m.DailyChangesChart })));
+const TypeBarChart = lazy(() => import("./audit-trail/AuditCharts").then((m) => ({ default: m.TypeBarChart })));
+const chartFallback = <div className="h-full animate-pulse rounded-md bg-slate-100 motion-reduce:animate-none" role="status" aria-label="Loading chart" />;
+
+const PAGE = 50;
+const ALL = "all";
+const QUERY_OPTS = { staleTime: 60_000, gcTime: 10 * 60_000, placeholderData: keepPreviousData, retry: false, refetchOnWindowFocus: false } as const;
+
+const SEV_STYLE = {
+  critical: { cls: "border-red-200 bg-red-50 text-red-900", Icon: ShieldAlert, label: "Critical" },
+  warning: { cls: "border-amber-200 bg-amber-50 text-amber-900", Icon: AlertTriangle, label: "Warning" },
+  info: { cls: "border-blue-200 bg-blue-50 text-blue-900", Icon: Info, label: "Info" },
+} as const;
+
+/** Debounce a fast-changing value (search box) so we don't fire a query per keystroke. */
+function useDebounced<T>(value: T, ms = 350): T {
+  const [v, setV] = useState(value);
+  useEffect(() => { const t = setTimeout(() => setV(value), ms); return () => clearTimeout(t); }, [value, ms]);
+  return v;
 }
-
-interface GenerationRun {
-  id: string;
-  cycleId: string;
-  processName: string;
-  branchName: string | null;
-  runType: string;
-  status: string;
-  stats: {
-    employeesProcessed: number;
-    assignmentsCreated: number;
-    weekoffsAllocated: number;
-    conflictsFound: number;
-  };
-  startedAt: string;
-  completedAt: string | null;
-  duration: number | null;
-  triggeredBy: string;
-}
-
-// Merge-plan Phase B bug #17: dedicated detail shapes for the two drill-down
-// drawers (Drill-Down Mandate) — fetched from GET /:id endpoints, never
-// reused from the list payloads above.
-interface AuditTrailDetail {
-  id: string;
-  date: string;
-  changeType: string;
-  changeTypeCode: string;
-  reason: string;
-  ruleApplied: string | null;
-  overrideReason: string | null;
-  timestamp: string;
-  employee: { id: string; code: string; name: string };
-  processName: string | null;
-  branchName: string | null;
-  shift: { name: string; startTime: string; endTime: string } | null;
-  changedBy: string;
-  changedByCode: string | null;
-  run: {
-    id: string; runType: string; status: string;
-    startedAt: string; completedAt: string | null; triggeredBy: string;
-  } | null;
-  relatedChanges: Array<{ id: string; date: string; changeType: string; reason: string; timestamp: string; changedBy: string }>;
-}
-
-interface GenerationRunDetail extends Omit<GenerationRun, 'triggeredBy'> {
-  triggeredBy: { id: string | null; name: string; code: string | null };
-  decisions: Array<{ id: string; date: string; changeType: string; reason: string; timestamp: string; employee: { code: string; name: string } }>;
-}
-
-interface AuditSummary {
-  totalChanges: number;
-  manualOverrides: number;
-  overrideRate: number;
-  byType: Record<string, number>;
-  generationRuns: {
-    auto: number;
-    manual: number;
-    totalAssignments: number;
-    totalConflicts: number;
-  };
-}
-
-const toneColors = {
-  blue: { iconBg: '#edf4ff', value: '#0b63e5', border: '#dce8fb' },
-  green: { iconBg: '#eaf8ef', value: '#15803d', border: '#d7f0df' },
-  amber: { iconBg: '#fff4e8', value: '#ea580c', border: '#fee3c5' },
-  violet: { iconBg: '#f3efff', value: '#6d28d9', border: '#e6ddff' },
-  slate: { iconBg: '#f1f4f8', value: '#0b1f44', border: '#e3e9f2' },
-};
 
 export default function AuditTrailPanel() {
-  const [activeTab, setActiveTab] = useState('trails');
   const { filters } = useRosterConsoleFilters();
   const { from: dateFrom, to: dateTo, branchId, processId, lobId } = filters;
-  const [changeTypeFilter, setChangeTypeFilter] = useState<string>('all');
-  const [amendDialogOpen, setAmendDialogOpen] = useState(false);
-  const [amendCycleId, setAmendCycleId] = useState('');
-  const [amendReason, setAmendReason] = useState('');
-  const [amendSubmitting, setAmendSubmitting] = useState(false);
-  // Merge-plan Phase B bug #17
-  const [selectedTrailId, setSelectedTrailId] = useState<string | null>(null);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const qc = useQueryClient();
 
-  const { data: trailsData, isLoading: trailsLoading, refetch: refetchTrails } = useQuery({
-    queryKey: ['roster-audit-trails', dateFrom, dateTo, branchId, processId, lobId, changeTypeFilter],
-    queryFn: async () => {
-      const params = scopeParams({ branchId, processId, lobId });
-      if (dateFrom) params.append('dateFrom', dateFrom);
-      if (dateTo) params.append('dateTo', dateTo);
-      if (changeTypeFilter && changeTypeFilter !== 'all') {
-        params.append('changeType', changeTypeFilter);
-      }
-      params.append('limit', '200');
-      const res = await api.get(`/roster-audit/trails?${params}`);
-      return res.data as { trails: AuditTrail[]; count: number };
-    },
+  const [tab, setTab] = useState<"trails" | "runs">("trails");
+  const [changeType, setChangeType] = useState(ALL);
+  const [overridesOnly, setOverridesOnly] = useState(false);
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounced(search.trim());
+  const [runStatus, setRunStatus] = useState(ALL);
+  const [trailOffset, setTrailOffset] = useState(0);
+  const [runOffset, setRunOffset] = useState(0);
+  const [trailId, setTrailId] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [segment, setSegment] = useState<SegmentSpec | null>(null);
+  const [amendOpen, setAmendOpen] = useState(false);
+
+  const scope = useMemo(() => scopeParams({ branchId, processId, lobId }), [branchId, processId, lobId]);
+  const scopeKey = scope.toString();
+
+  // Any filter change returns to the first page.
+  useEffect(() => { setTrailOffset(0); setRunOffset(0); }, [scopeKey, dateFrom, dateTo, changeType, overridesOnly, debouncedSearch, runStatus]);
+
+  const dateParams = useCallback((p: URLSearchParams) => { if (dateFrom) p.set("dateFrom", dateFrom); if (dateTo) p.set("dateTo", dateTo); return p; }, [dateFrom, dateTo]);
+
+  // Summary and the first trails page load in parallel (independent queries, no waterfall).
+  const summary = useQuery({
+    queryKey: ["roster-audit-summary", dateFrom, dateTo, scopeKey],
+    queryFn: async () => (await api.get(`/api/roster-audit/summary?${dateParams(new URLSearchParams(scope))}`)) as AuditSummary,
+    ...QUERY_OPTS,
   });
 
-  const { data: summaryData, isLoading: summaryLoading } = useQuery({
-    queryKey: ['roster-audit-summary', dateFrom, dateTo, branchId, processId, lobId],
+  const trails = useQuery({
+    queryKey: ["roster-audit-trails", dateFrom, dateTo, scopeKey, changeType, overridesOnly, debouncedSearch, trailOffset],
     queryFn: async () => {
-      const params = scopeParams({ branchId, processId, lobId });
-      if (dateFrom) params.append('dateFrom', dateFrom);
-      if (dateTo) params.append('dateTo', dateTo);
-      const res = await api.get(`/roster-audit/summary?${params}`);
-      return res.data as AuditSummary;
+      const p = dateParams(new URLSearchParams(scope));
+      if (changeType !== ALL) p.set("changeType", changeType);
+      if (overridesOnly) p.set("overridesOnly", "1");
+      if (debouncedSearch) p.set("q", debouncedSearch);
+      p.set("limit", String(PAGE)); p.set("offset", String(trailOffset));
+      return (await api.get(`/api/roster-audit/trails?${p}`)) as TrailsResponse;
     },
+    ...QUERY_OPTS,
   });
 
-  const { data: runsData, isLoading: runsLoading } = useQuery({
-    queryKey: ['roster-audit-runs'],
+  // Runs carry branch/process (no LOB) and are windowed by start time; only fetched once the tab is opened.
+  const runs = useQuery({
+    queryKey: ["roster-audit-runs", dateFrom, dateTo, branchId, processId, runStatus, runOffset],
     queryFn: async () => {
-      const res = await api.get('/roster-audit/generation-runs?limit=50');
-      return res.data as { runs: GenerationRun[] };
+      const p = dateParams(new URLSearchParams());
+      if (branchId) p.set("branchId", branchId);
+      if (processId) p.set("processId", processId);
+      if (runStatus !== ALL) p.set("status", runStatus);
+      p.set("limit", String(PAGE)); p.set("offset", String(runOffset));
+      return (await api.get(`/api/roster-audit/generation-runs?${p}`)) as RunsResponse;
     },
-    enabled: activeTab === 'runs',
+    enabled: tab === "runs",
+    ...QUERY_OPTS,
   });
 
-  // Merge-plan Phase B bug #17: dedicated per-row detail fetches for the drawers.
-  const { data: trailDetail, isLoading: trailDetailLoading } = useQuery({
-    queryKey: ['roster-audit-trail-detail', selectedTrailId],
-    queryFn: async () => {
-      const res = await api.get(`/roster-audit/trails/${selectedTrailId}`);
-      return res.data as AuditTrailDetail;
-    },
-    enabled: !!selectedTrailId,
-  });
+  const s = summary.data;
+  const alerts = useMemo(() => buildAlerts(s), [s]);
+  const dailyTotals = useMemo(() => (s?.daily ?? []).map((d) => d.total), [s]);
+  const dailyOverrides = useMemo(() => (s?.daily ?? []).map((d) => d.overrides), [s]);
+  const hasScopeFilters = !!(branchId || processId || lobId);
 
-  const { data: runDetail, isLoading: runDetailLoading } = useQuery({
-    queryKey: ['roster-audit-run-detail', selectedRunId],
-    queryFn: async () => {
-      const res = await api.get(`/roster-audit/generation-runs/${selectedRunId}`);
-      return res.data as GenerationRunDetail;
-    },
-    enabled: !!selectedRunId,
-  });
-
-  const getChangeTypeBadge = (type: string, code: string) => {
-    const colorMap: Record<string, string> = {
-      shift_assigned: 'bg-blue-100 text-blue-700',
-      weekoff_assigned: 'bg-green-100 text-green-700',
-      weekoff_denied: 'bg-red-100 text-red-700',
-      weekoff_waitlisted: 'bg-amber-100 text-amber-700',
-      shift_frozen: 'bg-violet-100 text-violet-700',
-      holiday_applied: 'bg-cyan-100 text-cyan-700',
-      rejected_request: 'bg-red-100 text-red-700',
-      manager_override: 'bg-orange-100 text-orange-700',
-    };
-    return (
-      <Badge className={`${colorMap[code] || 'bg-gray-100 text-gray-700'} font-medium`}>
-        {type}
-      </Badge>
-    );
+  const applyAlert = (a: AuditAlert) => {
+    setTab(a.action.tab);
+    if (a.action.tab === "trails") { setChangeType(a.action.changeType ?? ALL); setOverridesOnly(!!a.action.overridesOnly); setSearch(""); }
+    else setRunStatus(a.action.runStatus ?? ALL);
+  };
+  const openSegment = (title: string, params: Record<string, string>) => setSegment({ title, params: { ...params, ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) } });
+  const showAllForSegment = () => {
+    if (!segment) return;
+    const p = segment.params;
+    setTab("trails"); setChangeType(p.changeType ?? ALL); setOverridesOnly(p.overridesOnly === "1"); setSearch("");
+    setSegment(null);
   };
 
-  const getStatusBadge = (status: string) => {
-    const map: Record<string, { bg: string; text: string }> = {
-      completed: { bg: 'bg-green-100', text: 'text-green-700' },
-      running: { bg: 'bg-blue-100', text: 'text-blue-700' },
-      failed: { bg: 'bg-red-100', text: 'text-red-700' },
-      partial: { bg: 'bg-amber-100', text: 'text-amber-700' },
-    };
-    const colors = map[status] || map.completed;
-    return <Badge className={`${colors.bg} ${colors.text}`}>{status}</Badge>;
-  };
+  const refresh = () => { void qc.invalidateQueries({ queryKey: ["roster-audit-summary"] }); void qc.invalidateQueries({ queryKey: ["roster-audit-trails"] }); if (tab === "runs") void qc.invalidateQueries({ queryKey: ["roster-audit-runs"] }); };
+  const updated = formatUpdatedAt(summary.dataUpdatedAt);
+  const filtersActive = changeType !== ALL || overridesOnly || !!search;
+  const clearFilters = () => { setChangeType(ALL); setOverridesOnly(false); setSearch(""); };
 
   return (
     <div className="space-y-4">
-      <div className="space-y-4">
-        <PanelHeader
-          icon={History}
-          title="Roster Audit Trail"
-          description="Track every roster change for compliance and accountability"
-          actions={
-            <>
-              <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => refetchTrails()}>
-                <RefreshCw className="w-4 h-4 mr-1" />
-                Refresh
-              </Button>
-              <Button size="sm" className="cursor-pointer" onClick={() => setAmendDialogOpen(true)}>
-                Record Amendment
-              </Button>
-            </>
-          }
-        />
+      <PanelHeader
+        icon={History}
+        title="Roster Audit Trail"
+        description="Every roster decision and manual change, with who made it, when and why"
+        updatedLabel={updated ? `Updated ${updated}` : undefined}
+        actions={
+          <>
+            <Button variant="outline" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={refresh} aria-label="Refresh audit data" disabled={summary.isFetching || trails.isFetching}>
+              <RefreshCw className={`mr-1 h-4 w-4 ${summary.isFetching ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden />Refresh
+            </Button>
+            <Button size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={() => setAmendOpen(true)}>
+              <PenLine className="mr-1 h-4 w-4" aria-hidden />Record amendment
+            </Button>
+          </>
+        }
+      />
 
-        {!summaryLoading && summaryData && (
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <KpiTile icon={FileText} tone="blue" label="Total Changes" value={summaryData.totalChanges.toLocaleString()} />
-            <KpiTile icon={User} tone="amber" label="Manual Overrides" value={summaryData.manualOverrides} />
-            <KpiTile icon={GitBranch} tone="violet" label="Override Rate" value={`${summaryData.overrideRate}%`} />
-            <KpiTile icon={CheckCircle} tone="green" label="Auto Runs" value={summaryData.generationRuns.auto} />
-            <KpiTile
-              icon={AlertTriangle}
-              tone={summaryData.generationRuns.totalConflicts > 0 ? "red" : "neutral"}
-              label="Conflicts"
-              value={summaryData.generationRuns.totalConflicts}
-            />
-          </div>
+      {/* Insight strip: most severe first, each click filters the tables below. */}
+      {summary.isError ? (
+        <ConsoleCard accent="amber" className="flex items-center justify-between gap-2 p-3 text-sm text-slate-800" role="alert">
+          <span>Could not load the audit summary.</span>
+          <Button variant="outline" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={() => summary.refetch()}>Retry</Button>
+        </ConsoleCard>
+      ) : alerts.length > 0 ? (
+        <ul className="flex flex-wrap gap-2" aria-label="Audit alerts">
+          {alerts.map((a) => {
+            const st = SEV_STYLE[a.severity];
+            return (
+              <li key={a.key}>
+                <button type="button" onClick={() => applyAlert(a)} className={`inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-sm sm:min-h-[36px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${st.cls}`}>
+                  <st.Icon className="h-4 w-4 shrink-0" aria-hidden />
+                  <span className="text-[11px] font-bold uppercase">{st.label}</span>
+                  <span><strong className="tabular-nums">{fmtNum(a.count)}</strong> {a.label}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : s ? (
+        <p className="inline-flex items-center gap-2 text-sm text-emerald-800"><CheckCircle2 className="h-4 w-4" aria-hidden />No failed runs, engine errors or conflicts in this period.</p>
+      ) : null}
+
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {!s ? (summary.isError ? null : Array.from({ length: 5 }, (_, i) => <div key={i} className="h-[116px] animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none" role="status" aria-label="Loading KPI" />)) : (
+          <>
+            <KpiTile icon={FileText} tone="blue" label="Total changes" value={fmtNum(s.totalChanges)} sub={`${fmtDate(s.period.from)} - ${fmtDate(s.period.to)}`} spark={dailyTotals}
+              delta={s.deltas.totalChanges ?? undefined} onClick={() => openSegment("All audit entries", {})} />
+            <KpiTile icon={User} tone="violet" label="Manual overrides" value={fmtNum(s.manualOverrides)} sub={s.topActors[0] ? `Top: ${s.topActors[0].name} (${fmtNum(s.topActors[0].count)})` : "No overrides"} spark={dailyOverrides}
+              delta={s.deltas.manualOverrides ?? undefined} deltaBad="up" onClick={() => openSegment("Manual overrides", { overridesOnly: "1" })} />
+            <KpiTile icon={GitBranch} tone={s.overrideRate >= 10 ? "amber" : "neutral"} label="Override rate" value={`${s.overrideRate}%`} progress={Math.min(100, s.overrideRate)}
+              sub={`Previous period ${s.previous.overrideRate}%`} onClick={() => openSegment("Manual overrides", { overridesOnly: "1" })} />
+            <KpiTile icon={CheckCircle2} tone="green" label="Generation runs" value={fmtNum(s.generationRuns.total)} sub={`${fmtNum(s.generationRuns.auto)} auto · ${fmtNum(s.generationRuns.manual)} manual`}
+              delta={s.deltas.runs ?? undefined} onClick={() => { setRunStatus(ALL); setTab("runs"); }} />
+            <KpiTile icon={AlertTriangle} tone={s.generationRuns.totalConflicts > 0 ? "red" : "neutral"} label="Conflicts" value={fmtNum(s.generationRuns.totalConflicts)} sub={`${fmtNum(s.generationRuns.failed)} failed run${s.generationRuns.failed === 1 ? "" : "s"}`}
+              delta={s.deltas.conflicts ?? undefined} deltaBad="up" onClick={() => { setRunStatus(ALL); setTab("runs"); }} />
+          </>
         )}
-
-        {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="bg-white/80 border border-white/60 rounded-xl p-1">
-            <TabsTrigger value="trails" className="rounded-lg">
-              <History className="w-4 h-4 mr-2" />
-              Audit Trail
-            </TabsTrigger>
-            <TabsTrigger value="runs" className="rounded-lg">
-              <GitBranch className="w-4 h-4 mr-2" />
-              Generation Runs
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="trails" className="mt-4">
-            <Card className="rounded-lg">
-              <CardHeader className="border-b pb-4">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-slate-600" />
-                    Change History
-                  </CardTitle>
-                  <div className="flex items-center gap-2">
-                    <Filter className="w-4 h-4 text-gray-400" />
-                    <Select value={changeTypeFilter} onValueChange={setChangeTypeFilter}>
-                      <SelectTrigger className="w-48 h-9">
-                        <SelectValue placeholder="All change types" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All change types</SelectItem>
-                        <SelectItem value="shift_assigned">Shift Assigned</SelectItem>
-                        <SelectItem value="weekoff_assigned">Week-off Assigned</SelectItem>
-                        <SelectItem value="weekoff_denied">Week-off Denied</SelectItem>
-                        <SelectItem value="weekoff_waitlisted">Week-off Waitlisted</SelectItem>
-                        <SelectItem value="shift_frozen">Shift Frozen</SelectItem>
-                        <SelectItem value="holiday_applied">Holiday Applied</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="p-0">
-                {trailsLoading ? (
-                  <div className="flex items-center justify-center py-20">
-                    <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
-                  </div>
-                ) : !trailsData?.trails?.length ? (
-                  <div className="text-center py-20 text-gray-500">
-                    No audit records found for the selected period
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow className="bg-slate-50/50">
-                          <TableHead className="font-semibold">Date</TableHead>
-                          <TableHead className="font-semibold">Employee</TableHead>
-                          <TableHead className="font-semibold">Change Type</TableHead>
-                          <TableHead className="font-semibold">Reason</TableHead>
-                          <TableHead className="font-semibold">Process</TableHead>
-                          <TableHead className="font-semibold">Changed By</TableHead>
-                          <TableHead className="font-semibold">Timestamp</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {trailsData.trails.map((trail) => (
-                          <TableRow
-                            key={trail.id}
-                            className="hover:bg-slate-50/50 cursor-pointer"
-                            onClick={() => setSelectedTrailId(trail.id)}
-                          >
-                            <TableCell className="font-medium">
-                              {new Date(trail.date).toLocaleDateString('en-IN', {
-                                day: '2-digit',
-                                month: 'short',
-                                year: 'numeric',
-                              })}
-                            </TableCell>
-                            <TableCell>
-                              <div>
-                                <p className="font-medium text-gray-900">{trail.employee.name}</p>
-                                <p className="text-xs text-gray-500">{trail.employee.code}</p>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              {getChangeTypeBadge(trail.changeType, trail.changeTypeCode)}
-                            </TableCell>
-                            <TableCell className="max-w-[200px]">
-                              <p className="text-sm text-gray-600 truncate" title={trail.reason}>
-                                {trail.reason}
-                              </p>
-                            </TableCell>
-                            <TableCell>
-                              <p className="text-sm">{trail.processName}</p>
-                              <p className="text-xs text-gray-500">{trail.branchName}</p>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-1">
-                                <User className="w-3 h-3 text-gray-400" />
-                                <span className="text-sm">{trail.changedBy}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-sm text-gray-500">
-                              {new Date(trail.timestamp).toLocaleString('en-IN', {
-                                day: '2-digit',
-                                month: 'short',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="runs" className="mt-4">
-            {(branchId || processId || lobId) && (
-              <FilterNote className="mb-2">Branch / Process / LOB filters not applied to generation runs</FilterNote>
-            )}
-            <Card className="rounded-lg">
-              <CardHeader className="border-b pb-4">
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <GitBranch className="w-5 h-5 text-slate-600" />
-                  Roster Generation Runs
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                {runsLoading ? (
-                  <div className="flex items-center justify-center py-20">
-                    <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
-                  </div>
-                ) : !runsData?.runs?.length ? (
-                  <div className="text-center py-20 text-gray-500">
-                    No generation runs found
-                  </div>
-                ) : (
-                  <div className="divide-y">
-                    {runsData.runs.map((run) => (
-                      <div
-                        key={run.id}
-                        className="p-4 hover:bg-slate-50/50 flex items-center justify-between cursor-pointer"
-                        onClick={() => setSelectedRunId(run.id)}
-                      >
-                        <div className="flex items-center gap-4">
-                          <div
-                            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                              run.runType === 'auto'
-                                ? 'bg-green-100'
-                                : 'bg-blue-100'
-                            }`}
-                          >
-                            <RefreshCw
-                              className={`w-5 h-5 ${
-                                run.runType === 'auto' ? 'text-green-600' : 'text-blue-600'
-                              }`}
-                            />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-semibold text-gray-900">
-                                {run.processName || 'All Processes'}
-                              </p>
-                              {getStatusBadge(run.status)}
-                              <Badge variant="outline" className="text-xs">
-                                {run.runType}
-                              </Badge>
-                            </div>
-                            <p className="text-sm text-gray-500">
-                              {run.branchName || 'All Branches'} • Triggered by {run.triggeredBy}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-6">
-                          <div className="text-right">
-                            <p className="text-sm font-medium text-gray-900">
-                              {run.stats.assignmentsCreated} assignments
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {run.stats.employeesProcessed} employees •{' '}
-                              {run.stats.weekoffsAllocated} week-offs
-                            </p>
-                          </div>
-                          {run.stats.conflictsFound > 0 && (
-                            <Badge className="bg-red-100 text-red-700">
-                              {run.stats.conflictsFound} conflicts
-                            </Badge>
-                          )}
-                          <div className="text-right text-sm text-gray-500">
-                            <p>
-                              {new Date(run.startedAt).toLocaleDateString('en-IN', {
-                                day: '2-digit',
-                                month: 'short',
-                              })}
-                            </p>
-                            <p className="text-xs">
-                              {run.duration ? `${run.duration}s` : 'Running...'}
-                            </p>
-                          </div>
-                          <ChevronRight className="w-5 h-5 text-gray-400" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
       </div>
 
-      {amendDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 space-y-4">
-            <h2 className="font-semibold text-base">Record Post-Publication Amendment</h2>
-            <p className="text-sm text-slate-500">
-              Mandatory: describe what changed and why. Logged in the roster audit trail.
-            </p>
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-600">Cycle ID</label>
-              <input
-                className="w-full border rounded p-2 text-sm"
-                placeholder="e.g. 42"
-                value={amendCycleId}
-                onChange={(e) => setAmendCycleId(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-600">Amendment Reason</label>
-              <textarea
-                className="w-full border rounded p-2 text-sm min-h-[100px]"
-                placeholder="Describe the amendment reason..."
-                value={amendReason}
-                onChange={(e) => setAmendReason(e.target.value)}
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => { setAmendDialogOpen(false); setAmendCycleId(''); setAmendReason(''); }}
-              >Cancel</Button>
-              <Button
-                size="sm"
-                disabled={!amendReason.trim() || !amendCycleId.trim() || amendSubmitting}
-                className="bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
-                onClick={async () => {
-                  if (!amendReason.trim() || !amendCycleId.trim()) return;
-                  setAmendSubmitting(true);
-                  try {
-                    await api.post(`/roster-gov/cycles/${amendCycleId.trim()}/amendments`, {
-                      reason: amendReason.trim(),
-                    });
-                    setAmendDialogOpen(false);
-                    setAmendCycleId('');
-                    setAmendReason('');
-                    void refetchTrails();
-                  } finally {
-                    setAmendSubmitting(false);
-                  }
-                }}
-              >{amendSubmitting ? 'Saving…' : 'Save Amendment'}</Button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Charts */}
+      <div className="grid gap-3 lg:grid-cols-3">
+        <ChartCard className="lg:col-span-2" title="Changes per roster day" subtitle="All changes vs manual overrides. Select a day to see its entries." loading={summary.isLoading} error={summary.isError} onRetry={() => summary.refetch()} empty={!s?.daily.length} emptyLabel="No audit entries in this period" height={240}>
+          <Suspense fallback={chartFallback}><DailyChangesChart data={s?.daily ?? []} onSelectDay={(d) => setSegment({ title: `Changes on ${fmtDate(d)}`, params: { dateFrom: d, dateTo: d } })} /></Suspense>
+        </ChartCard>
+        <ChartCard title="Changes by type" subtitle="Select a bar to see its entries" loading={summary.isLoading} error={summary.isError} onRetry={() => summary.refetch()} empty={!s?.byTypeDetail.length} emptyLabel="No audit entries in this period" height={240}>
+          <Suspense fallback={chartFallback}><TypeBarChart data={(s?.byTypeDetail ?? []).slice(0, 8)} onSelect={(code) => openSegment(CHANGE_TYPE_OPTIONS.find((o) => o.value === code)?.label ?? code, { changeType: code })} /></Suspense>
+        </ChartCard>
+      </div>
 
-      {/* Merge-plan Phase B bug #17: Audit Trail row drill-down (Drill-Down Mandate) */}
-      <Sheet open={!!selectedTrailId} onOpenChange={(open) => !open && setSelectedTrailId(null)}>
-        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Audit Entry {trailDetail?.id ? `#${trailDetail.id}` : ''}
-            </SheetTitle>
-          </SheetHeader>
-          {trailDetailLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-            </div>
-          ) : trailDetail ? (
-            <div className="space-y-6 mt-4">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Change</p>
-                <div className="flex items-center gap-2 mb-2">
-                  {getChangeTypeBadge(trailDetail.changeType, trailDetail.changeTypeCode)}
-                  <span className="text-sm text-slate-500">
-                    {new Date(trailDetail.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                  </span>
-                </div>
-                <p className="text-sm text-slate-600">{trailDetail.reason}</p>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "trails" | "runs")}>
+        <TabsList>
+          <TabsTrigger value="trails" className="min-h-[44px] cursor-pointer sm:min-h-8"><History className="mr-2 h-4 w-4" aria-hidden />Audit trail{trails.data ? ` (${fmtNum(trails.data.total)})` : ""}</TabsTrigger>
+          <TabsTrigger value="runs" className="min-h-[44px] cursor-pointer sm:min-h-8"><GitBranch className="mr-2 h-4 w-4" aria-hidden />Generation runs{runs.data ? ` (${fmtNum(runs.data.total)})` : ""}</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="trails" className="mt-3">
+          <ConsoleCard>
+            <div className="flex flex-col gap-2 border-b border-border p-3 sm:flex-row sm:items-center">
+              <div className="relative sm:w-64">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" aria-hidden />
+                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search employee name or code" aria-label="Search employee name or code" maxLength={60} className="min-h-[44px] pl-8 sm:min-h-10" />
               </div>
-
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Employee</p>
-                <p className="text-sm font-medium text-gray-900">{trailDetail.employee.name}</p>
-                <p className="text-xs text-gray-500">{trailDetail.employee.code}</p>
-                <p className="text-xs text-gray-500 mt-1">{trailDetail.processName || '—'} · {trailDetail.branchName || '—'}</p>
-              </div>
-
-              {trailDetail.shift && (
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Shift</p>
-                  <p className="text-sm text-slate-700">
-                    {trailDetail.shift.name} ({trailDetail.shift.startTime}–{trailDetail.shift.endTime})
-                  </p>
-                </div>
+              <Select value={changeType} onValueChange={setChangeType}>
+                <SelectTrigger className="min-h-[44px] sm:min-h-10 sm:w-56" aria-label="Filter by change type"><SelectValue placeholder="All change types" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>All change types</SelectItem>
+                  {CHANGE_TYPE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={overridesOnly ? "manual" : ALL} onValueChange={(v) => setOverridesOnly(v === "manual")}>
+                <SelectTrigger className="min-h-[44px] sm:min-h-10 sm:w-48" aria-label="Filter by source"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>Engine and manual</SelectItem>
+                  <SelectItem value="manual">Manual overrides only</SelectItem>
+                </SelectContent>
+              </Select>
+              {filtersActive && (
+                <Button variant="ghost" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={clearFilters}><X className="mr-1 h-4 w-4" aria-hidden />Clear filters</Button>
               )}
-
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Changed By</p>
-                <p className="text-sm text-slate-700">
-                  {trailDetail.changedBy}{trailDetail.changedByCode ? ` (${trailDetail.changedByCode})` : ''}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {new Date(trailDetail.timestamp).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                </p>
-              </div>
-
-              {trailDetail.run && (
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Generation Run</p>
-                  <p className="text-sm text-slate-700">
-                    {trailDetail.run.runType} run · {getStatusBadge(trailDetail.run.status)}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">Triggered by {trailDetail.run.triggeredBy}</p>
-                </div>
-              )}
-
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
-                  Related Changes (±7 days, same employee)
-                </p>
-                {trailDetail.relatedChanges.length > 0 ? (
-                  <div className="space-y-2">
-                    {trailDetail.relatedChanges.map((rc) => (
-                      <div key={rc.id} className="text-sm border-l-2 border-slate-200 pl-3 py-0.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-slate-700">{rc.changeType}</span>
-                          <span className="text-xs text-gray-400">
-                            {new Date(rc.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-500">{rc.reason} · {rc.changedBy}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-400">None</p>
-                )}
-              </div>
             </div>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+            {trails.isLoading ? <TableSkeleton label="Loading audit trail" /> : trails.isError ? (
+              <div className="flex items-center justify-between gap-2 p-4 text-sm text-slate-700" role="alert"><span>Could not load the audit trail.</span><Button variant="outline" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={() => trails.refetch()}>Retry</Button></div>
+            ) : !trails.data?.trails.length ? (
+              <div className="px-4 py-16 text-center text-sm text-slate-600">No audit records match the selected period and filters.</div>
+            ) : (
+              <>
+                <TrailsTable rows={trails.data.trails} onOpen={setTrailId} />
+                <Pager offset={trails.data.offset} count={trails.data.count} total={trails.data.total} pageSize={PAGE} onPage={setTrailOffset} busy={trails.isFetching} />
+              </>
+            )}
+          </ConsoleCard>
+        </TabsContent>
 
-      {/* Merge-plan Phase B bug #17: Generation Run row drill-down (Drill-Down Mandate) */}
-      <Sheet open={!!selectedRunId} onOpenChange={(open) => !open && setSelectedRunId(null)}>
-        <SheetContent className="w-[400px] sm:w-[560px] overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <GitBranch className="w-4 h-4" />
-              Generation Run {runDetail?.cycleId ? `· Cycle ${runDetail.cycleId}` : ''}
-            </SheetTitle>
-          </SheetHeader>
-          {runDetailLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+        <TabsContent value="runs" className="mt-3">
+          <ConsoleCard>
+            <div className="flex flex-col gap-2 border-b border-border p-3 sm:flex-row sm:items-center">
+              <Select value={runStatus} onValueChange={setRunStatus}>
+                <SelectTrigger className="min-h-[44px] sm:min-h-10 sm:w-48" aria-label="Filter by run status"><SelectValue placeholder="All statuses" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>All statuses</SelectItem>
+                  {RUN_STATUS_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <FilterNote>Runs are filtered by start time{hasScopeFilters ? "; LOB is not applied to runs" : ""}</FilterNote>
+              {runStatus !== ALL && <Button variant="ghost" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={() => setRunStatus(ALL)}><X className="mr-1 h-4 w-4" aria-hidden />Clear filter</Button>}
             </div>
-          ) : runDetail ? (
-            <div className="space-y-6 mt-4">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Run</p>
-                <div className="flex items-center gap-2 mb-1">
-                  {getStatusBadge(runDetail.status)}
-                  <Badge variant="outline" className="text-xs">{runDetail.runType}</Badge>
-                </div>
-                <p className="text-sm text-slate-700">
-                  {runDetail.processName || 'All Processes'} · {runDetail.branchName || 'All Branches'}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Triggered by {runDetail.triggeredBy.name}{runDetail.triggeredBy.code ? ` (${runDetail.triggeredBy.code})` : ''}
-                </p>
-              </div>
+            {runs.isLoading ? <TableSkeleton label="Loading generation runs" /> : runs.isError ? (
+              <div className="flex items-center justify-between gap-2 p-4 text-sm text-slate-700" role="alert"><span>Could not load generation runs.</span><Button variant="outline" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={() => runs.refetch()}>Retry</Button></div>
+            ) : !runs.data?.runs.length ? (
+              <div className="px-4 py-16 text-center text-sm text-slate-600">No generation runs in the selected period and scope.</div>
+            ) : (
+              <>
+                <RunsTable rows={runs.data.runs} onOpen={setRunId} />
+                <Pager offset={runs.data.offset} count={runs.data.runs.length} total={runs.data.total} pageSize={PAGE} onPage={setRunOffset} busy={runs.isFetching} />
+              </>
+            )}
+          </ConsoleCard>
+        </TabsContent>
+      </Tabs>
 
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Stats</p>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="rounded-lg bg-slate-50 p-2">
-                    <div className="font-bold text-slate-800">{runDetail.stats.assignmentsCreated}</div>
-                    <div className="text-xs text-slate-500">Assignments Created</div>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 p-2">
-                    <div className="font-bold text-slate-800">{runDetail.stats.employeesProcessed}</div>
-                    <div className="text-xs text-slate-500">Employees Processed</div>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 p-2">
-                    <div className="font-bold text-slate-800">{runDetail.stats.weekoffsAllocated}</div>
-                    <div className="text-xs text-slate-500">Week-offs Allocated</div>
-                  </div>
-                  <div className={`rounded-lg p-2 ${runDetail.stats.conflictsFound > 0 ? 'bg-red-50' : 'bg-slate-50'}`}>
-                    <div className={`font-bold ${runDetail.stats.conflictsFound > 0 ? 'text-red-700' : 'text-slate-800'}`}>
-                      {runDetail.stats.conflictsFound}
-                    </div>
-                    <div className="text-xs text-slate-500">Conflicts Found</div>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Timing</p>
-                <p className="text-sm text-slate-700">
-                  Started {new Date(runDetail.startedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                </p>
-                <p className="text-sm text-slate-700">
-                  {runDetail.completedAt
-                    ? `Completed ${new Date(runDetail.completedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} (${runDetail.duration}s)`
-                    : 'Still running'}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
-                  Audit Trail (this run's decisions)
-                </p>
-                {runDetail.decisions.length > 0 ? (
-                  <div className="space-y-2 max-h-72 overflow-y-auto">
-                    {runDetail.decisions.map((d) => (
-                      <div key={d.id} className="text-sm border-l-2 border-slate-200 pl-3 py-0.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-slate-700">{d.changeType}</span>
-                          <span className="text-xs text-gray-400">
-                            {new Date(d.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                          </span>
-                        </div>
-                        <p className="text-xs text-gray-500">{d.employee.name} ({d.employee.code}) · {d.reason}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-400">None</p>
-                )}
-              </div>
-            </div>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+      <TrailDrawer id={trailId} onClose={() => setTrailId(null)} onOpenRun={(id) => { setTrailId(null); setRunId(id); }} />
+      <RunDrawer id={runId} onClose={() => setRunId(null)} onOpenTrail={(id) => { setRunId(null); setTrailId(id); }} />
+      <SegmentDrawer spec={segment} scope={scope} onClose={() => setSegment(null)} onOpenTrail={(id) => { setSegment(null); setTrailId(id); }} onViewAll={segment && segment.params.dateFrom === dateFrom && segment.params.dateTo === dateTo ? showAllForSegment : undefined} />
+      <AmendmentDialog open={amendOpen} onOpenChange={setAmendOpen} scope={scope} />
     </div>
   );
 }

@@ -4,6 +4,7 @@
  * from Radix Tabs.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +35,8 @@ export function ConsoleTabsBar({ tabs, activeKey }: { tabs: ConsoleTabItem[]; ac
     active?.scrollIntoView?.({ block: "nearest", inline: "center" });
   }, [activeKey]);
 
+  const nudge = (dir: 1 | -1) => ref.current?.scrollBy({ left: dir * Math.max(240, (ref.current?.clientWidth ?? 0) * 0.6), behavior: "smooth" });
+  const arrow = "absolute top-1/2 z-10 hidden h-7 w-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-border bg-white text-slate-700 shadow-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex";
   return (
     <div className="relative">
       <TabsList
@@ -48,6 +51,8 @@ export function ConsoleTabsBar({ tabs, activeKey }: { tabs: ConsoleTabItem[]; ac
           </TabsTrigger>
         ))}
       </TabsList>
+      {fade.left && <button type="button" aria-label="Scroll tabs left" onClick={() => nudge(-1)} className={cn(arrow, "left-1")}><ChevronLeft className="h-4 w-4" aria-hidden /></button>}
+      {fade.right && <button type="button" aria-label="Scroll tabs right" onClick={() => nudge(1)} className={cn(arrow, "right-1")}><ChevronRight className="h-4 w-4" aria-hidden /></button>}
       <span
         aria-hidden
         className={cn("pointer-events-none absolute inset-y-0 left-0 w-8 rounded-l-lg bg-gradient-to-r from-white to-transparent transition-opacity", fade.left ? "opacity-100" : "opacity-0")}

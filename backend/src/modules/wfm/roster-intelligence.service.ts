@@ -14,7 +14,15 @@
  */
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
-import { isShiftDueYet } from './shift-due.util.js';
+import { isShiftDueYet, todayLocalDateStr } from './shift-due.util.js';
+import {
+  shrinkagePct as calcShrinkagePct,
+  minutesSinceShiftStart,
+  isOvernightShift,
+  hasShiftEnded,
+  canJudgeIncomplete,
+  timeToMinutes,
+} from './roster-intelligence.calc.js';
 import { lobCondition, type LobFilter } from '../../shared/lobFilter.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -98,13 +106,10 @@ export interface UnplannedAbsenceAlert {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function timeToMinutes(t: string): number {
-  const parts = t.split(':').map(Number);
-  return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
-}
-
+// Local-date formatting (host clock is IST). toISOString() is UTC and mislabels 00:00-05:30 IST
+// as the previous day, which made "today"/"yesterday" defaults wrong for the first 5.5 hours.
 function formatDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return todayLocalDateStr(d);
 }
 
 function yesterdayDate(): string {
@@ -128,23 +133,16 @@ const INCOMPLETE_THRESHOLD = 0.8;
  */
 export async function generateManagerDailyDigests(
   date: string = yesterdayDate(),
-  scope?: RosterIntelligenceScope
+  scope?: RosterIntelligenceScope,
+  filters?: RosterIntelligenceFilters
 ): Promise<ManagerDailyDigest[]> {
   if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) return [];
 
   // Scoped on e (the team member), not mgr — a branch-scoped or process-scoped caller sees
   // digests for managers whose team sits in their branch/process, matching
-  // detectUnplannedAbsences's convention above.
-  const scopeConds: string[] = [];
-  const scopeParams: unknown[] = [];
-  if (scope?.branchIds) {
-    scopeConds.push(`e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
-    scopeParams.push(...scope.branchIds);
-  }
-  if (scope?.processIds) {
-    scopeConds.push(`e.process_id IN (${scope.processIds.map(() => "?").join(",")})`);
-    scopeParams.push(...scope.processIds);
-  }
+  // detectUnplannedAbsences's convention above. UI filters (branch/process/LOB) are ANDed on
+  // top and also narrow each manager's TEAM (so counts reflect the filter, not the whole team).
+  const { conds: scopeConds, params: scopeParams } = buildEmployeeScope(scope, filters);
 
   // Get all managers with active team members who have roster for the date
   const [managers] = await db.execute<RowDataPacket[]>(
@@ -164,26 +162,32 @@ export async function generateManagerDailyDigests(
 
   const digests: ManagerDailyDigest[] = [];
 
-  for (const mgr of managers) {
-    const digest = await generateSingleManagerDigest(
-      String(mgr.manager_id),
-      String(mgr.manager_name),
-      mgr.manager_email ? String(mgr.manager_email) : null,
-      date
+  // Bounded parallelism (was strictly sequential: 2 queries x N managers).
+  const CONCURRENCY = 6;
+  for (let i = 0; i < managers.length; i += CONCURRENCY) {
+    const batch = await Promise.all(
+      managers.slice(i, i + CONCURRENCY).map((mgr) =>
+        generateSingleManagerDigest(
+          String(mgr.manager_id),
+          String(mgr.manager_name),
+          mgr.manager_email ? String(mgr.manager_email) : null,
+          date,
+          { conds: scopeConds, params: scopeParams },
+        ),
+      ),
     );
-    if (digest.teamSize > 0) {
-      digests.push(digest);
-    }
+    for (const digest of batch) if (digest.teamSize > 0) digests.push(digest);
   }
 
   return digests;
 }
 
-async function generateSingleManagerDigest(
+export async function generateSingleManagerDigest(
   managerId: string,
   managerName: string,
   managerEmail: string | null,
-  date: string
+  date: string,
+  teamScope: { conds: string[]; params: unknown[] } = { conds: [], params: [] }
 ): Promise<ManagerDailyDigest> {
   // Get team roster + attendance for the date
   const [teamRows] = await db.execute<RowDataPacket[]>(
@@ -209,8 +213,9 @@ async function generateSingleManagerDigest(
      LEFT JOIN branch_master b ON b.id = e.branch_id
      WHERE e.reporting_manager_id = ?
        AND e.active_status = 1
-       AND e.employment_status = 'Active'`,
-    [date, date, managerId]
+       AND e.employment_status = 'Active'
+       ${teamScope.conds.map((c) => `AND ${c}`).join("\n       ")}`,
+    [date, date, managerId, ...teamScope.params]
   );
 
   // Merge-plan Phase B bug #2: Command Center's branch filter was a no-op ("Would need
@@ -246,7 +251,8 @@ async function generateSingleManagerDigest(
 
   for (const r of teamRows) {
     const type = String(r.assignment_type ?? '').toUpperCase();
-    const isOff = ['WEEK_OFF', 'LEAVE', 'HOLIDAY'].includes(type);
+    // TRAINING is not production-floor attendance: excluded here exactly as detectUnplannedAbsences does.
+    const isOff = ['WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING'].includes(type);
 
     const shiftStart = r.template_start || r.shift_start_time;
     const shiftEnd = r.template_end || r.shift_end_time;
@@ -312,7 +318,8 @@ async function generateSingleManagerDigest(
       const workedPct = expectedMinutes > 0 ? Math.round((workedMinutes / expectedMinutes) * 100) : 100;
       member.workedPct = workedPct;
 
-      if (workedPct < INCOMPLETE_THRESHOLD * 100) {
+      const judgeable = canJudgeIncomplete(!!r.last_out, date, shiftStart ? String(shiftStart) : null, shiftEnd ? String(shiftEnd) : null);
+      if (judgeable && workedPct < INCOMPLETE_THRESHOLD * 100) {
         // Incomplete shift = BROWN
         member.adherence = 'BROWN';
         incompleteShifts.push(member);
@@ -330,7 +337,7 @@ async function generateSingleManagerDigest(
   }
 
   const teamSize = teamRows.length;
-  const shrinkagePct = planned > 0 ? Math.round(((planned - present) / planned) * 100) : 0;
+  const shrinkagePct = calcShrinkagePct(planned, present);
 
   // Get APR pending count for this manager's team
   // apr_requests was never a real table — the actual attendance-regularization requests live in
@@ -420,7 +427,8 @@ export async function generateBranchDashboard(
 
   for (const r of rows) {
     const type = String(r.assignment_type ?? '').toUpperCase();
-    const isOff = ['WEEK_OFF', 'LEAVE', 'HOLIDAY'].includes(type);
+    // TRAINING is not production-floor attendance: excluded here exactly as detectUnplannedAbsences does.
+    const isOff = ['WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING'].includes(type);
     if (isOff) continue;
 
     // Same "shift hasn't started yet today" guard as generateSingleManagerDigest above — a row
@@ -465,7 +473,7 @@ export async function generateBranchDashboard(
     adherencePct: p.planned > 0 ? Math.round((p.onTime / p.planned) * 100) : 0,
   })).sort((a, b) => a.adherencePct - b.adherencePct); // Worst first
 
-  const shrinkagePct = planned > 0 ? Math.round(((planned - present) / planned) * 100) : 0;
+  const shrinkagePct = calcShrinkagePct(planned, present);
 
   // Chronic absentees (last 30 days)
   const thirtyDaysAgo = new Date();
@@ -544,31 +552,13 @@ export async function detectUnplannedAbsences(
   if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) return [];
 
   const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const { conds: scopeConds, params: scopeParams } = buildEmployeeScope(scope, filters);
 
-  const scopeConds: string[] = [];
-  const scopeParams: unknown[] = [];
-  if (scope?.branchIds) {
-    scopeConds.push(`e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
-    scopeParams.push(...scope.branchIds);
-  }
-  if (scope?.processIds) {
-    scopeConds.push(`e.process_id IN (${scope.processIds.map(() => "?").join(",")})`);
-    scopeParams.push(...scope.processIds);
-  }
-  if (filters?.branchId) {
-    scopeConds.push('e.branch_id = ?');
-    scopeParams.push(filters.branchId);
-  }
-  if (filters?.processId) {
-    scopeConds.push('e.process_id = ?');
-    scopeParams.push(filters.processId);
-  }
-  const lobCond = filters?.lob ? lobCondition(filters.lob) : null;
-  if (lobCond) {
-    scopeConds.push(lobCond.sql);
-    scopeParams.push(...lobCond.params);
-  }
+  // For today's live view also look back one roster day: an overnight shift (e.g. 22:00-06:00)
+  // rostered yesterday is still running after midnight, and an employee absent from it must
+  // still alert. Explicit past/future dates query only that date.
+  const isLive = date === todayLocalDateStr(now);
+  const dates = isLive ? [yesterdayDate(), date] : [date];
 
   // Find employees rostered for shifts that have started but haven't punched in
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -581,12 +571,13 @@ export async function detectUnplannedAbsences(
        mgr.official_email AS manager_email,
        pm.process_name,
        bm.branch_name,
+       DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS roster_day,
        COALESCE(st.start_time, ra.shift_start_time) AS shift_start,
        COALESCE(st.end_time, ra.shift_end_time) AS shift_end
      FROM employees e
-     JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
+     JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date IN (${dates.map(() => '?').join(',')})
      LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ?
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
      LEFT JOIN process_master pm ON pm.id = e.process_id
      LEFT JOIN branch_master bm ON bm.id = e.branch_id
@@ -595,7 +586,7 @@ export async function detectUnplannedAbsences(
        AND ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING')
        AND att.clock_in_time IS NULL
        ${scopeConds.map((c) => `AND ${c}`).join("\n       ")}`,
-    [date, date, ...scopeParams]
+    [...dates, ...scopeParams]
   );
 
   const alerts: UnplannedAbsenceAlert[] = [];
@@ -603,21 +594,28 @@ export async function detectUnplannedAbsences(
   for (const r of rows) {
     const shiftStart = r.shift_start;
     if (!shiftStart) continue;
+    const rosterDay = String(r.roster_day);
+    const shiftEnd = r.shift_end ? String(r.shift_end) : null;
 
-    const shiftMinutes = timeToMinutes(String(shiftStart));
-    const minutesSinceStart = currentMinutes - shiftMinutes;
+    // Yesterday's row only matters while its overnight shift is still running.
+    if (rosterDay !== date) {
+      if (!isOvernightShift(String(shiftStart), shiftEnd) || hasShiftEnded(rosterDay, String(shiftStart), shiftEnd, now)) continue;
+    }
+
+    // Real elapsed minutes (date-aware), not clock-of-day arithmetic.
+    const minutesSinceStart = minutesSinceShiftStart(rosterDay, String(shiftStart), now);
 
     // Only alert if shift started + grace period passed
     if (minutesSinceStart >= gracePeriodMinutes) {
-      const shiftTime = r.shift_end
-        ? `${String(shiftStart).slice(0, 5)}-${String(r.shift_end).slice(0, 5)}`
+      const shiftTime = shiftEnd
+        ? `${String(shiftStart).slice(0, 5)}-${shiftEnd.slice(0, 5)}`
         : String(shiftStart).slice(0, 5);
 
       alerts.push({
         employeeId: String(r.employee_id),
         employeeCode: String(r.employee_code),
         employeeName: String(r.employee_name),
-        date,
+        date: rosterDay,
         shiftTime,
         managerId: r.reporting_manager_id ? String(r.reporting_manager_id) : null,
         managerName: r.manager_name ? String(r.manager_name) : null,
@@ -629,7 +627,40 @@ export async function detectUnplannedAbsences(
     }
   }
 
+  // Most overdue first so the list is severity-ordered.
+  alerts.sort((x, y) => y.minutesSinceShiftStart - x.minutesSinceShiftStart);
   return alerts;
+}
+
+/** RBAC scope + UI filters -> SQL conditions on alias `e`. Filters only ever NARROW the scope. */
+function buildEmployeeScope(
+  scope?: RosterIntelligenceScope,
+  filters?: RosterIntelligenceFilters,
+): { conds: string[]; params: unknown[] } {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (scope?.branchIds) {
+    conds.push(`e.branch_id IN (${scope.branchIds.map(() => '?').join(',')})`);
+    params.push(...scope.branchIds);
+  }
+  if (scope?.processIds) {
+    conds.push(`e.process_id IN (${scope.processIds.map(() => '?').join(',')})`);
+    params.push(...scope.processIds);
+  }
+  if (filters?.branchId) {
+    conds.push('e.branch_id = ?');
+    params.push(filters.branchId);
+  }
+  if (filters?.processId) {
+    conds.push('e.process_id = ?');
+    params.push(filters.processId);
+  }
+  const lobCond = filters?.lob ? lobCondition(filters.lob) : null;
+  if (lobCond) {
+    conds.push(lobCond.sql);
+    params.push(...lobCond.params);
+  }
+  return { conds, params };
 }
 
 // ── Weekly Shrinkage Report ──────────────────────────────────────────────────

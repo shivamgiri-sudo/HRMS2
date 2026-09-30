@@ -1,800 +1,219 @@
 /**
- * Roster Intervention Dashboard — Phase 4
+ * Retention Interventions — tab=interventions of the Roster Command Center.
  *
- * Design System: MAS HRMS Frozen Patterns
- * - ConsoleCard containers with backdrop-blur
- * - Gradient headers (violet for HR/intervention domain)
- * - Tone color system for priority levels
- * - Bento grid layout (density 8/10)
- * - Responsive: mobile-first grid
+ * KPI strip (server aggregates, click = drill-down) -> alert strip (severity ordered, click-to-filter)
+ * -> weekly trend + open-by-tier + open-by-owner charts -> sortable virtualised case table.
+ * Every table row / KPI / chart segment opens a right slide-over (DetailDrawer) that fetches from
+ * a dedicated endpoint: GET .../:id (one case) or GET .../cases (the cases behind a segment).
  *
- * Features:
- * 1. Intervention queue for at-risk employees
- * 2. Action tracking (scheduled, completed, outcome)
- * 3. Priority-based sorting (critical, high, medium)
- * 4. Filter by owner (HR, Manager, WFM)
- * 5. Outcome tracking (retained, exited, pending)
+ * Sub-components live in ./interventions/. countByTier (interventionCounts.ts) is kept as the
+ * fallback tier count for the loaded list when the server summary has not answered.
  */
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Badge } from "@/components/ui/badge";
+import { Suspense, lazy, useMemo, useState } from "react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, CheckCircle2, Clock, Percent, RefreshCw, Shield, UserCheck, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Textarea } from "@/components/ui/textarea";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
+import { ChartCard } from "@/components/wfm/console/ChartCard";
 import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
-import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
+import { DetailDrawer } from "@/components/wfm/console/DetailDrawer";
+import { KpiTile } from "@/components/wfm/console/KpiTile";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { UpdatedStamp } from "./heavyQuery";
+import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import { scopeParams } from "./filterState";
 import { countByTier } from "./interventionCounts";
 import {
-  AlertTriangle,
-  ArrowRight,
-  Calendar,
-  CheckCircle2,
-  Clock,
-  Filter,
-  RefreshCw,
-  Shield,
-  Target,
-  TrendingDown,
-  User,
-  UserCheck,
-  UserMinus,
-  Users,
-  XCircle,
-  Zap,
-} from "lucide-react";
+  OWNER_LABEL, TIER_LABEL, adaptCase, adaptSummary, fmtInt, fmtPct,
+  type CaseApiRow, type Owner, type SummaryApi, type Tier,
+} from "./interventions/calc";
+import { RecordBody, drawerHeaderFor, useCaseDetail } from "./interventions/InterventionDrawer";
+import { SegmentBody, type Segment } from "./interventions/SegmentBody";
+import InterventionTable from "./interventions/InterventionTable";
 
+const InterventionCharts = lazy(() => import("./interventions/InterventionCharts"));
+const BASE = "/api/analytics/intervention-recommendations";
 const ALL = "__all__";
+const QUERY_OPTS = { staleTime: 60_000, placeholderData: keepPreviousData, refetchOnWindowFocus: false } as const;
 
-// ── Types ────────────────────────────────────────────────────────────────────
+type View = null | { kind: "segment"; segment: Segment } | { kind: "record"; id: string; back?: Segment };
 
-interface InterventionRecommendation {
-  id: string;
-  employeeId: string;
-  employeeCode: string;
-  employeeName: string;
-  processName: string | null;
-  branchName: string | null;
-  managerId: string | null;
-  managerName: string | null;
-  generatedAt: string;
-  riskTier: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-  predictionScore: number;
-  recommendations: Array<{
-    priority: "immediate" | "within_48h" | "this_week";
-    owner: "hr_admin" | "manager" | "wfm" | "process_head";
-    action: string;
-    reason: string;
-    triggeredBy: string[];
-  }>;
-  actionTaken: boolean;
-  actionTakenAt: string | null;
-  actionTakenBy: string | null;
-  actionNotes: string | null;
-  outcome: "retained" | "exited" | "pending";
-  outcomeDate: string | null;
-  signals: {
-    attendancePct: number | null;
-    qualityPct: number | null;
-    lateMarks30d: number | null;
-    aonDays: number | null;
-  };
-}
-
-interface InterventionSummary {
-  total: number;
-  byTier: { CRITICAL: number; HIGH: number; MEDIUM: number; LOW: number };
-  byOutcome: { retained: number; exited: number; pending: number };
-  actionRate: number;
-  retentionRate: number;
-}
-
-/**
- * Shape of a GET .../pending row. The API is snake_case and returns a narrower set of columns
- * than the camelCase interface above describes — the page's type was written against a
- * response nothing ever produced, which is why it needs mapping rather than a rename.
- */
-interface PendingInterventionApiRow {
-  id: string;
-  employee_id: string;
-  employee_name: string;
-  branch_name: string | null;
-  process_name: string | null;
-  designation_name: string | null;
-  generated_at: string;
-  days_since_generated: number;
-  risk_tier: string;
-  prediction_score: number;
-  recommendations: InterventionRecommendation["recommendations"] | string | null;
-}
-
-function adaptPendingRow(r: PendingInterventionApiRow): InterventionRecommendation {
-  // recommendations is a JSON column; mysql2 hands it back parsed on some drivers and as a
-  // string on others, so both are accepted rather than assuming one.
-  let recs: InterventionRecommendation["recommendations"] = [];
-  try {
-    recs = typeof r.recommendations === "string"
-      ? JSON.parse(r.recommendations)
-      : (r.recommendations ?? []);
-  } catch { recs = []; }
-
-  return {
-    id: r.id,
-    employeeId: r.employee_id,
-    // Not selected by the endpoint. Left blank rather than filled with the id, so the column
-    // reads as absent instead of as a code that would not match anything.
-    employeeCode: "",
-    employeeName: r.employee_name,
-    processName: r.process_name || null,
-    branchName: r.branch_name || null,
-    managerId: null,
-    managerName: null,
-    generatedAt: r.generated_at,
-    riskTier: String(r.risk_tier ?? "LOW").toUpperCase() as InterventionRecommendation["riskTier"],
-    predictionScore: Number(r.prediction_score ?? 0),
-    recommendations: Array.isArray(recs) ? recs : [],
-    // /pending selects WHERE action_taken = 0 AND outcome = 'pending', so these are constants
-    // for every row it can return — not guesses.
-    actionTaken: false,
-    actionTakenAt: null,
-    actionTakenBy: null,
-    actionNotes: null,
-    outcome: "pending",
-    outcomeDate: null,
-    signals: { attendancePct: null, qualityPct: null, lateMarks30d: null, aonDays: null },
-  };
-}
-
-/** Shape of GET /api/analytics/intervention-recommendations/outcomes -> data. */
-interface InterventionOutcomesApi {
-  total_generated: number;
-  action_taken_count: number;
-  retained_count: number;
-  exited_count: number;
-  pending_count: number;
-  retention_success_rate: number;
-  avg_days_to_action: number | null;
-}
-
-/**
- * The outcomes endpoint carries every figure this page shows EXCEPT the per-tier split — it
- * aggregates by outcome, not by risk tier. byTier is therefore derived from the pending list
- * (see below) rather than invented here, and stays at zero when that list is empty.
- */
-function adaptSummary(raw: InterventionOutcomesApi | undefined): InterventionSummary {
-  const total = Number(raw?.total_generated ?? 0);
-  const actioned = Number(raw?.action_taken_count ?? 0);
-  return {
-    total,
-    byTier: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
-    byOutcome: {
-      retained: Number(raw?.retained_count ?? 0),
-      exited: Number(raw?.exited_count ?? 0),
-      pending: Number(raw?.pending_count ?? 0),
-    },
-    actionRate: total > 0 ? Math.round((actioned / total) * 100) : 0,
-    retentionRate: Number(raw?.retention_success_rate ?? 0),
-  };
-}
-
-// ── Design Tokens (MAS HRMS Frozen) ──────────────────────────────────────────
-
-const TONE = {
-  blue: { iconBg: "#edf4ff", value: "#0b63e5", border: "#dce8fb" },
-  green: { iconBg: "#eaf8ef", value: "#15803d", border: "#d7f0df" },
-  amber: { iconBg: "#fff4e8", value: "#ea580c", border: "#fee3c5" },
-  red: { iconBg: "#fff0f1", value: "#dc2626", border: "#ffdadd" },
-  violet: { iconBg: "#f3efff", value: "#6d28d9", border: "#e6ddff" },
-  teal: { iconBg: "#f0fdfa", value: "#0f766e", border: "#99f6e4" },
-  slate: { iconBg: "#f1f4f8", value: "#0b1f44", border: "#e3e9f2" },
-};
-
-const TIER_CONFIG = {
-  CRITICAL: { tone: "red" as const, label: "Critical", icon: AlertTriangle },
-  HIGH: { tone: "amber" as const, label: "High", icon: Zap },
-  MEDIUM: { tone: "blue" as const, label: "Medium", icon: Target },
-  LOW: { tone: "green" as const, label: "Low", icon: Shield },
-};
-
-const OWNER_CONFIG = {
-  hr_admin: { label: "HR Admin", icon: Users },
-  manager: { label: "Manager", icon: User },
-  wfm: { label: "WFM", icon: Calendar },
-  process_head: { label: "Process Head", icon: Target },
-};
-
-const PRIORITY_CONFIG = {
-  immediate: { label: "Immediate", color: "text-red-600", bg: "bg-red-50" },
-  within_48h: { label: "Within 48h", color: "text-amber-600", bg: "bg-amber-50" },
-  this_week: { label: "This Week", color: "text-blue-600", bg: "bg-blue-50" },
-};
-
-// ── Subcomponents ────────────────────────────────────────────────────────────
-
-function MetricTile({
-  label,
-  value,
-  helper,
-  tone = "slate",
-  icon,
-}: {
-  label: string;
-  value: string | number;
-  helper?: string;
-  tone?: keyof typeof TONE;
-  icon: React.ElementType;
-}) {
+function DrawerHost({ view, setView }: { view: View; setView: (v: View) => void }) {
+  const recordId = view?.kind === "record" ? view.id : "";
+  const detail = useCaseDetail(recordId);
+  if (!view) return <DetailDrawer open={false} onOpenChange={() => undefined} title="">{null}</DetailDrawer>;
+  const close = () => setView(null);
+  if (view.kind === "segment") {
+    return (
+      <DetailDrawer open onOpenChange={(o) => !o && close()} title={view.segment.title} subtitle="Cases behind this figure — select one for full detail">
+        <SegmentBody segment={view.segment} onOpen={(r) => setView({ kind: "record", id: r.id, back: view.segment })} />
+      </DetailDrawer>
+    );
+  }
+  const h = drawerHeaderFor(detail.data);
   return (
-    <KpiTile
-      label={label}
-      value={value}
-      sub={helper}
-      tone={toKpiTone(tone)}
-      icon={icon}
-    />
+    <DetailDrawer open onOpenChange={(o) => !o && close()} title={h.title} badge={h.badge} subtitle={h.subtitle}>
+      {view.back && (
+        <Button variant="ghost" size="sm" className="-ml-2 cursor-pointer" onClick={() => setView({ kind: "segment", segment: view.back! })}>
+          Back to {view.back.title}
+        </Button>
+      )}
+      <RecordBody id={view.id} onDone={() => undefined} />
+    </DetailDrawer>
   );
 }
-
-function RiskBadge({ tier }: { tier: keyof typeof TIER_CONFIG }) {
-  const config = TIER_CONFIG[tier];
-  const colors = TONE[config.tone];
-  return (
-    <Badge
-      className="font-bold"
-      style={{ backgroundColor: colors.iconBg, color: colors.value, borderColor: colors.border }}
-    >
-      <config.icon className="h-3 w-3 mr-1" />
-      {config.label}
-    </Badge>
-  );
-}
-
-function InterventionCard({
-  intervention,
-  onAction,
-  onViewDetail,
-}: {
-  intervention: InterventionRecommendation;
-  onAction: () => void;
-  onViewDetail: () => void;
-}) {
-  const tierConfig = TIER_CONFIG[intervention.riskTier];
-  const colors = TONE[tierConfig.tone];
-
-  return (
-    <ConsoleCard className="overflow-hidden">
-      <div
-        className="h-1"
-        style={{ backgroundColor: colors.value }}
-      />
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="font-bold text-slate-800 truncate">{intervention.employeeName}</span>
-              <span className="text-xs text-slate-500">{intervention.employeeCode}</span>
-              <RiskBadge tier={intervention.riskTier} />
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span>{intervention.processName || "—"}</span>
-              <span>•</span>
-              <span>{intervention.branchName || "—"}</span>
-              {intervention.managerName && (
-                <>
-                  <span>•</span>
-                  <span>Mgr: {intervention.managerName}</span>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="text-right">
-            <div className="text-2xl font-bold" style={{ color: colors.value }}>
-              {intervention.predictionScore}
-            </div>
-            <div className="text-[10px] text-slate-400 uppercase">Risk Score</div>
-          </div>
-        </div>
-
-        {/* Signal indicators */}
-        <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-          <div className="rounded-lg bg-slate-50 p-2">
-            <p className={`text-sm font-bold ${(intervention.signals.attendancePct ?? 100) < 85 ? "text-red-600" : "text-slate-700"}`}>
-              {intervention.signals.attendancePct ?? "—"}%
-            </p>
-            <p className="text-[10px] text-slate-500">Attendance</p>
-          </div>
-          <div className="rounded-lg bg-slate-50 p-2">
-            <p className={`text-sm font-bold ${(intervention.signals.qualityPct ?? 100) < 75 ? "text-amber-600" : "text-slate-700"}`}>
-              {intervention.signals.qualityPct ?? "—"}%
-            </p>
-            <p className="text-[10px] text-slate-500">Quality</p>
-          </div>
-          <div className="rounded-lg bg-slate-50 p-2">
-            <p className={`text-sm font-bold ${(intervention.signals.lateMarks30d ?? 0) > 5 ? "text-amber-600" : "text-slate-700"}`}>
-              {intervention.signals.lateMarks30d ?? "—"}
-            </p>
-            <p className="text-[10px] text-slate-500">Late (30d)</p>
-          </div>
-          <div className="rounded-lg bg-slate-50 p-2">
-            <p className={`text-sm font-bold ${(intervention.signals.aonDays ?? 999) <= 30 ? "text-red-600" : "text-slate-700"}`}>
-              {intervention.signals.aonDays ?? "—"}
-            </p>
-            <p className="text-[10px] text-slate-500">AoN Days</p>
-          </div>
-        </div>
-
-        {/* Top recommendation */}
-        {intervention.recommendations.length > 0 && (
-          <div className={`mt-3 p-3 rounded-lg ${PRIORITY_CONFIG[intervention.recommendations[0].priority].bg}`}>
-            <div className="flex items-start gap-2">
-              <ArrowRight className={`h-4 w-4 mt-0.5 ${PRIORITY_CONFIG[intervention.recommendations[0].priority].color}`} />
-              <div className="flex-1 min-w-0">
-                <p className={`text-sm font-medium ${PRIORITY_CONFIG[intervention.recommendations[0].priority].color}`}>
-                  {intervention.recommendations[0].action}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  Owner: {OWNER_CONFIG[intervention.recommendations[0].owner].label} • {PRIORITY_CONFIG[intervention.recommendations[0].priority].label}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="mt-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {intervention.outcome === "retained" && (
-              <Badge variant="default" className="bg-green-100 text-green-700">
-                <UserCheck className="h-3 w-3 mr-1" /> Retained
-              </Badge>
-            )}
-            {intervention.outcome === "exited" && (
-              <Badge variant="destructive" className="bg-red-100 text-red-700">
-                <UserMinus className="h-3 w-3 mr-1" /> Exited
-              </Badge>
-            )}
-            {intervention.actionTaken && intervention.outcome === "pending" && (
-              <Badge variant="secondary" className="bg-amber-100 text-amber-700">
-                <Clock className="h-3 w-3 mr-1" /> Action Taken
-              </Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={onViewDetail}>
-              View Details
-            </Button>
-            {!intervention.actionTaken && (
-              <Button size="sm" onClick={onAction} className="bg-violet-600 hover:bg-violet-700">
-                Take Action
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
-    </ConsoleCard>
-  );
-}
-
-// ── Main Component ───────────────────────────────────────────────────────────
 
 export default function InterventionsPanel() {
-  const navigate = useNavigate();
-  const [tierFilter, setTierFilter] = useState(ALL);
-  const [ownerFilter, setOwnerFilter] = useState(ALL);
-  const [selectedIntervention, setSelectedIntervention] = useState<InterventionRecommendation | null>(null);
-  const [actionNotes, setActionNotes] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const queryClient = useQueryClient();
+  const qc = useQueryClient();
   const { filters } = useRosterConsoleFilters();
   const { branchId, processId, lobId } = filters;
+  const [tier, setTier] = useState<string>(ALL);
+  const [owner, setOwner] = useState<string>(ALL);
+  const [view, setView] = useState<View>(null);
+  const scope = scopeParams({ branchId, processId, lobId }).toString();
 
-  /*
-   * These three called /api/analytics/interventions/*, which nothing serves. The real router is
-   * mounted at /api/analytics/intervention-recommendations and exposes /outcomes, /pending and
-   * PATCH /:id — different paths, and a different verb for the mutation.
-   *
-   * Note on what this does and does not fix: the paths are now right, but
-   * employee_retention_recommendation holds 0 rows, so the page will honestly show zeros until
-   * recommendations are generated. That is a data gap, not a wiring one — the difference being
-   * that a 401 from an unserved URL used to be indistinguishable from a genuinely quiet week.
-   */
-  const { data: summaryData, isError: summaryError } = useQuery({
+  const summaryQ = useQuery({
     queryKey: ["interventions", "summary", branchId, processId, lobId],
+    queryFn: async () => adaptSummary((await hrmsApi.get<{ data?: SummaryApi }>(`${BASE}/outcomes?${scope}`))?.data),
+    ...QUERY_OPTS,
+  });
+  const listQ = useQuery({
+    queryKey: ["interventions", "list", tier, owner, branchId, processId, lobId],
     queryFn: async () => {
-      const raw = await hrmsApi.get<{ data?: InterventionOutcomesApi }>(
-        `/api/analytics/intervention-recommendations/outcomes?${scopeParams({ branchId, processId, lobId })}`,
-      );
-      return adaptSummary(raw?.data);
+      const p = new URLSearchParams(scope);
+      p.set("limit", "200");
+      if (tier !== ALL) p.set("tier", tier);
+      if (owner !== ALL) p.set("owner", owner);
+      const raw = await hrmsApi.get<{ data?: CaseApiRow[] }>(`${BASE}/pending?${p}`);
+      return (raw?.data ?? []).map(adaptCase);
     },
+    ...QUERY_OPTS,
   });
 
-  const { data: interventionsData, isLoading } = useQuery({
-    queryKey: ["interventions", "list", tierFilter, ownerFilter, branchId, processId, lobId],
-    queryFn: async () => {
-      const params = scopeParams({ branchId, processId, lobId });
-      // The API supports `owner` and `limit` only; tier is filtered client-side below rather
-      // than sent as a parameter the handler would silently ignore.
-      if (ownerFilter !== ALL) params.set("owner", ownerFilter);
-      const raw = await hrmsApi.get<{ data?: PendingInterventionApiRow[]; count?: number }>(
-        `/api/analytics/intervention-recommendations/pending?${params}`,
-      );
-      let rows = (raw?.data ?? []).map(adaptPendingRow);
-      if (tierFilter !== ALL) rows = rows.filter((r) => r.riskTier === tierFilter);
-      // Merge-plan Phase B bug #15: there used to be an Outcome filter here too, but the
-      // endpoint already hard-selects `outcome = 'pending'` server-side, so every row it
-      // returns has the same outcome — the filter was a no-op decoration. The backing table
-      // (employee_retention_recommendation) also has 0 production rows today, so a real
-      // `?outcome=` variant can't be verified against live data yet; removed rather than
-      // shipping a control that silently does nothing. Re-add once the endpoint supports it.
-      return { interventions: rows, total: rows.length };
-    },
-  });
+  const s = summaryQ.data;
+  const rows = listQ.data ?? [];
+  const fallbackTiers = useMemo(() => countByTier(rows), [rows]);
+  const tiers = s?.byTier ?? fallbackTiers;
+  const seg = (title: string, bucket: Segment["bucket"], extra: Partial<Segment> = {}) => setView({ kind: "segment", segment: { title, bucket, scope, ...extra } });
 
-  const markActionMutation = useMutation({
-    mutationFn: (data: { id: string; notes: string }) =>
-      hrmsApi.patch(`/api/analytics/intervention-recommendations/${data.id}`, { notes: data.notes }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["interventions"] });
-      setSelectedIntervention(null);
-      setActionNotes("");
-    },
-  });
-
-  const handleTakeAction = async () => {
-    if (!selectedIntervention) return;
-    setIsSubmitting(true);
-    try {
-      await markActionMutation.mutateAsync({ id: selectedIntervention.id, notes: actionNotes });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const interventions = interventionsData?.interventions ?? [];
-  const summaryBase = summaryData ?? {
-    total: 0,
-    byTier: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
-    byOutcome: { retained: 0, exited: 0, pending: 0 },
-    actionRate: 0,
-    retentionRate: 0,
-  };
-
-  /*
-   * byTier is counted from the pending rows rather than taken from /outcomes, which aggregates
-   * by outcome and carries no tier breakdown. Two honest limits follow, and neither is hidden:
-   * these are counts of OPEN interventions (which is what the tiles are labelled), and they
-   * reflect the filtered list, so narrowing by owner narrows the tiles with it.
-   */
-  const summary: InterventionSummary = (() => {
-    const byTier = countByTier(interventionsData?.interventions ?? []);
-    return { ...summaryBase, byTier };
-  })();
+  // Alerts: most severe first. Counts come from the server summary, never the (limited) list.
+  const alerts = s ? [
+    s.overdue > 0 && { key: "overdue", sev: 0, text: `${fmtInt(s.overdue)} open case${s.overdue === 1 ? "" : "s"} past action deadline`, run: () => seg("Overdue cases", "overdue") },
+    tiers.CRITICAL > 0 && { key: "crit", sev: 1, text: `${fmtInt(tiers.CRITICAL)} critical-risk employee${tiers.CRITICAL === 1 ? "" : "s"} awaiting action`, run: () => setTier("CRITICAL") },
+    tiers.HIGH > 0 && { key: "high", sev: 2, text: `${fmtInt(tiers.HIGH)} high-risk open`, run: () => setTier("HIGH") },
+  ].filter(Boolean) as Array<{ key: string; sev: number; text: string; run: () => void }> : [];
 
   return (
     <>
-      <div>
-        <PanelHeader
-          icon={Shield}
-          title="Retention Interventions"
-          description="Track and manage retention interventions for at-risk employees"
-          actions={
-            <Button
-              variant="outline"
-              size="sm"
-              className="cursor-pointer"
-              onClick={() => queryClient.invalidateQueries({ queryKey: ["interventions"] })}
-            >
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
-          }
-        />
+      <PanelHeader
+        icon={Shield}
+        title="Retention interventions"
+        description="Open retention cases for at-risk employees, deadlines and outcomes"
+        updatedLabel={undefined}
+        actions={<>
+          <UpdatedStamp updatedAt={summaryQ.dataUpdatedAt} fetching={summaryQ.isFetching || listQ.isFetching} />
+          <Button variant="outline" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-9" onClick={() => qc.invalidateQueries({ queryKey: ["interventions"] })}>
+            <RefreshCw className="mr-2 h-4 w-4" aria-hidden /> Refresh
+          </Button>
+        </>}
+      />
 
-        {/*
-          `summary` falls back to an all-zero default, so a failed request renders as
-          "0 critical, 0 pending, 0% action rate" — indistinguishable from a genuinely quiet
-          week. On a retention screen that reads as "no one is at risk", which is exactly the
-          wrong conclusion to draw from an endpoint that never answered.
-        */}
-        {summaryError && (
-          <div className="mb-6 rounded-xl border border-red-300 bg-red-50 p-4">
-            <p className="font-semibold text-red-900">Intervention summary could not be loaded</p>
-            <p className="mt-1 text-sm text-red-800">
-              The counts below are placeholders, not a quiet week — no at-risk employees were
-              evaluated. Use Refresh above, and report it if it persists.
-            </p>
-          </div>
-        )}
-
-        {/* KPI Tiles */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6">
-          <MetricTile
-            label="Critical"
-            value={summary.byTier.CRITICAL}
-            helper="Immediate action"
-            tone="red"
-            icon={AlertTriangle}
-          />
-          <MetricTile
-            label="High Risk"
-            value={summary.byTier.HIGH}
-            helper="Within 48 hours"
-            tone="amber"
-            icon={Zap}
-          />
-          <MetricTile
-            label="Medium Risk"
-            value={summary.byTier.MEDIUM}
-            helper="This week"
-            tone="blue"
-            icon={Target}
-          />
-          <MetricTile
-            label="Pending"
-            value={summary.byOutcome.pending}
-            helper="Awaiting outcome"
-            tone="violet"
-            icon={Clock}
-          />
-          <MetricTile
-            label="Retained"
-            value={summary.byOutcome.retained}
-            helper={`${summary.retentionRate}% success`}
-            tone="green"
-            icon={UserCheck}
-          />
-          <MetricTile
-            label="Action Rate"
-            value={`${summary.actionRate}%`}
-            helper="Interventions acted on"
-            tone="teal"
-            icon={CheckCircle2}
-          />
+      {summaryQ.isError && (
+        <div role="alert" className="mb-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+          <p className="font-semibold">Intervention summary could not be loaded</p>
+          <p className="mt-0.5">Figures below are unavailable, not zero. Use Refresh; report it if it persists.</p>
         </div>
+      )}
 
-        {/* Filters */}
-        <ConsoleCard className="mb-6">
-          <div className="p-4 flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-slate-400" />
-              <span className="text-sm font-medium text-slate-600">Filters:</span>
-            </div>
-            <Select value={tierFilter} onValueChange={setTierFilter}>
-              <SelectTrigger className="w-36">
-                <SelectValue placeholder="Risk Tier" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>All Tiers</SelectItem>
-                <SelectItem value="CRITICAL">Critical</SelectItem>
-                <SelectItem value="HIGH">High</SelectItem>
-                <SelectItem value="MEDIUM">Medium</SelectItem>
-                <SelectItem value="LOW">Low</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={ownerFilter} onValueChange={setOwnerFilter}>
-              <SelectTrigger className="w-36">
-                <SelectValue placeholder="Owner" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>All Owners</SelectItem>
-                <SelectItem value="hr_admin">HR Admin</SelectItem>
-                <SelectItem value="manager">Manager</SelectItem>
-                <SelectItem value="wfm">WFM</SelectItem>
-                <SelectItem value="process_head">Process Head</SelectItem>
-              </SelectContent>
-            </Select>
-            <div className="ml-auto text-sm text-slate-500">
-              {interventions.length} interventions
-            </div>
-          </div>
-        </ConsoleCard>
+      {alerts.length > 0 && (
+        <ul className="mb-3 flex flex-wrap gap-2" aria-label="Alerts">
+          {alerts.sort((a, b) => a.sev - b.sev).map((a) => (
+            <li key={a.key}>
+              <button type="button" onClick={a.run}
+                className={`inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8 ${a.sev < 2 ? "border-red-200 bg-red-50 text-red-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden /> {a.text}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
-        {/* Intervention List */}
-        {isLoading ? (
-          <ConsoleCard className="py-12 text-center">
-            <div className="animate-pulse">Loading interventions...</div>
-          </ConsoleCard>
-        ) : interventions.length === 0 ? (
-          <ConsoleCard className="py-12 text-center">
-            <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-400" />
-            <p className="font-medium text-green-700">No interventions match your filters</p>
-            <p className="text-sm text-slate-500 mt-1">Try adjusting your filter criteria</p>
-          </ConsoleCard>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {interventions.map((intervention) => (
-              <InterventionCard
-                key={intervention.id}
-                intervention={intervention}
-                onAction={() => {
-                  setSelectedIntervention(intervention);
-                  setActionNotes("");
-                }}
-                onViewDetail={() => setSelectedIntervention(intervention)}
-              />
-            ))}
-          </div>
-        )}
+      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <KpiTile label="Open cases" value={s ? fmtInt(s.openTotal) : "—"} sub="Awaiting action" tone="violet" icon={Clock}
+          spark={s?.generatedSpark} delta={s?.generatedDelta ?? undefined} deltaBad="up" onClick={() => seg("Open cases", "open")} />
+        <KpiTile label="Critical" value={s || listQ.data ? fmtInt(tiers.CRITICAL) : "—"} sub="Act within 24 h" tone="red" icon={AlertTriangle}
+          onClick={() => seg("Critical open cases", "open", { tier: "CRITICAL" })} />
+        <KpiTile label="High" value={s || listQ.data ? fmtInt(tiers.HIGH) : "—"} sub="Act within 48 h" tone="amber" icon={Zap}
+          onClick={() => seg("High-risk open cases", "open", { tier: "HIGH" })} />
+        <KpiTile label="Overdue" value={s ? fmtInt(s.overdue) : "—"} sub={s ? `${fmtPct(s.overduePct)} of open` : undefined} tone="red" icon={Clock}
+          progress={s?.overduePct ?? undefined} onClick={() => seg("Overdue cases", "overdue")} />
+        <KpiTile label="Action rate" value={s ? fmtPct(s.actionRate) : "—"} sub={s ? `${fmtInt(s.actioned)} of ${fmtInt(s.total)} actioned` : undefined} tone="blue" icon={Percent}
+          progress={s?.actionRate ?? undefined} spark={s?.actionedSpark} delta={s?.actionedDelta ?? undefined} deltaBad="down" onClick={() => seg("Actioned cases", "actioned")} />
+        <KpiTile label="Retained" value={s ? fmtInt(s.retained) : "—"} tone="green" icon={UserCheck}
+          sub={s ? `${fmtPct(s.retentionRate)} of resolved · ${fmtInt(s.exited)} exited` : undefined} onClick={() => seg("Retained employees", "retained")} />
       </div>
 
-      {/* Action Sheet */}
-      <Sheet open={!!selectedIntervention} onOpenChange={(open) => !open && setSelectedIntervention(null)}>
-        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-violet-600" />
-              Intervention Details
-            </SheetTitle>
-          </SheetHeader>
-          {selectedIntervention && (
-            <div className="mt-6 space-y-6">
-              {/* Employee Info */}
-              <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-violet-100">
-                  <User className="h-6 w-6 text-violet-600" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-800">{selectedIntervention.employeeName}</h3>
-                  <p className="text-sm text-slate-500">{selectedIntervention.employeeCode}</p>
-                  <p className="text-xs text-slate-400">{selectedIntervention.processName} • {selectedIntervention.branchName}</p>
-                </div>
-                <div className="ml-auto">
-                  <RiskBadge tier={selectedIntervention.riskTier} />
-                </div>
-              </div>
+      <div className="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <ChartCard title="Cases by week" subtitle="Generated vs actioned, last 12 weeks — select a bar to see its cases" className="lg:col-span-2"
+          loading={summaryQ.isLoading} error={summaryQ.isError} onRetry={() => summaryQ.refetch()} empty={!!s && s.total === 0} emptyLabel="No cases generated yet" height={330}>
+          {s && <Suspense fallback={<div className="h-full animate-pulse rounded-md bg-slate-100" />}>
+            <InterventionCharts part="trend" summary={s} onWeek={(w) => seg(`Cases generated week of ${w.split("-").reverse().join("/")}`, "all", { weekStart: w })} onTier={() => undefined} onOwner={() => undefined} />
+          </Suspense>}
+        </ChartCard>
+        <div className="grid gap-3">
+          <ChartCard title="Open by risk tier" loading={summaryQ.isLoading} error={summaryQ.isError} onRetry={() => summaryQ.refetch()} empty={!!s && s.openTotal === 0} emptyLabel="No open cases" height={130}>
+            {s && <Suspense fallback={<div className="h-full animate-pulse rounded-md bg-slate-100" />}>
+              <InterventionCharts part="tier" summary={s} onWeek={() => undefined} onTier={(t: Tier) => seg(`${TIER_LABEL[t]} open cases`, "open", { tier: t })} onOwner={() => undefined} />
+            </Suspense>}
+          </ChartCard>
+          <ChartCard title="Open by owner" subtitle="A case can involve several owners" loading={summaryQ.isLoading} error={summaryQ.isError} onRetry={() => summaryQ.refetch()} empty={!!s && s.openTotal === 0} emptyLabel="No open cases" height={130}>
+            {s && <Suspense fallback={<div className="h-full animate-pulse rounded-md bg-slate-100" />}>
+              <InterventionCharts part="owner" summary={s} onWeek={() => undefined} onTier={() => undefined} onOwner={(o: Owner) => seg(`Open cases involving ${OWNER_LABEL[o]}`, "open", { owner: o })} />
+            </Suspense>}
+          </ChartCard>
+        </div>
+      </div>
 
-              {/* Risk Score */}
-              <div className="text-center p-4 rounded-xl bg-gradient-to-br from-violet-50 to-purple-50">
-                <div className="text-4xl font-bold text-violet-600">{selectedIntervention.predictionScore}</div>
-                <div className="text-sm text-slate-500">Attrition Risk Score</div>
-              </div>
+      <ConsoleCard>
+        <div className="flex flex-wrap items-center gap-3 border-b border-border p-3">
+          <h3 className="mr-auto text-sm font-semibold text-slate-900">Open cases {listQ.data && <span className="font-normal text-slate-600">· {fmtInt(rows.length)}{s && s.openTotal > rows.length && tier === ALL && owner === ALL ? ` of ${fmtInt(s.openTotal)}` : ""}</span>}</h3>
+          <Select value={tier} onValueChange={setTier}>
+            <SelectTrigger className="w-36" aria-label="Filter by risk tier"><SelectValue placeholder="Risk tier" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All tiers</SelectItem>
+              {(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as Tier[]).map((t) => <SelectItem key={t} value={t}>{TIER_LABEL[t]}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={owner} onValueChange={setOwner}>
+            <SelectTrigger className="w-40" aria-label="Filter by owner"><SelectValue placeholder="Owner" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All owners</SelectItem>
+              {(Object.keys(OWNER_LABEL) as Owner[]).map((o) => <SelectItem key={o} value={o}>{OWNER_LABEL[o]}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        {listQ.isLoading ? (
+          <div className="space-y-2 p-3" role="status" aria-label="Loading cases">
+            {Array.from({ length: 6 }, (_, i) => <div key={i} className="h-12 animate-pulse rounded bg-slate-100" />)}
+          </div>
+        ) : listQ.isError ? (
+          <div role="alert" className="p-6 text-center text-sm text-red-800">
+            Could not load open cases.{" "}
+            <button type="button" className="cursor-pointer font-semibold underline" onClick={() => listQ.refetch()}>Retry</button>
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-col items-center gap-1 p-10 text-center text-sm text-slate-600">
+            <CheckCircle2 className="h-8 w-8 text-emerald-600" aria-hidden />
+            <p className="font-medium text-slate-900">No open cases for these filters</p>
+            <p>Cases appear once retention recommendations are generated for at-risk employees.</p>
+          </div>
+        ) : (
+          <InterventionTable rows={rows} onOpen={(r) => setView({ kind: "record", id: r.id })} />
+        )}
+      </ConsoleCard>
 
-              {/* Signal Breakdown */}
-              <div>
-                <h4 className="font-semibold text-slate-700 mb-3">Risk Signals</h4>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 rounded-lg bg-slate-50">
-                    <p className="text-lg font-bold text-slate-800">{selectedIntervention.signals.attendancePct ?? "—"}%</p>
-                    <p className="text-xs text-slate-500">Attendance (60d)</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-slate-50">
-                    <p className="text-lg font-bold text-slate-800">{selectedIntervention.signals.qualityPct ?? "—"}%</p>
-                    <p className="text-xs text-slate-500">Quality Avg</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-slate-50">
-                    <p className="text-lg font-bold text-slate-800">{selectedIntervention.signals.lateMarks30d ?? "—"}</p>
-                    <p className="text-xs text-slate-500">Late Marks (30d)</p>
-                  </div>
-                  <div className="p-3 rounded-lg bg-slate-50">
-                    <p className="text-lg font-bold text-slate-800">{selectedIntervention.signals.aonDays ?? "—"}</p>
-                    <p className="text-xs text-slate-500">Age on Network</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Recommendations */}
-              <div>
-                <h4 className="font-semibold text-slate-700 mb-3">Recommended Actions</h4>
-                <div className="space-y-2">
-                  {selectedIntervention.recommendations.map((rec, i) => {
-                    const OwnerIcon = OWNER_CONFIG[rec.owner].icon;
-                    return (
-                      <div key={i} className={`p-3 rounded-lg ${PRIORITY_CONFIG[rec.priority].bg}`}>
-                        <div className="flex items-start gap-2">
-                          <OwnerIcon className={`h-4 w-4 mt-0.5 ${PRIORITY_CONFIG[rec.priority].color}`} />
-                          <div>
-                            <p className={`text-sm font-medium ${PRIORITY_CONFIG[rec.priority].color}`}>{rec.action}</p>
-                            <p className="text-xs text-slate-500 mt-1">{rec.reason}</p>
-                            <div className="flex items-center gap-2 mt-2 text-xs text-slate-400">
-                              <span>{OWNER_CONFIG[rec.owner].label}</span>
-                              <span>•</span>
-                              <span>{PRIORITY_CONFIG[rec.priority].label}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Action Form */}
-              {!selectedIntervention.actionTaken && (
-                <div className="border-t pt-6">
-                  <h4 className="font-semibold text-slate-700 mb-3">Record Action</h4>
-                  <Textarea
-                    placeholder="Describe the action taken (e.g., scheduled 1:1 meeting, assigned mentor, discussed with manager...)"
-                    value={actionNotes}
-                    onChange={(e) => setActionNotes(e.target.value)}
-                    rows={3}
-                    className="mb-4"
-                  />
-                  <div className="flex gap-3">
-                    <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => setSelectedIntervention(null)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      className="flex-1 bg-violet-600 hover:bg-violet-700"
-                      disabled={!actionNotes.trim() || isSubmitting}
-                      onClick={handleTakeAction}
-                    >
-                      {isSubmitting ? "Saving..." : "Mark Action Taken"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Existing Action */}
-              {selectedIntervention.actionTaken && (
-                <div className="border-t pt-6">
-                  <h4 className="font-semibold text-slate-700 mb-3">Action History</h4>
-                  <div className="p-4 rounded-lg bg-green-50 border border-green-200">
-                    <div className="flex items-center gap-2 text-green-700 font-medium mb-2">
-                      <CheckCircle2 className="h-4 w-4" />
-                      Action Taken
-                    </div>
-                    <p className="text-sm text-slate-600">{selectedIntervention.actionNotes}</p>
-                    <p className="text-xs text-slate-400 mt-2">
-                      {selectedIntervention.actionTakenAt && new Date(selectedIntervention.actionTakenAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  {selectedIntervention.outcome !== "pending" && (
-                    <div className={`mt-3 p-4 rounded-lg ${
-                      selectedIntervention.outcome === "retained" ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-200"
-                    } border`}>
-                      <div className={`flex items-center gap-2 font-medium mb-1 ${
-                        selectedIntervention.outcome === "retained" ? "text-emerald-700" : "text-red-700"
-                      }`}>
-                        {selectedIntervention.outcome === "retained" ? (
-                          <><UserCheck className="h-4 w-4" /> Employee Retained</>
-                        ) : (
-                          <><UserMinus className="h-4 w-4" /> Employee Exited</>
-                        )}
-                      </div>
-                      {selectedIntervention.outcomeDate && (
-                        <p className="text-xs text-slate-500">
-                          Outcome date: {new Date(selectedIntervention.outcomeDate).toLocaleDateString()}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/*
-                * Merge-plan Phase B bug #16: this used to be 4 buttons (Call Employee,
-                * Send Message, Schedule Meeting, View Full 360), none wired to a real
-                * handler. There is no telephony, messaging, or scheduling integration
-                * behind Call/Message/Schedule anywhere in this codebase to wire them to,
-                * so they're removed rather than left as decorative controls. "View Full
-                * 360" survives because a real destination already exists — the same
-                * per-employee roster profile page other roster-console tabs deep-link to.
-                */}
-              <div className="border-t pt-6">
-                <h4 className="font-semibold text-slate-700 mb-3">Quick Actions</h4>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="justify-start gap-2"
-                  onClick={() => navigate(`/wfm/employee-roster/${selectedIntervention.employeeId}`)}
-                >
-                  <TrendingDown className="h-4 w-4" /> View Full 360
-                </Button>
-              </div>
-            </div>
-          )}
-        </SheetContent>
-      </Sheet>
+      <DrawerHost view={view} setView={setView} />
     </>
   );
 }

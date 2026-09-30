@@ -177,7 +177,7 @@ export const workforceRouteElements = (
       */}
       <Route path="/wfm/roster-requests"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRequestsPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-insights"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInsightsPage /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/roster-view"       element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterViewPage /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-view" element={<RosterCommandCenterRedirect toTab="roster-view" />} />
       {/* Own page code (TNI_ANALYSIS) as of 2026-09-09, not WFM_ROSTER: that code
           gates a whole roster-planning module and carried no grant for trainer/qa,
           the two roles this training-needs view exists for -- see 1711_tni_analysis_page.sql. */}
@@ -203,12 +203,13 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-interventions"  element={<RosterCommandCenterRedirect toTab="interventions" />} />
       <Route path="/wfm/roster-audit"          element={<RosterCommandCenterRedirect toTab="audit" />} />
       <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/capacity-dashboard" element={<ProtectedRoute><Gate pageCode="WFM_CAPACITY_DASHBOARD"><WFMCapacityDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/team-comparison" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><TeamRosterComparison /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/capacity-dashboard" element={<RosterCommandCenterRedirect toTab="capacity" />} />
+      <Route path="/wfm/team-comparison" element={<RosterCommandCenterRedirect toTab="comparison" />} />
       <Route path="/wfm/notification-hub" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterNotificationHub /></Gate></ProtectedRoute>} />
       {/* Mobile PWA optimized views for managers */}
       <Route path="/wfm/mobile-roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><MobileRosterDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/mobile-attendance" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><MobileTeamAttendance /></Gate></ProtectedRoute>} />
+      {/* Was a hard-coded mock page — no real data source; forwarded to the live console. */}
+      <Route path="/wfm/mobile-attendance" element={<RosterCommandCenterRedirect toTab="live" />} />
       {/*
         Roster Rules — the seven roster configuration screens as one tabbed page.
 
@@ -254,7 +255,7 @@ export const workforceRouteElements = (
               here. A pageCode can be added later by whoever administers the access catalog. */}
       <Route path="/wfm/rest-policy"       element={<ProtectedRoute roles={['super_admin','admin','wfm','hr']}><NativeWFMRestPolicyConfig /></ProtectedRoute>} />
       <Route path="/wfm/week-off-default"  element={<ProtectedRoute roles={['super_admin','admin','wfm','hr','manager']}><NativeWeekOffDefaultConfig /></ProtectedRoute>} />
-      <Route path="/wfm/weekoff-fairness"  element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_head']}><Gate pageCode="WFM_WEEKOFF_FAIRNESS"><WeekoffFairness /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/weekoff-fairness" element={<RosterCommandCenterRedirect toTab="fairness" />} />
       <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
 
       {/* AON & Attrition analytics — the same view the Reports hub serves as its `aon` tab,

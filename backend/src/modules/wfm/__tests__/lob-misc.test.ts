@@ -58,17 +58,15 @@ describe('interventions', () => {
 describe('process team roster', () => {
   const answer = (rows: unknown[]) => async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return [rows, []] as any; };
 
-  it('adds the lob filter after process and names LOBs via a parameterised lookup', async () => {
+  it('adds the lob filter after process and names LOBs via the lob_master join', async () => {
     calls.length = 0;
     mockExecute.mockImplementationOnce(answer([{ process_name: 'P' }]));
-    mockExecute.mockImplementationOnce(answer([{ employee_id: 'e1', employee_code: 'C1', employee_name: 'A', lob_id: LOB_UUID, assignment_type: 'WORK' }]));
-    mockExecute.mockImplementationOnce(answer([{ id: LOB_UUID, lob_name: 'Sales' }]));
+    mockExecute.mockImplementationOnce(answer([{ employee_id: 'e1', employee_code: 'C1', employee_name: 'A', lob_id: LOB_UUID, assignment_type: 'WORK', lob_name: 'Sales' }]));
     const view = await getProcessTeamRosterView('p1', '2026-09-01', { kind: 'lob', id: LOB_UUID });
     expect(calls[1].sql).toContain('e.lob_id = ?');
-    expect(calls[1].params).toEqual(['2026-09-01', '2026-09-01', '2026-09-01', 'p1', LOB_UUID]);
+    expect(calls[1].params).toEqual(['2026-09-01', '2026-09-01', '2026-09-01', '2026-09-01', 'p1', LOB_UUID]);
     expectParamPosition(calls[1], 'e.lob_id = ?', LOB_UUID);
-    expect(calls[2].sql).toContain('FROM lob_master WHERE id IN (?)');
-    expect(calls[2].params).toEqual([LOB_UUID]);
+    expect(calls[1].sql).toContain('LEFT JOIN lob_master');
     expect(view.members[0]).toMatchObject({ lobId: LOB_UUID, lobName: 'Sales' });
   });
   it('unassigned uses IS NULL and skips the name lookup when nobody has a LOB', async () => {

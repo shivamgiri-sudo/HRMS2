@@ -13,13 +13,14 @@ const { mockExecute, state } = vi.hoisted(() => {
   };
   const mockExecute = vi.fn(async (sql: string, params?: any[]) => {
     const s = sql.trim().toUpperCase();
-    if (s.includes('FINAL_ROSTER_STATUS')) {
-      state.lastPublishParams = params ?? [];
-      return [state.publishRows];
-    }
+    // The ack query also filters on final_roster_status, so match it first by its own column.
     if (s.includes('EMPLOYEE_ACK_STATUS')) {
       state.lastAckParams = params ?? [];
       return [state.ackRows];
+    }
+    if (s.includes('FINAL_ROSTER_STATUS')) {
+      state.lastPublishParams = params ?? [];
+      return [state.publishRows];
     }
     return [[]];
   });

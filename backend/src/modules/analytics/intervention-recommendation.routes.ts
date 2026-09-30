@@ -14,6 +14,7 @@ import {
   markInterventionActioned,
   getInterventionOutcomes
 } from './intervention-recommendation.service.js';
+import { getInterventionDetail, listInterventionCases } from './intervention-cases.service.js';
 
 const router = Router();
 
@@ -31,6 +32,22 @@ router.get(
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
   getPendingInterventions
+);
+
+// Cases by bucket (open|actioned|retained|exited|overdue|all) — drill-down lists
+router.get(
+  '/cases',
+  requireAuth,
+  requireRole('hr', 'admin', 'super_admin', 'manager'),
+  listInterventionCases
+);
+
+// Full case detail for the drill-down drawer
+router.get(
+  '/:id',
+  requireAuth,
+  requireRole('hr', 'admin', 'super_admin', 'manager'),
+  getInterventionDetail
 );
 
 // Mark a recommendation as actioned — PATCH /:id

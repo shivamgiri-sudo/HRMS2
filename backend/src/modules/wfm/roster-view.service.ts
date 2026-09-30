@@ -557,7 +557,12 @@ export async function getEmployeeAdherenceTrend(
 export async function getRosterStatusSummary(
   filters: RosterStatusSummaryFilters
 ): Promise<RosterStatusSummary> {
-  const where = ['ra.roster_date BETWEEN ? AND ?'];
+  // Same synthetic-cohort guard as the rest of the roster console (412k rows from one 2026-06-11
+  // batch, all provenance columns NULL) — without it "never published" was ~99% synthetic rows.
+  const where = [
+    'ra.roster_date BETWEEN ? AND ?',
+    'NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)',
+  ];
   const params: unknown[] = [filters.fromDate, filters.toDate];
   if (filters.branchId) { where.push('e.branch_id = ?'); params.push(filters.branchId); }
   if (filters.processId) { where.push('e.process_id = ?'); params.push(filters.processId); }
@@ -574,10 +579,12 @@ export async function getRosterStatusSummary(
     params
   );
   const [ackRows] = await db.execute<RowDataPacket[]>(
+    // employee_ack_status defaults to 'pending' on every unpublished row, so only rows that have
+    // actually left 'generated' can meaningfully be "pending acknowledgement".
     `SELECT COALESCE(ra.employee_ack_status, 'pending') AS status, COUNT(*) AS cnt
        FROM wfm_roster_assignment ra
        JOIN employees e ON e.id = ra.employee_id
-      WHERE ${whereSql}
+      WHERE ${whereSql} AND COALESCE(ra.final_roster_status, 'generated') <> 'generated'
       GROUP BY status`,
     params
   );

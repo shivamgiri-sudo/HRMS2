@@ -11,6 +11,8 @@ import { rtaSyncService } from "./rta-sync.service.js";
 import { weekoffAllocationService } from "./weekoff-allocation.service.js";
 import { weekOffPolicyConfigService } from "./week-off-policy-config.service.js";
 import { db } from "../../db/mysql.js";
+import { validateAmendmentInput } from "../wfm/roster-audit.helpers.js";
+import { recordAmendmentInDecisionAudit } from "../wfm/roster-audit.amendment.js";
 import type { RowDataPacket } from "mysql2";
 
 const router = Router();
@@ -273,12 +275,27 @@ router.post("/cycles/:cycleId/amendments", h(async (req: AuthenticatedRequest, r
   if (!(await canOwnRoster(req, cycle.process_id, cycle.branch_id))) {
     return res.status(403).json({ success: false, message: "Forbidden: only mapped Process Manager/WFM may create amendments" });
   }
+  const invalid = validateAmendmentInput(req.body, cycle);
+  if (invalid) return res.status(400).json({ error: invalid });
+  const [scopeRows] = await db.execute<RowDataPacket[]>(
+    "SELECT 1 FROM roster_daily_assignment WHERE cycle_id = ? AND employee_id = ? AND roster_date = ? LIMIT 1",
+    [req.params.cycleId, employeeId, date]
+  );
+  if (!(scopeRows as RowDataPacket[])[0]) {
+    return res.status(400).json({ error: "Employee has no assignment in this cycle on that date" });
+  }
   const amendment = await rosterGovernanceService.createAmendment(
     req.params.cycleId,
-    { employeeId, date, newShiftId, newAssignmentType, reason },
+    { employeeId, date, newShiftId, newAssignmentType, reason: String(reason).trim() },
     req.authUser!.id,
     req
   );
+  // Mirror into the roster audit trail (best-effort; the amendment above is already committed).
+  await recordAmendmentInDecisionAudit({
+    cycleId: req.params.cycleId, employeeId, date, newAssignmentType, newShiftId,
+    reason: String(reason), actorUserId: req.authUser!.id, cycle,
+    oldShiftId: (amendment as { old_shift_id?: string | null })?.old_shift_id ?? null,
+  });
   return res.status(201).json({ amendment });
 }));
 

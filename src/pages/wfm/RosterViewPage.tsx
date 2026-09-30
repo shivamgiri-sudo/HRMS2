@@ -12,7 +12,7 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { EmbeddableLayout as DashboardLayout } from "@/components/wfm/console/EmbeddableLayout";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -415,6 +415,7 @@ export default function RosterViewPage() {
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
+                            aria-label={`Open details for ${r.employeeName}`}
                             onClick={() => setSelectedEmployee(r)}
                           >
                             <ChevronRight className="h-4 w-4" />
@@ -439,8 +440,8 @@ export default function RosterViewPage() {
 
       {/* Employee Trend Drawer */}
       <Sheet open={!!selectedEmployee} onOpenChange={(open) => !open && setSelectedEmployee(null)}>
-        <SheetContent className="w-[400px] sm:w-[540px]">
-          <SheetHeader>
+        <SheetContent className="w-full overflow-y-auto sm:w-[540px] sm:max-w-[540px]">
+          <SheetHeader className="pr-10">
             <SheetTitle className="flex items-center gap-2">
               <TrendingUp className="h-5 w-5 text-indigo-600" />
               {selectedEmployee?.employeeName} — Adherence Trend

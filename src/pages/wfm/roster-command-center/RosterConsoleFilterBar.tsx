@@ -92,8 +92,8 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
           stuck ? "shadow-md" : "shadow-sm",
         )}
       >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))_9rem_9rem_auto]">
-          <div>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_9rem_9rem_auto]">
+          <div className="col-span-2 sm:col-span-1">
             <label className={LABEL} htmlFor="rcc-branch">Branch</label>
             <Select value={filters.branchId || "__all__"} onValueChange={(v) => setBranchId(v === "__all__" ? "" : v)}>
               <SelectTrigger id="rcc-branch" className={CONTROL}><SelectValue placeholder="All branches" /></SelectTrigger>
@@ -103,7 +103,7 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
               </SelectContent>
             </Select>
           </div>
-          <div>
+          <div className="col-span-2 sm:col-span-1">
             <label className={LABEL} htmlFor="rcc-process">Process</label>
             <Select value={filters.processId || "__all__"} onValueChange={(v) => setProcessId(v === "__all__" ? "" : v)}>
               <SelectTrigger id="rcc-process" className={CONTROL}><SelectValue placeholder="All processes" /></SelectTrigger>
@@ -113,7 +113,7 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
               </SelectContent>
             </Select>
           </div>
-          <div>
+          <div className="col-span-2 sm:col-span-1">
             <span className={LABEL}>LOB</span>
             <LobSelect processId={filters.processId} value={filters.lobId} onChange={setLobId} includeUnassigned className={CONTROL} />
           </div>
@@ -133,7 +133,7 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
               className={DATE_INPUT}
             />
           </div>
-          <div className="flex items-end">
+          <div className="col-span-2 flex items-end sm:col-span-1">
             <Button type="button" variant="outline" size="sm" className="h-9 w-full cursor-pointer" onClick={resetFilters}>
               <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Reset
             </Button>

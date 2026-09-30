@@ -39,6 +39,7 @@ import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ShieldAlert, RefreshCw, Activity, Users, BarChart3, TrendingUp, ShieldCheck, Clock3, Lightbulb, History,
+  CalendarDays, Trophy, Gauge, Scale,
 } from "lucide-react";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,7 @@ import {
 } from "./roster-command-center/RosterConsoleFilterContext";
 import { RosterConsoleFilterBar } from "./roster-command-center/RosterConsoleFilterBar";
 import { ConsoleTabsBar } from "./roster-command-center/ConsoleTabsBar";
+import { EmbeddedInConsole } from "@/components/wfm/console/EmbeddableLayout";
 import { defaultFilters, nextParamsForProcess, nextParamsForReset } from "./roster-command-center/filterState";
 
 const LiveMonitoringPanel = lazy(() => import("./roster-command-center/LiveMonitoringPanel"));
@@ -60,6 +62,12 @@ const CompliancePanel = lazy(() => import("./roster-command-center/CompliancePan
 const ShiftEffectivenessPanel = lazy(() => import("./roster-command-center/ShiftEffectivenessPanel"));
 const InterventionsPanel = lazy(() => import("./roster-command-center/InterventionsPanel"));
 const AuditTrailPanel = lazy(() => import("./roster-command-center/AuditTrailPanel"));
+// Merged-in standalone pages (previously separate sidebar entries). They keep their own
+// page-code gates and render bare inside the console via EmbeddedInConsole.
+const RosterViewPage = lazy(() => import("./RosterViewPage"));
+const TeamRosterComparison = lazy(() => import("./TeamRosterComparison"));
+const WFMCapacityDashboard = lazy(() => import("./WFMCapacityDashboard"));
+const WeekoffFairness = lazy(() => import("./WeekoffFairness"));
 
 type TabKey =
   | "live"
@@ -69,7 +77,11 @@ type TabKey =
   | "compliance"
   | "shifts"
   | "interventions"
-  | "audit";
+  | "audit"
+  | "roster-view"
+  | "comparison"
+  | "capacity"
+  | "fairness";
 
 type TabDef = {
   key: TabKey;
@@ -89,6 +101,10 @@ const TAB_DEFS: TabDef[] = [
   { key: "shifts", icon: Clock3, label: "Shift Effectiveness", pageCode: "WFM_ROSTER_SHIFT_EFFECTIVENESS", Component: ShiftEffectivenessPanel },
   { key: "interventions", icon: Lightbulb, label: "Interventions", pageCode: "WFM_ROSTER_INTERVENTIONS", Component: InterventionsPanel },
   { key: "audit", icon: History, label: "Audit Trail", pageCode: "WFM_ROSTER_AUDIT_TRAIL", Component: AuditTrailPanel },
+  { key: "roster-view", icon: CalendarDays, label: "Roster View", pageCode: "WFM_ROSTER", Component: RosterViewPage },
+  { key: "comparison", icon: Trophy, label: "Team Comparison", pageCode: "WFM_ROSTER", Component: TeamRosterComparison },
+  { key: "capacity", icon: Gauge, label: "Capacity", pageCode: "WFM_CAPACITY_DASHBOARD", Component: WFMCapacityDashboard },
+  { key: "fairness", icon: Scale, label: "Week-off Fairness", pageCode: "WFM_WEEKOFF_FAIRNESS", Component: WeekoffFairness },
 ];
 
 /** The code offered to the Request Access flow when no tab is visible at all. */
@@ -293,7 +309,7 @@ export default function RosterCommandCenter() {
           </header>
 
           <Tabs value={activeKey} onValueChange={handleTabChange}>
-            <div className="z-20 space-y-2 bg-background pb-2 md:sticky md:top-0">
+            <div className="z-20 space-y-2 bg-background pb-2 md:sticky md:top-[var(--topbar-height,64px)]">
               <RosterConsoleFilterBar activeTabKey={activeKey} />
               <ConsoleTabsBar tabs={visibleTabs} activeKey={activeKey} />
             </div>
@@ -303,7 +319,7 @@ export default function RosterCommandCenter() {
               // panel's lazy chunk (and its data fetch) is triggered.
               <TabsContent key={t.key} value={t.key} className="mt-3">
                 <Suspense fallback={<TabFallback />}>
-                  <t.Component />
+                  <EmbeddedInConsole><t.Component /></EmbeddedInConsole>
                 </Suspense>
               </TabsContent>
             ))}

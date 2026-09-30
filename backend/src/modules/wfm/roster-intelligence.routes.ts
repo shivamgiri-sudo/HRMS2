@@ -7,6 +7,8 @@ import { Router } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { readLobFilter } from '../../shared/lobFilter.js';
+import { todayLocalDateStr } from './shift-due.util.js';
+import { registerLiveDetailRoutes } from './roster-intelligence-detail.routes.js';
 import {
   generateManagerDailyDigests,
   generateBranchDashboard,
@@ -142,10 +144,21 @@ router.get('/manager-digest', requireRole(...MANAGER_ROLES), async (req, res) =>
  */
 router.get('/manager-digests', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
-    const date = req.query.date ? String(req.query.date) : undefined;
+    // The Live Monitoring tab shows "today so far": default to today (the service default of
+    // yesterday is for the 7 AM email cron and made this panel show yesterday's numbers).
+    const rawDate = req.query.date ? String(req.query.date) : todayLocalDateStr();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+      return;
+    }
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
     const scope = await resolveLiveMonitoringScope(req as AuthenticatedRequest);
-    const digests = await generateManagerDailyDigests(date, scope);
-    res.json({ digests, count: digests.length });
+    // branchId/processId/lobId only NARROW within the RBAC scope, and narrow each team's members.
+    const digests = await generateManagerDailyDigests(rawDate, scope, { branchId, processId, lob });
+    res.json({ digests, count: digests.length, date: rawDate });
   } catch (err: any) {
     console.error('[roster-intelligence] manager-digests error:', err);
     res.status(500).json({ error: `Failed to generate digests: ${err.message}` });
@@ -199,7 +212,8 @@ router.get('/branch-dashboards', requireRole(...LIVE_MONITORING_ROLES), async (r
 router.get('/unplanned-absences', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const date = req.query.date ? String(req.query.date) : undefined;
-    const gracePeriod = req.query.gracePeriod ? parseInt(String(req.query.gracePeriod), 10) : 30;
+    const parsedGrace = req.query.gracePeriod ? parseInt(String(req.query.gracePeriod), 10) : 30;
+    const gracePeriod = Number.isFinite(parsedGrace) && parsedGrace >= 0 ? parsedGrace : 30;
     const lob = readLobFilter(req, res);
     if (!lob) return;
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
@@ -460,5 +474,7 @@ function formatUnplannedAlertEmail(
 
   return lines.join('\n');
 }
+
+registerLiveDetailRoutes(router, LIVE_MONITORING_ROLES, resolveLiveMonitoringScope);
 
 export const rosterIntelligenceRouter = router;

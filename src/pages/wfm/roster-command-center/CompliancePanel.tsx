@@ -1,816 +1,230 @@
 /**
- * Roster Compliance Monitor — Phase 5
+ * Roster Compliance (tab=compliance).
  *
- * Design System: MAS HRMS Frozen Patterns
- * - ConsoleCard containers with backdrop-blur
- * - Gradient headers (amber for compliance/warning domain)
- * - Tone color system for violation severity
- * - Responsive: mobile-first grid
- *
- * Features:
- * 1. Rule violation tracking (rest policy, consecutive days, week-off)
- * 2. Compliance score by branch/process/manager
- * 3. Violation trend over time
- * 4. Auto-fix suggestions
- * 5. Audit trail of violations
+ * One domain throughout: roster-rule compliance (rest, consecutive days, week-off fairness,
+ * weekly hours, night shifts). Summary, violations feed, trend and every drill-down read the
+ * same server-side incident list, so their numbers cannot disagree. Attendance adherence is
+ * shown as a separate, labelled measure. Split into ./compliance/* to stay under 500 lines.
  */
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Badge } from "@/components/ui/badge";
+import { Suspense, lazy, useMemo, useState } from "react";
+import { Activity, AlertTriangle, ChevronLeft, ChevronRight, RefreshCw, ShieldCheck, Users, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Progress } from "@/components/ui/progress";
-import { hrmsApi } from "@/lib/hrmsApi";
-import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
+import { ChartCard } from "@/components/wfm/console/ChartCard";
 import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
-import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
+import { KpiTile } from "@/components/wfm/console/KpiTile";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { StatusPill } from "@/components/wfm/console/StatusPill";
 import { scopeParams } from "./filterState";
-import { HEAVY_QUERY_OPTIONS, HEAVY_QUERY_TIMEOUT_MS, SectionSkeleton, UpdatedStamp, useRefreshFlags } from "./heavyQuery";
-import {
-  AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
-  Calendar,
-  CheckCircle2,
-  Clock,
-  Filter,
-  Moon,
-  RefreshCw,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  Sun,
-  Target,
-  TrendingDown,
-  TrendingUp,
-  Users,
-  XCircle,
-  Zap,
-} from "lucide-react";
+import { UpdatedStamp, useRefreshFlags } from "./heavyQuery";
+import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
+import { ComplianceAlertStrip, buildAlerts } from "./compliance/ComplianceAlerts";
+import { ComplianceDrawer } from "./compliance/ComplianceDrawer";
+import { ViolationsTable } from "./compliance/ViolationsTable";
+import { ALL, FEED_PAGE_SIZE, useComplianceData } from "./compliance/useComplianceData";
+import { currentMonthIst, fmtInt, fmtMonth, fmtPct, fmtPoints, pctChange, recentMonths, scoreBand } from "./compliance/format";
+import { ATTENDANCE_OPTIONS, RULE_OPTIONS, type DrawerTarget, type FeedKind } from "./compliance/types";
 
-const ALL = "__all__";
+const TrendChart = lazy(() => import("./compliance/ComplianceCharts").then((m) => ({ default: m.TrendChart })));
+const RuleBars = lazy(() => import("./compliance/ComplianceCharts").then((m) => ({ default: m.RuleBars })));
+const BranchBars = lazy(() => import("./compliance/ComplianceCharts").then((m) => ({ default: m.BranchBars })));
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
-interface ComplianceSummary {
-  overallScore: number;
-  trend: number;
-  byRule: {
-    minimumRest: { violations: number; total: number; score: number };
-    consecutiveDays: { violations: number; total: number; score: number };
-    weekOffFairness: { violations: number; total: number; score: number };
-    maxHoursWeek: { violations: number; total: number; score: number };
-    nightShiftLimit: { violations: number; total: number; score: number };
-  };
-  byBranch: Array<{
-    branchId: string;
-    branchName: string;
-    score: number;
-    violations: number;
-    trend: number;
-  }>;
-  byProcess: Array<{
-    processId: string;
-    processName: string;
-    score: number;
-    violations: number;
-  }>;
-}
-
-interface Violation {
-  id: string;
-  employeeId: string;
-  employeeCode: string;
-  employeeName: string;
-  processName: string | null;
-  branchName: string | null;
-  /*
-   * Widened from the five roster-rule literals to `string`, because the API's per-incident
-   * feed emits attendance-derived ids (ABSENT_NO_CALL, LATE_ARRIVAL) and there is no
-   * per-incident source for the five rules the summary counts. Narrowing this back would
-   * force those ids into buckets they do not belong to; RULE_CONFIG is guarded with a humanised fallback in ViolationRow.
-   */
-  ruleType: string;
-  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-  detectedAt: string;
-  details: string;
-  affectedDates: string[];
-  suggestedFix: string | null;
-  /*
-   * Also widened. The API derives this from the roster day (WORKING / WEEK_OFF); there is no
-   * acknowledge/resolve/waive workflow behind this dashboard and no table to persist one, so
-   * the four-state union described a lifecycle that has never existed.
-   */
-  status: string;
-  resolvedAt: string | null;
-  resolvedBy: string | null;
-}
-
-interface TrendData {
-  week: string;
-  violations: number;
-  score: number;
-}
-
-// ── Design Tokens (MAS HRMS Frozen) ──────────────────────────────────────────
-
-const TONE = {
-  blue: { iconBg: "#edf4ff", value: "#0b63e5", border: "#dce8fb" },
-  green: { iconBg: "#eaf8ef", value: "#15803d", border: "#d7f0df" },
-  amber: { iconBg: "#fff4e8", value: "#ea580c", border: "#fee3c5" },
-  red: { iconBg: "#fff0f1", value: "#dc2626", border: "#ffdadd" },
-  violet: { iconBg: "#f3efff", value: "#6d28d9", border: "#e6ddff" },
-  teal: { iconBg: "#f0fdfa", value: "#0f766e", border: "#99f6e4" },
-  slate: { iconBg: "#f1f4f8", value: "#0b1f44", border: "#e3e9f2" },
-};
-
-const RULE_CONFIG = {
-  MINIMUM_REST: { label: "Minimum Rest", icon: Moon, description: "Less than required rest between shifts" },
-  CONSECUTIVE_DAYS: { label: "Consecutive Days", icon: Calendar, description: "Working too many days in a row" },
-  WEEKOFF_FAIRNESS: { label: "Week-Off Fairness", icon: Sun, description: "Unfair week-off distribution" },
-  MAX_HOURS_WEEK: { label: "Max Hours/Week", icon: Clock, description: "Exceeding weekly hour limit" },
-  NIGHT_SHIFT_LIMIT: { label: "Night Shift Limit", icon: Moon, description: "Too many consecutive night shifts" },
-};
-
-// Merge-plan Phase B bug #9: the "Violations" tab's real data (GET /api/wfm/compliance/
-// violations) is attendance-derived exceptions, NOT one of the 5 roster rules above — the
-// API has no per-incident feed for those. The Rule filter used to offer RULE_CONFIG's 5
-// options, none of which this endpoint's rows ever match (their real ruleId is always one
-// of the 3 below), so every one of those 5 choices silently returned zero rows. Filter
-// options now match the real domain instead.
-const EXCEPTION_TYPE_CONFIG = {
-  ABSENT_NO_CALL: { label: "Absent Without Notification", icon: XCircle },
-  LATE_ARRIVAL: { label: "Late Arrival", icon: Clock },
-  ADHERENCE: { label: "Adherence Violation", icon: AlertTriangle },
-};
-
-const SEVERITY_CONFIG = {
-  CRITICAL: { tone: "red" as const, label: "Critical" },
-  HIGH: { tone: "amber" as const, label: "High" },
-  MEDIUM: { tone: "blue" as const, label: "Medium" },
-  LOW: { tone: "green" as const, label: "Low" },
-};
-
-
-// ── Subcomponents ────────────────────────────────────────────────────────────
-
-function MetricTile({
-  label,
-  value,
-  helper,
-  tone = "slate",
-  trend,
-  icon,
-}: {
-  label: string;
-  value: string | number;
-  helper?: string;
-  tone?: keyof typeof TONE;
-  trend?: number;
-  icon: React.ElementType;
-}) {
-  return (
-    <KpiTile
-      label={label}
-      value={value}
-      sub={helper}
-      tone={toKpiTone(tone)}
-      icon={icon}
-      delta={trend}
-      deltaBad="down"
-    />
-  );
-}
-
-function ComplianceGauge({ score }: { score: number }) {
-  const size = 140;
-  const strokeWidth = 12;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = Math.PI * radius;
-  const offset = circumference - (score / 100) * circumference;
-
-  const color = score >= 90 ? "#15803d" : score >= 75 ? "#ea580c" : "#dc2626";
-  const label = score >= 90 ? "Excellent" : score >= 75 ? "Good" : score >= 50 ? "Needs Attention" : "Critical";
-
-  return (
-    <div className="flex flex-col items-center">
-      <svg width={size} height={size / 2 + 20} className="overflow-visible">
-        <path
-          d={`M ${strokeWidth / 2} ${size / 2} A ${radius} ${radius} 0 0 1 ${size - strokeWidth / 2} ${size / 2}`}
-          fill="none"
-          stroke="#e5e7eb"
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-        />
-        <path
-          d={`M ${strokeWidth / 2} ${size / 2} A ${radius} ${radius} 0 0 1 ${size - strokeWidth / 2} ${size / 2}`}
-          fill="none"
-          stroke={color}
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          className="transition-all duration-700"
-        />
-        <text x={size / 2} y={size / 2 - 10} textAnchor="middle" fontSize={32} fontWeight="bold" fill={color}>
-          {score}%
-        </text>
-        <text x={size / 2} y={size / 2 + 15} textAnchor="middle" fontSize={12} fill="#64748b">
-          {label}
-        </text>
-      </svg>
-    </div>
-  );
-}
-
-function RuleComplianceCard({
-  rule,
-  data,
-}: {
-  rule: keyof typeof RULE_CONFIG;
-  data: { violations: number; total: number; score: number };
-}) {
-  const config = RULE_CONFIG[rule];
-  const Icon = config.icon;
-  const tone = data.score >= 90 ? "green" : data.score >= 75 ? "amber" : "red";
-  const colors = TONE[tone];
-
-  return (
-    <ConsoleCard className="p-4">
-      <div className="flex items-center gap-3 mb-3">
-        <div
-          className="flex h-10 w-10 items-center justify-center rounded-xl"
-          style={{ backgroundColor: colors.iconBg }}
-        >
-          <Icon className="h-5 w-5" style={{ color: colors.value }} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h4 className="font-semibold text-slate-800">{config.label}</h4>
-          <p className="text-xs text-slate-500 truncate">{config.description}</p>
-        </div>
-        <div className="text-right">
-          <p className="text-xl font-bold" style={{ color: colors.value }}>{data.score}%</p>
-        </div>
-      </div>
-      <div className="space-y-1">
-        <div className="flex justify-between text-xs text-slate-500">
-          <span>{data.violations} violations</span>
-          <span>{data.total} checked</span>
-        </div>
-        <Progress value={data.score} className={`h-2 [&>div]:bg-${tone === "green" ? "emerald" : tone}-500`} />
-      </div>
-    </ConsoleCard>
-  );
-}
-
-/** "ABSENT_NO_CALL" -> "Absent No Call", for ids RULE_CONFIG has no entry for. */
-const humanise = (id: string) =>
-  id.split(/[_\s]+/).filter(Boolean).map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ");
-
-function ViolationRow({ violation }: { violation: Violation }) {
-  // Merge-plan Phase B bug #9: ruleType is keyed on EXCEPTION_TYPE_CONFIG's real ids
-  // (ABSENT_NO_CALL/LATE_ARRIVAL/ADHERENCE) now, not the fictional RULE_CONFIG lookup that
-  // never matched. Kept a humanise() fallback for any id the API ever adds that isn't
-  // enumerated here, so an unrecognised id still renders a readable label instead of
-  // crashing.
-  const ruleConfig = EXCEPTION_TYPE_CONFIG[violation.ruleType as keyof typeof EXCEPTION_TYPE_CONFIG] ?? {
-    label: humanise(violation.ruleType),
-    icon: AlertTriangle,
-  };
-  const severityConfig = SEVERITY_CONFIG[violation.severity] ?? SEVERITY_CONFIG.LOW;
-  const colors = TONE[severityConfig.tone];
-  const Icon = ruleConfig.icon;
-
-  return (
-    <div className="p-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
-      <div className="flex items-start gap-4">
-        <div
-          className="flex h-10 w-10 items-center justify-center rounded-xl flex-shrink-0"
-          style={{ backgroundColor: colors.iconBg }}
-        >
-          <Icon className="h-5 w-5" style={{ color: colors.value }} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-slate-800">{violation.employeeName}</span>
-            <span className="text-xs text-slate-500">{violation.employeeCode}</span>
-            <Badge style={{ backgroundColor: colors.iconBg, color: colors.value }}>
-              {severityConfig.label}
-            </Badge>
-          </div>
-          <p className="text-sm text-slate-600 mt-1">{violation.details}</p>
-          <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
-            <span>{ruleConfig.label}</span>
-            <span>•</span>
-            <span>{violation.processName || "—"}</span>
-            <span>•</span>
-            <span>{new Date(violation.detectedAt).toLocaleDateString()}</span>
-          </div>
-          {violation.suggestedFix && (
-            <div className="mt-2 p-2 rounded-lg bg-blue-50 border border-blue-200">
-              <p className="text-xs text-blue-700 flex items-center gap-1">
-                <Zap className="h-3 w-3" />
-                <span className="font-medium">Suggested Fix:</span> {violation.suggestedFix}
-              </p>
-            </div>
-          )}
-        </div>
-        {/* Merge-plan Phase B bug #11: Acknowledge/Resolve buttons removed — no DB-backed
-            workflow exists behind either (no acknowledge/resolve table, no status lifecycle
-            beyond the API's raw WORKING/WEEK_OFF roster-day value). Re-add once one does. */}
-      </div>
-    </div>
-  );
-}
-
-function TrendChart({ data }: { data: TrendData[] }) {
-  if (data.length === 0) return <p className="text-center text-slate-400 py-8">No trend data</p>;
-
-  const maxViolations = Math.max(...data.map((d) => d.violations), 1);
-  const height = 100;
-
-  return (
-    <div className="overflow-x-auto">
-      <div className="flex items-end justify-between h-32 gap-3 min-w-[400px]">
-        {data.map((d, i) => (
-          <div key={d.week} className="flex-1 flex flex-col items-center">
-            <div
-              className="w-full rounded-t-lg bg-gradient-to-t from-amber-500 to-amber-300 transition-all"
-              style={{ height: `${Math.max((d.violations / maxViolations) * height, 4)}px` }}
-            />
-            <span className="text-[10px] mt-2 text-slate-500">{d.week.slice(5)}</span>
-            <span className="text-xs font-bold text-slate-700">{d.violations}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── API adapters ─────────────────────────────────────────────────────────────
-/*
- * This page called /api/roster-compliance/*, which nothing serves. The real endpoints are
- * /api/wfm/compliance/{summary,violations,trend} — written for this dashboard, per their own
- * comments — under a different prefix and a different response shape. Both sides are adapted
- * here rather than in the backend, because /summary and /trend are also consumed by the
- * WFM compliance surface and changing their contract would break that.
- *
- * Worth doing only now: until 2026-08-28 that engine queried `roster_assignment` (0 rows) and
- * returned a flat 100% via its own `: 100` fallback, so wiring this up would have replaced an
- * error state with a confident lie. It now reads wfm_roster_assignment — measured live at
- * 65% for August (1,198 violations across 599 employees) and 82% for July.
- */
-interface ComplianceApiRule {
-  ruleId: string;
-  ruleName: string;
-  violationCount: number;
-}
-interface ComplianceApiBranch {
-  branchId: string;
-  branchName: string;
-  score: number;
-  violations: number;
-  trend: number;
-}
-interface ComplianceApiSummary {
-  compliancePct: number;
-  totalEmployees: number;
-  totalViolations: number;
-  rules: ComplianceApiRule[];
-  byBranch?: ComplianceApiBranch[];
-  trend: number;
-}
-interface ApiViolation {
-  violationId: string;
-  date: string;
-  employeeId: string;
-  employeeCode: string;
-  employeeName: string;
-  processName: string | null;
-  branchName: string | null;
-  ruleId: string;
-  ruleName: string;
-  severity: "high" | "medium" | "low";
-  shiftName: string | null;
-  status: string;
-}
-interface ApiTrendPoint {
-  month: string;
-  compliancePct: number;
-  violations: number;
-}
-
-/** API ruleId → the key this page's byRule object uses. */
-const RULE_ID_TO_KEY: Record<string, keyof ComplianceSummary["byRule"]> = {
-  MIN_REST: "minimumRest",
-  CONSECUTIVE_DAYS: "consecutiveDays",
-  WEEKOFF_FAIRNESS: "weekOffFairness",
-  MAX_HOURS: "maxHoursWeek",
-  NIGHT_SHIFT_LIMIT: "nightShiftLimit",
-};
-
-function adaptSummary(raw: ComplianceApiSummary | null | undefined): ComplianceSummary {
-  const employees = Number(raw?.totalEmployees ?? 0);
-  const emptyRule = { violations: 0, total: employees, score: 100 };
-  const byRule: ComplianceSummary["byRule"] = {
-    minimumRest: { ...emptyRule },
-    consecutiveDays: { ...emptyRule },
-    weekOffFairness: { ...emptyRule },
-    maxHoursWeek: { ...emptyRule },
-    nightShiftLimit: { ...emptyRule },
-  };
-  for (const rule of raw?.rules ?? []) {
-    const key = RULE_ID_TO_KEY[rule.ruleId];
-    if (!key) continue;
-    const violations = Number(rule.violationCount ?? 0);
-    byRule[key] = {
-      violations,
-      total: employees,
-      // "% of the evaluated population without this breach" — which is what the card's
-      // "N checked" caption beside it already claims the denominator is.
-      score: employees > 0 ? Math.max(0, Math.round(((employees - violations) / employees) * 100)) : 100,
-    };
-  }
-  return {
-    overallScore: Number(raw?.compliancePct ?? 0),
-    trend: Number(raw?.trend ?? 0),
-    byRule,
-    // Merge-plan Phase B bug #8: /summary now returns real byBranch data (grouped compliance
-    // query, only populated on the "all branches" view — see the route's own comment for
-    // why). byProcess still has no backend support, left empty rather than faked.
-    byBranch: (raw?.byBranch ?? []).map((b) => ({
-      branchId: b.branchId,
-      branchName: b.branchName,
-      score: Number(b.score ?? 0),
-      violations: Number(b.violations ?? 0),
-      trend: Number(b.trend ?? 0),
-    })),
-    byProcess: [],
-  };
-}
-
-function adaptViolation(v: ApiViolation): Violation {
-  return {
-    id: v.violationId,
-    employeeId: v.employeeId,
-    employeeCode: v.employeeCode,
-    employeeName: v.employeeName,
-    processName: v.processName,
-    branchName: v.branchName,
-    // Passed through as the API's own rule id. These are attendance-derived breaches
-    // (ABSENT_NO_CALL, LATE_ARRIVAL), NOT the five roster rules the summary counts — the API
-    // has no per-incident feed for those. ViolationRow guards its RULE_CONFIG lookup and
-    // humanises anything unrecognised, so the label stays truthful instead of being forced
-    // into one of the five buckets it does not belong to.
-    ruleType: v.ruleId,
-    severity: v.severity === "high" ? "HIGH" : v.severity === "medium" ? "MEDIUM" : "LOW",
-    detectedAt: v.date,
-    details: [v.ruleName, v.shiftName].filter(Boolean).join(" · "),
-    affectedDates: v.date ? [v.date] : [],
-    suggestedFix: null,
-    status: v.status,
-    resolvedAt: null,
-    resolvedBy: null,
-  };
-}
-
-// ── Main Component ───────────────────────────────────────────────────────────
+const ChartFallback = () => <div className="h-full animate-pulse rounded-md bg-slate-100" role="status" aria-label="Loading chart" />;
 
 export default function CompliancePanel() {
   const { filters } = useRosterConsoleFilters();
-  const branchFilter = filters.branchId || ALL;
-  const { processId, lobId } = filters;
-  const [ruleFilter, setRuleFilter] = useState(ALL);
-
+  const scopeQs = useMemo(() => scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId: filters.lobId }).toString(), [filters.branchId, filters.processId, filters.lobId]);
+  const [month, setMonth] = useState(currentMonthIst);
+  const [kind, setKind] = useState<FeedKind>("roster");
+  const [ruleId, setRuleId] = useState(ALL);
+  const [severity, setSeverity] = useState(ALL);
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
+  const [tab, setTab] = useState("overview");
   const { mark, consume } = useRefreshFlags();
-  const withRefresh = (params: URLSearchParams, key: string) => {
-    if (consume(key)) params.set("refresh", "1");
-    return params;
-  };
 
-  // Summary is the slow one (cold ~48s): it goes first; violations/trend only start once it has settled
-  // so the three requests never hit the shared DB pool at the same time.
-  const summaryQuery = useQuery({
-    queryKey: ["compliance", "summary", branchFilter, processId, lobId],
-    queryFn: async ({ signal }) => {
-      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId, lobId }), "summary");
-      const raw = await hrmsApi.get<ComplianceApiSummary>(`/api/wfm/compliance/summary?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
-      return adaptSummary(raw);
-    },
-    ...HEAVY_QUERY_OPTIONS,
-  });
-  const { data: summaryData, isError: summaryError } = summaryQuery;
-  const summarySettled = summaryQuery.fetchStatus === "idle";
+  const feedFilters = useMemo(() => ({ kind, ruleId, severity, q, page }), [kind, ruleId, severity, q, page]);
+  const { summary: sq, trend: tq, violations: vq } = useComplianceData(scopeQs, month, feedFilters, consume);
+  const summary = sq.data;
+  const anyFetching = sq.isFetching || tq.isFetching || vq.isFetching;
 
-  const violationsQuery = useQuery({
-    queryKey: ["compliance", "violations", branchFilter, processId, lobId, ruleFilter],
-    queryFn: async ({ signal }) => {
-      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId, lobId }), "violations");
-      // Merge-plan Phase B bug #9: ruleFilter's options are now EXCEPTION_TYPE_CONFIG's real
-      // ids (ABSENT_NO_CALL/LATE_ARRIVAL/ADHERENCE), which the API's ruleId param actually
-      // matches — previously this sent one of the 5 roster-rule ids, which never matched
-      // anything and silently returned zero rows every time a non-"All" option was picked.
-      if (ruleFilter !== ALL) params.set("ruleId", ruleFilter);
-      const raw = await hrmsApi.get<{ violations: ApiViolation[]; totalCount: number }>(
-        `/api/wfm/compliance/violations?${params}`,
-        HEAVY_QUERY_TIMEOUT_MS,
-        signal,
-      );
-      const violations = (raw?.violations ?? []).map(adaptViolation);
-      return { violations, total: raw?.totalCount ?? violations.length };
-    },
-    enabled: summarySettled,
-    ...HEAVY_QUERY_OPTIONS,
-  });
-  const { data: violationsData } = violationsQuery;
-  const violationsLoading = violationsQuery.isPending;
+  const months = useMemo(() => recentMonths(currentMonthIst(), 6), []);
+  const alerts = useMemo(() => buildAlerts(summary, {
+    filterRule: (id, k) => { setKind(k); setRuleId(id); setSeverity(ALL); setQ(""); setPage(1); setTab("violations"); },
+    open: setDrawer,
+  }), [summary]);
 
-  const trendQuery = useQuery({
-    queryKey: ["compliance", "trend", branchFilter, processId, lobId],
-    queryFn: async ({ signal }) => {
-      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId, lobId }), "trend");
-      const raw = await hrmsApi.get<{ trend: ApiTrendPoint[] }>(`/api/wfm/compliance/trend?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
-      return {
-        trend: (raw?.trend ?? []).map((t) => ({
-          week: t.month,
-          violations: Number(t.violations ?? 0),
-          score: Number(t.compliancePct ?? 0),
-        })),
-      };
-    },
-    enabled: summarySettled,
-    ...HEAVY_QUERY_OPTIONS,
-  });
-  const { data: trendData } = trendQuery;
+  const refresh = () => { mark("summary", "trend", "violations"); void sq.refetch(); void tq.refetch(); void vq.refetch(); };
+  const resetPage = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
+  const changeKind = (k: string) => { setKind(k as FeedKind); setRuleId(ALL); setPage(1); };
 
-  /** Refresh: bypass the server cache, summary first, then the other two once it settles. */
-  const refetch = async () => {
-    mark("summary", "violations", "trend");
-    try {
-      await summaryQuery.refetch();
-    } finally {
-      void violationsQuery.refetch();
-      void trendQuery.refetch();
-    }
-  };
-  const anyFetching = summaryQuery.isFetching || violationsQuery.isFetching || trendQuery.isFetching;
-
-  const summary = summaryData ?? {
-    overallScore: 0,
-    trend: 0,
-    byRule: {
-      minimumRest: { violations: 0, total: 0, score: 100 },
-      consecutiveDays: { violations: 0, total: 0, score: 100 },
-      weekOffFairness: { violations: 0, total: 0, score: 100 },
-      maxHoursWeek: { violations: 0, total: 0, score: 100 },
-      nightShiftLimit: { violations: 0, total: 0, score: 100 },
-    },
-    byBranch: [],
-    byProcess: [],
-  };
-
-  const violations = violationsData?.violations ?? [];
-  const trend = trendData?.trend ?? [];
-
-  const totalViolations = Object.values(summary.byRule).reduce((s, r) => s + r.violations, 0);
-  // Merge-plan Phase B bug #9/#11 fallout: this used to filter on v.status === "OPEN", but
-  // the API's real status values are WEEK_OFF/WORKING (there is no acknowledge/resolve
-  // workflow, see the Violation type's own comment) — so this was always 0, showing a
-  // permanent false "no open issues" regardless of real data. Every row the endpoint
-  // returns already IS an open, unresolved exception (its WHERE clause only selects
-  // non-present/half_day attendance), so the honest count is simply how many were returned.
-  const openViolations = violations.length;
+  const band = scoreBand(summary?.compliancePct ?? null);
+  const prev = summary?.previous ?? null;
+  const spark = summary?.history.map((h) => h.compliancePct ?? 0) ?? [];
+  const violSpark = summary?.history.map((h) => h.violations) ?? [];
+  const noData = !!summary && !summary.hasData;
+  const ruleOptions = kind === "roster" ? RULE_OPTIONS : ATTENDANCE_OPTIONS;
+  const feed = vq.data;
+  const totalPages = feed ? Math.max(1, Math.ceil(feed.totalCount / FEED_PAGE_SIZE)) : 1;
 
   return (
-      <div>
-        <PanelHeader
-          icon={ShieldCheck}
-          title="Roster Compliance"
-          description="Track WFM rule violations and compliance scores"
-          actions={
-            <div className="flex items-center gap-3">
-              <UpdatedStamp updatedAt={summaryQuery.dataUpdatedAt} fetching={anyFetching} />
-              <Button variant="outline" size="sm" onClick={() => void refetch()} className="cursor-pointer" aria-label="Refresh compliance data">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh
-              </Button>
-            </div>
-          }
-        />
-
-        {/*
-          Without this the page is actively misleading rather than merely empty. When the
-          summary request fails, `summary` falls back to a default whose every rule reads
-          score 100 / 0 violations — so a failure renders as "100% compliant, nothing to
-          fix", which is the opposite of the truth: nothing was checked at all. That breaks
-          CLAUDE.md's rule that UI must not hide missing backend functionality, and on a
-          compliance screen a false all-clear is the most expensive possible failure mode.
-        */}
-        {summaryError && (
-          <div className="mb-6 rounded-xl border border-red-300 bg-red-50 p-4">
-            <p className="font-semibold text-red-900">Compliance data could not be loaded</p>
-            <p className="mt-1 text-sm text-red-800">
-              The scores and violation counts below are placeholders, not a clean bill of health —
-              no roster rules were evaluated. Retry, and report it if it persists.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void refetch()}
-              className="mt-3 border-red-300 bg-white text-red-800 hover:bg-red-100"
-            >
-              Retry
+    <div>
+      <PanelHeader
+        icon={ShieldCheck}
+        title="Roster Compliance"
+        description="Rest policy, consecutive days, week-off fairness, weekly hours and night-shift limits, measured on the published roster"
+        actions={
+          <>
+            <UpdatedStamp updatedAt={sq.dataUpdatedAt} fetching={anyFetching} />
+            <Select value={month} onValueChange={(v) => { setMonth(v); setPage(1); }}>
+              <SelectTrigger className="h-9 w-[140px]" aria-label="Compliance month"><SelectValue /></SelectTrigger>
+              <SelectContent>{months.map((m) => <SelectItem key={m} value={m}>{fmtMonth(m)}</SelectItem>)}</SelectContent>
+            </Select>
+            <Button variant="outline" size="sm" onClick={refresh} className="min-h-[44px] cursor-pointer sm:min-h-9" aria-label="Refresh compliance data">
+              <RefreshCw className="mr-2 h-4 w-4" aria-hidden />Refresh
             </Button>
-          </div>
-        )}
+          </>
+        }
+      />
 
-        {/* KPI Row — skeleton while the (slow) summary has no data yet, so a loading state never reads as 100% */}
-        {summaryQuery.isPending && <div className="mb-6"><SectionSkeleton lines={2} label="Loading compliance summary" /></div>}
-        <div className={`grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6${summaryQuery.isPending ? " hidden" : ""}`}>
-          <MetricTile
-            label="Compliance Score"
-            value={`${summary.overallScore}%`}
-            helper="Overall"
-            tone={summary.overallScore >= 90 ? "green" : summary.overallScore >= 75 ? "amber" : "red"}
-            trend={summary.trend}
-            icon={ShieldCheck}
-          />
-          <MetricTile
-            label="Total Violations"
-            value={totalViolations}
-            helper="This period"
-            tone={totalViolations === 0 ? "green" : "amber"}
-            icon={AlertTriangle}
-          />
-          <MetricTile
-            label="Open Issues"
-            value={openViolations}
-            helper="Need attention"
-            tone={openViolations === 0 ? "green" : "red"}
-            icon={XCircle}
-          />
-          <MetricTile
-            label="Branches"
-            value={summary.byBranch.length}
-            helper="Monitored"
-            tone="blue"
-            icon={Users}
-          />
+      {sq.isError && (
+        <div role="alert" className="mb-3 rounded-lg border border-red-300 bg-red-50 p-3">
+          <p className="text-sm font-semibold text-red-900">Compliance data could not be loaded</p>
+          <p className="mt-1 text-sm text-red-800">No roster rules were evaluated, so no score is shown. This is not a clean bill of health.</p>
+          <Button variant="outline" size="sm" onClick={refresh} className="mt-2 min-h-[44px] cursor-pointer border-red-300 bg-white text-red-900 sm:min-h-9">Retry</Button>
         </div>
+      )}
+      {noData && (
+        <div role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          No published roster rows were found for {fmtMonth(month)} with the current filters, so compliance cannot be scored.
+        </div>
+      )}
 
-        <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-3 lg:w-[450px] bg-white/80 backdrop-blur">
-            <TabsTrigger value="overview" className="data-[state=active]:bg-amber-500 data-[state=active]:text-white">
-              Overview
-            </TabsTrigger>
-            <TabsTrigger value="violations" className="data-[state=active]:bg-red-500 data-[state=active]:text-white">
-              Attendance Exceptions
-            </TabsTrigger>
-            <TabsTrigger value="trend" className="data-[state=active]:bg-blue-500 data-[state=active]:text-white">
-              Trend
-            </TabsTrigger>
-          </TabsList>
+      <ComplianceAlertStrip alerts={alerts} />
 
-          {/* Overview Tab */}
-          <TabsContent value="overview" className="space-y-4">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Compliance Gauge */}
-              <ConsoleCard className="p-6">
-                <h3 className="font-semibold text-slate-800 mb-4 text-center">Overall Compliance</h3>
-                <ComplianceGauge score={summary.overallScore} />
-              </ConsoleCard>
-
-              {/* Rule Breakdown — all 5 configured rules. Night Shift Limit (5th) was
-                  computed by the backend and typed in RULE_CONFIG the whole time but never
-                  rendered here (merge-plan Phase B bug #7). */}
-              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <RuleComplianceCard rule="MINIMUM_REST" data={summary.byRule.minimumRest} />
-                <RuleComplianceCard rule="CONSECUTIVE_DAYS" data={summary.byRule.consecutiveDays} />
-                <RuleComplianceCard rule="WEEKOFF_FAIRNESS" data={summary.byRule.weekOffFairness} />
-                <RuleComplianceCard rule="MAX_HOURS_WEEK" data={summary.byRule.maxHoursWeek} />
-                <RuleComplianceCard rule="NIGHT_SHIFT_LIMIT" data={summary.byRule.nightShiftLimit} />
-              </div>
-            </div>
-
-            {/* Branch Ranking */}
-            <ConsoleCard>
-              <div className="p-4 border-b border-slate-100">
-                <h3 className="font-semibold text-slate-800">Branch Compliance Ranking</h3>
-              </div>
-              <div className="p-4 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Branch</th>
-                      <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Score</th>
-                      <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Violations</th>
-                      <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase">Trend</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {summary.byBranch.map((branch) => (
-                      <tr key={branch.branchId} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium text-slate-800">{branch.branchName}</td>
-                        <td className="px-4 py-3 text-center">
-                          <Badge
-                            variant={branch.score >= 90 ? "default" : branch.score >= 75 ? "secondary" : "destructive"}
-                          >
-                            {branch.score}%
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3 text-center text-slate-600">{branch.violations}</td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`flex items-center justify-center gap-1 text-xs font-medium ${branch.trend >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                            {branch.trend >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                            {Math.abs(branch.trend)}%
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {summary.byBranch.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="px-4 py-8 text-center text-slate-400">No branch data</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </ConsoleCard>
-          </TabsContent>
-
-          {/* Attendance Exceptions Tab (formerly "Violations" — merge-plan Phase B bug #9:
-              relabeled honestly. This data is attendance-derived exceptions — absences and
-              late arrivals — not the 5 roster rules the Overview tab counts; there is no
-              per-incident feed for those, so this tab was never able to show them. */}
-          <TabsContent value="violations" className="space-y-4">
-            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-800">
-              Shows attendance exceptions (absences, late arrivals) for the period — a
-              different, more granular list than the 5 roster-rule counts on the Overview tab.
-            </div>
-            {/* Filters — merge-plan Phase B bug #11: the Status filter (Open/Acknowledged/
-                Resolved/Waived) is removed. It filtered on a lifecycle that does not exist —
-                no acknowledge/resolve workflow or table backs it — and its default value
-                ("OPEN") never matched the API's real WEEK_OFF/WORKING status, so this tab
-                showed zero rows by default before today's fix. */}
-            <ConsoleCard className="p-4">
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Filter className="h-4 w-4 text-slate-400" />
-                  <span className="text-sm font-medium text-slate-600">Filters:</span>
-                </div>
-                <Select value={ruleFilter} onValueChange={setRuleFilter}>
-                  <SelectTrigger className="w-48">
-                    <SelectValue placeholder="All Exception Types" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL}>All Exception Types</SelectItem>
-                    {Object.entries(EXCEPTION_TYPE_CONFIG).map(([key, config]) => (
-                      <SelectItem key={key} value={key}>{config.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="ml-auto text-sm text-slate-500">
-                  {violations.length} exceptions
-                </div>
-              </div>
-            </ConsoleCard>
-
-            {/* Violations List */}
-            <ConsoleCard>
-              {violationsLoading ? (
-                <SectionSkeleton lines={5} label="Loading violations" />
-              ) : violations.length === 0 ? (
-                <div className="py-12 text-center">
-                  <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-400" />
-                  <p className="font-medium text-green-700">No violations found</p>
-                  <p className="text-sm text-slate-500">All rosters are compliant with WFM rules</p>
-                </div>
-              ) : (
-                violations.map((violation) => (
-                  <ViolationRow key={violation.id} violation={violation} />
-                ))
-              )}
-            </ConsoleCard>
-          </TabsContent>
-
-          {/* Trend Tab */}
-          <TabsContent value="trend" className="space-y-4">
-            <ConsoleCard>
-              <div className="p-4 border-b border-slate-100">
-                {/* Merge-plan Phase B bug #10: backend groups by calendar month
-                    (DATE_FORMAT(roster_date,'%Y-%m')) over a 6-month window, not weekly —
-                    the old "Weekly / Last 8 weeks" label was simply wrong. */}
-                <h3 className="font-semibold text-slate-800">Monthly Violation Trend</h3>
-                <p className="text-xs text-slate-500">Last 6 months</p>
-              </div>
-              <div className="p-6">
-                <TrendChart data={trend} />
-              </div>
-            </ConsoleCard>
-          </TabsContent>
-        </Tabs>
+      <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-5" aria-busy={sq.isPending}>
+        {sq.isPending ? Array.from({ length: 5 }, (_, i) => <div key={i} className="h-[108px] animate-pulse rounded-lg bg-slate-100" />) : (
+          <>
+            <KpiTile label="Compliance" value={fmtPct(summary?.compliancePct)} sub={[band.label, fmtPoints(summary?.trend) && `${fmtPoints(summary?.trend)} vs ${prev ? fmtMonth(prev.period) : "prior"}`].filter(Boolean).join(" - ")} tone={band.tone === "neutral" ? "neutral" : band.tone} icon={ShieldCheck} spark={spark} progress={summary?.compliancePct ?? undefined} onClick={() => setDrawer({ type: "overview" })} />
+            <KpiTile label="Violations" value={fmtInt(summary?.totalViolations)} sub="Rule incidents this month" tone={summary?.totalViolations ? "amber" : "green"} icon={AlertTriangle} delta={summary ? pctChange(summary.totalViolations, prev?.totalViolations) : undefined} deltaBad="up" spark={violSpark} onClick={() => setDrawer({ type: "overview" })} />
+            <KpiTile label="Employees affected" value={fmtInt(summary?.employeesWithViolations)} sub={`of ${fmtInt(summary?.totalEmployees)} rostered`} tone={summary?.employeesWithViolations ? "red" : "green"} icon={UserX} progress={summary && summary.totalEmployees > 0 ? (summary.employeesWithViolations / summary.totalEmployees) * 100 : undefined} onClick={() => setDrawer({ type: "overview" })} />
+            <KpiTile label="Rostered employees" value={fmtInt(summary?.totalEmployees)} sub={`${fmtInt(summary?.byBranch.length)} branches`} tone="blue" icon={Users} onClick={() => setDrawer({ type: "overview" })} />
+            <KpiTile label="Attendance rate" value={fmtPct(summary?.attendance?.adherencePct)} sub={summary?.attendance ? `${fmtInt(summary.attendance.unreconciled)} not reconciled` : "No elapsed days yet"} tone="neutral" icon={Activity} onClick={() => { setKind("attendance"); setRuleId(ALL); setPage(1); setTab("violations"); }} />
+          </>
+        )}
       </div>
+
+      <Tabs value={tab} onValueChange={setTab} className="space-y-3">
+        <TabsList aria-label="Compliance views">
+          <TabsTrigger value="overview" className="min-h-[36px]">Overview</TabsTrigger>
+          <TabsTrigger value="violations" className="min-h-[36px]">Violations</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-3">
+          <ChartCard title="Compliance trend" subtitle="Compliance % (line) and rule incidents (bars), last 6 months. Select a month to switch." height={260} loading={tq.isPending} error={tq.isError} onRetry={() => void tq.refetch()} empty={!tq.data?.some((t) => t.rostered > 0)}>
+            <Suspense fallback={<ChartFallback />}><TrendChart data={tq.data ?? []} selected={month} onSelect={setMonth} /></Suspense>
+          </ChartCard>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <ChartCard title="Incidents by rule" subtitle="Select a bar for the rule detail" height={240} loading={sq.isPending} error={sq.isError} empty={!summary?.totalViolations} emptyLabel="No rule incidents this month">
+              <Suspense fallback={<ChartFallback />}><RuleBars rules={summary?.rules ?? []} onSelect={(id) => setDrawer({ type: "rule", id })} /></Suspense>
+            </ChartCard>
+            <ChartCard title="Branch compliance" subtitle="Lowest ten branches; select a bar for the branch detail" height={240} loading={sq.isPending} error={sq.isError} empty={!summary?.byBranch.length}>
+              <Suspense fallback={<ChartFallback />}><BranchBars branches={summary?.byBranch ?? []} onSelect={(id) => setDrawer({ type: "branch", id })} /></Suspense>
+            </ChartCard>
+          </div>
+          <ConsoleCard>
+            <div className="border-b border-border p-3"><h3 className="text-sm font-semibold text-slate-900">Rules</h3><p className="text-xs text-slate-600">Each row opens the rule detail</p></div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="bg-muted"><tr>{["Rule", "Threshold", "Severity", "Incidents", "Employees"].map((h, i) => <th key={h} scope="col" className={`px-3 py-2 text-xs font-semibold text-slate-700 ${i < 3 ? "text-left" : "text-right"}`}>{h}</th>)}</tr></thead>
+                <tbody className="divide-y divide-border">
+                  {(summary?.rules ?? []).map((r) => (
+                    <tr key={r.ruleId} tabIndex={0} onClick={() => setDrawer({ type: "rule", id: r.ruleId })} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDrawer({ type: "rule", id: r.ruleId }); } }} aria-label={`Open ${r.ruleName} detail`} className="cursor-pointer hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                      <td className="px-3 py-2"><span className="font-medium text-slate-900">{r.ruleName}</span><span className="block text-xs text-slate-600">{r.description}</span></td>
+                      <td className="px-3 py-2 text-slate-700">{r.threshold}</td>
+                      <td className="px-3 py-2"><StatusPill tone={r.severity === "high" ? "red" : "amber"}>{r.severity === "high" ? "High" : "Medium"}</StatusPill></td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtInt(r.violationCount)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtInt(r.employeesAffected)}</td>
+                    </tr>
+                  ))}
+                  {sq.isPending && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-500">Loading rules</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </ConsoleCard>
+          <ConsoleCard>
+            <div className="border-b border-border p-3"><h3 className="text-sm font-semibold text-slate-900">Branch ranking</h3><p className="text-xs text-slate-600">Lowest compliance first; each row opens the branch detail</p></div>
+            <div className="max-h-[420px] overflow-auto">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="sticky top-0 bg-muted"><tr>{["Branch", "Status", "Compliance", "Change", "Violations", "Rostered"].map((h, i) => <th key={h} scope="col" className={`px-3 py-2 text-xs font-semibold text-slate-700 ${i < 2 ? "text-left" : "text-right"}`}>{h}</th>)}</tr></thead>
+                <tbody className="divide-y divide-border">
+                  {(summary?.byBranch ?? []).map((b) => {
+                    const bb = scoreBand(b.score);
+                    return (
+                      <tr key={b.branchId} tabIndex={0} onClick={() => setDrawer({ type: "branch", id: b.branchId })} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDrawer({ type: "branch", id: b.branchId }); } }} aria-label={`Open ${b.branchName} detail`} className="cursor-pointer hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                        <td className="px-3 py-2 font-medium text-slate-900">{b.branchName}</td>
+                        <td className="px-3 py-2"><StatusPill tone={bb.tone}>{bb.label}</StatusPill></td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtPct(b.score)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtPoints(b.trend) ?? "—"}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtInt(b.violations)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmtInt(b.rostered)}</td>
+                      </tr>
+                    );
+                  })}
+                  {!sq.isPending && !summary?.byBranch.length && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-500">No branch data for these filters</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </ConsoleCard>
+        </TabsContent>
+
+        <TabsContent value="violations" className="space-y-3">
+          <ConsoleCard className="p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={kind} onValueChange={changeKind}>
+                <SelectTrigger className="h-9 w-[210px]" aria-label="Violation source"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="roster">Roster rule violations</SelectItem>
+                  <SelectItem value="attendance">Attendance exceptions</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={ruleId} onValueChange={resetPage(setRuleId)}>
+                <SelectTrigger className="h-9 w-[190px]" aria-label="Rule filter"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value={ALL}>{kind === "roster" ? "All rules" : "All exception types"}</SelectItem>{ruleOptions.map((o) => <SelectItem key={o.id} value={o.id}>{o.label}{feed?.counts.byRule[o.id] !== undefined ? ` (${feed.counts.byRule[o.id]})` : ""}</SelectItem>)}</SelectContent>
+              </Select>
+              {kind === "roster" && (
+                <Select value={severity} onValueChange={resetPage(setSeverity)}>
+                  <SelectTrigger className="h-9 w-[150px]" aria-label="Severity filter"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value={ALL}>All severities</SelectItem><SelectItem value="high">High</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="low">Low</SelectItem></SelectContent>
+                </Select>
+              )}
+              {kind === "roster" && <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search name or code" aria-label="Search employee" className="h-9 w-[200px]" />}
+              <span className="ml-auto text-xs text-slate-600 tabular-nums" aria-live="polite">{feed ? `${fmtInt(feed.totalCount)} ${kind === "roster" ? "incidents" : "exceptions"} in ${fmtMonth(month)}` : ""}</span>
+            </div>
+            {kind === "attendance" && <p className="mt-2 text-xs text-slate-600">Attendance exceptions cover elapsed rostered working days only; leave, holidays and week-offs are excluded. This is a separate measure from the roster-rule score.</p>}
+          </ConsoleCard>
+          <ConsoleCard className="p-3">
+            {vq.isPending ? <div className="h-[260px] animate-pulse rounded-md bg-slate-100" role="status" aria-label="Loading violations" />
+              : vq.isError ? <p role="alert" className="py-8 text-center text-sm text-red-800">Violations could not be loaded. <button type="button" className="cursor-pointer underline" onClick={() => void vq.refetch()}>Retry</button></p>
+              : !feed?.violations.length ? <p className="py-10 text-center text-sm text-slate-600">No {kind === "roster" ? "rule violations" : "attendance exceptions"} match these filters.</p>
+              : <ViolationsTable rows={feed.violations} onOpen={setDrawer} />}
+            {feed && feed.totalCount > FEED_PAGE_SIZE && (
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-700">
+                <span className="tabular-nums">Page {page} of {totalPages}</span>
+                <span className="flex gap-2">
+                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="min-h-[44px] cursor-pointer sm:min-h-8" aria-label="Previous page"><ChevronLeft className="h-4 w-4" aria-hidden /></Button>
+                  <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="min-h-[44px] cursor-pointer sm:min-h-8" aria-label="Next page"><ChevronRight className="h-4 w-4" aria-hidden /></Button>
+                </span>
+              </div>
+            )}
+          </ConsoleCard>
+        </TabsContent>
+      </Tabs>
+
+      <ComplianceDrawer target={drawer} onClose={() => setDrawer(null)} onOpen={setDrawer} scopeQs={scopeQs} month={month} summary={summary} />
+    </div>
   );
 }

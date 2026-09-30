@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { Sparkline } from "./Sparkline";
 
 export type KpiTone = "neutral" | "blue" | "green" | "amber" | "red" | "violet";
 
@@ -24,13 +25,17 @@ export interface KpiTileProps {
   icon?: React.ElementType;
   /** Small element (e.g. a live pulse) placed top-right. */
   adornment?: React.ReactNode;
+  /** Recent values (oldest→newest) rendered as a sparkline bottom-right. */
+  spark?: number[];
+  /** 0-100 progress bar under the value (e.g. attainment vs target). */
+  progress?: number;
   onClick?: () => void;
   className?: string;
 }
 
 /** Compact KPI tile for the data-dense console panels. */
 export function KpiTile({
-  label, value, sub, delta, deltaBad, tone = "neutral", icon: Icon, adornment, onClick, className,
+  label, value, sub, delta, deltaBad, tone = "neutral", icon: Icon, adornment, spark, progress, onClick, className,
 }: KpiTileProps) {
   const t = TONE[tone];
   const bad = delta !== undefined && deltaBad !== undefined && (deltaBad === "up" ? delta > 0 : delta < 0);
@@ -51,7 +56,15 @@ export function KpiTile({
           )}
         </span>
       </div>
-      <p className={cn("mt-2 text-2xl font-bold leading-none tabular-nums", t.value)}>{value}</p>
+      <div className="mt-2 flex items-end justify-between gap-2">
+        <p className={cn("text-2xl font-bold leading-none tabular-nums", t.value)}>{value}</p>
+        {spark && spark.length > 1 && <Sparkline values={spark} className={t.value} ariaLabel={`${label} trend`} />}
+      </div>
+      {progress !== undefined && (
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
+          <div className={cn("h-full rounded-full bg-current", t.value)} style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
+        </div>
+      )}
       <p className="mt-1 text-xs font-semibold text-slate-700">{label}</p>
       {sub != null && <p className="mt-0.5 text-xs text-slate-600">{sub}</p>}
     </>
