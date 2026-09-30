@@ -27,7 +27,7 @@ interface Grant {
   id?: string; scope_type: "all" | "company" | "branch"; company_key: string | null; branch_id: string | null;
   can_dashboards: boolean; can_upload: boolean; can_mis: boolean;
 }
-interface Detail { user: UserRow; restrict_to_grants: boolean; notes: string | null; grants: Grant[] }
+interface Detail { user: UserRow; restrict_to_grants: boolean; notes: string | null; grants: Grant[]; roleOpensFullTpzView: boolean }
 type Caps = { d: boolean; u: boolean; m: boolean };
 const NO_CAPS: Caps = { d: false, u: false, m: false };
 const anyCap = (c: Caps | undefined): boolean => Boolean(c && (c.d || c.u || c.m));
@@ -127,6 +127,13 @@ function AccessEditor({ userId, options, onClose, onSaved }: { userId: string; o
                 {isAdmin && <span className="mt-1 block text-amber-700">Admins and super admins always keep full access.</span>}
               </span>
             </label>
+            {!isAdmin && detailQ.data?.roleOpensFullTpzView && !restrict && (
+              <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                <span className="font-semibold">Heads up:</span> {personName(user)}&rsquo;s role ({user.roles.join(", ")}) already opens every
+                TPZ process on its own. The grants you set below will only ADD to that — they will not narrow what this person sees unless you
+                also turn the switch above on.
+              </p>
+            )}
           </section>
 
           <section className="space-y-2">

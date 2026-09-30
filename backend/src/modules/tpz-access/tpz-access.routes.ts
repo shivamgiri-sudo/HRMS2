@@ -5,7 +5,7 @@ import { db } from "../../db/mysql.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { TPZ_COMPANIES } from "./tpz-access.catalog.js";
-import { canTpz, hasAnyTpzAccess } from "./tpz-access.resolver.js";
+import { canTpz, hasAnyTpzAccess, resolveTpzAccess } from "./tpz-access.resolver.js";
 import { accessOf } from "./tpz-access.middleware.js";
 import {
   getUserTpzAccessView, loadBranchCompanies, replaceUserTpzAccess, validateGrantInputs, type TpzGrantInput,
@@ -123,10 +123,21 @@ router.get("/users/:userId", adminOnly, h(async (req, res) => {
   const u = users[0];
   if (!u) return res.status(404).json({ success: false, message: "User not found" });
   const view = await getUserTpzAccessView(String(u.id));
+  const roles = u.roles ? String(u.roles).split(",") : [];
+  // Whether this user's ROLE ALONE (ignoring the restrict toggle and any grants) already opens
+  // every TPZ process -- reuses the same resolver the real access decision runs through, so this
+  // can never drift from what actually happens. Lets the admin UI warn "the grants below won't
+  // narrow this person unless you also turn Restrict on" BEFORE they save and are surprised by it
+  // live -- confirmed live 2026-09-30: two different admins gave a single-process grant to a
+  // process_manager-and-similar-rostered user, left Restrict off, and the person still saw every
+  // process, because that role is in LEGACY_TPZ_VIEW_ROLES by design (documented in this same
+  // page's own help text, but easy to miss).
+  const roleOpensFullTpzView = resolveTpzAccess({ roles, restrict: false, grants: [], branchCompanies: new Map() }).roleFullView;
   res.json({
     success: true,
     data: {
-      user: { id: String(u.id), email: u.email ?? null, employee_code: u.employee_code ?? null, full_name: u.full_name ?? null, roles: u.roles ? String(u.roles).split(",") : [] },
+      user: { id: String(u.id), email: u.email ?? null, employee_code: u.employee_code ?? null, full_name: u.full_name ?? null, roles },
+      roleOpensFullTpzView,
       ...view,
     },
   });
