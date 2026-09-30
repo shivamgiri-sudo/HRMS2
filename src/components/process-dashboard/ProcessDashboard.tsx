@@ -20,7 +20,7 @@ import { AlertsChip } from "./alerts/AlertsChip";
 import { AlertsTab } from "./alerts/AlertsTab";
 import type { BreakdownRow } from "./types";
 import { WhyDrawer } from "./rootcause/WhyDrawer";
-import { openWhyState, parseWhy, writeWhy, type WhyState } from "./rootcause/whyState";
+import { WHY_PARAMS, openWhyState, parseWhy, writeWhy, type WhyState } from "./rootcause/whyState";
 
 const PacingPanel = lazy(() => import("./forecast/PacingPanel"));
 // The inbound dashboard pulls in the charting bundle; load it only when the Live inbound tab is opened.
@@ -60,6 +60,12 @@ type View = "apr" | "inbound" | "sales" | "outbound" | "alerts";
 export function resolveView(want: string | null, extra: Array<Exclude<View, "apr" | "alerts">>, aprReady: boolean): View {
   if (want === "apr" || (want === "alerts" && aprReady) || (extra as string[]).includes(want ?? "")) return want as View;
   return aprReady ? "apr" : extra[0];
+}
+/** Tabs share from/to/tl/lob/q, but drill-down state (agent/day/sort/page/metric/why) means different things per tab, so it is dropped on a tab switch. */
+export function switchViewParams(cur: URLSearchParams): URLSearchParams {
+  const n = new URLSearchParams(cur);
+  for (const k of ["agent", "day", "sort", "dir", "page", "metric", ...WHY_PARAMS]) n.delete(k);
+  return n;
 }
 const tabCls = (on: boolean) => `inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 border-b-2 px-4 text-sm font-semibold ${FOCUS} ${on ? "border-blue-700 text-blue-800" : "border-transparent text-slate-700 hover:text-slate-900"}`;
 
@@ -102,7 +108,7 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
   const aprReady = !!config?.configured && config.enabled;
   const want = sp.get("view");
   const view = resolveView(want, extra, aprReady);
-  const setView = (v: View) => setSp((cur) => { const n = new URLSearchParams(cur); if (v !== "apr") n.set("view", v); else n.delete("view"); return n; }, { replace: true });
+  const setView = (v: View) => setSp((cur) => { const n = switchViewParams(cur); if (v !== "apr") n.set("view", v); else n.delete("view"); return n; }, { replace: true });
   const fallback = <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   return (
     <div className="space-y-4">

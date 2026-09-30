@@ -58,3 +58,11 @@ describe("resolveView (outer tab strip)", () => {
     expect(resolveView("alerts", all, false)).toBe("inbound"); expect(resolveView("sales", ["inbound"], false)).toBe("inbound");
   });
 });
+
+import { switchViewParams } from "../ProcessDashboard";
+describe("switchViewParams", () => {
+  it("keeps shared filters, drops tab-specific drill state", () => {
+    const n = switchViewParams(new URLSearchParams("from=2026-09-01&to=2026-09-10&tl=A&lob=L&q=x&agent=E1&day=2026-09-02&sort=aht&dir=asc&page=3&metric=aht&why=calls&wfrom=2026-09-01&view=alerts"));
+    expect(n.toString()).toBe("from=2026-09-01&to=2026-09-10&tl=A&lob=L&q=x&view=alerts");
+  });
+});
