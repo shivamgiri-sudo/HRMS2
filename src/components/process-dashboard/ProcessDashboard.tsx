@@ -67,6 +67,17 @@ export function switchViewParams(cur: URLSearchParams): URLSearchParams {
   for (const k of ["agent", "day", "sort", "dir", "page", "metric", ...WHY_PARAMS]) n.delete(k);
   return n;
 }
+/** Arrow/Home/End move between the tabs of a tablist and activate the one reached (WAI-ARIA tabs, automatic activation). */
+export function tabArrowKeys(e: React.KeyboardEvent<HTMLElement>) {
+  const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+  if (!keys.includes(e.key)) return;
+  const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
+  const i = tabs.indexOf(document.activeElement as HTMLElement);
+  if (i < 0 || !tabs.length) return;
+  e.preventDefault();
+  const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  tabs[next].focus(); tabs[next].click();
+}
 const tabCls = (on: boolean) => `inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 border-b-2 px-4 text-sm font-semibold ${FOCUS} ${on ? "border-blue-700 text-blue-800" : "border-transparent text-slate-700 hover:text-slate-900"}`;
 
 /**
@@ -112,7 +123,7 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
   const fallback = <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   return (
     <div className="space-y-4">
-      <div role="tablist" aria-label="Dashboard views" className="flex flex-wrap gap-1 border-b border-slate-200">
+      <div role="tablist" aria-label="Dashboard views" className="flex flex-wrap gap-1 border-b border-slate-200" onKeyDown={tabArrowKeys}>
         <button type="button" role="tab" id="pd-tab-apr" aria-selected={view === "apr"} aria-controls="pd-panel-apr" className={tabCls(view === "apr")} onClick={() => setView("apr")}>Process overview</button>
         {tab && <button type="button" role="tab" id="pd-tab-inbound" aria-selected={view === "inbound"} aria-controls="pd-panel-inbound" className={tabCls(view === "inbound")} onClick={() => setView("inbound")}><PhoneIncoming className="h-4 w-4" aria-hidden="true" />Live inbound</button>}
         {sales.data && <button type="button" role="tab" id="pd-tab-sales" aria-selected={view === "sales"} aria-controls="pd-panel-sales" className={tabCls(view === "sales")} onClick={() => setView("sales")}><ShoppingCart className="h-4 w-4" aria-hidden="true" />Sales</button>}
