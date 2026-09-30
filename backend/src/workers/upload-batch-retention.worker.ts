@@ -207,10 +207,23 @@ let started = false;
 export function startUploadBatchRetentionCron(): void {
   if (started || process.env.NODE_ENV === "test") return;
   started = true;
-  void import("node-cron").then(({ default: cron }) => {
-    cron.schedule("0 2 * * *", () => {
-      runUploadBatchRetention().catch((err) => logger.error({ worker: "upload-batch-retention", err }, "cron run failed"));
-    });
-    logger.info({ worker: "upload-batch-retention", mode: retentionMode() }, "scheduled daily 02:00");
-  });
+  // Timer to the next 02:00, rescheduled after each run: the convention every other daily job here uses
+  // (see noc-sla-reminder.worker.ts). node-cron is not a dependency of this project, so importing it broke the build.
+  const msUntilTwoAm = (): number => {
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(2, 0, 0, 0);
+    if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+    return next.getTime() - now.getTime();
+  };
+  const schedule = (): void => {
+    const timer = setTimeout(() => {
+      runUploadBatchRetention()
+        .catch((err) => logger.error({ worker: "upload-batch-retention", err }, "scheduled run failed"))
+        .finally(schedule);
+    }, msUntilTwoAm());
+    timer.unref?.();
+  };
+  schedule();
+  logger.info({ worker: "upload-batch-retention", mode: retentionMode() }, "scheduled daily 02:00");
 }
