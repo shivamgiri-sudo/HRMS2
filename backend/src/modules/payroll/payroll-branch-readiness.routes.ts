@@ -18,11 +18,22 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
+import { invalidateReadinessSummaryCache } from "./payroll-readiness-summary-cache.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { db } from "../../db/mysql.js";
 import { triggerPayrollAttendanceFreezeRequest } from "../work-inbox/work-inbox.triggers.js";
 
 export const payrollBranchReadinessRouter = Router();
+
+// A state-changing request must not be followed by a stale cached summary (see cachedReadinessSummary).
+payrollBranchReadinessRouter.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+    invalidateReadinessSummaryCache();
+    res.on("finish", invalidateReadinessSummaryCache);
+  }
+  next();
+});
+
 
 // ---------------------------------------------------------------------------
 // Helpers

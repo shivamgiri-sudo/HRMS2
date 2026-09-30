@@ -6,6 +6,13 @@ import { env } from "../../config/env.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
+import { sharedInFlight } from "../dashboards/metrics-in-flight.js";
+import {
+  COMMAND_CENTER_TTL_MS,
+  commandCenterCache,
+  commandCenterCacheKey,
+  pruneCommandCenterCache,
+} from "./commandCenterCache.js";
 import { submitInterviewUpdate, resolveRecruiterForActor } from "./recruiterInterview.service.js";
 // analytics-simple.service.ts is no longer imported: the six /analytics/* routes that used it
 // were removed (see below). The file is left in place rather than deleted because
@@ -15,6 +22,7 @@ import { submitInterviewUpdate, resolveRecruiterForActor } from "./recruiterInte
 import type { RowDataPacket } from "mysql2";
 
 export const atsFullParityRouter = Router();
+
 
 interface RecruiterLookupRow extends RowDataPacket {
   id: string;
@@ -113,7 +121,18 @@ atsFullParityRouter.get("/web-data", requireRole("admin", "hr", "recruiter", "ma
 atsFullParityRouter.get("/command-center", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
   const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
   const bypassScope = isSuperAdmin || role === "hr" || role === "ceo";
-  const data = await svc.commandCenterData({ ...(req.query as Record<string, unknown>), actorId: req.authUser?.id, bypassScope });
+  const query = req.query as Record<string, unknown>;
+  const actorId = req.authUser?.id;
+  // Keyed by actor + scope + filters, so one user's scoped result is never served to another.
+  const key = commandCenterCacheKey(actorId, bypassScope, query);
+  const hit = commandCenterCache.get(key);
+  if (hit && Date.now() - hit.at < COMMAND_CENTER_TTL_MS) return res.json(hit.value);
+  const data = await sharedInFlight(key, async () => {
+    const value = (await svc.commandCenterData({ ...query, actorId, bypassScope })) as Record<string, unknown>;
+    commandCenterCache.set(key, { at: Date.now(), value });
+    pruneCommandCenterCache();
+    return value;
+  });
   res.json(data);
 }));
 
