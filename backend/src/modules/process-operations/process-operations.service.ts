@@ -3528,7 +3528,7 @@ async function pnlSummaryWithFallback(period: string): Promise<{ summary: any; a
 
 /**
  * Keep the last-good P&L summary warm so the Business Health panel (and Operating %) does not meet a cold ~20-30s
- * calculation after every restart. Runs 60s after the process starts, then every 30 minutes, one month at a time.
+ * calculation after every restart. Runs 10s after the process starts, then every 30 minutes, one month at a time.
  * Same computation a user opening the P&L page triggers. Off with BUSINESS_HEALTH_PNL_WARM=false; never runs in tests.
  */
 function warmPnlSummary(): void {
@@ -3543,7 +3543,7 @@ function warmPnlSummary(): void {
   })();
 }
 if (process.env.BUSINESS_HEALTH_PNL_WARM !== "false" && !process.env.VITEST && process.env.NODE_ENV !== "test") {
-  setTimeout(warmPnlSummary, 60_000).unref();
+  setTimeout(warmPnlSummary, 10_000).unref();
   setInterval(warmPnlSummary, 30 * 60_000).unref();
 }
 

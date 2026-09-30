@@ -29,7 +29,9 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
   );
 }
 
-function ChartTooltip({ active, payload, fmt, target, hasTarget }: { active?: boolean; payload?: Array<{ payload: DrillPoint }>; fmt: (v: number) => string; target: number | null; hasTarget: boolean }) {
+const COMPACT = new Intl.NumberFormat("en-IN", { notation: "compact", maximumFractionDigits: 1 });
+
+function ChartTooltip({ active, payload, fmt, gapFmt, target, hasTarget }: { active?: boolean; payload?: Array<{ payload: DrillPoint }>; fmt: (v: number) => string; gapFmt: (v: number) => string; target: number | null; hasTarget: boolean }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   return (
@@ -37,7 +39,7 @@ function ChartTooltip({ active, payload, fmt, target, hasTarget }: { active?: bo
       <p className="font-bold text-slate-900 dark:text-slate-100">{p.date} · {WEEKDAY_LABELS[p.weekday]}</p>
       <p className="mt-1 text-base font-extrabold" style={{ color: colorOf(p.status) }}>{fmt(p.value)}</p>
       {hasTarget && target !== null && p.gap !== null && (
-        <p className="text-slate-600 dark:text-slate-300">{p.gap > 0 ? `${fmt(Math.abs(p.gap))} short of target` : `${fmt(Math.abs(p.gap))} ahead of target`}</p>
+        <p className="text-slate-600 dark:text-slate-300">{p.gap > 0 ? `${gapFmt(Math.abs(p.gap))} short of target` : `${gapFmt(Math.abs(p.gap))} ahead of target`}</p>
       )}
       {p.ma !== null && <p className="text-slate-500">7-day average {fmt(p.ma)}</p>}
       {p.numerator !== null && p.denominator !== null && <p className="text-slate-500">{p.numerator.toLocaleString("en-IN")} of {p.denominator.toLocaleString("en-IN")}</p>}
@@ -59,7 +61,9 @@ function InsightRow({ i }: { i: Insight }) {
 
 export function MetricDrillOverview({ name, unit, direction, target, readings, basis }: MetricDrillOverviewProps) {
   const fmt = (v: number) => formatValue(v, unit);
-  const s = useMemo(() => computeDrillStats({ readings, target, direction }, fmt), [readings, target, direction, unit]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A distance between two percentages is in points, not percent.
+  const gapFmt = (v: number) => (isPercentUnit(unit) ? `${v.toFixed(1)} pt` : formatValue(v, unit));
+  const s = useMemo(() => computeDrillStats({ readings, target, direction }, fmt, gapFmt), [readings, target, direction, unit]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showMa, setShowMa] = useState(true);
   const [showVol, setShowVol] = useState(true);
   const hasTarget = target !== null && !!direction;
@@ -93,7 +97,7 @@ export function MetricDrillOverview({ name, unit, direction, target, readings, b
               {hasTarget && <span className="text-xs text-slate-500">target {higher ? "≥" : "≤"} {fmt(target as number)}</span>}
             </div>
             {hasTarget && lat.gap !== null && (
-              <p className="mt-2 text-sm text-slate-700 dark:text-slate-200"><b style={{ color: colorOf(lat.status) }}>{fmt(Math.abs(lat.gap))}</b> {lat.gap > 0 ? "short of" : "ahead of"} target</p>
+              <p className="mt-2 text-sm text-slate-700 dark:text-slate-200"><b style={{ color: colorOf(lat.status) }}>{gapFmt(Math.abs(lat.gap))}</b> {lat.gap > 0 ? "short of" : "ahead of"} target</p>
             )}
             {delta !== null && (
               <p className="mt-1 flex items-center gap-1 text-xs text-slate-600 dark:text-slate-300">
@@ -131,7 +135,7 @@ export function MetricDrillOverview({ name, unit, direction, target, readings, b
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
               <XAxis dataKey="date" tickFormatter={(v: string) => v.slice(5)} tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} minTickGap={16} />
               <YAxis yAxisId="v" domain={yDomain} tickFormatter={(v: number) => (pct ? `${v}` : fmt(v))} tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} width={48} />
-              {hasVolume && showVol && <YAxis yAxisId="vol" orientation="right" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={44} />}
+              {hasVolume && showVol && <YAxis yAxisId="vol" orientation="right" tickFormatter={(v: number) => COMPACT.format(v)} tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={44} />}
               {hasVolume && showVol && <Bar yAxisId="vol" dataKey="denominator" fill={C.vol} opacity={0.55} radius={[3, 3, 0, 0]} maxBarSize={26} name="Volume" />}
               {hasTarget && <ReferenceLine yAxisId="v" y={target as number} stroke="#0f172a" strokeDasharray="5 4" label={{ value: `target ${fmt(target as number)}`, position: "insideTopRight", fontSize: 11, fill: "#0f172a" }} />}
               <Area yAxisId="v" type="monotone" dataKey="value" stroke={C.line} strokeWidth={2.4} fill="url(#drillFill)" name={name}
@@ -140,7 +144,7 @@ export function MetricDrillOverview({ name, unit, direction, target, readings, b
                 )}
                 activeDot={{ r: 6 }} />
               {showMa && <Line yAxisId="v" type="monotone" dataKey="ma" stroke={C.ma} strokeWidth={2} strokeDasharray="6 4" dot={false} connectNulls name="7-day average" />}
-              <Tooltip content={<ChartTooltip fmt={fmt} target={target} hasTarget={hasTarget} />} />
+              <Tooltip content={<ChartTooltip fmt={fmt} gapFmt={gapFmt} target={target} hasTarget={hasTarget} />} />
               {s.n > 14 && <Brush dataKey="date" height={22} stroke="#94a3b8" travellerWidth={8} tickFormatter={(v: string) => v.slice(5)} />}
             </ComposedChart>
           </ResponsiveContainer>

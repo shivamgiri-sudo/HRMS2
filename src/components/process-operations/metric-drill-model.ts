@@ -117,7 +117,8 @@ export function buildBins(values: number[], target: number | null, count = 8): B
   return bins;
 }
 
-export function computeDrillStats({ readings, target, direction }: DrillInput, fmt: (v: number) => string = (v) => v.toFixed(1)): DrillStats {
+/** `gapFmt` formats a distance to target (percent metrics say "pt", not "%"); defaults to `fmt`. */
+export function computeDrillStats({ readings, target, direction }: DrillInput, fmt: (v: number) => string = (v) => v.toFixed(1), gapFmt: (v: number) => string = fmt): DrillStats {
   const clean = readings.filter((r) => r.value !== null).map((r) => ({ ...r, value: r.value as number }))
     .sort((a, b) => a.date.localeCompare(b.date));
   const ma = movingAverage(clean.map((r) => r.value));
@@ -160,7 +161,7 @@ export function computeDrillStats({ readings, target, direction }: DrillInput, f
     volumeTotal: vols.length ? vols.reduce((a, b) => a + b, 0) : null, volumeAvg: mean(vols), numeratorTotal: nums.length ? nums.reduce((a, b) => a + b, 0) : null,
     weekdays, calendar: buildCalendar(points), bins: buildBins(values, target), insights: [],
   };
-  stats.insights = buildInsights(stats, target, direction, fmt);
+  stats.insights = buildInsights(stats, target, direction, fmt, gapFmt);
   return stats;
 }
 
@@ -168,13 +169,13 @@ function better(a: number, b: number, direction: string | null): boolean {
   return direction === "lower_is_better" ? a < b : a > b;
 }
 
-export function buildInsights(s: DrillStats, target: number | null, direction: string | null, fmt: (v: number) => string): Insight[] {
+export function buildInsights(s: DrillStats, target: number | null, direction: string | null, fmt: (v: number) => string, gapFmt: (v: number) => string = fmt): Insight[] {
   const out: Insight[] = [];
   if (!s.latest) return out;
   const higher = direction !== "lower_is_better";
   if (target !== null && direction) {
     if (s.latest.status === "fail") {
-      out.push({ tone: "bad", text: `Latest reading ${fmt(s.latest.value)} is ${fmt(Math.abs(s.latest.gap as number))} ${higher ? "under" : "over"} the target of ${fmt(target)}.` });
+      out.push({ tone: "bad", text: `Latest reading ${fmt(s.latest.value)} is ${gapFmt(Math.abs(s.latest.gap as number))} ${higher ? "under" : "over"} the target of ${fmt(target)}.` });
     } else {
       out.push({ tone: "good", text: `Latest reading ${fmt(s.latest.value)} meets the target of ${fmt(target)}.` });
     }
@@ -193,7 +194,7 @@ export function buildInsights(s: DrillStats, target: number | null, direction: s
     const d = s.last7Avg - s.prev7Avg;
     if (Math.abs(d) / Math.abs(s.prev7Avg) >= 0.03) {
       const good = higher ? d > 0 : d < 0;
-      out.push({ tone: good ? "good" : "warn", text: `The last 7 readings average ${fmt(s.last7Avg)}, ${d > 0 ? "up" : "down"} ${fmt(Math.abs(d))} from the 7 before.` });
+      out.push({ tone: good ? "good" : "warn", text: `The last 7 readings average ${fmt(s.last7Avg)}, ${d > 0 ? "up" : "down"} ${gapFmt(Math.abs(d))} from the 7 before.` });
     }
   }
   const ranked = s.weekdays.filter((w) => w.n >= 2 && w.avg !== null);

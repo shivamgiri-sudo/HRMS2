@@ -401,7 +401,10 @@ const LATEST_DATE: Record<string, () => Promise<string | null>> = {
 
 const LATEST_DATA_FALLBACK_OK = true;
 const CACHE_MS = 5 * 60_000;
-const cache = new Map<string, { at: number; p: Promise<BusinessDatapoints> }>();
+/** A finished result older than CACHE_MS is still served (instantly) for this long while a fresh one is computed in the background. */
+const STALE_OK_MS = 6 * 60 * 60_000;
+interface CacheEntry { at: number; p: Promise<BusinessDatapoints>; value?: BusinessDatapoints; refreshing?: boolean }
+const cache = new Map<string, CacheEntry>();
 
 async function runAdapters(processCode: string, from: string, to: string): Promise<{ groups: DatapointGroup[]; notes: string[] }> {
   const settled = await Promise.allSettled(ADAPTERS[processCode].map((fn) => fn(from, to)));
@@ -452,13 +455,44 @@ export async function getBusinessDatapoints(userId: string, processId: string, p
   if (!code) {
     return { supported: false, available: false, reason: "No sales-system connection is set up for this process yet.", processCode: rawCode, window: null, groups: [] };
   }
-  const w = windowFor(period);
+  return cachedCompute(code, windowFor(period));
+}
+
+/**
+ * Stale-while-revalidate: these adapters scan large upload tables (10-35 s cold), so a fresh result is reused for
+ * CACHE_MS, then for up to STALE_OK_MS it is served immediately while a new one computes behind it. The window
+ * label/dates travel with the result, so a stale answer is never passed off as today's.
+ */
+function cachedCompute(code: string, w: { from: string; to: string; label: string }): Promise<BusinessDatapoints> {
   const key = `${code}|${w.from}|${w.to}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.p;
-  const p = compute(code, w);
-  cache.set(key, { at: Date.now(), p });
-  p.then((r) => { if (!r.available) cache.delete(key); }).catch(() => cache.delete(key));
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (hit && age < CACHE_MS) return hit.p;
+  if (hit?.value && age < STALE_OK_MS) {
+    if (!hit.refreshing) {
+      hit.refreshing = true;
+      compute(code, w).then((r) => { if (r.available) cache.set(key, { at: Date.now(), p: Promise.resolve(r), value: r }); else hit.refreshing = false; })
+        .catch(() => { hit.refreshing = false; });
+    }
+    return hit.p;
+  }
+  const entry: CacheEntry = { at: Date.now(), p: compute(code, w) };
+  cache.set(key, entry);
+  entry.p.then((r) => { if (r.available) entry.value = r; else cache.delete(key); }).catch(() => cache.delete(key));
   if (cache.size > 100) { const k = cache.keys().next().value; if (k) cache.delete(k); }
-  return p;
+  return entry.p;
+}
+
+/** Warm the default (Last 30 days) view for every wired process, one at a time, so the first person to open one does not wait 30+ s. */
+export async function warmBusinessDatapoints(): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT process_code, process_name FROM process_master WHERE active_status = 1");
+  const codes = new Set<string>();
+  for (const r of rows) { const c = adapterKeyFor(r.process_code ? String(r.process_code) : null, r.process_name ? String(r.process_name) : null); if (c) codes.add(c); }
+  for (const code of codes) {
+    try { await cachedCompute(code, windowFor("trend")); } catch { /* a failed warm-up is harmless */ }
+  }
+}
+if (process.env.BUSINESS_DATAPOINTS_WARM !== "false" && !process.env.VITEST && process.env.NODE_ENV !== "test") {
+  setTimeout(() => { void warmBusinessDatapoints().catch(() => undefined); }, 90_000).unref();
+  setInterval(() => { void warmBusinessDatapoints().catch(() => undefined); }, 4 * 60 * 60_000).unref();
 }
