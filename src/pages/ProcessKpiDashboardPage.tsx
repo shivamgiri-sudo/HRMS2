@@ -65,7 +65,7 @@ const ragLabel: Record<NonNullable<KpiScorecardRow["rag"]>, string> = {
   good: "SLA Met", warn: "At Risk", crit: "Breached",
 };
 
-function KpiCard({ row, onOpen }: { row: KpiScorecardRow; onOpen: () => void }) {
+export function KpiCard({ row, onOpen }: { row: KpiScorecardRow; onOpen: () => void }) {
   const interactive = row.availability === "ok";
   return (
     <button

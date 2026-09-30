@@ -375,6 +375,36 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_sbi_card_dialer_mis_batch") {
+    const { importSbiCardDialerMisBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardDialerMisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_agent_mis_batch") {
+    const { importSbiCardAgentMisBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardAgentMisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_account_file_batch") {
+    const { importSbiCardAccountFileBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardAccountFileBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_downtime_batch") {
+    const { importSbiCardDowntimeBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardDowntimeBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_sbi_card_pen_estimation_batch") {
+    const { importSbiCardPenEstimationBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardPenEstimationBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_domestic_billing_approved_hc_batch") {
     const { importDomesticBillingApprovedHcBatch } = await import("./domestic-billing-approved-hc-bulk.service.js");
     const data = await importDomesticBillingApprovedHcBatch(id, userId);

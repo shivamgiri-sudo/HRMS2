@@ -110,6 +110,15 @@ export const TPZ_COMPANIES: TpzCompany[] = [
       DALMIA_APR: "import_dalmia_apr_batch", DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",
     },
   },
+  {
+    key: "sbi_card", label: "SBI Card Collections", processCodes: ["SBI_CARD"],
+    perfPrefixes: ["/sbi-card-dashboard"], inboundKeys: [],
+    uploads: {
+      SBI_CARD_DIALER_MIS: "import_sbi_card_dialer_mis_batch", SBI_CARD_AGENT_MIS: "import_sbi_card_agent_mis_batch",
+      SBI_CARD_ACCOUNT_FILE: "import_sbi_card_account_file_batch", SBI_CARD_DOWNTIME: "import_sbi_card_downtime_batch",
+      SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch",
+    },
+  },
   { key: "dubangladesh", label: "DU Bangladesh", processCodes: [], perfPrefixes: [], inboundKeys: ["dubangladesh"], uploads: {} },
   { key: "viega", label: "Viega", processCodes: ["VIEGA"], perfPrefixes: [], inboundKeys: ["viega"], uploads: {} },
   { key: "exicom", label: "Exicom", processCodes: ["EXICOM"], perfPrefixes: [], inboundKeys: ["exicom"], uploads: {} },

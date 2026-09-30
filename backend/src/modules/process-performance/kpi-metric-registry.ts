@@ -153,6 +153,21 @@ export const PROCESS_KPI_REGISTRY: ProcessKpiSet[] = [
     ],
   },
   {
+    // SBI Card Collections: values are rolled up into process_metric_actual by the Dialer MIS / Agent MIS importers (sbi-card-kpi-sync.ts).
+    // Targets are placeholders to be confirmed with the client -- no SBI Card target sheet has been supplied.
+    processCode: "SBI_CARD",
+    billingName: "SBI Card Collections",
+    projectName: "SBI Card",
+    metrics: [
+      { metricKey: "sbi_contact_rate_pct", label: "Contact Rate %", family: "rate", unit: "percent", target: 20, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_connect_rate_pct", label: "Connect Rate %", family: "rate", unit: "percent", target: 10, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_ptp_rate_pct", label: "PTP Rate %", family: "rate", unit: "percent", target: 30, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_amount_collected", label: "Amount Collected", family: "volume", unit: "currency", target: 100000, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_calls_per_agent", label: "Calls per Agent", family: "volume", unit: "count", target: 150, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_leakage_sec", label: "Login Leakage (avg per agent per day)", family: "duration", unit: "seconds", target: 1800, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+    ],
+  },
+  {
     processCode: "GS1",
     billingName: "GS1",
     projectName: "GS1",

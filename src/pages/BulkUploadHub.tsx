@@ -18,6 +18,7 @@ import {
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
+import { pickSheetWithHeader, readCampaignSheets, describeCampaignRead, dropBlankRows, isSbiCardCode, SHEET_NAME_AS_CAMPAIGN_CODES } from "@/lib/excelSheetPicker";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -231,6 +232,12 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",
   DALMIA_DD_RAW: "import_dalmia_dd_batch",
   DALMIA_OUTBOUND_RAW: "import_dalmia_outbound_batch",
+  // SBI Card Collections uploads
+  SBI_CARD_DIALER_MIS: "import_sbi_card_dialer_mis_batch",
+  SBI_CARD_AGENT_MIS: "import_sbi_card_agent_mis_batch",
+  SBI_CARD_ACCOUNT_FILE: "import_sbi_card_account_file_batch",
+  SBI_CARD_DOWNTIME: "import_sbi_card_downtime_batch",
+  SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {
@@ -1697,7 +1704,7 @@ export default function BulkUploadHub() {
    * emits each cell's *formatted* value, so a date shows up as the sheet
    * displayed it rather than as an Excel serial number.
    */
-  async function excelFileToCsvText(file: File, template: UploadTemplate | null): Promise<string> {
+  async function excelFileToCsvText(file: File, template: UploadTemplate | null): Promise<{ text: string; summary: string | null }> {
     const workbook = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array" });
     if (workbook.SheetNames.length === 0) throw new Error("The workbook has no sheets.");
 
@@ -1712,34 +1719,23 @@ export default function BulkUploadHub() {
     const expected = new Set([
       ...(template?.required_columns || []), ...(template?.optional_columns || []),
     ].map((c) => headerKey(c)));
-    let bestSheetName = workbook.SheetNames[0]!;
-    let bestScore = -1;
-    // Tie-break on fewest extra/unknown columns, not just first-sheet-wins: two
-    // sheets in the same workbook can share every header of a smaller template
-    // (one a strict superset of the other's columns) and tie on raw match count —
-    // confirmed live with the ETM Tracker workbook's "DOC ETM" (32 cols) and
-    // "POA ETM" (28 cols) sheets, where DOC ETM's headers are POA ETM's plus 4
-    // more: both score 28/28 against the POA ETM template, and DOC ETM (appearing
-    // first in the workbook) always won under a bare `score > bestScore` check —
-    // silently staging the wrong sheet regardless of which template was selected.
-    let bestExtra = Infinity;
-    if (expected.size > 0) {
-      for (const name of workbook.SheetNames) {
-        const sheet = workbook.Sheets[name];
-        if (!sheet) continue;
-        const firstRow = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 })[0] as unknown[] | undefined;
-        if (!firstRow) continue;
-        const headerCells = firstRow.map((cell) => String(cell ?? "").trim()).filter((c) => c !== "");
-        const score = headerCells.filter((c) => expected.has(canonicalKey(c))).length;
-        const extra = headerCells.filter((c) => !expected.has(canonicalKey(c))).length;
-        if (score > bestScore || (score === bestScore && extra < bestExtra)) {
-          bestScore = score;
-          bestExtra = extra;
-          bestSheetName = name;
-        }
-      }
+    const code = String(template?.upload_type_code || "").toUpperCase();
+    const requiredCols = template?.required_columns || [];
+    if (SHEET_NAME_AS_CAMPAIGN_CODES.has(code)) {
+      // One sheet per campaign (SBI Card Dialer MIS): every matching sheet, Campaign = its own sheet name.
+      const res = readCampaignSheets(workbook, expected, canonicalKey, requiredCols);
+      const header = [...new Set(res.rows.flatMap((r) => Object.keys(r)))];
+      const sheetOut = XLSX.utils.json_to_sheet(res.rows, { header });
+      return { text: XLSX.utils.sheet_to_csv(sheetOut, { blankrows: false }), summary: describeCampaignRead(res) };
     }
-    return XLSX.utils.sheet_to_csv(workbook.Sheets[bestSheetName]!, { blankrows: false });
+    const picked = pickSheetWithHeader(workbook, expected, canonicalKey);
+    const sheet = workbook.Sheets[picked.name]!;
+    if (picked.headerRow === 0 && !isSbiCardCode(code)) return { text: XLSX.utils.sheet_to_csv(sheet, { blankrows: false }), summary: null };
+    // Header below a title row and/or blank spacer rows to drop (SBI Card templates).
+    const objs = XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: "", raw: false, range: picked.headerRow });
+    const kept = isSbiCardCode(code) ? dropBlankRows(objs, requiredCols, canonicalKey).rows : objs;
+    const header = [...new Set(kept.flatMap((r) => Object.keys(r)))];
+    return { text: XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(kept, { header }), { blankrows: false }), summary: null };
   }
 
   async function createUploadBatch() {
@@ -1774,6 +1770,7 @@ export default function BulkUploadHub() {
       const uploadData = await uploadResponse.json();
       const filePath = uploadData.url; // "/api/files/bulk-uploads/uuid.csv"
 
+      let readSummary: string | null = null;
       let parsedRows: CsvRow[] = [];
       let stagedRows: ReturnType<typeof validateRows> = [];
 
@@ -1785,9 +1782,9 @@ export default function BulkUploadHub() {
       const isExcel = lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls") || lowerName.endsWith(".xlsb");
 
       if (lowerName.endsWith(".csv") || isExcel) {
-        const text = isExcel
-          ? await excelFileToCsvText(selectedFile, selectedTemplate)
-          : await selectedFile.text();
+        const excelRead = isExcel ? await excelFileToCsvText(selectedFile, selectedTemplate) : null;
+        readSummary = excelRead?.summary ?? null;
+        const text = excelRead ? excelRead.text : await selectedFile.text();
         const parsed = parseCsvDetailed(text);
         const health = buildCsvHealth(selectedTemplate, parsed);
         setCsvHealth(health);
@@ -1865,7 +1862,7 @@ export default function BulkUploadHub() {
         }
       }
 
-      setMessage("Upload batch created successfully.");
+      setMessage(`Upload batch created successfully.${readSummary ? ` ${readSummary}.` : ""}`);
       setSelectedFile(null);
       setPreviewRows([]);
 

@@ -77,6 +77,11 @@ const RPC_BY_TYPE: Record<string, string> = {
   DALMIA_OUTBOUND_RAW: "import_dalmia_outbound_batch",
   DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",
   DALMIA_APR: "import_dalmia_apr_batch",
+  SBI_CARD_DIALER_MIS: "import_sbi_card_dialer_mis_batch",
+  SBI_CARD_AGENT_MIS: "import_sbi_card_agent_mis_batch",
+  SBI_CARD_ACCOUNT_FILE: "import_sbi_card_account_file_batch",
+  SBI_CARD_DOWNTIME: "import_sbi_card_downtime_batch",
+  SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch",
 };
 
 /** Same normalization every aw-*-bulk.service.ts backend importer uses: lowercase,
@@ -86,6 +91,8 @@ const RPC_BY_TYPE: Record<string, string> = {
  * Allocation, all 3 original Neemans uploaders) where the real header was
  * present but spelled/cased/spaced differently than the catalog's required_columns
  * entry. Normalizing removes that whole class of false rejection. */
+import { pickSheetWithHeader, readCampaignSheets, describeCampaignRead, dropBlankRows, isSbiCardCode, SHEET_NAME_AS_CAMPAIGN_CODES } from "@/lib/excelSheetPicker";
+
 function normalizeHeaderKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -346,44 +353,34 @@ export function BellavitaMasmisUploader({
    * excelFileToCsvText — ported here using this file's own normalized
    * header match (normalizeHeaderKey) instead of an exact-string match,
    * consistent with this uploader's existing tolerant-header philosophy. */
-  function pickBestSheet(workbook: XLSX.WorkBook, tmpl: UploadTemplate | null): string {
-    const sheetNames = workbook.SheetNames;
-    if (sheetNames.length === 0) throw new Error("The file has no sheets.");
+  function pickBestSheet(workbook: XLSX.WorkBook, tmpl: UploadTemplate | null): { name: string; headerRow: number } {
     const expected = new Set(
       [...(tmpl?.required_columns || []), ...(tmpl?.optional_columns || [])].map(normalizeHeaderKey),
     );
-    if (expected.size === 0) return sheetNames[0]!;
-
-    let bestSheetName = sheetNames[0]!;
-    let bestScore = -1;
-    let bestExtra = Infinity;
-    for (const name of sheetNames) {
-      const sheet = workbook.Sheets[name];
-      if (!sheet) continue;
-      const firstRow = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 })[0] as unknown[] | undefined;
-      if (!firstRow) continue;
-      const headerCells = firstRow.map((cell) => String(cell ?? "").trim()).filter((c) => c !== "");
-      const normalizedHeaders = headerCells.map(normalizeHeaderKey);
-      const score = normalizedHeaders.filter((h) => expected.has(h)).length;
-      const extra = normalizedHeaders.filter((h) => !expected.has(h)).length;
-      if (score > bestScore || (score === bestScore && extra < bestExtra)) {
-        bestScore = score;
-        bestExtra = extra;
-        bestSheetName = name;
-      }
-    }
-    return bestSheetName;
+    // The header row may sit below a title row (e.g. SBI Card Dialer MIS has it on row 2) and empty "-"
+    // sheets never win over a sheet with matching headers -- see pickSheetWithHeader.
+    return pickSheetWithHeader(workbook, expected, normalizeHeaderKey);
   }
 
-  async function fileToRows(f: File): Promise<Record<string, string>[]> {
+  async function fileToRows(f: File): Promise<{ rows: Record<string, string>[]; summary: string | null }> {
     const lower = f.name.toLowerCase();
     const workbook = lower.endsWith(".csv")
       ? XLSX.read(await f.text(), { type: "string" })
       : XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: "array" });
-    const sheetName = pickBestSheet(workbook, template);
-    return XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[sheetName]!, {
-      defval: "", raw: false,
+    const code = String(template?.upload_type_code || "").toUpperCase();
+    const required = template?.required_columns || [];
+    if (SHEET_NAME_AS_CAMPAIGN_CODES.has(code)) {
+      // One sheet per campaign: stage every matching sheet, each row tagged with its own sheet name.
+      const expected = new Set([...required, ...(template?.optional_columns || [])].map(normalizeHeaderKey));
+      const res = readCampaignSheets(workbook, expected, normalizeHeaderKey, required);
+      return { rows: res.rows, summary: describeCampaignRead(res) };
+    }
+    const picked = pickBestSheet(workbook, template);
+    const rows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[picked.name]!, {
+      defval: "", raw: false, range: picked.headerRow,
     });
+    // Blank spacer rows would otherwise be staged as "X is required" errors.
+    return { rows: isSbiCardCode(code) ? (dropBlankRows(rows, required, normalizeHeaderKey).rows as Record<string, string>[]) : rows, summary: null };
   }
 
   async function handleUpload() {
@@ -393,7 +390,7 @@ export function BellavitaMasmisUploader({
     setResult(null);
 
     try {
-      const rows = await fileToRows(file);
+      const { rows, summary: readSummary } = await fileToRows(file);
       if (rows.length === 0) {
         throw new Error("This file has no data rows below the header.");
       }
@@ -452,7 +449,7 @@ export function BellavitaMasmisUploader({
       const batch = batchRes.data;
       setLastBatchId(batch.id);
 
-      setMessage(`Staging ${stagedRows.length} row(s)...`);
+      setMessage(`${readSummary ? `${readSummary}. ` : ""}Staging ${stagedRows.length} row(s)...`);
       for (let offset = 0; offset < stagedRows.length; offset += STAGE_CHUNK_SIZE) {
         const slice = stagedRows.slice(offset, offset + STAGE_CHUNK_SIZE);
         await hrmsApi.post(
@@ -489,7 +486,7 @@ export function BellavitaMasmisUploader({
       setResult({ imported, errors: errored });
       void refreshCoverage([templateCode]);
       setPhase("done");
-      setMessage(null);
+      setMessage(readSummary);
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       loadLog();

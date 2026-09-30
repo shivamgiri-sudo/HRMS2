@@ -16,6 +16,7 @@ import { NeemansChatDashboard } from "@/components/process-performance/NeemansCh
 import { BellavitaChatDashboard } from "@/components/process-performance/BellavitaChatDashboard";
 import { BellavitaCartDashboard } from "@/components/process-performance/BellavitaCartDashboard";
 import { DalmiaDashboard } from "@/components/process-performance/DalmiaDashboard";
+import { SbiCardDashboard } from "@/components/process-performance/SbiCardDashboard";
 import { HousingOwnerDashboard } from "@/components/process-performance/HousingOwnerDashboard";
 import { HousingPremiumSaleDashboard } from "@/components/process-performance/HousingPremiumSaleDashboard";
 import { LpFeedbackDashboard } from "@/components/process-performance/LpFeedbackDashboard";
@@ -36,7 +37,7 @@ import {
   Receipt, PhoneIncoming, PhoneOutgoing, PhoneCall, ClipboardList,
   Mail, Star, ShieldCheck, Repeat, RotateCcw, TrendingUp,
   Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
-  Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud, Sparkles, Download,
+  Building2, Globe, Settings, Zap, CreditCard, LayoutGrid, UploadCloud, Sparkles, Download,
 } from "lucide-react";
 
 /**
@@ -45,7 +46,7 @@ import {
  * company is passed straight through as projectKey with no separate
  * mapping table, same as bellavita/gnc/clovia/neemans already are.
  */
-type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom";
+type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "sbi_card";
 type SectionKey = "dashboards" | "uploader" | "mis";
 
 const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
@@ -65,6 +66,7 @@ const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "dubangladesh", label: "DU Bangladesh" },
   { key: "viega", label: "Viega" },
   { key: "exicom", label: "Exicom" },
+  { key: "sbi_card", label: "SBI Card Collections" },
 ];
 
 /** Icon + color per company, purely a visual grouping aid on the landing
@@ -86,6 +88,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
   dubangladesh: { icon: Globe, tone: "cyan" },
   viega: { icon: Settings, tone: "purple" },
   exicom: { icon: Zap, tone: "fuchsia" },
+  sbi_card: { icon: CreditCard, tone: "blue" },
 };
 
 /**
@@ -98,7 +101,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -147,6 +150,9 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   dalmia: [
     { key: "performance", label: "Inbound & Outbound Performance", description: "Calls, AL/SL, language-wise, outbound, QRC and leads — inbound live from the dialer, DD/Outbound/APR from the uploaders", kind: "dalmia_dashboard" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
+  ],
+  sbi_card: [
+    { key: "performance", label: "Collections Performance", description: "Dials, connects, PTP, campaigns/buckets, agents & teams, accounts, downtime and KPI metrics", kind: "sbi_card_dashboard" },
   ],
   dubangladesh: [
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
@@ -303,6 +309,15 @@ const DALMIA_UPLOADERS = [
   { code: "DALMIA_AFTER_HOUR",   label: "after_hour",      description: "Upload Dalmia after-hour call log",           icon: PhoneIncoming },
 ];
 
+/** SBI Card Collections' 5 uploaders (upload_template_master codes; RPCs import_sbi_card_*_batch). */
+const SBI_CARD_UPLOADERS = [
+  { code: "SBI_CARD_DIALER_MIS",     label: "Dialer MIS",       description: "Upload SBI Card dialer MIS (one campaign sheet per upload)", icon: PhoneOutgoing },
+  { code: "SBI_CARD_AGENT_MIS",      label: "Agent MIS",        description: "Upload SBI Card agent MIS",                                  icon: Users },
+  { code: "SBI_CARD_ACCOUNT_FILE",   label: "Account File",     description: "Upload SBI Card account allocation file",                    icon: ClipboardList },
+  { code: "SBI_CARD_DOWNTIME",       label: "Downtime Tracker", description: "Upload SBI Card dialer downtime tracker",                    icon: Activity },
+  { code: "SBI_CARD_PEN_ESTIMATION", label: "Pen Estimation",   description: "Upload SBI Card penetration estimation",                     icon: Target },
+];
+
 const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   bellavita: BELLAVITA_UPLOADERS,
   gnc: GNC_UPLOADERS,
@@ -312,6 +327,7 @@ const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   housing_premium: HOUSING_PREMIUM_UPLOADERS,
   clovia: CLOVIA_UPLOADERS,
   dalmia: DALMIA_UPLOADERS,
+  sbi_card: SBI_CARD_UPLOADERS,
   birlanu: BIRLANU_UPLOADERS,
   satya_retail: SATYA_RETAIL_UPLOADERS,
   lp_feedback: LP_FEEDBACK_UPLOADERS,
@@ -538,7 +554,7 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -731,6 +747,8 @@ export default function ProcessPerformanceV2Page() {
               <BellavitaChatDashboard />
             ) : selectedDashboard.kind === "dalmia_dashboard" ? (
               <DalmiaDashboard />
+            ) : selectedDashboard.kind === "sbi_card_dashboard" ? (
+              <SbiCardDashboard />
             ) : selectedDashboard.kind === "bellavita_cart" ? (
               <BellavitaCartDashboard />
             ) : selectedDashboard.kind === "housing_owner_sale" ? (

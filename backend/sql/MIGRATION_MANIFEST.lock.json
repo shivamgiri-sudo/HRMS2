@@ -942,7 +942,8 @@
     "migrations/1930_gnc_apr_kpi_source_own_table.sql",
     "migrations/1940_bla_bli_blu_abandon_upload_template.sql",
     "migrations/1921_capacity_mandate_editors.sql",
-    "1931_bank_exception_email_template.sql"
+    "1931_bank_exception_email_template.sql",
+    "1932_sbi_card_collections.sql"
   ],
   "approvedDeletions": [
     {

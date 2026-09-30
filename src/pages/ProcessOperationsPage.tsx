@@ -11,6 +11,7 @@ import {
   BvoDashboard, LpDashboard, ProcessDataPanel, DalmiaDashboard, UploadPanel,
 } from "./NativeSalesDashboard";
 import { HousingDashboardEmbed } from "./NativeHousingDashboards";
+import { SbiCardDashboard } from "@/components/process-performance/SbiCardDashboard";
 import BlaBliBluSalesDashboard from "./BlaBliBluSalesDashboard";
 import { KpiCommandDeck } from "@/components/process-operations/KpiCommandDeck";
 import { ProcessPortfolio } from "@/components/process-operations/ProcessPortfolio";
@@ -80,6 +81,7 @@ const PROCESS_SALES_MAP: Record<string, { type: string; label: string }> = {
   CLOVIA:              { type: "clovia",    label: "Clovia" },
   DALMIA_CEMENT:       { type: "dalmia",    label: "Dalmia" },
   DU_DIGITAL:          { type: "du",        label: "DU Digital" },
+  SBI_CARD:            { type: "sbi_card",  label: "SBI Card Collections" },
   // LP = Lawyers Panel (owner, 2026-09-15). Worked by the Eresolution team (NOIDA):
   // the LP call records' agents who are HRMS employees are all active on
   // Eresolution. The LAWYER_PANEL process_master row is inactive, with no staff.
@@ -108,7 +110,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
     return (
       <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
         <p className="text-sm font-semibold text-slate-700">No sales dashboard for {processName}</p>
-        <p className="text-xs text-slate-400 mt-1">Sales data is only available for Bellavita, BLA / BLI / BLU, Neemans, GNC, AW, Clovia, Dalmia, DU Digital, Eresolution (Lawyers Panel), and Housing processes.</p>
+        <p className="text-xs text-slate-400 mt-1">Sales data is only available for Bellavita, BLA / BLI / BLU, Neemans, GNC, AW, Clovia, Dalmia, SBI Card Collections, DU Digital, Eresolution (Lawyers Panel), and Housing processes.</p>
       </div>
     );
   }
@@ -116,7 +118,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
   return (
     <div className="space-y-5">
       {/* Month selector — shared across all views that need it */}
-      {!["clovia", "du", "dalmia", "lp"].includes(mapping.type) && (
+      {!["clovia", "du", "dalmia", "sbi_card", "lp"].includes(mapping.type) && (
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Month</span>
           <input type="month" value={month} onChange={e => setMonth(e.target.value)}
@@ -135,6 +137,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
       {mapping.type === "clovia"    && <ProcessDataPanel process="Clovia" uploadTypes={["CLOVIA_EMAIL_DAILY","CLOVIA_CHAT_DAILY","CLOVIA_CRM_DISPOSITION","CLOVIA_QUALITY_AUDIT","CLOVIA_RECHURN_CALLS","CLOVIA_TEAM_ALIGNMENT"]} color="#E40B92" />}
       {mapping.type === "du"        && <ProcessDataPanel process="DU Digital" uploadTypes={["DU_APR_KOREA","DU_APR_THAILAND","DU_TEAM_MAPPING_KOREA","DU_TEAM_MAPPING_THAILAND"]} color="#003D6B" />}
       {mapping.type === "dalmia"    && <DalmiaDashboard />}
+      {mapping.type === "sbi_card"  && <SbiCardDashboard />}
       {mapping.type === "housing"   && <HousingDashboardEmbed subProcess="both" />}
 
       {/* This brand's sales uploads — the Brand Sales Analytics "Upload Data"

@@ -37,6 +37,8 @@ export const COVERAGE_SOURCES: Record<string, Source | null> = {
   SATYA_ALLOCATION_MASMIS: M("satya_allocation", "report_date"), SATYA_CDR_MASMIS: M("satya_cdr", "report_date"),
   DALMIA_DD_RAW: H("dalmia_dd_raw"), DALMIA_OUTBOUND_RAW: H("dalmia_outbound_raw"), DALMIA_AFTER_HOUR: H("dalmia_after_hour_raw"),
   DALMIA_APR: M("dalmia_apr_raw", "report_date", "date"),
+  SBI_CARD_DIALER_MIS: H("sbi_card_dialer_mis"), SBI_CARD_AGENT_MIS: H("sbi_card_agent_mis"), SBI_CARD_ACCOUNT_FILE: H("sbi_card_account_file"),
+  SBI_CARD_DOWNTIME: H("sbi_card_downtime"), SBI_CARD_PEN_ESTIMATION: H("sbi_card_pen_estimation"),
 };
 
 export interface UploadCoverage {
