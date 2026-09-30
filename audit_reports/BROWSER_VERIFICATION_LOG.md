@@ -285,3 +285,20 @@ Verified on production data via the localhost preview API + Playwright (zero con
 | Operating % / revenue blank | Root cause found on the server: one P&L query (salary-assignment lookup, correlated subquery) ran >160s so the org-wide calculation never finished. Rewritten to one pass (identical on 13/14 processes compared; the 14th differed only by an arbitrary tie the new tie-break now reproduces). Calculation now 77s cold. After it completes: Bella-Vita revenue ₹17.46L, Operating % 35.5% (Aug payroll, labelled); Neemans ₹7.02L, 3.3% |
 
 **Not verified:** a real production login / per-role scoping; that the app's own 60s-after-start warm-up populates the cache (verified with an equivalent cold-then-warm run in a separate process); Housing Owner Operating % (no payroll rows for Aug or Sep, a genuine data gap); Satya Retail (no process record); dark mode.
+
+---
+
+## 2026-09-30 — Remaining Process Performance V2 dashboards added to Business datapoints
+
+**Method:** Same read-only harness against production (every non-SELECT rejected; 0 blocked), plus a check of every V2 route file's own endpoint for the same window. Dialler-dependent pieces (Dalmia, inbound groups) run on the production server with the deployed build. Harness and temporary server files removed afterwards.
+
+| Check | Result |
+|---|---|
+| KPI page vs the V2 dashboard's own endpoint, same window | 24 of 24 compared values identical: Bella-Vita turnover ₹42,83,504, chats 39,207, chat revenue ₹3,58,873, carts 40,347, recovered revenue ₹9,42,144; GNC turnover, abandon-cart sales 940 / ₹37,23,038, chats 8,067; Housing Owner ₹32,10,033; Housing Premium ₹23,49,747; Birlanu; Clovia emails 1,965 / audit 91.14% / CSAT 93.21%; Appreciate Wealth inbound 64, outbound 6,983, dialler 3,993; Lawyer Panel 57,744 / 37,055 |
+| Neemans sales, cart, productivity | V2 shows 0 for September; the KPI page shows no section for an all-zero source (by design) |
+| Server: Dalmia extras | 940 tagged calls (420 query / 353 request / 167 complaint), utilisation 39.3%, after-hours leads 467, calls by language with a 10-stage share list |
+| Server: Clovia channels | Emails 1,965; CSAT 93.2%; audit 91.1%; outbound 3,270 calls at 89.8% connected; rechurn 426 |
+| Server: Satya Retail adapter | 10,117 shops allocated, 174 orders, ₹2,79,920 order value, 28,163 call attempts |
+| Server: Bella-Vita chat / cart, GNC abandon cart | Load with funnels (4 and 5 stages) |
+
+**Not verified:** a real production login and per-role scoping; the new sections were not re-rendered in a browser this round (same component as the earlier verified layout); Satya Retail cannot appear on the KPI page until a process record for it exists (none in process_master); Puresta has no dashboard in V2 either.
