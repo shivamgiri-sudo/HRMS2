@@ -1174,13 +1174,13 @@ export const budgetTopupService = {
   },
 
   /**
-   * The raiser withdraws their own request. Allowed at either pending stage — nothing has touched
-   * the budget line until Finance Head approval applies it, so withdrawing before then undoes
-   * nothing. Deliberately NOT routed through review(): the maker-checker rule there refuses the
-   * raiser outright, which is exactly why a request raised in error used to have no way out
-   * short of asking a reviewer to reject it.
+   * The raiser (or a super_admin) withdraws a request — only while it is still 'submitted'. Once
+   * Branch Head has approved, the request is a reviewer's decision in flight and leaves the queue
+   * by Finance Head's approve/reject, not by withdrawal. Deliberately NOT routed through
+   * review(): the maker-checker rule there refuses the raiser outright, which is exactly why a
+   * request raised in error used to have no way out short of asking a reviewer to reject it.
    */
-  async cancel(id: string, actorId: string, actorRole: string, reason?: string) {
+  async cancel(id: string, actorId: string, actorRole: string, isSuperAdmin: boolean, reason?: string) {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
@@ -1195,11 +1195,17 @@ export const budgetTopupService = {
       const request = rows[0];
       if (!request) throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
       const status = String(request.status);
-      if (String(request.requested_by) !== actorId) {
+      if (String(request.requested_by) !== actorId && !isSuperAdmin) {
         throw refuse(403, "TOPUP_NOT_OWNER", "Only the person who raised this top-up request can cancel it");
       }
-      if (!["submitted", "branch_head_approved"].includes(status)) {
-        throw refuse(409, "TOPUP_WRONG_STAGE", `Cannot cancel a top-up request in status ${status}`);
+      if (status !== "submitted") {
+        throw refuse(
+          409,
+          "TOPUP_WRONG_STAGE",
+          status === "branch_head_approved"
+            ? "Branch Head has already approved this top-up request, so it can no longer be cancelled"
+            : `Cannot cancel a top-up request in status ${status}`
+        );
       }
       await connection.execute(
         `UPDATE finance_budget_topup_request
@@ -1236,7 +1242,7 @@ export const budgetTopupService = {
   },
 
   /**
-   * The raiser corrects the amount of their own request — only while it is still 'submitted'.
+   * The raiser (or a super_admin) corrects a request's amount — only while it is still 'submitted'.
    * Once Branch Head has approved, the figure is the one a reviewer signed off, and changing it
    * underneath that approval would send Finance Head a number nobody at the branch stage saw.
    *
@@ -1245,7 +1251,7 @@ export const budgetTopupService = {
    * Hand-typed cost-centre splits are rescaled in proportion, the last one absorbing the
    * rounding, so they still sum to the request; a request shared by a driver has none to rescale.
    */
-  async updateAmount(id: string, newAmount: number, actorId: string, actorRole: string) {
+  async updateAmount(id: string, newAmount: number, actorId: string, actorRole: string, isSuperAdmin: boolean) {
     const requestedAmount = roundMoney(newAmount);
     if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
       throw refuse(400, "TOPUP_AMOUNT_INVALID", "Requested amount must be greater than zero");
@@ -1264,7 +1270,7 @@ export const budgetTopupService = {
       const request = rows[0];
       if (!request) throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
       const status = String(request.status);
-      if (String(request.requested_by) !== actorId) {
+      if (String(request.requested_by) !== actorId && !isSuperAdmin) {
         throw refuse(403, "TOPUP_NOT_OWNER", "Only the person who raised this top-up request can edit it");
       }
       if (status !== "submitted") {

@@ -818,9 +818,9 @@ router.post(
   })
 );
 
-// The raiser's own two ways to change a request they submitted: correct its amount (only until
-// Branch Head approves) or withdraw it (until it is applied). Ownership and stage are enforced in
-// the service; the role gate is the same one that let them raise it.
+// The raiser's (or a super_admin's) two ways to change a submitted request: correct its amount or
+// withdraw it — both only until Branch Head approves. Ownership and stage are enforced in the
+// service; the role gate is the same one that let them raise it.
 router.patch(
   "/pnl/budget-topups/:id",
   requireWriteAccess,
@@ -838,7 +838,8 @@ router.patch(
       req.params.id,
       Number(req.body?.requestedAmount ?? 0),
       user.id,
-      user.role
+      user.role,
+      user.roles.includes("super_admin")
     );
     res.json({ success: true, data });
   })
@@ -861,6 +862,7 @@ router.post(
       req.params.id,
       user.id,
       user.role,
+      user.roles.includes("super_admin"),
       req.body?.reason ? String(req.body.reason) : undefined
     );
     res.json({ success: true, data });

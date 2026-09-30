@@ -204,12 +204,13 @@ describe("budget top-up request workflow", () => {
     expect(editIdx).toBeGreaterThan(cancelIdx);
     const cancelBody = service.slice(cancelIdx, editIdx);
     const editBody = service.slice(editIdx, directIdx);
-    // Both are the raiser's own actions — never a reviewer's.
+    // Both belong to the raiser, with a super_admin override — never a reviewer's.
+    expect(cancelBody).toContain("&& !isSuperAdmin");
+    expect(editBody).toContain("&& !isSuperAdmin");
     expect(cancelBody).toContain("TOPUP_NOT_OWNER");
     expect(editBody).toContain("TOPUP_NOT_OWNER");
-    // Cancel is open at both pending stages; an applied/rejected request cannot be withdrawn.
-    expect(cancelBody).toContain('["submitted", "branch_head_approved"].includes(status)');
-    // Edit is locked the moment Branch Head approves.
+    // Cancel and edit are both locked the moment Branch Head approves.
+    expect(cancelBody).toContain('status !== "submitted"');
     expect(editBody).toContain('status !== "submitted"');
     expect(editBody).toContain("TOPUP_EDIT_LOCKED");
     // Quantity is re-derived server-side so the approved amount stays the applied amount.
@@ -225,6 +226,6 @@ describe("budget top-up request workflow", () => {
     }
 
     const panel = read("../src/components/finance/budget/BudgetTopupPanel.tsx");
-    expect(panel).toContain('const canEditAmount = isOwnRequest(request) && request.status === "submitted";');
+    expect(panel).toContain('const canEditOrCancel = (isOwnRequest(request) || isSuperAdmin) && request.status === "submitted";');
   });
 });

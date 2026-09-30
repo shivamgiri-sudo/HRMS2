@@ -445,6 +445,7 @@ export function BudgetTopupPanel({
   presetLineId,
   onConsumedPreset,
   currentUserId,
+  isSuperAdmin,
   presetNewLineHead,
   presetNewLineSubHead,
   currentBudgetId,
@@ -469,6 +470,9 @@ export function BudgetTopupPanel({
   /** Current user's ID — used to disable the Approve button when the viewer is the submitter
    *  (maker-checker enforcement mirrors the backend check in budget-topup.service.ts). */
   currentUserId?: string | null;
+  /** super_admin may edit the amount of / cancel a request they did not raise — same override
+   *  budget-topup.service.ts's updateAmount()/cancel() apply. */
+  isSuperAdmin?: boolean;
   /** Group D deep-link readiness: mirrors presetLineId's shape for the "no line exists yet"
    *  case a blocked GRN can also produce (see BranchBudgetManagementWorkspace's ?newLineHead=/
    *  ?newLineSubHead= params). Nothing sends these yet — Group A, not built — this only makes
@@ -888,12 +892,10 @@ export function BudgetTopupPanel({
                 : request.finance_head_review_note ?? request.branch_head_review_note;
           const decisionNoteLabel =
             request.status === "rejected" ? "Rejected" : request.status === "cancelled" ? "Cancelled" : "Reviewer remark";
-          /* The raiser's own actions. Editing the amount stops the moment Branch Head approves —
-             that approval is of a specific figure — while withdrawing stays possible until the
-             increase is actually applied. Mirrors updateAmount()/cancel() in budget-topup.service.ts. */
-          const canEditAmount = isOwnRequest(request) && request.status === "submitted";
-          const canCancel =
-            isOwnRequest(request) && (request.status === "submitted" || request.status === "branch_head_approved");
+          /* The raiser's (or a super_admin's) actions. Both stop the moment Branch Head approves —
+             from there the request leaves the queue only by a reviewer's decision. Mirrors
+             updateAmount()/cancel() in budget-topup.service.ts. */
+          const canEditOrCancel = (isOwnRequest(request) || isSuperAdmin) && request.status === "submitted";
 
           return (
             <div
@@ -965,9 +967,8 @@ export function BudgetTopupPanel({
 
                   <ApprovalTrack stages={stages} />
 
-                  {(canEditAmount || canCancel) && (
+                  {canEditOrCancel && (
                     <div className="flex gap-2 border-t border-slate-100 pt-3">
-                      {canEditAmount && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -979,8 +980,6 @@ export function BudgetTopupPanel({
                         >
                           <Pencil className="mr-1 h-3.5 w-3.5" />Edit amount
                         </Button>
-                      )}
-                      {canCancel && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -992,7 +991,6 @@ export function BudgetTopupPanel({
                         >
                           <Ban className="mr-1 h-3.5 w-3.5" />Cancel request
                         </Button>
-                      )}
                     </div>
                   )}
 

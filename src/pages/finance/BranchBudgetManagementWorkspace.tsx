@@ -2848,6 +2848,7 @@ export default function BranchBudgetManagementWorkspace() {
                   canReviewFinanceStage={Boolean(capabilities?.canReviewFinanceStage)}
                   canDirectTopup={Boolean(capabilities?.canDirectTopup)}
                   currentUserId={user?.id ?? null}
+                  isSuperAdmin={isSuperAdmin}
                   presetLineId={topupPresetLineId || null}
                   presetNewLineHead={topupPresetNewLineHead || null}
                   presetNewLineSubHead={topupPresetNewLineSubHead || null}
