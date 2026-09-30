@@ -59,8 +59,8 @@ export async function withReadOnly<T>(fn: (conn: Conn) => Promise<T>): Promise<T
 export async function listTables(schema: string): Promise<Array<{ table: string; rows: number | null; updatedAt: string | null }>> {
   const { schema: s } = assertSourceName(schema, "x");
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT table_name AS t, table_rows AS r, update_time AS u FROM information_schema.tables
-      WHERE table_schema = ? AND table_type = 'BASE TABLE' ORDER BY table_name LIMIT 3000`, [s]);
+    `SELECT TABLE_NAME AS t, TABLE_ROWS AS r, UPDATE_TIME AS u FROM information_schema.tables
+      WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME LIMIT 3000`, [s]);
   return rows.filter((r) => !SENSITIVE_TABLE_RE.test(String(r.t)))
     .map((r) => ({ table: String(r.t), rows: r.r === null ? null : Number(r.r), updatedAt: r.u ? String(r.u) : null }));
 }
@@ -68,8 +68,8 @@ export async function listTables(schema: string): Promise<Array<{ table: string;
 export async function listColumns(schema: string, table: string): Promise<ColumnInfo[]> {
   const src = assertSourceName(schema, table);
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT column_name AS c, data_type AS d, column_type AS ct FROM information_schema.columns
-      WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position LIMIT 600`, [src.schema, src.table]);
+    `SELECT COLUMN_NAME AS c, DATA_TYPE AS d, COLUMN_TYPE AS ct FROM information_schema.columns
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION LIMIT 600`, [src.schema, src.table]);
   if (!rows.length) throw new PdError(404, "TABLE_NOT_FOUND", `${src.schema}.${src.table} does not exist`);
   return rows.map((r) => ({ name: String(r.c), dataType: String(r.d), columnType: String(r.ct) }));
 }
@@ -156,7 +156,7 @@ export async function readFreshness(r: Resolved): Promise<Freshness> {
       `SELECT /*+ MAX_EXECUTION_TIME(${QUERY_TIMEOUT_MS}) */ DATE_FORMAT(MAX(${dateCol}), '%Y-%m-%d') AS mx, DATE_FORMAT(MIN(${dateCol}), '%Y-%m-%d') AS mn, COUNT(*) AS n
          FROM ${quoteIdent(src.schema)}.${quoteIdent(src.table)}${where}`, params);
     const [t] = await conn.query<RowDataPacket[]>(
-      `SELECT update_time AS u FROM information_schema.tables WHERE table_schema = ? AND table_name = ? LIMIT 1`, [src.schema, src.table]);
+      `SELECT UPDATE_TIME AS u FROM information_schema.tables WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? LIMIT 1`, [src.schema, src.table]);
     return { latestDate: a[0]?.mx ?? null, earliestDate: a[0]?.mn ?? null, rows: Number(a[0]?.n ?? 0), lastDataAt: t[0]?.u ? String(t[0].u) : null };
   });
 }
