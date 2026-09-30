@@ -67,7 +67,7 @@ import {
 } from './kpi-studio.compute.js';
 import { validateFormula } from './kpi-formula.engine.js';
 import {
-  StudioForbiddenError, assertCanAuthor, assertCanCompute, definitionTarget, definitionVisibilitySql, studioViewerFor,
+  StudioForbiddenError, assertCanAuthor, assertCanCompute, assertCanEditSource, definitionTarget, definitionVisibilitySql, studioViewerFor,
 } from './kpi-studio.scope.js';
 import { cancelBackfill, getBackfill, listBackfills, startBackfill } from './kpi-studio.backfill.js';
 import { resetFieldNameCache } from './kpi-studio.compute.js';
@@ -254,6 +254,8 @@ router.post(
   '/data-sources',
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
+    const b = req.body ?? {};
+    await assertCanEditSource(req.authUser!.id, { sourceId: b.id ? String(b.id) : undefined, newProcessId: b.process_id ? String(b.process_id) : null });
     const result = await saveDataSource(req.body ?? {}, req.authUser?.id);
     res.json({ success: true, data: result });
   }),
@@ -277,6 +279,7 @@ router.post(
   '/data-sources/:id/fields',
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
+    await assertCanEditSource(req.authUser!.id, { sourceId: req.params.id });
     const result = await saveSourceField({ ...(req.body ?? {}), data_source_id: req.params.id });
     resetFieldNameCache();
     res.json({ success: true, data: result });
@@ -291,6 +294,7 @@ router.delete(
   '/data-sources/:id',
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
+    await assertCanEditSource(req.authUser!.id, { sourceId: req.params.id });
     res.json({ success: true, data: await deleteDataSource(req.params.id) });
   }),
 );
@@ -300,6 +304,7 @@ router.post(
   '/data-sources/:id/restore',
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
+    await assertCanEditSource(req.authUser!.id, { sourceId: req.params.id });
     res.json({ success: true, data: await restoreDataSource(req.params.id) });
   }),
 );
@@ -308,6 +313,7 @@ router.delete(
   '/fields/:fieldId',
   requireRole(...CONFIG_ROLES),
   h(async (req, res) => {
+    await assertCanEditSource(req.authUser!.id, { fieldId: req.params.fieldId });
     const removed = await deleteSourceField(req.params.fieldId);
     resetFieldNameCache();
     res.json({ success: true, data: removed });

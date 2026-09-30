@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authorDecision, computeDecision, definitionVisibilitySql, type StudioViewer } from '../kpi-studio.scope.js';
+import { authorDecision, computeDecision, definitionVisibilitySql, sourceDecision, type StudioViewer } from '../kpi-studio.scope.js';
 
 /**
  * Who may author or compute what. A formula decides what appears on somebody's appraisal and compute
@@ -67,3 +67,15 @@ describe('definitionVisibilitySql', () => {
     expect(v.params).toEqual([]);
   });
 });
+
+describe('sourceDecision', () => {
+  it("a scoped author may change a source tied to their own process only", () => {
+    expect(sourceDecision('p1', scoped).ok).toBe(true);
+    expect(sourceDecision('other', scoped).message).toMatch(/do not manage/);
+  });
+  it('a shared source (no process) needs organisation-wide access', () => {
+    expect(sourceDecision(null, scoped).message).toMatch(/organisation-wide/);
+    expect(sourceDecision(null, org).ok).toBe(true);
+  });
+});
+

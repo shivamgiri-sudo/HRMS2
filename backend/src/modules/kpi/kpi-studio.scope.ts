@@ -115,3 +115,44 @@ export async function definitionTarget(id: string): Promise<ScopeTarget | null> 
     `SELECT branch_id, process_id, designation_id, employee_id FROM kpi_studio_definition WHERE id = ? LIMIT 1`, [id]);
   return ((rows as any[])[0] as ScopeTarget | undefined) ?? null;
 }
+
+/**
+ * A data source feeds every KPI that reads it. One tied to a process belongs to whoever manages that process;
+ * one tied to no process is shared configuration and needs organisation-wide access.
+ */
+export function sourceDecision(processId: string | null | undefined, viewer: StudioViewer): Decision {
+  if (viewer.orgWide) return { ok: true };
+  if (processId && viewer.processIds.has(processId)) return { ok: true };
+  return no(processId
+    ? 'That data source belongs to a process you do not manage.'
+    : 'A data source that is not tied to one of your processes can only be changed by someone with organisation-wide access. Tie it to your process, or ask an administrator.');
+}
+
+/** The process a stored source (or the source owning a field) is tied to; null when none or not found. */
+export async function sourceProcessId(ref: { sourceId?: string; fieldId?: string }): Promise<string | null> {
+  try {
+    const [rows] = ref.fieldId
+      ? await db.execute<RowDataPacket[]>(
+        `SELECT s.process_id FROM kpi_studio_source_field f JOIN kpi_studio_data_source s ON s.id = f.data_source_id WHERE f.id = ? LIMIT 1`, [ref.fieldId])
+      : await db.execute<RowDataPacket[]>(`SELECT process_id FROM kpi_studio_data_source WHERE id = ? LIMIT 1`, [ref.sourceId ?? '']);
+    const p = (rows as any[])[0]?.process_id;
+    return p ? String(p) : null;
+  } catch {
+    // process_id arrived with a later migration; a database without it has only shared sources.
+    return null;
+  }
+}
+
+/** Throws unless the caller may change this source. Pass the stored source/field, and the process a save would set. */
+export async function assertCanEditSource(userId: string, ref: { sourceId?: string; fieldId?: string; newProcessId?: string | null }): Promise<void> {
+  const viewer = await studioViewerFor(userId);
+  if (viewer.orgWide) return;
+  const checks: Array<string | null> = [];
+  if (ref.sourceId || ref.fieldId) checks.push(await sourceProcessId(ref));
+  if (ref.newProcessId !== undefined || !(ref.sourceId || ref.fieldId)) checks.push(ref.newProcessId ?? null);
+  for (const pid of checks) {
+    const d = sourceDecision(pid, viewer);
+    if (!d.ok) throw new StudioForbiddenError(d.message ?? 'Not allowed');
+  }
+}
+

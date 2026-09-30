@@ -62,6 +62,7 @@ vi.mock("../kpi-studio.scope.js", async (importOriginal) => {
     assertCanAuthor: async (_u: string, t: any) => guard(real.authorDecision({ ...t, employeeProcessId: t.employee_id ? "process-1" : null }, viewer.current)),
     assertCanCompute: async (_u: string, t: any) => guard(real.computeDecision(t, viewer.current)),
     definitionTarget: async () => ({ process_id: "process-1" }),
+    assertCanEditSource: async (_u: string, r: any) => guard(real.sourceDecision(r.newProcessId ?? (r.sourceId || r.fieldId ? "process-1" : null), viewer.current)),
   };
 });
 
@@ -477,3 +478,18 @@ describe("authoring and computing are limited to the caller's own processes", ()
     expect((await request(appFor("qa")).post("/api/kpi-studio/compute-range").send({ from: "2026-08-01", to: "2026-08-01" })).status).toBe(403);
   });
 });
+
+describe("data sources are limited to the caller's own processes", () => {
+  it("refuses a shared source, or one for another process, from a scoped author", async () => {
+    viewer.current = { orgWide: false, processIds: new Set(["process-1"]), fullBranchIds: new Set<string>() };
+    schemaInstalled(); resetStudioCapability();
+    const shared = await request(appFor("process_manager")).post("/api/kpi-studio/data-sources").send({ source_code: "X", source_name: "X", source_type: "manual" });
+    expect(shared.status).toBe(403);
+    expect(shared.body.message).toMatch(/organisation-wide/);
+    const other = await request(appFor("process_manager")).post("/api/kpi-studio/data-sources").send({ source_code: "X", source_name: "X", source_type: "manual", process_id: "process-2" });
+    expect(other.status).toBe(403);
+    const own = await request(appFor("process_manager")).post("/api/kpi-studio/data-sources").send({ source_code: "X", source_name: "X", source_type: "manual", process_id: "process-1" });
+    expect(own.status).not.toBe(403);
+  });
+});
+
