@@ -425,7 +425,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const conv = getEarning('CONVEYANCE') || getEarning('CONV') || Number(record.conveyance ?? 0);
     const pa = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE') || getEarning('PORTFOLIO') || Number(record.portfolio ?? 0);
     const ma = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE') || getEarning('MEDICAL') || Number(record.medical_allowance ?? 0);
-    const sa = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE') || Number(record.special_allowance ?? 0);
+    const sa = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE') || 0;
     const arrear = getEarning('ARREAR') || Number(record.arrear ?? 0);
     const incentive = getEarning('INCENTIVE') || Number(record.incentive ?? 0);
     const lta = Number(record.lta ?? 0);
@@ -522,7 +522,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const conv = getEarning('CONVEYANCE') || getEarning('CONV') || Number(record.conveyance ?? 0);
     const pa = getEarning('PA') || getEarning('PERSONAL_ALLOWANCE') || getEarning('PORTFOLIO') || Number(record.portfolio ?? 0);
     const ma = getEarning('MA') || getEarning('MEDICAL_ALLOWANCE') || getEarning('MEDICAL') || Number(record.medical_allowance ?? 0);
-    const sa = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE') || Number(record.special_allowance ?? 0);
+    const sa = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE') || 0;
     const arrear = getEarning('ARREAR') || Number(record.arrear ?? 0);
     const incentive = getEarning('INCENTIVE') || Number(record.incentive ?? 0);
 
