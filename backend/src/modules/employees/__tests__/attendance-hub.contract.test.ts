@@ -34,7 +34,14 @@ describe("attendance hub contracts", () => {
     expect(routesSource).toContain("branch_master");
     expect(routesSource).toContain("process_master");
     expect(routesSource).toContain("designation_master");
-    expect(routesSource).toContain('"payroll_head", "payroll_admin"');
+    // The route's own role gate, whatever the formatter does with its line breaks.
+    const gate = routesSource.match(
+      /"\/hr-hub\/filter-options",\s*requireRole\(([\s\S]*?)\),\s*h\(/,
+    );
+    expect(gate, "role gate on /hr-hub/filter-options not found").toBeTruthy();
+    const gateRoles = gate![1].match(/"[a-z_]+"/g) ?? [];
+    expect(gateRoles).toContain('"payroll_head"');
+    expect(gateRoles).toContain('"payroll_admin"');
     expect(hooksSource).toContain("/api/employees/hr-hub/filter-options");
     expect(hooksSource).not.toContain('"/api/branches"');
     expect(hooksSource).not.toContain('"/api/process"');

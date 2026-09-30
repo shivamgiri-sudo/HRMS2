@@ -22,7 +22,14 @@ const { getMonthRunIds, resolveOutputRunIds, runIdPlaceholders, MonthOutputError
   await import("../payroll-month-outputs.service.js");
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const routes = fs.readFileSync(path.resolve(DIR, "../payroll.routes.ts"), "utf8");
+/**
+ * payroll.routes.ts is prettier-formatted since cd83825bc, so a registration reads
+ * `router.post(\n  "/runs",` rather than `router.post("/runs",`. Re-join the path onto the verb
+ * so the markers below keep locating the same handlers; nothing inside a handler is altered.
+ */
+const joinRouteRegistrations = (s: string) =>
+  s.replace(/(router\.(?:get|post|put|patch|delete))\(\s+"/g, '$1("');
+const routes = joinRouteRegistrations(fs.readFileSync(path.resolve(DIR, "../payroll.routes.ts"), "utf8"));
 
 beforeEach(() => execute.mockReset());
 
@@ -141,7 +148,8 @@ describe("the month payment file applies every gate to every run", () => {
   });
 
   it("refuses when any run in scope is unvalidated", () => {
-    expect(neft).toContain("r.validation_status !== 'validated'");
+    // Either quote style: prettier rewrote the literal to double quotes.
+    expect(neft).toMatch(/r\.validation_status !== ['"]validated['"]/);
   });
 
   it("refuses when any run in scope lacks finance sign-off", () => {

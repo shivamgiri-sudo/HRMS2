@@ -38,6 +38,23 @@ vi.mock("../middleware/authMiddleware.js", async (importOriginal) => {
   };
 });
 
+// /latest-punches resolves the caller's RBAC branch scope (9b4199412) from the role keys
+// stored in the DB. The DB is stubbed here, so the role keys come from the test actor
+// instead; the real scope resolution (dashboardScope.ts) still runs on top of them, so
+// admin resolves ORG_ALL exactly as it does in production.
+vi.mock("../shared/roleResolver.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../shared/roleResolver.js")>();
+  return {
+    ...original,
+    getUserRoleContext: async () => ({
+      roleKeys: actor.roles,
+      primaryRole: actor.role,
+      isSuperAdmin: actor.roles.includes("super_admin") || actor.roles.includes("admin"),
+      isHO: false,
+    }),
+  };
+});
+
 // requireRole.ts is NOT mocked — the whole point of this file is to exercise the real
 // role gate on both the router-level and route-level middleware.
 import { cosecMonitoringRouter } from "../modules/peopleos/peopleos.routes.js";
@@ -155,6 +172,9 @@ describe("2b — each endpoint issues only the query(ies) its own response uses"
     const calls = execute.mock.calls.map(([sql]) => String(sql));
     expect(calls.some((sql) => /FROM biometric_attendance_log/.test(sql))).toBe(true);
     expect(calls.some((sql) => /FROM integration_sync_run/.test(sql))).toBe(false);
+    // admin is ORG_ALL, so the punch join must stay unfiltered by branch.
+    const punchSql = calls.find((sql) => /FROM biometric_attendance_log/.test(sql))!;
+    expect(punchSql).not.toMatch(/e\.branch_id IN/);
   });
 });
 

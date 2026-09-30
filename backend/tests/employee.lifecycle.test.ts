@@ -9,7 +9,14 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+vi.mock("../src/db/mysql.js", () => ({
+  db: {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    query: vi.fn().mockResolvedValue([[], []]),
+    getConnection: vi.fn(),
+  },
+  pingDb: vi.fn(),
+}));
 
 /**
  * Tokens this suite authenticates with, and who each one is.
@@ -62,13 +69,20 @@ import { db } from "../src/db/mysql.js";
 import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
+const mockGetConnection = db.getConnection as ReturnType<typeof vi.fn>;
 const mockGetUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 
 const ADMIN_AUTH = { Authorization: "Bearer admin.token" };
 const HR_AUTH    = { Authorization: "Bearer hr.token" };
 const EMP_AUTH   = { Authorization: "Bearer emp.token" };
 
-beforeEach(() => { vi.clearAllMocks(); mockExecute.mockResolvedValue([[], []]); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  // mockReset, not just clear: clearAllMocks leaves unconsumed mockResolvedValueOnce entries
+  // queued, so one test's leftovers were answering the next test's queries.
+  mockExecute.mockReset();
+  mockExecute.mockResolvedValue([[], []]);
+});
 
 function mockAdmin() {
   mockGetUser.mockResolvedValue({ data: { user: { id: "u-admin" } }, error: null });
@@ -166,14 +180,30 @@ describe("POST /api/assets-mgmt/:id/assign", () => {
   });
   it("assigns asset for hr and writes audit", async () => {
     mockHr();
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "aa-1", asset_id: "a-1" }], []]);
+    // assetsService.assign now closes the old assignment, inserts the new one and flips
+    // asset_master inside ONE transaction on a pooled connection, so those statements go
+    // through conn.execute rather than db.execute.
+    const conn = {
+      beginTransaction: vi.fn(),
+      commit: vi.fn(),
+      rollback: vi.fn(),
+      release: vi.fn(),
+      execute: vi.fn(async (sql: unknown) =>
+        /^SELECT \* FROM asset_assignment/i.test(String(sql))
+          ? [[{ id: "aa-1", asset_id: "a-1" }], []]
+          : [{ affectedRows: 1 }, []]),
+    };
+    mockGetConnection.mockResolvedValue(conn);
     const r = await request(app).post("/api/assets-mgmt/a-1/assign").set(HR_AUTH)
       .send({ employee_id: "emp-1" });
     expect(r.status).toBe(201);
+    expect(r.body.data).toMatchObject({ id: "aa-1", asset_id: "a-1" });
+    const insert = conn.execute.mock.calls.find(([sql]) => /INSERT INTO asset_assignment/i.test(String(sql)));
+    expect(insert, "expected the assignment to be inserted").toBeDefined();
+    expect(insert![1]).toEqual(expect.arrayContaining(["a-1", "emp-1", "u-hr"]));
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+    expect(conn.rollback).not.toHaveBeenCalled();
+    expect(conn.release).toHaveBeenCalledTimes(1);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const auditCall = mockExecute.mock.calls.find(([sql]: any) =>
       typeof sql === "string" && sql.includes("sensitive_action_log")
@@ -198,12 +228,26 @@ describe("POST /api/helpdesk/tickets", () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
     mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "emp-1", employee_code: "E001" }], []]);
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
-    mockExecute.mockResolvedValueOnce([[{ id: "t-1", status: "open" }], []]);
-    mockExecute.mockResolvedValueOnce([[], []]);
+    // createTicket now does an auto-routing lookup (raiser's branch, then the owning role's
+    // holders) before the INSERT, so the rest is keyed on the statement, not on position.
+    mockExecute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (/INSERT INTO helpdesk_ticket/i.test(text)) return [{ affectedRows: 1 }, []];
+      if (/FROM helpdesk_ticket t/i.test(text)) return [[{ id: "t-1", employee_id: "emp-1", status: "open" }], []];
+      return [[], []];
+    });
     const r = await request(app).post("/api/helpdesk/tickets").set(EMP_AUTH)
-      .send({ category: "hr", subject: "Test", description: "Desc" });
+      .send({ category: "hr", subject: "Test", description: "Desc", employee_id: "emp-attacker" });
     expect(r.status).toBe(201);
+    // The title's claim: employee_id comes from the caller's own employee record, and a
+    // body-supplied one is ignored on the non-admin path.
+    const insert = mockExecute.mock.calls.find(([sql]: [unknown]) =>
+      /INSERT INTO helpdesk_ticket/i.test(String(sql)),
+    );
+    expect(insert, "expected the ticket to be inserted").toBeDefined();
+    expect(insert![1]).toContain("emp-1");
+    expect(insert![1]).not.toContain("emp-attacker");
+    expect(insert![1]).toContain("u-emp"); // raised_by_user_id is the acting user
   });
 });
 

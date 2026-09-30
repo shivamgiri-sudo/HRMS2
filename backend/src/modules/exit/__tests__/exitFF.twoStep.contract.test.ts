@@ -16,6 +16,7 @@ vi.mock('../../payroll/noc-release-gate.service.js', () => ({
 }));
 vi.mock('../exit.notifications.js', () => ({
   notifyFullFinalReady: vi.fn().mockResolvedValue(undefined),
+  notifyFFApproved: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../../../shared/auditLog.js', () => ({
   logSensitiveAction: vi.fn().mockResolvedValue(undefined),

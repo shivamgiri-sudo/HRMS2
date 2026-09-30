@@ -38,7 +38,8 @@ describe("/me/promotions and /me/transfers exist", () => {
   it("both routes are registered", () => {
     expect(employeeRoutes).toContain('meScopedMobility("promotions"');
     expect(employeeRoutes).toContain('meScopedMobility("transfers"');
-    expect(meBlock).toContain("router.get(`/me/${path}`");
+    // Whitespace-tolerant: prettier breaks the call after the opening parenthesis.
+    expect(meBlock).toMatch(/router\.get\(\s*`\/me\/\$\{path\}`/);
   });
 
   it("they reuse mobilityService rather than re-querying the tables", () => {

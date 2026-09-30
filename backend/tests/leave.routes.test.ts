@@ -140,17 +140,49 @@ describe("GET /api/leave/requests", () => {
 });
 
 describe("PATCH /api/leave/requests/:id/review", () => {
+  // The review route is leaveSecureRouter's, which authorises every call through
+  // canReviewLeave(): it loads the request's row and refuses (403) when the request does not
+  // exist or when the caller is the employee who raised it, before any role is consulted. The
+  // suite's mocked caller is employee emp-1, so the request under review has to belong to
+  // someone else for the privileged (admin/hr) path to apply at all.
+  function requestUnderReviewBelongsTo(employeeId: string | null) {
+    mockExecute.mockImplementation(async (sql: unknown) => {
+      if (/FROM leave_request lr/i.test(String(sql)) && employeeId) {
+        return [[{ employee_id: employeeId, status: "pending", leave_type_id: "lt-1" }], []];
+      }
+      return [[], []];
+    });
+  }
+
   it("approves request", async () => {
-    svc.reviewRequest.mockResolvedValueOnce({ ...fakeRequest, status: "approved" });
+    requestUnderReviewBelongsTo("emp-2");
+    svc.reviewRequest.mockResolvedValueOnce({ ...fakeRequest, employee_id: "emp-2", status: "approved" });
     const r = await request(app).patch("/api/leave/requests/lr-1/review").set(AUTH)
       .send({ status: "approved" });
     expect(r.status).toBe(200);
     expect(r.body.data.status).toBe("approved");
+    expect(svc.reviewRequest).toHaveBeenCalledWith("lr-1", { status: "approved", remarks: null }, expect.any(String));
   });
   it("returns 400 for invalid status", async () => {
+    requestUnderReviewBelongsTo("emp-2");
     const r = await request(app).patch("/api/leave/requests/lr-1/review").set(AUTH)
       .send({ status: "maybe" });
     expect(r.status).toBe(400);
+    expect(svc.reviewRequest).not.toHaveBeenCalled();
+  });
+  it("refuses to let a caller review their own leave request, even as admin/hr", async () => {
+    requestUnderReviewBelongsTo("emp-1");
+    const r = await request(app).patch("/api/leave/requests/lr-1/review").set(AUTH)
+      .send({ status: "approved" });
+    expect(r.status).toBe(403);
+    expect(svc.reviewRequest).not.toHaveBeenCalled();
+  });
+  it("refuses a request that does not exist instead of reviewing it", async () => {
+    requestUnderReviewBelongsTo(null);
+    const r = await request(app).patch("/api/leave/requests/lr-1/review").set(AUTH)
+      .send({ status: "approved" });
+    expect(r.status).toBe(403);
+    expect(svc.reviewRequest).not.toHaveBeenCalled();
   });
 });
 

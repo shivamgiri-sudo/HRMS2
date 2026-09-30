@@ -42,6 +42,7 @@ const { logSensitiveAction } = vi.hoisted(() => ({ logSensitiveAction: vi.fn() }
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../exit.notifications.js", () => ({
   notifyFullFinalReady: vi.fn(),
+  notifyFFApproved: vi.fn(async () => undefined),
   notifyResignationSubmitted: vi.fn(),
   notifyResignationDecision: vi.fn(),
 }));
@@ -356,8 +357,22 @@ describe("approveFF — approval is guarded on the state it was decided on", () 
     await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(/already paid/i);
   });
 
-  it("still refuses a provisional calculation", async () => {
-    stub(ffRow({ is_ff_provisional: 1 }));
-    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(/provisional/i);
+  it("no longer gates approval on the provisional flag (2-step F&F, ee3a7b80e)", async () => {
+    // This asserted the opposite until ee3a7b80e (2026-09-23) deliberately removed the
+    // is_ff_provisional gate: F&F approves in two steps (prepare -> approve), not three.
+    // exitFF.twoStep.contract.test.ts pins the same decision. What must still hold for a
+    // provisional row is everything else approveFF guarantees: the status-guarded UPDATE
+    // and an audit entry for the approval.
+    stub(ffRow({ status: "draft", is_ff_provisional: 1, approved_by: null }));
+    // The stub does not answer getFF's re-read, so the call rejects AFTER the approval.
+    await ffService.approveFF(FF_ID, APPROVER).catch(() => undefined);
+
+    const update = execute.mock.calls.find(([s]) => String(s).includes("SET status = 'approved'"));
+    expect(update, "no approval UPDATE was issued for a provisional calculation").toBeTruthy();
+    expect(String(update![0])).toContain("AND status = ?");
+    expect(update![1]).toEqual([APPROVER, FF_ID, "draft"]);
+    expect(logSensitiveAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action_type: "FULL_FINAL_APPROVED", entity_id: FF_ID }),
+    );
   });
 });

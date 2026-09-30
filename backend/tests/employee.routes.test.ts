@@ -52,6 +52,7 @@ import { app } from "../src/app.js";
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 const svc = employeeService as { [K in keyof typeof employeeService]: ReturnType<typeof vi.fn> };
 const AUTH = { Authorization: "Bearer mock-token-admin" };
+const COST_CENTRE_ID = "550e8400-e29b-41d4-a716-446655440010";
 
 const fakeEmployee = {
   id: "emp-1",
@@ -86,9 +87,21 @@ describe("POST /api/employees", () => {
       employeeCode: "MCN001",
       firstName: "Ravi",
       dateOfJoining: "2026-01-01",
+      costCentreId: COST_CENTRE_ID,
     });
     expect(r.status).toBe(201);
     expect(r.body.data.employee_code).toBe("MCN001");
+    expect(svc.createEmployee.mock.calls[0][0]).toMatchObject({ costCentreId: COST_CENTRE_ID });
+  });
+
+  it("returns 400 when costCentreId is missing — a cost centre is mandatory at creation", async () => {
+    const r = await request(app).post("/api/employees").set(AUTH).send({
+      employeeCode: "MCN001",
+      firstName: "Ravi",
+      dateOfJoining: "2026-01-01",
+    });
+    expect(r.status).toBe(400);
+    expect(svc.createEmployee).not.toHaveBeenCalled();
   });
 
   it("returns 400 when employeeCode missing", async () => {

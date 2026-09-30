@@ -401,11 +401,31 @@ describe('GET /api/wfm/productivity-upload/sources', () => {
     // Same gate function is not enough: it is handed out by a stubbed requireRole that ignores its
     // arguments. Every call must have named the identical role list, so /sources cannot be gated
     // on a list of its own that drifts from UPLOAD_ROLES.
-    expect(gateCalls.roleLists.length).toBeGreaterThanOrEqual(3);
-    const [firstList] = gateCalls.roleLists;
-    expect(firstList!.length).toBeGreaterThan(0);
-    for (const list of gateCalls.roleLists) {
-      expect(list).toEqual(firstList);
+    //
+    // requireRole is called once per route at registration, in the same order the routes land on
+    // the router stack, so the n-th recorded role list belongs to the n-th route. Since 7009660eb
+    // the router also carries the admin column-mapping route, which is gated on a narrower list of
+    // its own, so the lists are matched to their routes rather than all compared to the first.
+    const routeLayers = stack.filter((l) => l.route);
+    expect(gateCalls.roleLists.length).toBe(routeLayers.length);
+    const rolesFor = (path: string, method: string): string[] => {
+      const index = routeLayers.findIndex((l) => l.route.path === path && l.route.methods?.[method]);
+      expect(index, `no ${method.toUpperCase()} ${path} route registered`).toBeGreaterThan(-1);
+      return gateCalls.roleLists[index]!;
+    };
+
+    const uploadRoles = rolesFor('/sources', 'get');
+    expect(uploadRoles.length).toBeGreaterThan(0);
+    expect(rolesFor('/preview', 'post')).toEqual(uploadRoles);
+    expect(rolesFor('/commit', 'post')).toEqual(uploadRoles);
+
+    // Rewriting a source's column mapping is an admin action: gated, and never on a list wider
+    // than the upload roles it sits beside.
+    expect(handlersFor('/sources/:sourceId/column-mapping', 'post')).toContain(roleGateStub);
+    const mappingRoles = rolesFor('/sources/:sourceId/column-mapping', 'post');
+    expect(mappingRoles).toEqual(['super_admin', 'admin', 'wfm']);
+    for (const role of mappingRoles) {
+      expect(uploadRoles).toContain(role);
     }
   });
 });

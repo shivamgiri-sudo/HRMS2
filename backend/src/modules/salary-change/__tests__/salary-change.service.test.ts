@@ -8,32 +8,51 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * records old→new + who requested/who submitted, and logSensitiveAction is called.
  */
 
-const { execute, getPackageById, logSensitiveAction } = vi.hoisted(() => ({
-  execute: vi.fn(),
-  getPackageById: vi.fn(),
-  logSensitiveAction: vi.fn().mockResolvedValue(undefined),
-}));
+const { execute, connExecute, conn, getConnection, getPackageById, logSensitiveAction } = vi.hoisted(() => {
+  const connExecute = vi.fn();
+  // The three critical writes (insert new, supersede old, change log) run on one pooled
+  // connection inside a transaction since d3108e0c8, so a dropped connection cannot leave an
+  // 'active' row without its supersede partner or its log entry.
+  const conn = {
+    execute: connExecute,
+    beginTransaction: vi.fn(async () => undefined),
+    commit: vi.fn(async () => undefined),
+    rollback: vi.fn(async () => undefined),
+    release: vi.fn(() => undefined),
+  };
+  return {
+    execute: vi.fn(),
+    connExecute,
+    conn,
+    getConnection: vi.fn(async () => conn),
+    getPackageById: vi.fn(),
+    logSensitiveAction: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
-vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection } }));
 vi.mock("../../payroll-masters/payrollMasters.service.js", () => ({ getPackageById }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 
 import { changeSalary } from "../salary-change.service.js";
 
 describe("changeSalary()", () => {
-  beforeEach(() => { execute.mockReset(); getPackageById.mockReset(); logSensitiveAction.mockClear(); });
+  beforeEach(() => {
+    execute.mockReset(); connExecute.mockReset(); getPackageById.mockReset(); logSensitiveAction.mockClear();
+    conn.beginTransaction.mockClear(); conn.commit.mockClear(); conn.rollback.mockClear(); conn.release.mockClear();
+  });
 
   it("inserts the new active assignment, supersedes the old one, and writes the audit trail", async () => {
+    // Pool reads, then the non-critical display sync that runs after the transaction commits.
     execute
       .mockResolvedValueOnce([[{ id: "e1" }]]) // employee active check
       .mockResolvedValueOnce([[{ id: "old-assign-1", ctc: 40000 }]]) // current active assignment
+      .mockResolvedValueOnce([{ affectedRows: 1 } as unknown]); // sync employee_salary_assignment
+    // The transactional writes, in order, on the dedicated connection.
+    connExecute
       .mockResolvedValueOnce([{ affectedRows: 1 } as unknown]) // INSERT new assignment
       .mockResolvedValueOnce([{ affectedRows: 1 } as unknown]) // UPDATE old -> superseded
-      .mockResolvedValueOnce([{ affectedRows: 1 } as unknown]) // sync employee_salary_assignment
-      .mockResolvedValueOnce([{ affectedRows: 1 } as unknown]) // INSERT employee_salary_change_log
-      .mockResolvedValueOnce([[{ id: "e1", full_name: "Jane" }]]) // getEmployeeSalaryProfile: employee
-      .mockResolvedValueOnce([[{ ctc: 50000 }]]) // getEmployeeSalaryProfile: salary_components
-      .mockResolvedValueOnce([[]]); // getEmployeeSalaryProfile: change_history
+      .mockResolvedValueOnce([{ affectedRows: 1 } as unknown]); // INSERT employee_salary_change_log
 
     getPackageById.mockResolvedValueOnce({
       id: "pkg-1", basic: 25000, hra: 10000, conveyance: 1600, special_allowance: 3400,
@@ -47,15 +66,22 @@ describe("changeSalary()", () => {
       actorUserId: "actor-1",
     });
 
-    const insertAssignmentCall = execute.mock.calls[2];
+    // All three writes happen inside one committed transaction, and the connection is returned.
+    expect(conn.beginTransaction).toHaveBeenCalledTimes(1);
+    expect(connExecute).toHaveBeenCalledTimes(3);
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+    expect(conn.rollback).not.toHaveBeenCalled();
+    expect(conn.release).toHaveBeenCalledTimes(1);
+
+    const insertAssignmentCall = connExecute.mock.calls[0];
     expect(insertAssignmentCall[0]).toContain("INSERT INTO salary_component_assignments");
     expect(insertAssignmentCall[0]).toContain("'active'");
 
-    const supersedeCall = execute.mock.calls[3];
+    const supersedeCall = connExecute.mock.calls[1];
     expect(supersedeCall[0]).toContain("status = 'superseded'");
     expect(supersedeCall[1]).toEqual(["old-assign-1"]);
 
-    const logCall = execute.mock.calls[5];
+    const logCall = connExecute.mock.calls[2];
     expect(logCall[0]).toContain("INSERT INTO employee_salary_change_log");
     expect(logCall[1]).toEqual(
       expect.arrayContaining(["e1", "old-assign-1", "req-1", "Manager X", "actor-1", "Annual increment", 40000, 50000, "2026-09-01"])

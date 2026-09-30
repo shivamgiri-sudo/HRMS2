@@ -16,6 +16,16 @@ function readRepo(relativePath: string) {
 }
 
 /**
+ * Layout-insensitive form of a source text: all whitespace removed, the JSX `{" "}` spacer and the
+ * trailing comma before a closing bracket dropped. grn.service.ts and SmartGrnApprovalQueue.tsx
+ * are prettier-formatted now, so an expression these assertions quote on one line is wrapped
+ * across several in the file. Comparing compacted text to compacted needle pins exactly the same
+ * tokens in the same order.
+ */
+const compact = (s: string) =>
+  s.replace(/\{" "\}/g, " ").replace(/\s+/g, "").replace(/,(?=[)\]}])/g, "");
+
+/**
  * UNBUDGETED vendor GRNs — a Head/Sub-head with no approved budget line, which the vendor form
  * deliberately allows a raiser to pick.
  *
@@ -74,8 +84,8 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(service).toContain('throw new Error("An approved budget line is required");');
 
     expect(service).toContain("async function createUnbudgetedDraft(");
-    expect(service).toContain(
-      "return await createUnbudgetedDraft(payload, paymentTermsDays, actorUserId, actorRole);"
+    expect(compact(service)).toContain(
+      compact("return await createUnbudgetedDraft(payload, paymentTermsDays, actorUserId, actorRole);")
     );
 
     // head/sub_head must be real — saveComponentAllocations reads them back off this row to build
@@ -262,7 +272,7 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(queue).toContain("const unlinkedAllocations = useMemo(");
 
     // Candidate lines are filtered to the split's own cost centre, matching the server rule.
-    expect(queue).toContain('String(line.cost_centre_id ?? "") === String(alloc.cost_centre_id ?? "")');
+    expect(compact(queue)).toContain(compact('String(line.cost_centre_id ?? "") === String(alloc.cost_centre_id ?? "")'));
 
     // No client-side approval gate either — the queue must not reintroduce one the server
     // deliberately dropped.

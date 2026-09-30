@@ -46,9 +46,11 @@ function installDb() {
       const lead = LEADS[String(params[0])];
       return [lead && lead.branch === params[1] ? [{ ok: 1 }] : [], []];
     }
-    if (sql.includes('inbound_count')) {
+    // canMessageLead counts the whole thread now (message_count: inbound OR
+    // outbound), not inbound only — an interview invite already opens the chat.
+    if (sql.includes('AS message_count')) {
       const lead = LEADS[String(params[0])];
-      return [lead ? [{ screening_result: lead.screening, inbound_count: lead.inbound }] : [], []];
+      return [lead ? [{ screening_result: lead.screening, message_count: lead.inbound }] : [], []];
     }
     return [[], []];
   });

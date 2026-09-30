@@ -138,7 +138,6 @@ describe('statutory_filing', () => {
   it('how do I check ESI compliance', async () => expectHandled(await answerHowToQuestion('how do I check ESI compliance', 'u', ['admin']), route));
   it('where is TDS filing tracker', async () => expectHandled(await answerHowToQuestion('where is TDS filing tracker', 'u', ['admin']), route));
   it('how to download PF challan', async () => expectHandled(await answerHowToQuestion('how to download PF challan', 'u', ['admin']), route));
-  it('show me statutory compliance status', async () => expectHandled(await answerHowToQuestion('show me statutory compliance status', 'u', ['admin']), route));
 });
 
 // ─── PAYROLL: SIGN-OFF ───────────────────────────────────────────────────────
@@ -645,6 +644,9 @@ describe('letters_generate', () => {
 describe('statutory_compliance', () => {
   const route = '/compliance/statutory';
   it('how do I view statutory compliance', async () => expectHandled(await answerHowToQuestion('how do I view statutory compliance', 'u', ['hr']), route));
+  // The entry's own title phrase. It used to be pinned to statutory_filing (/payroll/statutory),
+  // which shadowed this entry and failed the RBAC cross-check in ai-howto.service.test.ts.
+  it('show me statutory compliance status', async () => expectHandled(await answerHowToQuestion('show me statutory compliance status', 'u', ['hr']), route));
   it('where can I check PF ESI compliance status', async () => expectHandled(await answerHowToQuestion('where is the statutory compliance overview page', 'u', ['hr']), route));
   it('how to check TDS compliance status', async () => expectHandled(await answerHowToQuestion('where do I check overall compliance status', 'u', ['hr']), route));
 });

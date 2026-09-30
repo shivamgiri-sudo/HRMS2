@@ -51,6 +51,10 @@ function authAs(sub: string, roles: string[]) {
     const text = String(sql);
     if (/FROM user_roles/i.test(text)) return [roles.map((r) => ({ role_key: r })), []];
     if (/user_assignment_scope|FROM auth_user/i.test(text)) return [[], []];
+    // requireRoleOrDirectReports' "does this caller manage anyone" probe runs before the
+    // handler. None of these subjects is admitted by it — they pass or fail on the role
+    // gate — so it is answered by shape instead of eating the handler's first fixture.
+    if (/FROM employees mgr\s+WHERE mgr\.user_id = \?/i.test(text)) return [[], []];
     if (/^\s*(INSERT|UPDATE|DELETE|REPLACE)/i.test(text)) return [{ affectedRows: 1 }, []];
     return [selectQueue.length ? selectQueue.shift()! : [], []];
   });

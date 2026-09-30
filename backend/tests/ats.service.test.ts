@@ -145,7 +145,12 @@ const fullCandidateInput = {
 };
 
 describe("atsService.createCandidate", () => {
-  beforeEach(resetDbMock);
+  beforeEach(() => {
+    resetDbMock();
+    // createCandidate opens with a rehire lookup (mobile owned only by departed
+    // employees re-opens the old row). Neither case here is a rehire.
+    mockExecute.mockResolvedValueOnce([[]]);
+  });
 
   it("throws when mobile already exists", async () => {
     mockExecute.mockResolvedValueOnce([[{ id: fakeCandidate.id, current_stage: "Applied", active_status: 1 }]]);

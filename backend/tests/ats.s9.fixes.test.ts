@@ -32,8 +32,15 @@ vi.mock("../src/db/mysql.js", () => ({
 const mockHasScopedAccess = vi.fn().mockResolvedValue(true);
 const mockBuildScopeWhereClause = vi.fn().mockResolvedValue({ sql: "1=1", params: [] });
 
+// send-token asks hasAnyRole whether the actor is in the HR department, which
+// since 2026-08-24 resends org-wide without a scope check. It defaults to false
+// here so the actor is a non-HR role and hasScopedAccess alone decides — the
+// scope cases below are about exactly that path.
+const mockHasAnyRole = vi.fn().mockResolvedValue(false);
+
 vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: mockHasScopedAccess,
+  hasAnyRole: mockHasAnyRole,
   buildScopeWhereClause: mockBuildScopeWhereClause,
 }));
 
@@ -144,6 +151,8 @@ function resetDbQueue() {
   vi.clearAllMocks();
   mockExecute.mockReset();
   mockExecute.mockResolvedValue([[]]);
+  mockHasAnyRole.mockReset().mockResolvedValue(false);
+  mockHasScopedAccess.mockReset().mockResolvedValue(true);
 }
 
 const ONE_HOUR_AGO = new Date(Date.now() - 61 * 60 * 1000); // 61 min ago
@@ -277,12 +286,31 @@ describe("POST /api/ats/onboarding/send-token/:id — row-scope via hasScopedAcc
     await request(app).post("/api/ats/onboarding/send-token/cand-1").send({});
     expect(mockHasScopedAccess).toHaveBeenCalledWith(
       "user-hr-1",
-      // branch_hr/payroll_head/payroll_hr added so these roles don't pass requireRole only
-      // to be silently scope-denied here (see ats.onboarding.routes.ts).
-      ["hr", "recruiter", "branch_hr", "payroll_head", "payroll_hr"],
+      // The non-HR roles that stay branch/process-scoped. 'hr' is no longer in
+      // this list: the HR department is decided by hasAnyRole before this call
+      // (see ats.onboarding.routes.ts).
+      ["recruiter", "branch_hr", "payroll_head", "payroll_hr"],
       { branchId: "b99", processId: "p77" },
       { allowAdminBypass: true },
     );
+  });
+
+  it("TC-S9-09b: asks whether the actor is in the HR department, by the exact role list", async () => {
+    mockExecute.mockResolvedValueOnce([[{ applied_for_branch: "b99", applied_for_process: "p77" }]]);
+    await request(app).post("/api/ats/onboarding/send-token/cand-1").send({});
+    expect(mockHasAnyRole).toHaveBeenCalledWith(
+      "user-hr-1", "hr", "hr_admin", "hr_branch", "hr_head", "ho_hr", "recruitment_hr",
+    );
+  });
+
+  it("TC-S9-09c: an HR-department actor resends org-wide, without a scope row", async () => {
+    mockExecute.mockResolvedValueOnce([[{ applied_for_branch: "b99", applied_for_process: "p77" }]]);
+    mockHasAnyRole.mockResolvedValueOnce(true);
+    mockHasScopedAccess.mockResolvedValue(false);
+    const res = await request(app).post("/api/ats/onboarding/send-token/cand-1").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBe("tok-abc");
+    expect(mockHasScopedAccess).not.toHaveBeenCalled();
   });
 });
 

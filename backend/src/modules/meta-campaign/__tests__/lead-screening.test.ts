@@ -240,7 +240,8 @@ describe('screenLead — unknowns never disqualify', () => {
       { ...noRequirements, educationRequirement: 'Any graduate preferred' }
     );
     expect(r.qualified).toBe(true);
-    expect(r.skipped.join(' ')).toMatch(/preference, not a bar/);
+    // Wording as the screener prints it today; the skip itself is what matters.
+    expect(r.skipped).toContain('education ("Any graduate preferred" is a preference, not enforced)');
   });
 
   it('does not enforce an education requirement worded as a preference', () => {
@@ -269,7 +270,7 @@ describe('screenLead — unknowns never disqualify', () => {
       { ...noRequirements, educationRequirement: 'Must hold a Foo certification' }
     );
     expect(r.qualified).toBe(true);
-    expect(r.skipped.join(' ')).toMatch(/not on the known ladder/);
+    expect(r.skipped).toContain('education ("Must hold a Foo certification" not on known ladder)');
   });
 });
 
@@ -439,7 +440,7 @@ describe('screenLead — end to end from a raw payload', () => {
       { ...noRequirements, metaTargetAgeMin: 18 }
     );
     expect(r.qualified).toBe(false);
-    expect(r.reason).toMatch(/below the required minimum/);
+    expect(r.reason).toBe('Age 16 below minimum 18');
   });
 });
 

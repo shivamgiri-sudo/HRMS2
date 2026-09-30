@@ -251,11 +251,14 @@ describe("WFM audit: POST /api/wfm-ext/roster/swaps/:id/review", () => {
 
 describe("WFM audit: POST /api/wfm-ext/roster/conflicts/:id/resolve", () => {
   it("writes a sensitive_action_log entry when resolving a conflict", async () => {
-    mockAdmin();
+    // The service reads the conflict first and 404s on an unknown id.
+    mockAdmin([{ id: "cf-1", employee_id: "emp-1", resolved: 0 }]);
 
     const r = await request(app)
       .post("/api/wfm-ext/roster/conflicts/cf-1/resolve")
-      .set(ADMIN);
+      .set(ADMIN)
+      // The route now refuses a resolve that does not say what was done.
+      .send({ resolution_action: "reassigned", remarks: "moved to the other shift" });
 
     expect(r.status).toBe(200);
     const auditCall = mockExecute.mock.calls.find(// eslint-disable-next-line @typescript-eslint/no-explicit-any

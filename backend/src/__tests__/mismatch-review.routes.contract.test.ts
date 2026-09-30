@@ -160,7 +160,7 @@ describe("1d — scope predicate coverage across the three read paths", () => {
     expect(summaryRes.status).toBe(200);
 
     const listCall = execute.mock.calls.find(([sql]) => /ORDER BY adr\.record_date DESC/.test(sql));
-    const countCall = execute.mock.calls.find(([sql]) => /COUNT\(\*\) AS total/.test(sql));
+    const countCall = execute.mock.calls.find(([sql]) => /COUNT\(\*\) OVER\(\) AS total_count/.test(sql));
     const summaryCall = execute.mock.calls.find(([sql]) => /unresolved_mismatches/.test(sql));
 
     const readPaths: Array<[string, typeof listCall]> = [
@@ -224,7 +224,7 @@ describe("1f — summary honours the passed window (and defaults to 30 days)", (
   it("the list also defaults to a 30-day window", async () => {
     const res = await request(appFor("wfm")).get("/api/wfm/mismatches");
     expect(res.status).toBe(200);
-    const countCall = execute.mock.calls.find(([sql]) => /COUNT\(\*\) AS total/.test(sql));
+    const countCall = execute.mock.calls.find(([sql]) => /COUNT\(\*\) OVER\(\) AS total_count/.test(sql));
     expect(countCall![0]).toMatch(/INTERVAL 30 DAY/);
   });
 });

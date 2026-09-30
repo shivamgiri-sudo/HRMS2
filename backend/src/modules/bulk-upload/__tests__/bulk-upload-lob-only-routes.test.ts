@@ -228,9 +228,17 @@ describe("callers who already had the hub are unchanged", () => {
     execute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     execute.mockResolvedValueOnce([[{ n: 1 }], []]);
     execute.mockResolvedValueOnce([{}, []]);
+    execute.mockResolvedValueOnce([{}, []]);
     const res = await post("/batches/b2/import", "wfm", { rpc_name: "import_pf_uan_batch" });
     expect(res.status).toBe(202);
-    expect(execute).toHaveBeenCalledTimes(4); // no ownership lookup
+    // stale-claim release, claim, pending count, then the hand-off to hrms-workers, which is
+    // two statements since d9c6bc7ba (remember the rpc on the batch, queue the job) where it
+    // used to be one. What this case is about is that none of them is the ownership lookup.
+    expect(execute).toHaveBeenCalledTimes(5);
+    const statements = execute.mock.calls.map(([sql]) => String(sql));
+    expect(statements.some((sql) => /SELECT upload_type_code, uploaded_by FROM upload_batch/.test(sql))).toBe(false);
+    expect(statements[3]).toContain("$.import_rpc_name");
+    expect(statements[4]).toContain("INSERT INTO bulk_import_queue");
   });
 
   it("wfm: GET /templates is unfiltered and GET /batches has no LOB narrowing", async () => {

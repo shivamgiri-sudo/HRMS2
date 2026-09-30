@@ -41,7 +41,9 @@ function mockFlow(row: Record<string, unknown> | null, clearance?: Record<string
   exec().mockReset();
   exec().mockImplementation(async (sql: string) => {
     if (/FROM exit_request er/i.test(sql)) return [row ? [row] : [], []];
-    if (/exit_clearance_checklist/i.test(sql)) return [[clearance ?? { pending: 3, departments: 'IT, Finance' }], []];
+    // exit_clearance_task since 2026-08-19 — exit_clearance_checklist was an abandoned table
+    // and the count against it was a permanent false "all clear".
+    if (/FROM exit_clearance_task\s+WHERE exit_request_id = \? AND status NOT IN \('cleared', 'waived'\)/i.test(sql)) return [[clearance ?? { pending: 3, departments: 'IT, Finance' }], []];
     return [[], []];
   });
 }

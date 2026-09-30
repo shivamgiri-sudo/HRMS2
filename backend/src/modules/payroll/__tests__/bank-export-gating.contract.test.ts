@@ -30,7 +30,8 @@ function handlerAt(source: string, path: string, len = 900): string {
  * body so these assertions keep inspecting the code that runs, not the registration line.
  */
 function resolveDelegatedHandler(source: string, slice: string, len: number): string {
-  const delegated = slice.match(/,\s*(\w+Handler)\s*\)\s*;/);
+  // `,?` — prettier leaves a trailing comma after the handler argument.
+  const delegated = slice.match(/,\s*(\w+Handler),?\s*\)\s*;/);
   if (!delegated) return slice;
   const defIdx = source.indexOf(`const ${delegated[1]} =`);
   return defIdx > -1 ? source.slice(defIdx, defIdx + Math.max(len, 6000)) : slice;

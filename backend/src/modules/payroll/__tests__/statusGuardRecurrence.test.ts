@@ -31,6 +31,9 @@ const WINDOW_ROUTES = read("src/modules/payroll/payroll-window.routes.ts");
 const WINDOW_CRON = read("src/modules/payroll/payroll-window.cron.ts");
 const PAYROLL_ROUTES = read("src/modules/payroll/payroll.routes.ts");
 const PAYROLL_EXTENDED_ROUTES = read("src/modules/payroll/payroll-extended.routes.ts");
+// The Form 16 / TDS certificate FY query was extracted out of payroll.routes.ts into this service
+// (fdf0804bc) so the JSON endpoint and the PDF share one computation.
+const FORM16_DATA_SERVICE = read("src/modules/payroll/form16-data.service.ts");
 const PAYROLL_SERVICE = read("src/modules/payroll/payroll.service.ts");
 
 describe("payroll-window.routes.ts no longer hand-rolls the closed-run check", () => {
@@ -85,7 +88,7 @@ function handlerSource(source: string, path: string): string {
    * paid in several runs must still produce a single bank file. Follow the reference, so this keeps
    * inspecting the code that runs rather than the registration line.
    */
-  const delegated = slice.match(/,\s*(\w+Handler)\s*\)\s*;/);
+  const delegated = slice.match(/,\s*(\w+Handler),?\s*\)\s*;/);
   if (delegated) {
     const defIdx = source.indexOf(`const ${delegated[1]} =`);
     if (defIdx > -1) {
@@ -112,13 +115,13 @@ describe("NEFT export is reachable for finalized runs (two implementations)", ()
 
 describe("TDS certificate FY summary counts finalized months", () => {
   it("the status allow-list includes finalized", () => {
-    const m = PAYROLL_ROUTES.match(/AND spr\.status IN \(([^)]*)\)\s*\n\s*AND spl\.status NOT IN \('excluded', 'blocked'\)/);
+    const m = FORM16_DATA_SERVICE.match(/AND spr\.status IN \(([^)]*)\)\s*\n\s*AND spl\.status NOT IN \('excluded', 'blocked'\)/);
     expect(m, "TDS certificate FY query has moved or changed shape").toBeTruthy();
     expect(m![1].toLowerCase()).toContain("'finalized'");
   });
 
   it("the per-month canonical-run ranking includes finalized", () => {
-    expect(PAYROLL_ROUTES).toMatch(/FIELD\(spr\.status, 'disbursed', 'finalized'/);
+    expect(FORM16_DATA_SERVICE).toMatch(/FIELD\(spr\.status, 'disbursed', 'finalized'/);
   });
 });
 

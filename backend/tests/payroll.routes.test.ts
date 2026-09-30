@@ -224,10 +224,27 @@ describe("PATCH /api/payroll/runs/:id/status", () => {
 // Prep Lines
 describe("GET /api/payroll/runs/:id/lines", () => {
   it("returns prep lines", async () => {
-    svc.listLines.mockResolvedValueOnce([fakeLine]);
-    const r = await request(app).get("/api/payroll/runs/run-1/lines").set(AUTH);
-    expect(r.status).toBe(200);
-    expect(r.body.data).toHaveLength(1);
+    // This URL is served by payroll-lines.compat.routes.ts, which app.ts mounts ahead of
+    // payroll.routes.ts and which queries the db directly — payrollService.listLines is never
+    // reached. It returns a paginated envelope { lines, total, page, limit }, not a bare array.
+    // mockReset first: unconsumed mockResolvedValueOnce values queued by earlier tests survive
+    // clearAllMocks and would be served ahead of this implementation.
+    mockExecute.mockReset();
+    mockExecute.mockImplementation(async (sql: string) => {
+      if (/COUNT\(\*\) AS total\s+FROM salary_prep_line spl/.test(String(sql))) return [[{ total: 1 }], []];
+      if (/FROM salary_prep_line spl/.test(String(sql))) return [[fakeLine], []];
+      return [[], []];
+    });
+    try {
+      const r = await request(app).get("/api/payroll/runs/run-1/lines").set(AUTH);
+      expect(r.status).toBe(200);
+      expect(r.body.data.lines).toHaveLength(1);
+      expect(r.body.data.lines[0].id).toBe("line-1");
+      expect(r.body.data).toMatchObject({ total: 1, page: 1 });
+    } finally {
+      mockExecute.mockReset();
+      mockExecute.mockResolvedValue([[], []]);
+    }
   });
 });
 
