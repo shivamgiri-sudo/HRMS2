@@ -1550,24 +1550,20 @@ async function ensureDatabaseExists(
 ): Promise<void> {
   const conn = await mysql.createConnection({ host, port, user, password });
   try {
-    await conn.query(
-      `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-    );
-    // ALTER DATABASE acquires a global MDL that blocks ALL concurrent DDL (CREATE TABLE, ALTER
-    // TABLE) for the database's full duration â€" including the workers' own ensureTable() calls.
-    // Skip it entirely if the charset is already correct; the DB has been utf8mb4_unicode_ci
-    // since initial setup and this idempotent ALTER is noise on an established production server.
-    const [charsetRows] = await conn.query<mysql.RowDataPacket[]>(
-      `SELECT DEFAULT_CHARACTER_SET_NAME cs, DEFAULT_COLLATION_NAME co
-         FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?`,
+    // A database-level DDL statement (CREATE DATABASE IF NOT EXISTS included, even as a no-op; ALTER DATABASE
+    // always) takes a schema metadata lock that queues behind ANY long-running query on the schema. Every new
+    // connection then queues behind it, the backend cannot start, and nginx returns 502 until the long query
+    // ends. This took production down on 2026-09-30 (twice, each time a deploy restarted the backend while a
+    // report query was running). So: look first with a plain read (information_schema needs no such lock) and
+    // issue NO database DDL when the database already exists. The default charset of an established schema is
+    // never altered at startup — tables carry their own collations.
+    const [existing] = await conn.query<mysql.RowDataPacket[]>(
+      "SELECT 1 AS present FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
       [dbName],
     );
-    const already =
-      charsetRows[0]?.cs === "utf8mb4" &&
-      charsetRows[0]?.co === "utf8mb4_unicode_ci";
-    if (!already) {
+    if (existing.length === 0) {
       await conn.query(
-        `ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+        `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
       );
     }
     console.log(`[migration] database '${dbName}' ensured`);
