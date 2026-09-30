@@ -673,7 +673,7 @@ function LivePanel({ title, sub, children }: { title: string; sub?: string; chil
 
 type TrendDir = "positive" | "negative" | "action" | "neutral";
 
-function TrendChip({ trend, label }: { trend: TrendDir; label: string }) {
+function TrendChip({ trend, label, onDark = false }: { trend: TrendDir; label: string; onDark?: boolean }) {
   const Icon = trend === "positive" ? ArrowUpRight : trend === "negative" ? ArrowDownRight : trend === "action" ? AlertTriangle : Minus;
   const col = trend === "positive"
     ? { bg: "rgba(20,184,166,.14)", br: "#14b8a6", tx: "#0d9488" }
@@ -682,6 +682,8 @@ function TrendChip({ trend, label }: { trend: TrendDir; label: string }) {
     : trend === "action"
     ? { bg: "rgba(245,158,11,.14)", br: "#f59e0b", tx: "#d97706" }
     : { bg: "rgba(100,116,139,.14)", br: "#94a3b8", tx: "#475569" };
+  // On the saturated KPI-card gradients the tinted light-theme colours vanish; use a white-on-glass chip instead.
+  if (onDark) Object.assign(col, { bg: "rgba(255,255,255,.2)", br: "rgba(255,255,255,.65)", tx: "#ffffff" });
   return (
     <div style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px",
       borderRadius: 999, fontSize: 9, fontWeight: 800,
@@ -714,7 +716,7 @@ function LiveKpiCard({ label, value, sub, color, onClick, trend, trendLabel, rin
         <div style={{ fontSize: 24, fontWeight: 950, marginTop: 4, lineHeight: 1.1 }}>{value}</div>
       )}
       {sub && <div style={{ fontSize: 9, marginTop: 5, opacity: 0.82, fontWeight: 700 }}>{sub}</div>}
-      {trend && trendLabel && <div style={{ marginTop: 5 }}><TrendChip trend={trend} label={trendLabel} /></div>}
+      {trend && trendLabel && <div style={{ marginTop: 5 }}><TrendChip trend={trend} label={trendLabel} onDark /></div>}
     </div>
   );
 }
@@ -5247,7 +5249,7 @@ export default function ProcessOperationsPage() {
           <div style={{ height: 4, background: GAS_ACCENT }} />
 
           {/* Topbar */}
-          <div style={{ minHeight: 72, padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, color: "#fff", background: GAS_TOPBAR, position: "relative", overflow: "hidden" }}>
+          <div style={{ minHeight: 72, padding: "10px 20px", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 16, color: "#fff", background: GAS_TOPBAR, position: "relative", overflow: "hidden" }}>
             <div aria-hidden style={{ position: "absolute", width: 260, height: 260, borderRadius: "50%", right: -80, top: -170, background: "linear-gradient(135deg,rgba(255,255,255,.13),rgba(255,255,255,0))", pointerEvents: "none" }} />
 
             {/* Brand */}
@@ -5264,10 +5266,10 @@ export default function ProcessOperationsPage() {
             </div>
 
             {/* Right: filters + period + live pill */}
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, position: "relative", zIndex: 1, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, position: "relative", zIndex: 1, flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0, maxWidth: "100%" }}>
               {/* Branch filter */}
               {processes.length > 0 && (
-                <div style={{ minWidth: 210 }}>
+                <div style={{ minWidth: "min(210px, 100%)", flex: "1 1 210px" }}>
                   <label style={{ display: "block", marginBottom: 4, color: "#d6e7f7", fontSize: 10, textTransform: "uppercase", letterSpacing: .4, fontWeight: 950 }}>Branch</label>
                   <SearchableSelect
                     aria-label="Filter by branch"
@@ -5284,7 +5286,7 @@ export default function ProcessOperationsPage() {
               )}
               {/* Process filter */}
               {processes.length > 0 && (
-                <div style={{ minWidth: 320 }}>
+                <div style={{ minWidth: "min(320px, 100%)", flex: "1 1 320px" }}>
                   <label style={{ display: "block", marginBottom: 4, color: "#d6e7f7", fontSize: 10, textTransform: "uppercase", letterSpacing: .4, fontWeight: 950 }}>Process</label>
                   <SearchableSelect
                     aria-label="Select a process"
