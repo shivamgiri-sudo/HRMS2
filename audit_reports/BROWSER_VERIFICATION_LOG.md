@@ -330,3 +330,10 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - Cause of "not visible under Bla Bli Blu": the view only existed as a sub-tab of the Bella-Vita sales toggle; process BLA_BLI_BLU was missing from PROCESS_SALES_MAP, so its Sales Dashboard tab said "No sales dashboard". Now mapped (code or name match) and still available under Bella-Vita.
 - Data on prod: bla_bli_blu_overall_sales_raw = 2,400 rows, all August 2026; bla_dash_received = 0 rows. Dashboard now opens on the latest month with data (banner says so). Server-side check: Aug = 31 days, 2,063 real-time sales, Rs 13.73L, 13 product rows; workable/target columns 0 until Received Data is uploaded; September empty.
 - Not verified in a browser this time (both browser tools were locked by a stale session); verified via server-side service call and passing tests.
+
+## 2026-09-30 — BLA/BLI/BLU sheet-by-sheet review, analytics, abandon uploader (bb2fc09 + analytics commit)
+- Workbook has 6 sheets (Received Data, Overall Sales, Target Inputs, Formula Demo, Product Wise Sales, Dashboard Build PKT; none hidden, no charts). All Formula Demo formulas re-checked against bla-metrics.ts: definitions match.
+- Gaps found and fixed: no analytics beyond one line chart (added funnel, campaign/payment/sale-type donuts, order status, channel, hour, weekday, manpower, agent leaderboard, insights); product table dropped the Repeat campaign (added a Repeat/other column); manpower KPIs (HC/attendance) were skipped although HRMS has them (added).
+- Data gaps (prod, Aug 2026): 27% of Real Time Sales orders have no delivery status (RTO understated; now stated on the page); no attendance rows for Bla Bli Blu in Aug (present-based ratios show blank, page says so); Received Data = 0 rows; Inbound/Repeat campaigns have no targets or received data.
+- Bulk Upload Hub: new type BLA_BLI_BLU_ABANDON (Received Data -> bla_dash_received, replaces by date), migration 1940.
+- Verified on prod via server-side service call: Aug = 2,063 sales, Rs 13.73L, 23 agents selling, prepaid 69%, RTO 5.6% of updated orders. Not re-verified visually in a browser (browser tools locked).

@@ -939,7 +939,10 @@
     "migrations/1917_onfido_manpower_plan_total_queue.sql",
     "migrations/1919_ats_dashboard_indexes.sql",
     "migrations/1920_satya_retail_process.sql",
-    "migrations/1930_gnc_apr_kpi_source_own_table.sql"
+    "migrations/1930_gnc_apr_kpi_source_own_table.sql",
+    "migrations/1940_bla_bli_blu_abandon_upload_template.sql",
+    "migrations/1921_capacity_mandate_editors.sql",
+    "1931_bank_exception_email_template.sql"
   ],
   "approvedDeletions": [
     {
@@ -1172,7 +1175,9 @@
     "migrations/1917_onfido_manpower_plan_total_queue.sql",
     "migrations/1919_ats_dashboard_indexes.sql",
     "migrations/1920_satya_retail_process.sql",
-    "migrations/1930_gnc_apr_kpi_source_own_table.sql"
+    "migrations/1930_gnc_apr_kpi_source_own_table.sql",
+    "migrations/1940_bla_bli_blu_abandon_upload_template.sql",
+    "migrations/1921_capacity_mandate_editors.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

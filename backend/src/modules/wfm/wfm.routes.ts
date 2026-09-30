@@ -1347,6 +1347,50 @@ wfmRouter.get("/my-roster/weeks", requireAuth, h(async (req: any, res: any) => {
   return res.json({ success: true, data: weeks });
 }));
 
+// GET /api/wfm/my-roster/range?from=YYYY-MM-DD&to=YYYY-MM-DD — the caller's own uploaded/generated
+// roster as plain shift windows, for the Attendance page. That page used to read only the static
+// employees.working_hours_* profile fields, so a roster upload never changed what an employee saw
+// on their own Attendance page (scheduled hours, overtime, late arrival).
+// The assignment's own shift_start_time/shift_end_time snapshot wins over the live template/master
+// times, matching attendance-engine.service.ts, so editing a shift later doesn't rewrite history.
+wfmRouter.get("/my-roster/range", requireAuth, h(async (req: any, res: any) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ error: "No employee record" });
+
+  const from = String(req.query.from ?? "");
+  const to = String(req.query.to ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ success: false, error: "from and to must be YYYY-MM-DD" });
+  }
+  const spanDays = (Date.parse(to) - Date.parse(from)) / 86_400_000;
+  if (!(spanDays >= 0) || spanDays > 62) {
+    return res.status(400).json({ success: false, error: "range must be 0-62 days" });
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT wra.roster_date, wra.is_week_off,
+            COALESCE(wra.shift_start_time, wst.start_time, wsm.start_time) AS start_time,
+            COALESCE(wra.shift_end_time,   wst.end_time,   wsm.end_time)   AS end_time,
+            COALESCE(wst.shift_name, wsm.shift_name) AS shift_name
+       FROM wfm_roster_assignment wra
+       LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
+       LEFT JOIN wfm_shift_master wsm ON wsm.id = wra.shift_id
+      WHERE wra.employee_id = ?
+        AND wra.roster_date BETWEEN ? AND ?
+      ORDER BY wra.roster_date`,
+    [(emp as any).id, from, to]
+  );
+
+  const data = (rows as any[]).map((r) => ({
+    roster_date: r.roster_date instanceof Date ? r.roster_date.toISOString().slice(0, 10) : String(r.roster_date).slice(0, 10),
+    is_week_off: Boolean(r.is_week_off),
+    start_time: r.start_time ?? null,
+    end_time: r.end_time ?? null,
+    shift_name: r.shift_name ?? null,
+  }));
+  return res.json({ success: true, data });
+}));
+
 // GET /api/wfm/my-roster/week/:weekStart — the 7 days for that week, shift/weekoff/ack state.
 wfmRouter.get("/my-roster/week/:weekStart", requireAuth, h(async (req: any, res: any) => {
   const emp = await getEmployeeForUser(req.authUser!.id);

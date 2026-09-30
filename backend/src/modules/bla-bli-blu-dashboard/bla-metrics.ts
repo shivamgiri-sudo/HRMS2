@@ -29,6 +29,8 @@ export interface Additive {
   requiredData: number; cappedData: number; targetSale: number; targetRevenue: number;
   /** realTimeSale x prepaid/rto target, so weighted targets survive aggregation across LOBs. */
   prepaidTgtNum: number; rtoTgtNum: number;
+  /** Sales of LOBs that HAVE a target: the divisor for the blended prepaid / RTO targets (an untargeted LOB must not dilute them). */
+  tgtBaseSale: number;
 }
 export interface Metrics extends Additive {
   connectPct: number; attemptPct: number;
@@ -41,7 +43,7 @@ export interface Row extends Metrics { key: string; label: string }
 export const ZERO: Additive = {
   freshBase: 0, freshWorkable: 0, totalWorkable: 0, dnd: 0, uniqueAttempt: 0, connected: 0, le30: 0, lt1m: 0, ge1m: 0,
   realTimeSale: 0, prepaid: 0, rto: 0, revenue: 0, ptp: 0, h24: 0,
-  requiredData: 0, cappedData: 0, targetSale: 0, targetRevenue: 0, prepaidTgtNum: 0, rtoTgtNum: 0,
+  requiredData: 0, cappedData: 0, targetSale: 0, targetRevenue: 0, prepaidTgtNum: 0, rtoTgtNum: 0, tgtBaseSale: 0,
 };
 const ADD_KEYS = Object.keys(ZERO) as (keyof Additive)[];
 
@@ -78,6 +80,7 @@ export function dayAdditive(recv: ReceivedAgg | undefined, sales: SalesAgg | und
   if (cfg) {
     a.prepaidTgtNum = a.realTimeSale * cfg.prepaidTarget;
     a.rtoTgtNum = a.realTimeSale * cfg.rtoTarget;
+    a.tgtBaseSale = a.realTimeSale;
   }
   return a;
 }
@@ -85,8 +88,8 @@ export function dayAdditive(recv: ReceivedAgg | undefined, sales: SalesAgg | und
 export function derive(a: Additive, cfg?: TargetCfg): Metrics {
   const rts = a.realTimeSale;
   const conversionTarget = cfg ? cfg.conversionTarget : div(a.targetSale, a.cappedData);
-  const prepaidTarget = cfg ? cfg.prepaidTarget : div(a.prepaidTgtNum, rts);
-  const rtoTarget = cfg ? cfg.rtoTarget : div(a.rtoTgtNum, rts);
+  const prepaidTarget = cfg ? cfg.prepaidTarget : div(a.prepaidTgtNum, a.tgtBaseSale);
+  const rtoTarget = cfg ? cfg.rtoTarget : div(a.rtoTgtNum, a.tgtBaseSale);
   const targetAov = cfg ? cfg.targetAov : div(a.targetRevenue, a.targetSale);
   const deliveryConversion = div(rts, a.cappedData);
   const deliveryPrepaid = div(a.prepaid, rts);

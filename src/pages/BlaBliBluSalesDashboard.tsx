@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Loader2, Target, TrendingUp, Upload, Users, IndianRupee } from "lucide-react";
+import BlaAnalytics from "@/components/process-operations/BlaAnalytics";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 /**
@@ -21,7 +22,7 @@ interface Row {
 }
 interface Block { lob: string; hasTarget: boolean; daily: Row[]; weekly: Row[]; mtd: Row }
 interface Overview { from: string; to: string; latestDataDate?: string | null; lobs: string[]; blocks: Block[]; all: Block }
-interface Product { product: string; cartAbc: number; inbound: number; upgrade: number; total: number; contributionPct: number; paid: number; cod: number }
+interface Product { product: string; cartAbc: number; inbound: number; upgrade: number; other?: number; total: number; contributionPct: number; paid: number; cod: number }
 interface ProductWise { grandTotal: number; products: Product[] }
 interface UploadResult { validRows: number; totalRows: number; storedRows: number; datesReplaced: number; dateFrom: string | null; dateTo: string | null; skippedNoDate: number }
 
@@ -153,9 +154,9 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
             <Card icon={Users} label="Fresh Workable" value={fmt(m.freshWorkable)} sub={`Base ${fmt(m.freshBase)} · DND ${fmt(m.dnd)}`} />
             <Card icon={TrendingUp} label="Real Time Sales" value={fmt(m.realTimeSale)} sub={`Target ${fmt(m.targetSale)}`} />
-            <Card icon={Target} label="Sale Achievement" value={pct(m.saleAchievement)} sub={block.hasTarget ? undefined : "No target set"} />
-            <Card icon={IndianRupee} label="Revenue" value={inr(m.revenue)} sub={`Target ${inr(m.targetRevenue)} · ${pct(m.revenueAchievement)}`} />
-            <Card icon={TrendingUp} label="Delivery Conversion" value={pct(m.deliveryConversion)} sub={`Target ${pct(m.conversionTarget)}`} />
+            <Card icon={Target} label="Sale Achievement" value={m.targetSale > 0 ? pct(m.saleAchievement) : "—"} sub={m.targetSale > 0 ? undefined : block.hasTarget ? "Needs Received Data (workable base) to set the target" : "No target set"} />
+            <Card icon={IndianRupee} label="Revenue" value={inr(m.revenue)} sub={m.targetRevenue > 0 ? `Target ${inr(m.targetRevenue)} · ${pct(m.revenueAchievement)}` : "No target yet"} />
+            <Card icon={TrendingUp} label="Delivery Conversion" value={m.cappedData > 0 ? pct(m.deliveryConversion) : "—"} sub={m.cappedData > 0 ? `Target ${pct(m.conversionTarget)}` : "Needs Received Data"} />
             <Card icon={IndianRupee} label="AOV" value={inr(m.aov)} sub={`Prepaid ${pct(m.deliveryPrepaid)} · RTO ${pct(m.deliveryRto)}`} />
           </div>
 
@@ -186,7 +187,7 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
               ] as const).map(([l, v, s]) => (
                 <div key={l} className="rounded-xl bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">{l} Achievement</p>
-                  <p className={`text-xl font-bold ${achClass(v)}`}>{pct(v)}</p>
+                  <p className={`text-xl font-bold ${m.targetSale > 0 || l === "Prepaid" ? achClass(v) : "text-slate-300"}`}>{m.targetSale > 0 || l === "Prepaid" ? pct(v) : "—"}</p>
                   <p className="text-[11px] text-slate-400">{s}</p>
                 </div>
               ))}
@@ -229,19 +230,21 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
         </>
       )}
 
+      {!loading && !empty && <BlaAnalytics from={range.from} to={range.to} funnel={m ? { freshBase: m.freshBase, freshWorkable: m.freshWorkable, uniqueAttempt: m.uniqueAttempt, connected: m.connected, realTimeSale: m.realTimeSale } : undefined} />}
+
       {!loading && products && products.products.length > 0 && (
         <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
           <p className="mb-3 text-sm font-semibold text-slate-700">Product Wise Sales</p>
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-left text-slate-500">
-                <tr>{["Product / Category", "Cart ABC", "Inbound", "Upgrade", "Total", "Contribution", "Paid", "COD"].map((h) => <th key={h} className="px-2 py-2 font-semibold">{h}</th>)}</tr>
+                <tr>{["Product / Category", "Cart ABC", "Inbound", "Upgrade", "Repeat / other", "Total", "Contribution", "Paid", "COD"].map((h) => <th key={h} className="px-2 py-2 font-semibold">{h}</th>)}</tr>
               </thead>
               <tbody>
                 {products.products.map((p) => (
                   <tr key={p.product} className="border-t border-slate-100">
                     <td className="px-2 py-1.5">{p.product}</td><td className="px-2">{fmt(p.cartAbc)}</td><td className="px-2">{fmt(p.inbound)}</td><td className="px-2">{fmt(p.upgrade)}</td>
-                    <td className="px-2 font-semibold">{fmt(p.total)}</td><td className="px-2">{pct(p.contributionPct)}</td><td className="px-2">{fmt(p.paid)}</td><td className="px-2">{fmt(p.cod)}</td>
+                    <td className="px-2">{fmt(p.other ?? 0)}</td><td className="px-2 font-semibold">{fmt(p.total)}</td><td className="px-2">{pct(p.contributionPct)}</td><td className="px-2">{fmt(p.paid)}</td><td className="px-2">{fmt(p.cod)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -255,7 +258,8 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
           <UploadBox title="Received Data" hint="Daily data allocation sheet (Date, LOB, Data Type, Workable, Same Day Attempt, Final Dispo…). Re-uploading a date replaces it." endpoint="/api/bla-bli-blu-dashboard/upload/received-data" onDone={() => void load()} />
           <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
             <p className="text-sm font-semibold text-slate-700">Overall Sales</p>
-            <p className="text-xs text-slate-400">Sales come from the existing BLA / BLI / BLU Overall Sales upload in the Bulk Upload Hub — nothing to upload here.</p>
+            <p className="text-xs text-slate-400">Both uploads are also in the Bulk Upload Hub: "Bla Bli Blu — Overall Sales Raw" (the workbook's Overall Sales sheet) and "Bla Bli Blu — Abandon (Received Data)" (the Received Data sheet). Rows are keyed by OrderID, so re-uploading a file does not duplicate orders.</p>
+            <a href="/bulk-upload" className="mt-2 inline-block text-xs font-semibold text-blue-600 underline">Open Bulk Upload Hub</a>
           </div>
         </div>
       )}

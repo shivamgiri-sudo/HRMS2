@@ -527,6 +527,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_bb_cart_masmis_batch",
   "import_bb_chat_masmis_batch",
   // Bla Bli Blu Overall Sales (curated workbook sheet, distinct from the Shopify direct export)
+  "import_bla_bli_blu_abandon_batch",
   "import_bla_bli_blu_overall_sales_batch",
   "import_clovia_team_alignment_batch",
   // Dalmia uploads â€” after-hour contacts, DialDesk DD raw, outbound CDR

@@ -221,6 +221,7 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   // Bella Repeat alignment
   BELLA_REPEAT_ALIGNMENT: "import_bella_repeat_alignment_batch",
   // Bla Bli Blu Overall Sales (curated workbook sheet)
+  BLA_BLI_BLU_ABANDON: "import_bla_bli_blu_abandon_batch",
   BLA_BLI_BLU_OVERALL_SALES: "import_bla_bli_blu_overall_sales_batch",
   // Remaining Clovia uploads
   CLOVIA_QUALITY_AUDIT: "import_clovia_quality_audit_batch",
