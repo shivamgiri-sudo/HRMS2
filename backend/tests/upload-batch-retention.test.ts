@@ -106,7 +106,8 @@ describe("execute", () => {
     expect(order.filter((o) => o === "delete")).toHaveLength(3);
     expect(order.lastIndexOf("mark")).toBeGreaterThan(order.lastIndexOf("delete"));
     const del = calls.find((c) => /^DELETE/.test(c.sql))!;
-    expect(del.sql).toMatch(/LIMIT \?/);
+    expect(del.sql).toMatch(/LIMIT 1000$/); // constant inlined, never a bound LIMIT ? (rejected by MySQL prepared statements)
+    expect(del.params).toEqual(["b1"]);
     expect(calls.some((c) => /BEGIN|START TRANSACTION/i.test(c.sql))).toBe(false);
   }, 20000);
   it("snapshot query never reads row data", async () => {

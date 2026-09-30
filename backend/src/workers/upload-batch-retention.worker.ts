@@ -146,9 +146,11 @@ async function purgeRows(batchId: string, deadline: number): Promise<{ deleted: 
   let deleted = 0;
   for (;;) {
     if (Date.now() > deadline) return { deleted, finished: false };
+    // CHUNK_SIZE is a module constant, inlined on purpose: a bound `LIMIT ?` in a prepared statement is rejected by
+    // this MySQL ("Incorrect arguments to mysqld_stmt_execute"), which a mocked test cannot see.
     const [res] = await db.execute<import("mysql2").ResultSetHeader>(
-      "DELETE FROM upload_batch_row WHERE upload_batch_id = ? LIMIT ?",
-      [batchId, CHUNK_SIZE],
+      `DELETE FROM upload_batch_row WHERE upload_batch_id = ? LIMIT ${CHUNK_SIZE}`,
+      [batchId],
     );
     deleted += res.affectedRows;
     if (res.affectedRows < CHUNK_SIZE) return { deleted, finished: true };
