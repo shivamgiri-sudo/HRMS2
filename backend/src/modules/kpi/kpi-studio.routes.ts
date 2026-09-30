@@ -670,7 +670,9 @@ router.post(
     }
 
     const parsed = await parseUploadBuffer(file.buffer, file.originalname);
+    const uploader = await studioViewerFor(req.authUser!.id);
     const result = await commitUploadRows({
+      allowedProcessIds: uploader.orgWide ? null : uploader.processIds,
       dataSourceId,
       fileName: file.originalname,
       employeeColumn,

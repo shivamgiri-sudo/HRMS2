@@ -1400,6 +1400,11 @@ export async function commitUploadRows(options: {
   rows: ReadonlyArray<Record<string, unknown>>;
   uploadedBy?: string;
   dryRun?: boolean;
+  /**
+   * When set, only employees in these processes may be uploaded for; other rows are rejected with a reason.
+   * null/undefined = no restriction (organisation-wide caller).
+   */
+  allowedProcessIds?: ReadonlySet<string> | null;
 }): Promise<CommitUploadResult> {
   const { rows, columnMapping, employeeColumn, dateColumn } = options;
   const rejections: UploadRowOutcome[] = [];
@@ -1409,6 +1414,21 @@ export async function commitUploadRows(options: {
     .map((row) => (row[employeeColumn] === null || row[employeeColumn] === undefined ? '' : String(row[employeeColumn]).trim()))
     .filter(Boolean);
   const codeMap = await buildEmployeeCodeMap(codes);
+
+  // An upload writes somebody's KPI inputs, so it is scoped like an edit: a scoped uploader may only load
+  // figures for people in their own processes.
+  const outOfScope = new Set<string>();
+  if (options.allowedProcessIds) {
+    const ids = [...new Set(codeMap.values())];
+    for (let at = 0; at < ids.length; at += 500) {
+      const chunk = ids.slice(at, at + 500);
+      const [procRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, process_id FROM employees WHERE id IN (${chunk.map(() => '?').join(',')})`, chunk);
+      for (const r of procRows as any[]) {
+        if (!r.process_id || !options.allowedProcessIds.has(String(r.process_id))) outOfScope.add(String(r.id));
+      }
+    }
+  }
 
   const mappedFields = Object.entries(columnMapping).filter(([, header]) => Boolean(header));
   if (!mappedFields.length) throw new Error('No columns are mapped to fields yet');
@@ -1426,6 +1446,10 @@ export async function commitUploadRows(options: {
     const employeeId = codeMap.get(code.toUpperCase());
     if (!employeeId) {
       rejections.push({ rowNumber, employeeCode: code, reason: `No employee with code ${code}` });
+      return;
+    }
+    if (outOfScope.has(employeeId)) {
+      rejections.push({ rowNumber, employeeCode: code, reason: `${code} is not in a process you manage` });
       return;
     }
 
