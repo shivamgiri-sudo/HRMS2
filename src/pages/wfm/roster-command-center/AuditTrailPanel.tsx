@@ -5,15 +5,15 @@
  */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, FileText, GitBranch, History, Info, PenLine, RefreshCw, Search, ShieldAlert, User, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, GitBranch, History, Info, PenLine, RefreshCw, ShieldAlert, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChartCard } from "@/components/wfm/console/ChartCard";
 import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
 import { FilterNote } from "@/components/wfm/console/FilterNote";
 import { KpiTile } from "@/components/wfm/console/KpiTile";
+import { TabToolbar, ToolbarSearch, ToolbarSelect } from "@/components/wfm/console/TabToolbar";
+import { pickOne, useTabParams } from "./useTabParams";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
 import { hrmsApi as api } from "@/lib/hrmsApi";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
@@ -54,12 +54,18 @@ export default function AuditTrailPanel() {
   const { from: dateFrom, to: dateTo, branchId, processId, lobId } = filters;
   const qc = useQueryClient();
 
-  const [tab, setTab] = useState<"trails" | "runs">("trails");
-  const [changeType, setChangeType] = useState(ALL);
-  const [overridesOnly, setOverridesOnly] = useState(false);
-  const [search, setSearch] = useState("");
+  const [tp, setTp] = useTabParams({ sub: "trails", change: ALL, source: ALL, q: "", runStatus: ALL });
+  const tab = pickOne(tp.sub, ["trails", "runs"] as const, "trails");
+  const setTab = (t: "trails" | "runs") => setTp({ sub: t });
+  const changeType = tp.change;
+  const setChangeType = (v: string) => setTp({ change: v });
+  const overridesOnly = tp.source === "manual";
+  const setOverridesOnly = (v: boolean) => setTp({ source: v ? "manual" : ALL });
+  const search = tp.q;
+  const setSearch = (q: string) => setTp({ q });
   const debouncedSearch = useDebounced(search.trim());
-  const [runStatus, setRunStatus] = useState(ALL);
+  const runStatus = tp.runStatus;
+  const setRunStatus = (v: string) => setTp({ runStatus: v });
   const [trailOffset, setTrailOffset] = useState(0);
   const [runOffset, setRunOffset] = useState(0);
   const [trailId, setTrailId] = useState<string | null>(null);
@@ -117,22 +123,21 @@ export default function AuditTrailPanel() {
   const hasScopeFilters = !!(branchId || processId || lobId);
 
   const applyAlert = (a: AuditAlert) => {
-    setTab(a.action.tab);
-    if (a.action.tab === "trails") { setChangeType(a.action.changeType ?? ALL); setOverridesOnly(!!a.action.overridesOnly); setSearch(""); }
-    else setRunStatus(a.action.runStatus ?? ALL);
+    if (a.action.tab === "trails") setTp({ sub: "trails", change: a.action.changeType ?? ALL, source: a.action.overridesOnly ? "manual" : ALL, q: "" });
+    else setTp({ sub: "runs", runStatus: a.action.runStatus ?? ALL });
   };
   const openSegment = (title: string, params: Record<string, string>) => setSegment({ title, params: { ...params, ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) } });
   const showAllForSegment = () => {
     if (!segment) return;
     const p = segment.params;
-    setTab("trails"); setChangeType(p.changeType ?? ALL); setOverridesOnly(p.overridesOnly === "1"); setSearch("");
+    setTp({ sub: "trails", change: p.changeType ?? ALL, source: p.overridesOnly === "1" ? "manual" : ALL, q: "" });
     setSegment(null);
   };
 
   const refresh = () => { void qc.invalidateQueries({ queryKey: ["roster-audit-summary"] }); void qc.invalidateQueries({ queryKey: ["roster-audit-trails"] }); if (tab === "runs") void qc.invalidateQueries({ queryKey: ["roster-audit-runs"] }); };
   const updated = formatUpdatedAt(summary.dataUpdatedAt);
   const filtersActive = changeType !== ALL || overridesOnly || !!search;
-  const clearFilters = () => { setChangeType(ALL); setOverridesOnly(false); setSearch(""); };
+  const clearFilters = () => setTp({ change: ALL, source: ALL, q: "" });
 
   return (
     <div className="space-y-4">
@@ -214,29 +219,11 @@ export default function AuditTrailPanel() {
 
         <TabsContent value="trails" className="mt-3">
           <ConsoleCard>
-            <div className="flex flex-col gap-2 border-b border-border p-3 sm:flex-row sm:items-center">
-              <div className="relative sm:w-64">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" aria-hidden />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search employee name or code" aria-label="Search employee name or code" maxLength={60} className="min-h-[44px] pl-8 sm:min-h-10" />
-              </div>
-              <Select value={changeType} onValueChange={setChangeType}>
-                <SelectTrigger className="min-h-[44px] sm:min-h-10 sm:w-56" aria-label="Filter by change type"><SelectValue placeholder="All change types" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All change types</SelectItem>
-                  {CHANGE_TYPE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={overridesOnly ? "manual" : ALL} onValueChange={(v) => setOverridesOnly(v === "manual")}>
-                <SelectTrigger className="min-h-[44px] sm:min-h-10 sm:w-48" aria-label="Filter by source"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>Engine and manual</SelectItem>
-                  <SelectItem value="manual">Manual overrides only</SelectItem>
-                </SelectContent>
-              </Select>
-              {filtersActive && (
-                <Button variant="ghost" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={clearFilters}><X className="mr-1 h-4 w-4" aria-hidden />Clear filters</Button>
-              )}
-            </div>
+            <TabToolbar variant="embedded" label="Audit trail filters" onClear={filtersActive ? clearFilters : undefined}>
+              <ToolbarSearch value={search} onChange={setSearch} placeholder="Search employee name or code" />
+              <ToolbarSelect label="Filter by change type" value={changeType} onChange={setChangeType} options={[{ value: ALL, label: "All change types" }, ...CHANGE_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]} />
+              <ToolbarSelect label="Filter by source" value={overridesOnly ? "manual" : ALL} onChange={(v) => setOverridesOnly(v === "manual")} options={[{ value: ALL, label: "Engine and manual" }, { value: "manual", label: "Manual overrides only" }]} />
+            </TabToolbar>
             {trails.isLoading ? <TableSkeleton label="Loading audit trail" /> : trails.isError ? (
               <div className="flex items-center justify-between gap-2 p-4 text-sm text-slate-700" role="alert"><span>Could not load the audit trail.</span><Button variant="outline" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={() => trails.refetch()}>Retry</Button></div>
             ) : !trails.data?.trails.length ? (
@@ -252,17 +239,10 @@ export default function AuditTrailPanel() {
 
         <TabsContent value="runs" className="mt-3">
           <ConsoleCard>
-            <div className="flex flex-col gap-2 border-b border-border p-3 sm:flex-row sm:items-center">
-              <Select value={runStatus} onValueChange={setRunStatus}>
-                <SelectTrigger className="min-h-[44px] sm:min-h-10 sm:w-48" aria-label="Filter by run status"><SelectValue placeholder="All statuses" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All statuses</SelectItem>
-                  {RUN_STATUS_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
+            <TabToolbar variant="embedded" label="Generation run filters" onClear={runStatus !== ALL ? () => setRunStatus(ALL) : undefined}>
+              <ToolbarSelect label="Filter by run status" value={runStatus} onChange={setRunStatus} options={[{ value: ALL, label: "All statuses" }, ...RUN_STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]} />
               <FilterNote>Runs are filtered by start time{hasScopeFilters ? "; LOB is not applied to runs" : ""}</FilterNote>
-              {runStatus !== ALL && <Button variant="ghost" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={() => setRunStatus(ALL)}><X className="mr-1 h-4 w-4" aria-hidden />Clear filter</Button>}
-            </div>
+            </TabToolbar>
             {runs.isLoading ? <TableSkeleton label="Loading generation runs" /> : runs.isError ? (
               <div className="flex items-center justify-between gap-2 p-4 text-sm text-slate-700" role="alert"><span>Could not load generation runs.</span><Button variant="outline" size="sm" className="min-h-[44px] cursor-pointer sm:min-h-8" onClick={() => runs.refetch()}>Retry</Button></div>
             ) : !runs.data?.runs.length ? (

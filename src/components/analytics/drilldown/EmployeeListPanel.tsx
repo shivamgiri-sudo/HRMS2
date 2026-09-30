@@ -134,8 +134,10 @@ export async function fetchAonDrilldownEmployees(
   return res.data ?? [];
 }
 
-export function EmployeeListPanel({ open, metric, from, to, branchId, designationId }: EmployeeListPanelProps) {
-  const { chips, showEmployeeList, closeEmployeeList, selectEmployee, popToChip } = useDrillDown();
+export function EmployeeListPanel({ open, metric: pageMetric, from, to, branchId, designationId }: EmployeeListPanelProps) {
+  const { chips, showEmployeeList, closeEmployeeList, selectEmployee, popToChip, listMetric } = useDrillDown();
+  // A drill opened from the Overall Attrition Rate tile forces the exits list whatever the page metric is.
+  const metric = listMetric ?? pageMetric;
   const queryClient = useQueryClient();
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
 
@@ -167,7 +169,7 @@ export function EmployeeListPanel({ open, metric, from, to, branchId, designatio
     <Sheet open={open && showEmployeeList} onOpenChange={o => !o && closeEmployeeList()}>
       <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
         <SheetHeader>
-          <SheetTitle>Employees in this slice</SheetTitle>
+          <SheetTitle>{metric === "exits" ? "Exited employees" : "Employees in this slice"}</SheetTitle>
         </SheetHeader>
 
         <div className="mt-3 flex flex-wrap gap-1.5">
@@ -217,8 +219,20 @@ export function EmployeeListPanel({ open, metric, from, to, branchId, designatio
                   <p className="text-xs text-slate-500">
                     {row.employee_code}
                     {row.aon_days != null ? ` · ${row.aon_days} days on network` : ""}
-                    {row.tenure_at_exit_days != null ? ` · ${row.tenure_at_exit_days} days at exit` : ""}
                   </p>
+                  {metric === "exits" && (
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-600">
+                      <span>Process: <b className="font-medium text-slate-800">{String(row.process_name ?? "UNASSIGNED")}</b></span>
+                      <span>Tenure: <b className="font-medium text-slate-800">{row.tenure_at_exit_days != null ? `${row.tenure_at_exit_days} days` : "—"}</b></span>
+                      <span>Left: <b className="font-medium text-slate-800">{String(row.date_of_exit ?? "—")}</b></span>
+                      <span className="basis-full">
+                        Reason:{" "}
+                        {row.exit_reason
+                          ? <b className="font-medium text-slate-800">{String(row.exit_reason).replace(/_/g, " ")}</b>
+                          : <i className="text-slate-400">Not recorded</i>}
+                      </span>
+                    </div>
+                  )}
                 </button>
                 {shouldShowFlagButton(metric, row) && (
                   <Button

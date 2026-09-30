@@ -13,7 +13,8 @@ import { Suspense, lazy, useMemo, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Clock, Percent, RefreshCw, Shield, UserCheck, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TabToolbar, ToolbarSelect } from "@/components/wfm/console/TabToolbar";
+import { pickOne, useTabParams } from "./useTabParams";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { ChartCard } from "@/components/wfm/console/ChartCard";
 import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
@@ -68,8 +69,11 @@ export default function InterventionsPanel() {
   const qc = useQueryClient();
   const { filters } = useRosterConsoleFilters();
   const { branchId, processId, lobId } = filters;
-  const [tier, setTier] = useState<string>(ALL);
-  const [owner, setOwner] = useState<string>(ALL);
+  const [tp, setTp] = useTabParams({ tier: ALL, owner: ALL });
+  const tier = pickOne(tp.tier, ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const, ALL) as string;
+  const owner = pickOne(tp.owner, Object.keys(OWNER_LABEL) as Owner[], ALL) as string;
+  const setTier = (v: string) => setTp({ tier: v });
+  const setOwner = (v: string) => setTp({ owner: v });
   const [view, setView] = useState<View>(null);
   const scope = scopeParams({ branchId, processId, lobId }).toString();
 
@@ -176,23 +180,12 @@ export default function InterventionsPanel() {
       </div>
 
       <ConsoleCard>
-        <div className="flex flex-wrap items-center gap-3 border-b border-border p-3">
-          <h3 className="mr-auto text-sm font-semibold text-slate-900">Open cases {listQ.data && <span className="font-normal text-slate-600">· {fmtInt(rows.length)}{s && s.openTotal > rows.length && tier === ALL && owner === ALL ? ` of ${fmtInt(s.openTotal)}` : ""}</span>}</h3>
-          <Select value={tier} onValueChange={setTier}>
-            <SelectTrigger className="w-36" aria-label="Filter by risk tier"><SelectValue placeholder="Risk tier" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All tiers</SelectItem>
-              {(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as Tier[]).map((t) => <SelectItem key={t} value={t}>{TIER_LABEL[t]}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={owner} onValueChange={setOwner}>
-            <SelectTrigger className="w-40" aria-label="Filter by owner"><SelectValue placeholder="Owner" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All owners</SelectItem>
-              {(Object.keys(OWNER_LABEL) as Owner[]).map((o) => <SelectItem key={o} value={o}>{OWNER_LABEL[o]}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
+        <TabToolbar variant="embedded" label="Open case filters" onClear={tier !== ALL || owner !== ALL ? () => setTp({ tier: ALL, owner: ALL }) : undefined}>
+          <h3 className="mr-2 text-sm font-semibold text-slate-900">Open cases {listQ.data && <span className="font-normal text-slate-600">· {fmtInt(rows.length)}{s && s.openTotal > rows.length && tier === ALL && owner === ALL ? ` of ${fmtInt(s.openTotal)}` : ""}</span>}</h3>
+
+          <ToolbarSelect label="Filter by risk tier" value={tier} onChange={setTier} options={[{ value: ALL, label: "All tiers" }, ...(["CRITICAL", "HIGH", "MEDIUM", "LOW"] as Tier[]).map((t) => ({ value: t, label: TIER_LABEL[t] }))]} />
+          <ToolbarSelect label="Filter by owner" value={owner} onChange={setOwner} options={[{ value: ALL, label: "All owners" }, ...(Object.keys(OWNER_LABEL) as Owner[]).map((o) => ({ value: o, label: OWNER_LABEL[o] }))]} />
+        </TabToolbar>
         {listQ.isLoading ? (
           <div className="space-y-2 p-3" role="status" aria-label="Loading cases">
             {Array.from({ length: 6 }, (_, i) => <div key={i} className="h-12 animate-pulse rounded bg-slate-100" />)}

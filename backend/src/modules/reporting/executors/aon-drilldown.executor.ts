@@ -181,7 +181,15 @@ export async function aonDrilldownEmployees(
            DATE_FORMAT(e.date_of_exit, '%d-%m-%Y')     AS date_of_exit,
            DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) AS tenure_at_exit_days,
            COALESCE(NULLIF(TRIM(m.full_name),''),
-                    TRIM(CONCAT(m.first_name,' ',COALESCE(m.last_name,'')))) AS reporting_manager_name
+                    TRIM(CONCAT(m.first_name,' ',COALESCE(m.last_name,'')))) AS reporting_manager_name,
+           -- Correlated subquery, not a JOIN: an employee can hold several exit_request rows
+           -- and a JOIN would duplicate them and break reconciliation with the exit count.
+           -- NULL when no reason was captured; the UI renders that as "Not recorded".
+           (SELECT COALESCE(NULLIF(TRIM(er.exit_reason_category),''), NULLIF(TRIM(er.resignation_reason),''))
+              FROM exit_request er
+             WHERE er.employee_id = e.id
+             ORDER BY er.created_at DESC
+             LIMIT 1) AS exit_reason
       FROM employees e
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id

@@ -574,6 +574,13 @@ function enrichCandidate(row: CandidateRow): CandidateRow {
     _slaBreached: !!row.sla_breached,
     _selected: selected,
     _rejected: rejected,
+    // Ops (Round 2 - Op's) outcome, read from the round's own result column rather than from
+    // the overall decision: a candidate can pass Ops and still be rejected by the client.
+    _opsReached: !!normalizeText(row.round2_result),
+    _opsSelected: contains(row.round2_result, ["selected"]),
+    _opsRejected: contains(row.round2_result, ["reject"]),
+    // Same vocabulary as ats/analytics.unified.service.ts JOINED_STAGES.
+    _joined: ["onboarded", "converted", "payroll_validated"].includes(normalizeText(row.current_stage).toLowerCase()),
     _onHold: onHold,
     _waiting: waiting,
     _noShow: noShow,
@@ -774,6 +781,14 @@ function recruiterProductivity(rows: CandidateRow[]) {
       ? Math.round(openItems.reduce((a, r) => a + Number(r._totalMinutes || 0), 0) / openItems.length)
       : 0;
     const selectionRate = sourced ? Math.round((selection / sourced) * 1000) / 10 : 0;
+    const joined = items.filter((r) => r._joined).length;
+    // Denominator is everyone who got an offer: selected, plus joined rows whose decision
+    // column has since moved on, so joined can never exceed the base.
+    const offered = items.filter((r) => r._selected || r._joined).length;
+    // Ops rates are over candidates who reached the Ops round, not over everything sourced.
+    const opsReached = items.filter((r) => r._opsReached).length;
+    const opsSelected = items.filter((r) => r._opsSelected).length;
+    const opsRejected = items.filter((r) => r._opsRejected).length;
     const slaCompliancePercent = sourced ? Math.round(((sourced - breach) / sourced) * 1000) / 10 : 0;
     const handlingQualityScore = sourced ? Math.round(items.reduce((a, r) => a + Number(r._handlingQualityScore || 0), 0) / sourced) : 0;
     const qualityScore = sourced ? Math.round(items.reduce((a, r) => a + Number(r._candidateQualityScore || 0), 0) / sourced) : 0;
@@ -811,6 +826,14 @@ function recruiterProductivity(rows: CandidateRow[]) {
       AttendedCount: attended,
       SlaCompliancePercent: slaCompliancePercent,
       SelectionRate: selectionRate,
+      JoinedCount: joined,
+      OfferedCount: offered,
+      JoiningRate: offered ? Math.round((joined / offered) * 1000) / 10 : 0,
+      OpsReachedCount: opsReached,
+      OpsSelectedCount: opsSelected,
+      OpsRejectedCount: opsRejected,
+      OpsSelectionRate: opsReached ? Math.round((opsSelected / opsReached) * 1000) / 10 : 0,
+      OpsRejectionRate: opsReached ? Math.round((opsRejected / opsReached) * 1000) / 10 : 0,
       AvgWaitMinutes: avgWait,
       AttentionFlag: attentionFlag,
       QualityScore: qualityScore,

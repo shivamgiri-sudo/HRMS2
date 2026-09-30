@@ -9,12 +9,12 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import { Activity, AlertTriangle, ChevronLeft, ChevronRight, RefreshCw, ShieldCheck, Users, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChartCard } from "@/components/wfm/console/ChartCard";
 import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
 import { KpiTile } from "@/components/wfm/console/KpiTile";
+import { TabToolbar, ToolbarSearch, ToolbarSelect } from "@/components/wfm/console/TabToolbar";
+import { pickMonth, pickOne, useTabParams } from "./useTabParams";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
 import { StatusPill } from "@/components/wfm/console/StatusPill";
 import { scopeParams } from "./filterState";
@@ -36,14 +36,18 @@ const ChartFallback = () => <div className="h-full animate-pulse rounded-md bg-s
 export default function CompliancePanel() {
   const { filters } = useRosterConsoleFilters();
   const scopeQs = useMemo(() => scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId: filters.lobId }).toString(), [filters.branchId, filters.processId, filters.lobId]);
-  const [month, setMonth] = useState(currentMonthIst);
-  const [kind, setKind] = useState<FeedKind>("roster");
-  const [ruleId, setRuleId] = useState(ALL);
-  const [severity, setSeverity] = useState(ALL);
-  const [q, setQ] = useState("");
+  const months = useMemo(() => recentMonths(currentMonthIst(), 6), []);
+  const [tp, setTp] = useTabParams({ sub: "overview", month: "", kind: "roster", rule: ALL, sev: ALL, q: "" });
+  const month = pickMonth(tp.month, currentMonthIst());
+  const setMonth = (m: string) => setTp({ month: m === currentMonthIst() ? "" : m });
+  const kind = pickOne(tp.kind, ["roster", "attendance"] as const, "roster") as FeedKind;
+  const ruleId = tp.rule;
+  const severity = tp.sev;
+  const q = tp.q;
+  const tab = pickOne(tp.sub, ["overview", "violations"] as const, "overview");
+  const setTab = (t: string) => setTp({ sub: t });
   const [page, setPage] = useState(1);
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
-  const [tab, setTab] = useState("overview");
   const { mark, consume } = useRefreshFlags();
 
   const feedFilters = useMemo(() => ({ kind, ruleId, severity, q, page }), [kind, ruleId, severity, q, page]);
@@ -51,15 +55,18 @@ export default function CompliancePanel() {
   const summary = sq.data;
   const anyFetching = sq.isFetching || tq.isFetching || vq.isFetching;
 
-  const months = useMemo(() => recentMonths(currentMonthIst(), 6), []);
   const alerts = useMemo(() => buildAlerts(summary, {
-    filterRule: (id, k) => { setKind(k); setRuleId(id); setSeverity(ALL); setQ(""); setPage(1); setTab("violations"); },
+    filterRule: (id, k) => { setTp({ kind: k, rule: id, sev: ALL, q: "", sub: "violations" }); setPage(1); },
     open: setDrawer,
   }), [summary]);
 
   const refresh = () => { mark("summary", "trend", "violations"); void sq.refetch(); void tq.refetch(); void vq.refetch(); };
-  const resetPage = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
-  const changeKind = (k: string) => { setKind(k as FeedKind); setRuleId(ALL); setPage(1); };
+  const changeKind = (k: string) => { setTp({ kind: k, rule: ALL }); setPage(1); };
+  const setRuleId = (v: string) => { setTp({ rule: v }); setPage(1); };
+  const setSeverity = (v: string) => { setTp({ sev: v }); setPage(1); };
+  const setQ = (v: string) => { setTp({ q: v }); setPage(1); };
+  const filtersActive = ruleId !== ALL || severity !== ALL || !!q;
+  const clearViolationFilters = () => { setTp({ rule: ALL, sev: ALL, q: "" }); setPage(1); };
 
   const band = scoreBand(summary?.compliancePct ?? null);
   const prev = summary?.previous ?? null;
@@ -79,16 +86,16 @@ export default function CompliancePanel() {
         actions={
           <>
             <UpdatedStamp updatedAt={sq.dataUpdatedAt} fetching={anyFetching} />
-            <Select value={month} onValueChange={(v) => { setMonth(v); setPage(1); }}>
-              <SelectTrigger className="h-9 w-[140px]" aria-label="Compliance month"><SelectValue /></SelectTrigger>
-              <SelectContent>{months.map((m) => <SelectItem key={m} value={m}>{fmtMonth(m)}</SelectItem>)}</SelectContent>
-            </Select>
             <Button variant="outline" size="sm" onClick={refresh} className="min-h-[44px] cursor-pointer sm:min-h-9" aria-label="Refresh compliance data">
               <RefreshCw className="mr-2 h-4 w-4" aria-hidden />Refresh
             </Button>
           </>
         }
       />
+
+      <TabToolbar label="Compliance period">
+        <ToolbarSelect label="Compliance month" value={month} onChange={(v) => { setMonth(v); setPage(1); }} options={months.map((m) => ({ value: m, label: fmtMonth(m) }))} />
+      </TabToolbar>
 
       {sq.isError && (
         <div role="alert" className="mb-3 rounded-lg border border-red-300 bg-red-50 p-3">
@@ -112,7 +119,7 @@ export default function CompliancePanel() {
             <KpiTile label="Violations" value={fmtInt(summary?.totalViolations)} sub="Rule incidents this month" tone={summary?.totalViolations ? "amber" : "green"} icon={AlertTriangle} delta={summary ? pctChange(summary.totalViolations, prev?.totalViolations) : undefined} deltaBad="up" spark={violSpark} onClick={() => setDrawer({ type: "overview" })} />
             <KpiTile label="Employees affected" value={fmtInt(summary?.employeesWithViolations)} sub={`of ${fmtInt(summary?.totalEmployees)} rostered`} tone={summary?.employeesWithViolations ? "red" : "green"} icon={UserX} progress={summary && summary.totalEmployees > 0 ? (summary.employeesWithViolations / summary.totalEmployees) * 100 : undefined} onClick={() => setDrawer({ type: "overview" })} />
             <KpiTile label="Rostered employees" value={fmtInt(summary?.totalEmployees)} sub={`${fmtInt(summary?.byBranch.length)} branches`} tone="blue" icon={Users} onClick={() => setDrawer({ type: "overview" })} />
-            <KpiTile label="Attendance rate" value={fmtPct(summary?.attendance?.adherencePct)} sub={summary?.attendance ? `${fmtInt(summary.attendance.unreconciled)} not reconciled` : "No elapsed days yet"} tone="neutral" icon={Activity} onClick={() => { setKind("attendance"); setRuleId(ALL); setPage(1); setTab("violations"); }} />
+            <KpiTile label="Attendance rate" value={fmtPct(summary?.attendance?.adherencePct)} sub={summary?.attendance ? `${fmtInt(summary.attendance.unreconciled)} not reconciled` : "No elapsed days yet"} tone="neutral" icon={Activity} onClick={() => { setTp({ kind: "attendance", rule: ALL, sub: "violations" }); setPage(1); }} />
           </>
         )}
       </div>
@@ -183,27 +190,15 @@ export default function CompliancePanel() {
 
         <TabsContent value="violations" className="space-y-3">
           <ConsoleCard className="p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Select value={kind} onValueChange={changeKind}>
-                <SelectTrigger className="h-9 w-[210px]" aria-label="Violation source"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="roster">Roster rule violations</SelectItem>
-                  <SelectItem value="attendance">Attendance exceptions</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={ruleId} onValueChange={resetPage(setRuleId)}>
-                <SelectTrigger className="h-9 w-[190px]" aria-label="Rule filter"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value={ALL}>{kind === "roster" ? "All rules" : "All exception types"}</SelectItem>{ruleOptions.map((o) => <SelectItem key={o.id} value={o.id}>{o.label}{feed?.counts.byRule[o.id] !== undefined ? ` (${feed.counts.byRule[o.id]})` : ""}</SelectItem>)}</SelectContent>
-              </Select>
-              {kind === "roster" && (
-                <Select value={severity} onValueChange={resetPage(setSeverity)}>
-                  <SelectTrigger className="h-9 w-[150px]" aria-label="Severity filter"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value={ALL}>All severities</SelectItem><SelectItem value="high">High</SelectItem><SelectItem value="medium">Medium</SelectItem><SelectItem value="low">Low</SelectItem></SelectContent>
-                </Select>
-              )}
-              {kind === "roster" && <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search name or code" aria-label="Search employee" className="h-9 w-[200px]" />}
-              <span className="ml-auto text-xs text-slate-600 tabular-nums" aria-live="polite">{feed ? `${fmtInt(feed.totalCount)} ${kind === "roster" ? "incidents" : "exceptions"} in ${fmtMonth(month)}` : ""}</span>
-            </div>
+            <TabToolbar variant="embedded" label="Violation filters" className="border-0 p-0"
+              onClear={filtersActive ? clearViolationFilters : undefined}
+              summary={feed ? `${fmtInt(feed.totalCount)} ${kind === "roster" ? "incidents" : "exceptions"} in ${fmtMonth(month)}` : ""}>
+              <ToolbarSelect label="Violation source" value={kind} onChange={changeKind} options={[{ value: "roster", label: "Roster rule violations" }, { value: "attendance", label: "Attendance exceptions" }]} />
+              <ToolbarSelect label="Rule filter" value={ruleId} onChange={setRuleId}
+                options={[{ value: ALL, label: kind === "roster" ? "All rules" : "All exception types" }, ...ruleOptions.map((o) => ({ value: o.id, label: `${o.label}${feed?.counts.byRule[o.id] !== undefined ? ` (${feed.counts.byRule[o.id]})` : ""}` }))]} />
+              {kind === "roster" && <ToolbarSelect label="Severity filter" value={severity} onChange={setSeverity} options={[{ value: ALL, label: "All severities" }, { value: "high", label: "High" }, { value: "medium", label: "Medium" }, { value: "low", label: "Low" }]} />}
+              {kind === "roster" && <ToolbarSearch value={q} onChange={setQ} placeholder="Search name or code" label="Search employee" />}
+            </TabToolbar>
             {kind === "attendance" && <p className="mt-2 text-xs text-slate-600">Attendance exceptions cover elapsed rostered working days only; leave, holidays and week-offs are excluded. This is a separate measure from the roster-rule score.</p>}
           </ConsoleCard>
           <ConsoleCard className="p-3">
