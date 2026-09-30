@@ -48,6 +48,13 @@ export async function isProcessWritable(userId: string, processId: string): Prom
   return rows.length > 0;
 }
 
+/** Does the caller hold write scope over at least one process? Gate for the process-less admin helpers (table lists, suggestions, config list). */
+export async function hasAnyWritableProcess(userId: string): Promise<boolean> {
+  const scope = await buildScopeWhereClause(userId, ADMIN_ROLES, { processId: "p.id", branchId: "p.branch_id" }, { allowAdminBypass: true });
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT p.id FROM process_master p WHERE (${scope.sql}) LIMIT 1`, scope.params);
+  return rows.length > 0;
+}
+
 export interface ConfigListItem { processId: string; processCode: string; processName: string; category: string; label: string | null; enabled: boolean; configured: boolean; refreshSeconds: number }
 export async function listReadableConfigs(userId: string, opts: { onlyEnabled?: boolean } = {}): Promise<ConfigListItem[]> {
   const scope = await buildScopeWhereClause(userId, VIEWER_ROLES, { processId: "p.id", branchId: "p.branch_id" }, { allowAdminBypass: true, allowCeoAllRead: true });
@@ -59,9 +66,11 @@ export async function listReadableConfigs(userId: string, opts: { onlyEnabled?: 
     enabled: c.enabled, configured: isConfigured(c), refreshSeconds: c.refreshSeconds }; });
 }
 
-export async function listAllConfigsAdmin(): Promise<Array<ConfigListItem & { aprSchema: string | null; aprTable: string | null; configuredBy: string | null; updatedAt: string | null }>> {
+export async function listAllConfigsAdmin(userId: string): Promise<Array<ConfigListItem & { aprSchema: string | null; aprTable: string | null; configuredBy: string | null; updatedAt: string | null }>> {
+  // Only processes the caller may administer: a scoped process manager must not learn other processes' source tables.
+  const scope = await buildScopeWhereClause(userId, ADMIN_ROLES, { processId: "p.id", branchId: "p.branch_id" }, { allowAdminBypass: true });
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT c.*, p.process_code, p.process_name FROM process_dashboard_config c JOIN process_master p ON p.id = c.process_id ORDER BY p.process_name LIMIT 2000`);
+    `SELECT c.*, p.process_code, p.process_name FROM process_dashboard_config c JOIN process_master p ON p.id = c.process_id WHERE (${scope.sql}) ORDER BY p.process_name LIMIT 2000`, scope.params);
   return rows.map((r) => { const c = rowToConfig(r); return {
     processId: c.processId, processCode: String(r.process_code), processName: String(r.process_name), category: c.category, label: c.label,
     enabled: c.enabled, configured: isConfigured(c), refreshSeconds: c.refreshSeconds, aprSchema: c.aprSchema, aprTable: c.aprTable,

@@ -7,6 +7,7 @@ import { listColumns, listTables, PdError, assertSourceName } from "./pd.source.
 import { preview, suggest } from "./pd.admin.service.js";
 import { getInboundConfig, getInboundTab, listCandidateTables, previewInbound, saveInboundConfig } from "./pd.inbound.service.js";
 import { INBOUND_INSIGHT_ROLES } from "../call-master/inbound-projects.js";
+import { requireAnyWritable } from "./shared/ext.routes.js";
 import { loadConfigOrThrow } from "./pd.dataset.js";
 import { getAgentDrill, getAgents, getDay, getOverview, categoryProfileOut } from "./pd.service.js";
 import { getLive, liveEtag, streamCsv } from "./pd.live.js";
@@ -43,14 +44,14 @@ router.use(outboundRouter);
 /* ---------------- admin ---------------- */
 const admin = requireRole(...ADMIN_ROLES);
 
-router.get("/admin/tables", admin, h(async (req, res) => {
+router.get("/admin/tables", admin, requireAnyWritable, h(async (req, res) => {
   res.json({ success: true, data: await listTables(q1(req.query.schema)) });
 }));
-router.get("/admin/columns", admin, h(async (req, res) => {
+router.get("/admin/columns", admin, requireAnyWritable, h(async (req, res) => {
   const { schema, table } = assertSourceName(q1(req.query.schema), q1(req.query.table));
   res.json({ success: true, data: await listColumns(schema, table) });
 }));
-router.post("/admin/suggest", admin, h(async (req, res) => {
+router.post("/admin/suggest", admin, requireAnyWritable, h(async (req, res) => {
   const b = (req.body ?? {}) as { schema?: string; table?: string; processId?: string };
   res.json({ success: true, data: await suggest(String(b.schema ?? ""), String(b.table ?? ""), b.processId && UUID_RE.test(b.processId) ? b.processId : undefined) });
 }));
@@ -60,8 +61,8 @@ router.post("/admin/preview", admin, h(async (req, res) => {
   if (!(await isProcessWritable(req.authUser!.id, b.processId))) return res.status(403).json(OUT_OF_SCOPE);
   res.json({ success: true, data: await preview(b.processId, b.config ?? {}) });
 }));
-router.get("/admin/configs", admin, h(async (_req, res) => {
-  res.json({ success: true, data: await listAllConfigsAdmin() });
+router.get("/admin/configs", admin, requireAnyWritable, h(async (req, res) => {
+  res.json({ success: true, data: await listAllConfigsAdmin(req.authUser!.id) });
 }));
 router.get("/admin/configs/:processId", admin, h(async (req, res) => {
   const { processId } = req.params;
@@ -73,7 +74,7 @@ router.get("/admin/configs/:processId", admin, h(async (req, res) => {
 }));
 
 /* Support/inbound dialer source (process_inbound_config). Static paths first so ":processId" never swallows "tables"/"preview". */
-router.get("/admin/inbound/tables", admin, h(async (_req, res) => {
+router.get("/admin/inbound/tables", admin, requireAnyWritable, h(async (_req, res) => {
   res.json({ success: true, data: await listCandidateTables() });
 }));
 router.post("/admin/inbound/preview", admin, h(async (req, res) => {

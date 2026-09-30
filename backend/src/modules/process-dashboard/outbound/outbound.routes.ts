@@ -3,7 +3,7 @@ import { requireRole } from "../../../middleware/requireRole.js";
 import { requireAuth } from "../../../middleware/authMiddleware.js";
 import { ADMIN_ROLES, VIEWER_ROLES } from "../pd.config.service.js";
 import { assertSourceName, listColumns, listTables } from "../pd.source.js";
-import { guard, guardBody, q1, wrap } from "../shared/ext.routes.js";
+import { guard, requireAnyWritable, guardBody, q1, wrap } from "../shared/ext.routes.js";
 import { getOutboundConfig, saveOutboundConfig } from "./outbound.config.js";
 import { previewOutbound, suggestOutbound } from "./outbound.admin.js";
 import { getOutboundAgent, getOutboundAgents, getOutboundDispositions, getOutboundLive, getOutboundOverview, getOutboundTab } from "./outbound.service.js";
@@ -13,12 +13,12 @@ const router = Router();
 const admin = requireRole(...ADMIN_ROLES);
 const viewer = requireRole(...VIEWER_ROLES);
 
-router.get("/admin/outbound/tables", requireAuth, admin, wrap(async (req, res) => { res.json({ success: true, data: await listTables(q1(req.query.schema)) }); }));
-router.get("/admin/outbound/columns", requireAuth, admin, wrap(async (req, res) => {
+router.get("/admin/outbound/tables", requireAuth, admin, requireAnyWritable, wrap(async (req, res) => { res.json({ success: true, data: await listTables(q1(req.query.schema)) }); }));
+router.get("/admin/outbound/columns", requireAuth, admin, requireAnyWritable, wrap(async (req, res) => {
   const { schema, table } = assertSourceName(q1(req.query.schema), q1(req.query.table));
   res.json({ success: true, data: await listColumns(schema, table) });
 }));
-router.post("/admin/outbound/suggest", requireAuth, admin, wrap(async (req, res) => {
+router.post("/admin/outbound/suggest", requireAuth, admin, requireAnyWritable, wrap(async (req, res) => {
   const b = (req.body ?? {}) as { schema?: string; table?: string };
   res.json({ success: true, data: await suggestOutbound(String(b.schema ?? ""), String(b.table ?? "")) });
 }));

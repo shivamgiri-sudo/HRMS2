@@ -2,7 +2,7 @@
 import type { NextFunction, Response } from "express";
 import type { AuthenticatedRequest } from "../../../middleware/authMiddleware.js";
 import { logger } from "../../../logger.js";
-import { isProcessReadable, isProcessWritable } from "../pd.config.service.js";
+import { hasAnyWritableProcess, isProcessReadable, isProcessWritable } from "../pd.config.service.js";
 import { PdError } from "../pd.source.js";
 
 export const UUID_RE = /^[0-9a-fA-F-]{36}$/;
@@ -29,4 +29,12 @@ export async function guardBody(req: AuthenticatedRequest, res: Response): Promi
   if (!b.processId || !UUID_RE.test(b.processId)) throw new PdError(400, "BAD_PROCESS", "processId is required");
   if (!(await isProcessWritable(req.authUser!.id, b.processId))) { res.status(403).json(OUT_OF_SCOPE); return null; }
   return b.processId;
+}
+
+/** Admin helpers that are not about one process (table/column lists, suggestions): 403 unless the caller can administer at least one process. */
+export async function requireAnyWritable(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  try {
+    if (await hasAnyWritableProcess(req.authUser!.id)) return next();
+    res.status(403).json(OUT_OF_SCOPE);
+  } catch (err) { next(err); }
 }
