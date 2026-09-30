@@ -14,6 +14,7 @@ import { tpzAllowsUploadType } from "../tpz-access/tpz-access.middleware.js";
 import { getUploadCoverage } from "./upload-coverage.service.js";
 import { dispatchImport, assertGatedUploader, assertDepartmentStructureUploader, assertEmployeeLobUploader } from "./bulk-dispatch.js";
 import { ONFIDO_REPORT_CONFIGS } from "./onfido-report-configs.js";
+import { snapshotRouter } from "./snapshot.routes.js";
 import {
   HUB_ROLES, denyLobOnly, filterTemplatesForCaller, lobOnlyBatchFilter,
   restrictLobOnlyBatchAccess, restrictLobOnlyBatchCreate,
@@ -837,5 +838,8 @@ router.delete("/batches/:id", requireRole(...HUB_ROLES), restrictLobOnlyBatchAcc
   await db.query("DELETE FROM upload_batch WHERE id = ?", [id]);
   return res.json({ success: true });
 }));
+
+// Retention snapshots (counts/errors of batches whose rows were purged). Same audience as the Hub, LOB-only excluded.
+router.use("/snapshots", requireRole(...HUB_ROLES), denyLobOnly, snapshotRouter);
 
 export { router as bulkUploadRouter };

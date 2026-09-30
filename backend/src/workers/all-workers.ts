@@ -58,6 +58,7 @@ import { startRosterUploadEscalationScheduler, stopRosterUploadEscalationSchedul
 import { startInterventionRecommendationScheduler, stopInterventionRecommendationScheduler } from "../modules/analytics/intervention-recommendation.cron.js";
 import { startMetaCampaignSyncScheduler, stopMetaCampaignSyncScheduler } from "../modules/meta-campaign/meta-campaign.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
+import { startUploadBatchRetentionCron } from "./upload-batch-retention.worker.js";
 import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
 import { startAtsDailyReportScheduler, stopAtsDailyReportScheduler } from "../modules/ats/ats-daily-report.cron.js";
 import { startBranchActivityReportScheduler, stopBranchActivityReportScheduler } from "../modules/ats/branch-activity-report/scheduler.js";
@@ -304,6 +305,11 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "privacy-retention",
     start: () => { startRetentionCron(); return Promise.resolve(); },
+  },
+  {
+    // Dry run unless UPLOAD_BATCH_RETENTION_MODE=execute; see upload-batch-retention.worker.ts.
+    name: "upload-batch-retention",
+    start: () => { startUploadBatchRetentionCron(); return Promise.resolve(); },
   },
   {
     name: "business-action-sync",
