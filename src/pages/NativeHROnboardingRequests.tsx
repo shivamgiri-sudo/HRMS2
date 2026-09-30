@@ -2734,7 +2734,7 @@ export default function NativeHROnboardingRequests() {
                     {bgv && (
                       <>
                         <p className="mt-3 mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">BGV Result</p>
-                        <InfoRow label="Overall Status" value={bgv.overall_status} />
+                        <InfoRowChip label="Overall Status" value={bgv.overall_status} />
                         <InfoRow label="Score" value={bgv.score != null ? String(bgv.score) : undefined} />
                         {(bgv.checks ?? []).map((c, idx) => (
                           <InfoRow key={idx} label={c.check_type} value={`${c.status}${c.result_summary ? ' · ' + c.result_summary : ''}`} />
