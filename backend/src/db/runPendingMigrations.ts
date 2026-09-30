@@ -1816,9 +1816,55 @@ export async function findMissingDeclaredSchema(
  * - Runs 043_demo_data.sql only when SEED_DEMO_DATA=true.
  * - Production startup is blocked when any migration fails.
  */
+/**
+ * True for loopback / private-network hosts — a database a developer runs locally or on the LAN.
+ * Anything else (a public IP or hostname) is treated as a shared remote database.
+ */
+export function isLocalOrPrivateDbHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  if (h === "" || h === "localhost" || h === "::1" || h === "[::1]" || h.endsWith(".local")) return true;
+  if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
+  const m = /^172\.(\d{1,3})\./.exec(h);
+  return Boolean(m && Number(m[1]) >= 16 && Number(m[1]) <= 31);
+}
+
+/**
+ * Startup migrations and database DDL must run ONLY from the production deployment (or a local/private
+ * database, or when explicitly forced). A developer's `npm run dev` pointed at the shared production
+ * database otherwise issues CREATE/ALTER DATABASE and schema DDL on every restart; those queue behind any
+ * long-running query, block every new connection, and stall the whole site (recurring outage,
+ * 2026-09-30: several outside IPs each did this). Skipping is safe — the deployed server owns the schema.
+ */
+export function shouldSkipMigrationsForRemoteDb(
+  nodeEnv: string | undefined,
+  dbHost: string,
+  allowRemote: string | undefined,
+): boolean {
+  if (nodeEnv === "production" || nodeEnv === "test") return false;
+  if (allowRemote === "true") return false;
+  return !isLocalOrPrivateDbHost(dbHost);
+}
+
 export async function runPendingMigrations(
   attempt = 1,
 ): Promise<MigrationHealth> {
+  if (shouldSkipMigrationsForRemoteDb(env.NODE_ENV, env.DB_HOST, process.env.ALLOW_REMOTE_DB_MIGRATIONS)) {
+    console.warn(
+      `[migration] SKIPPED: NODE_ENV=${env.NODE_ENV} is pointed at a remote database (${env.DB_HOST}). ` +
+        "Startup migrations/DDL only run from the production deployment, because a dev process issuing DDL " +
+        "against the shared database blocks every other connection. Set ALLOW_REMOTE_DB_MIGRATIONS=true to override.",
+    );
+    migrationHealth = {
+      status: "ok",
+      applied: [],
+      skipped: [],
+      failed: [],
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
+    return migrationHealth;
+  }
+
   if (process.env.SKIP_MIGRATIONS === "true") {
     migrationHealth = {
       status: "ok",
