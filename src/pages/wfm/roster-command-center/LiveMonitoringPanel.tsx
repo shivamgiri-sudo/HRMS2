@@ -15,6 +15,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
 import { ChartCard } from "@/components/wfm/console/ChartCard";
 import { KpiTile } from "@/components/wfm/console/KpiTile";
+import { TabToolbar } from "@/components/wfm/console/TabToolbar";
+import { pickOne, useTabParams } from "./useTabParams";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
 import { StatusPill } from "@/components/wfm/console/StatusPill";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
@@ -55,7 +57,9 @@ export default function LiveMonitoringPanel() {
   const { filters } = useRosterConsoleFilters();
   const { processId, lobId, branchId } = filters;
   const { toast } = useToast();
-  const [sevFilter, setSevFilter] = useState<Severity | null>(null);
+  const [tp, setTp] = useTabParams({ sev: "" });
+  const sevFilter: Severity | null = pickOne(tp.sev, ["critical", "warning", "info"] as const, "" as never) || null;
+  const setSevFilter = (v: Severity | null) => setTp({ sev: v ?? "" });
   const [alertLimit, setAlertLimit] = useState(PAGE);
   const [teamLimit, setTeamLimit] = useState(PAGE);
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "shrinkagePct", dir: -1 });
@@ -148,16 +152,9 @@ export default function LiveMonitoringPanel() {
         }
       />
 
-      {err && (
-        <div role="alert" className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
-          Could not load {liveQ.isError ? "live alerts" : ""}{liveQ.isError && digestQ.isError ? " and " : ""}{digestQ.isError ? "team roll-ups" : ""}. Figures below may be incomplete.
-          <button type="button" className="cursor-pointer font-medium underline" onClick={refresh}>Retry</button>
-        </div>
-      )}
-
-      {/* Alert strip: severity counts, click to filter the alert list */}
-      <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Filter alerts by severity">
+      {/* Alert filter strip: severity counts, click to filter the alert list */}
+      <TabToolbar label="Alert filters" onClear={sevFilter ? () => setSevFilter(null) : undefined}>
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter alerts by severity">
         <span className="text-xs font-semibold text-slate-700">Alerts</span>
         {(["critical", "warning", "info"] as Severity[]).map((s) => (
           <button key={s} type="button" aria-pressed={sevFilter === s} onClick={() => { setSevFilter(sevFilter === s ? null : s); setAlertLimit(PAGE); }}
@@ -165,8 +162,16 @@ export default function LiveMonitoringPanel() {
             {SEV_LABEL[s]} <span className="tabular-nums font-bold">{sev[s]}</span>
           </button>
         ))}
-        {sevFilter && <button type="button" onClick={() => setSevFilter(null)} className="cursor-pointer text-xs underline text-slate-700">Clear</button>}
       </div>
+      </TabToolbar>
+
+      {err && (
+        <div role="alert" className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+          Could not load {liveQ.isError ? "live alerts" : ""}{liveQ.isError && digestQ.isError ? " and " : ""}{digestQ.isError ? "team roll-ups" : ""}. Figures below may be incomplete.
+          <button type="button" className="cursor-pointer font-medium underline" onClick={refresh}>Retry</button>
+        </div>
+      )}
 
       {/* KPI strip */}
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

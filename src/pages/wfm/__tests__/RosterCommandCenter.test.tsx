@@ -24,9 +24,10 @@ vi.mock("@/hooks/useUserRole", () => ({
 
 import RosterCommandCenter from "@/pages/wfm/RosterCommandCenter";
 import {
-  DATE_PRESETS, activePreset, buildChips, defaultFilters, describeTabFilters, isoDate,
+  DATE_PRESETS, activePreset, defaultFilters, isoDate,
   nextParamsForProcess, nextParamsForReset, presetRange, scopeParams,
 } from "@/pages/wfm/roster-command-center/filterState";
+import { clearTabLocalParams, pickDay, pickMonth, pickOne } from "@/pages/wfm/roster-command-center/useTabParams";
 import { toLobChoices } from "@/components/wfm/LobSelect";
 
 const ALL_CODES = [
@@ -57,27 +58,28 @@ describe("shell rendering", () => {
     expect(html).toContain("max-w-[1600px]");
   });
 
-  it("renders Branch, Process, LOB, date controls, presets and Reset", () => {
+  it("renders Branch, Process, LOB and Reset on every tab", () => {
     const html = render();
-    for (const t of ["Branch", "Process", "LOB", "From", "To", "Today", "Yesterday", "Last 7 days", "Last 14 days", "This month", "Reset"]) {
+    for (const t of ["Branch", "Process", "LOB", "Reset"]) {
       expect(html, t).toContain(t);
     }
+  });
+
+  it("shows the date range only on tabs that use it", () => {
+    expect(render("?tab=analytics")).not.toContain("Date range");
+    expect(render("?tab=trends")).toContain("Date range");
   });
 
   it("honours ?tab= and hides tabs the viewer cannot open", () => {
     const html = render("?tab=compliance", ["WFM_ROSTER_LIVE_MONITORING", "WFM_ROSTER_COMPLIANCE"]);
     expect(html).toMatch(/data-state="active"[^>]*>[^<]*<svg[^>]*>.*?<\/svg>Compliance/s);
     expect(html).not.toContain("Audit Trail");
-    expect(html).toContain("This tab uses: Branch · Process · LOB");
   });
 
   it("shows the access-denied state when no tab is visible", () => {
     expect(render("", [])).toContain("Access not available");
   });
 
-  it("shows an applied LOB chip from the URL", () => {
-    expect(render("?lob=__none__")).toContain("Unassigned");
-  });
 });
 
 describe("filter helpers", () => {
@@ -121,18 +123,6 @@ describe("filter helpers", () => {
     expect(isoDate(-1, NOW)).toBe("2026-09-23");
   });
 
-  it("chips list only non-default filters", () => {
-    expect(buildChips(defaultFilters(NOW), {}, NOW)).toEqual([]);
-    const chips = buildChips({ ...defaultFilters(NOW), branchId: "b1", lobId: "__none__", from: "2026-09-01" }, { branch: "Noida" }, NOW);
-    expect(chips.map((c) => c.key)).toEqual(["branchId", "lob", "dates"]);
-    expect(chips[0].value).toBe("Noida");
-    expect(chips[1].value).toBe("Unassigned");
-  });
-
-  it("describes what each tab uses", () => {
-    expect(describeTabFilters("audit")).toBe("This tab uses: Branch · Process · LOB · Dates");
-    expect(describeTabFilters("team-roster")).toContain("Process");
-  });
 });
 
 describe("LobSelect choices", () => {
@@ -165,4 +155,20 @@ describe("panels", () => {
       expect(readFileSync(resolve(dir, `${f}.tsx`), "utf8"), f).toContain("scopeParams");
     }
   });
+});
+
+describe("tab-local URL params", () => {
+  it("clearTabLocalParams drops tab-local keys but keeps scope and tab", () => {
+    const next = clearTabLocalParams(new URLSearchParams("tab=compliance&branchId=b1&month=2026-08&kind=attendance&q=ab"));
+    expect(next.toString()).toBe("tab=compliance&branchId=b1");
+  });
+
+  it("validators fall back on bad URL values", () => {
+    expect(pickMonth("2026-13", "2026-09")).toBe("2026-09");
+    expect(pickMonth("2026-08", "2026-09")).toBe("2026-08");
+    expect(pickDay("nope", "2026-09-30")).toBe("2026-09-30");
+    expect(pickOne("zzz", ["a", "b"] as const, "a")).toBe("a");
+    expect(pickOne("b", ["a", "b"] as const, "a")).toBe("b");
+  });
+
 });

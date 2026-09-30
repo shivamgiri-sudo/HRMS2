@@ -1,6 +1,6 @@
 /**
- * Sticky filter toolbar for the Roster Command Center: Branch, Process, LOB, date range +
- * presets, Reset, applied-filter chips, a per-tab "what this tab uses" line and a LOB
+ * Sticky scope toolbar for the Roster Command Center: Branch, Process, LOB and Reset on every
+ * tab; the date range (preset dropdown + From/To) only on tabs that honour it; a LOB
  * data-coverage hint. Option sources match the proven ones from TrendsPanel.
  */
 import { useEffect, useRef, useState } from "react";
@@ -8,13 +8,12 @@ import { useQuery } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { FilterBar, type FilterChip } from "@/components/ui/filter-bar";
 import { LobSelect } from "@/components/wfm/LobSelect";
 import { useWithoutLobSummary } from "@/hooks/useProcessLobMap";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { cn } from "@/lib/utils";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
-import { DATE_PRESETS, activePreset, buildChips, describeTabFilters, presetRange } from "./filterState";
+import { DATE_PRESETS, TAB_FILTER_SUPPORT, activePreset, presetRange, type PresetKey } from "./filterState";
 
 interface Process { id: string; process_name: string }
 interface Branch { id: string; branch_name: string }
@@ -65,21 +64,7 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
   const processes = procData?.data ?? [];
   const branches = branchData?.branches ?? [];
 
-  const chips: FilterChip[] = buildChips(filters, {
-    branch: branches.find((b) => b.id === filters.branchId)?.branch_name,
-    process: processes.find((p) => p.id === filters.processId)?.process_name,
-  }).map((c) => ({ key: c.key, label: c.label, value: c.value }));
-
-  const removeChip = (key: string) => {
-    if (key === "branchId") setBranchId("");
-    else if (key === "processId") setProcessId("");
-    else if (key === "lob") setLobId("");
-    else if (key === "dates") {
-      const r = presetRange("last14");
-      setDateRange(r.from, r.to);
-    }
-  };
-
+  const usesDates = (TAB_FILTER_SUPPORT[activeTabKey] ?? []).includes("dates");
   const preset = activePreset(filters.from, filters.to);
 
   return (
@@ -92,7 +77,7 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
           stuck ? "shadow-md" : "shadow-sm",
         )}
       >
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_9rem_9rem_auto]">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto]">
           <div className="col-span-2 sm:col-span-1">
             <label className={LABEL} htmlFor="rcc-branch">Branch</label>
             <Select value={filters.branchId || "__all__"} onValueChange={(v) => setBranchId(v === "__all__" ? "" : v)}>
@@ -117,51 +102,49 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
             <span className={LABEL}>LOB</span>
             <LobSelect processId={filters.processId} value={filters.lobId} onChange={setLobId} includeUnassigned className={CONTROL} />
           </div>
-          <div>
-            <label className={LABEL} htmlFor="rcc-from">From</label>
-            <input
-              id="rcc-from" type="date" value={filters.from} max={filters.to}
-              onChange={(e) => e.target.value && setDateRange(e.target.value, filters.to)}
-              className={DATE_INPUT}
-            />
-          </div>
-          <div>
-            <label className={LABEL} htmlFor="rcc-to">To</label>
-            <input
-              id="rcc-to" type="date" value={filters.to} min={filters.from}
-              onChange={(e) => e.target.value && setDateRange(filters.from, e.target.value)}
-              className={DATE_INPUT}
-            />
-          </div>
           <div className="col-span-2 flex items-end sm:col-span-1">
             <Button type="button" variant="outline" size="sm" className="h-9 w-full cursor-pointer" onClick={resetFilters}>
               <RotateCcw className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Reset
             </Button>
           </div>
         </div>
-
-        <div className="mt-2 flex flex-wrap items-center gap-1.5" role="group" aria-label="Date presets">
-          {DATE_PRESETS.map((p) => (
-            <button
-              key={p.key}
-              type="button"
-              onClick={() => {
-                const r = presetRange(p.key);
-                setDateRange(r.from, r.to);
-              }}
-              aria-pressed={preset === p.key}
-              className={cn(
-                "cursor-pointer rounded-full border px-2.5 py-1 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
-                preset === p.key ? "border-primary bg-primary text-primary-foreground" : "border-border bg-white text-slate-700 hover:bg-muted",
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-
-        {chips.length > 0 && <FilterBar className="mt-2" filters={chips} onRemove={removeChip} onClearAll={resetFilters} />}
-        <p className="mt-2 text-xs font-medium text-slate-600">{describeTabFilters(activeTabKey)}</p>
+        {usesDates && (
+          <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border pt-3 lg:grid-cols-[12rem_9rem_9rem]" role="group" aria-label="Date range">
+            <div className="col-span-2 lg:col-span-1">
+              <label className={LABEL} htmlFor="rcc-range">Date range</label>
+              <Select
+                value={preset ?? "custom"}
+                onValueChange={(v) => {
+                  if (v === "custom") return;
+                  const r = presetRange(v as PresetKey);
+                  setDateRange(r.from, r.to);
+                }}
+              >
+                <SelectTrigger id="rcc-range" className={CONTROL}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {DATE_PRESETS.map((p) => <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>)}
+                  <SelectItem value="custom" disabled={!!preset}>Custom range</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className={LABEL} htmlFor="rcc-from">From</label>
+              <input
+                id="rcc-from" type="date" value={filters.from} max={filters.to}
+                onChange={(e) => e.target.value && setDateRange(e.target.value, filters.to)}
+                className={DATE_INPUT}
+              />
+            </div>
+            <div>
+              <label className={LABEL} htmlFor="rcc-to">To</label>
+              <input
+                id="rcc-to" type="date" value={filters.to} min={filters.from}
+                onChange={(e) => e.target.value && setDateRange(filters.from, e.target.value)}
+                className={DATE_INPUT}
+              />
+            </div>
+          </div>
+        )}
         <LobCoverageHint branchId={filters.branchId} processId={filters.processId} />
       </section>
     </>

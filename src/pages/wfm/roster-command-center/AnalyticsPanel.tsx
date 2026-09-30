@@ -7,9 +7,10 @@ import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, BarChart3, ChevronLeft, ChevronRight, DollarSign, Info, LineChart, RefreshCw, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { TabToolbar, ToolbarSelect } from "@/components/wfm/console/TabToolbar";
+import { pickDay, pickOne, useTabParams } from "./useTabParams";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
 import { FilterNote } from "@/components/wfm/console/FilterNote";
 import { StatusPill } from "@/components/wfm/console/StatusPill";
@@ -25,7 +26,8 @@ import { buildInsights, currentWeekStart, fmtDate, fmtPeriod, previousMonth, rec
 import type { CostImpact, DrawerTarget, Forecast, QualityCorrelation, ShrinkageIntelligence } from "./analytics/types";
 
 const ALL = "__all__";
-type TabKey = "shrinkage" | "quality" | "cost" | "forecast";
+const TAB_KEYS = ["shrinkage", "quality", "cost", "forecast"] as const;
+type TabKey = (typeof TAB_KEYS)[number];
 
 const SEV_TONE = { critical: "red", warning: "amber", info: "blue" } as const;
 const SEV_LABEL = { critical: "Critical", warning: "Warning", info: "Info" } as const;
@@ -63,12 +65,15 @@ export default function AnalyticsPanel() {
   const branchSelected = branchId !== ALL;
 
   const thisWeek = currentWeekStart();
-  const [weekStart, setWeekStart] = useState(thisWeek);
-  const [period, setPeriod] = useState(previousMonth());
-  const [tab, setTab] = useState<TabKey>("shrinkage");
-  const [visited, setVisited] = useState<Set<TabKey>>(() => new Set(["shrinkage"]));
-  const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
   const periods = useMemo(() => recentPeriods(12), []);
+  const [tp, setTp] = useTabParams({ sub: "shrinkage", week: "", period: "" });
+  const weekStart = pickDay(tp.week, thisWeek);
+  const setWeekStart = (w: string) => setTp({ week: w === thisWeek ? "" : w });
+  const period = pickOne(tp.period, periods, previousMonth());
+  const setPeriod = (p: string) => setTp({ period: p === previousMonth() ? "" : p });
+  const tab = pickOne(tp.sub, TAB_KEYS, "shrinkage");
+  const [visited, setVisited] = useState<Set<TabKey>>(() => new Set([tab]));
+  const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
 
   const scope = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId });
   const scopeQs = scope.toString() ? `&${scope.toString()}` : "";
@@ -107,7 +112,7 @@ export default function AnalyticsPanel() {
   });
 
   const insights = useMemo(() => buildInsights(shrinkage.data, quality.data, cost.data, forecast.data), [shrinkage.data, quality.data, cost.data, forecast.data]);
-  const go = (t: TabKey) => { setTab(t); setVisited((v) => (v.has(t) ? v : new Set(v).add(t))); };
+  const go = (t: TabKey) => { setTp({ sub: t }); setVisited((v) => (v.has(t) ? v : new Set(v).add(t))); };
 
   const refreshAll = () => {
     mark("quality", "cost");
@@ -131,13 +136,6 @@ export default function AnalyticsPanel() {
     </div>
   ) : null;
 
-  const periodSelect = (
-    <Select value={period} onValueChange={setPeriod}>
-      <SelectTrigger className="h-9 w-[150px] cursor-pointer" aria-label="Month for quality and cost"><SelectValue /></SelectTrigger>
-      <SelectContent>{periods.map((p) => <SelectItem key={p} value={p}>{fmtPeriod(p)}</SelectItem>)}</SelectContent>
-    </Select>
-  );
-
   return (
     <div>
       <PanelHeader icon={BarChart3} title="Roster Analytics" description="Shrinkage patterns, quality correlation, cost impact and forecasting"
@@ -159,16 +157,23 @@ export default function AnalyticsPanel() {
             <TabsTrigger value="cost" className="min-h-[44px] cursor-pointer gap-1.5 sm:min-h-0"><DollarSign className="h-4 w-4" aria-hidden />Cost</TabsTrigger>
             <TabsTrigger value="forecast" className="min-h-[44px] cursor-pointer gap-1.5 sm:min-h-0"><LineChart className="h-4 w-4" aria-hidden />Forecast</TabsTrigger>
           </TabsList>
-          {tab === "shrinkage" && (
+        </div>
+
+        {tab === "shrinkage" && (
+          <TabToolbar label="Shrinkage filters">
             <div className="flex items-center gap-1" role="group" aria-label="Week">
               <Button variant="outline" size="icon" className="h-9 w-9 cursor-pointer" aria-label="Previous week" onClick={() => setWeekStart(shiftWeek(weekStart, -1))}><ChevronLeft className="h-4 w-4" aria-hidden /></Button>
               <span className="min-w-[132px] text-center text-xs font-medium tabular-nums text-slate-700">Week of {fmtDate(weekStart)}</span>
               <Button variant="outline" size="icon" className="h-9 w-9 cursor-pointer" aria-label="Next week" disabled={weekStart >= thisWeek} onClick={() => setWeekStart(shiftWeek(weekStart, 1))}><ChevronRight className="h-4 w-4" aria-hidden /></Button>
               {weekStart !== thisWeek && <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => setWeekStart(thisWeek)}>This week</Button>}
             </div>
-          )}
-          {(tab === "quality" || tab === "cost") && periodSelect}
-        </div>
+          </TabToolbar>
+        )}
+        {(tab === "quality" || tab === "cost") && (
+          <TabToolbar label="Period filters">
+            <ToolbarSelect label="Month for quality and cost" value={period} onChange={setPeriod} options={periods.map((p) => ({ value: p, label: fmtPeriod(p) }))} />
+          </TabToolbar>
+        )}
 
         {lobId && <FilterNote />}
         {(tab === "quality" || tab === "cost") && !branchSelected && (
