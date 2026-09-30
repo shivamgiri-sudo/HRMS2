@@ -15,13 +15,20 @@ const readinessSummaryCache = new Map<string, { at: number; value: unknown }>();
 /** Called by the readiness routers around any state-changing request so a user never sees their own action reverted. */
 export function invalidateReadinessSummaryCache(): void {
   readinessSummaryCache.clear();
+  gridSeededAt.clear();
 }
 
-export async function cachedReadinessSummary<T>(key: string, compute: () => Promise<T>): Promise<T> {
+export async function cachedReadinessSummary<T>(
+  key: string,
+  compute: () => Promise<T>,
+  /** Return false for a result that must not be reused (e.g. an {status:"error"} body). Default: cache everything that resolves. */
+  cacheable: (value: T) => boolean = () => true,
+): Promise<T> {
   const hit = readinessSummaryCache.get(key);
   if (hit && Date.now() - hit.at < READINESS_SUMMARY_TTL_MS) return structuredClone(hit.value) as T;
   const value = await sharedInFlight(key, async () => {
     const v = await compute();
+    if (!cacheable(v)) return v as unknown as Record<string, unknown>;
     readinessSummaryCache.set(key, { at: Date.now(), value: v });
     if (readinessSummaryCache.size > READINESS_SUMMARY_CACHE_MAX) {
       const oldest = [...readinessSummaryCache.entries()].sort((a, b) => a[1].at - b[1].at);
@@ -32,3 +39,18 @@ export async function cachedReadinessSummary<T>(key: string, compute: () => Prom
   return structuredClone(value) as unknown as T;
 }
 
+
+/**
+ * ensureMonthGrid() is an idempotent INSERT IGNORE of the whole (branch x process) grid and the
+ * summary routes ran it on EVERY request. Rows only need creating when a branch/process is new, so
+ * once per month per 5 minutes is enough. A failed seed is not remembered, so it retries next call.
+ */
+export const GRID_SEED_TTL_MS = 300_000;
+const gridSeededAt = new Map<string, number>();
+
+export async function seedMonthGridOnce(month: string, seed: () => Promise<unknown>, ttlMs = GRID_SEED_TTL_MS): Promise<void> {
+  const at = gridSeededAt.get(month);
+  if (at !== undefined && Date.now() - at < ttlMs) return;
+  await seed();
+  gridSeededAt.set(month, Date.now());
+}

@@ -14,6 +14,8 @@ const {
   cachedReadinessSummary,
   invalidateReadinessSummaryCache,
   READINESS_SUMMARY_TTL_MS,
+  seedMonthGridOnce,
+  GRID_SEED_TTL_MS,
 } = await import("../payroll-readiness-summary-cache.js");
 
 const deferred = <T,>() => {
@@ -86,6 +88,50 @@ describe("cachedReadinessSummary", () => {
   });
 });
 
+describe("cacheable predicate (governance summary)", () => {
+  it("never reuses a result the predicate rejects, such as an error body", async () => {
+    const compute = vi.fn()
+      .mockResolvedValueOnce({ status: "error", message: "engine down" })
+      .mockResolvedValueOnce({ status: "checked", blockers: 0 });
+    const ok = (v: { status: string }) => v.status !== "error";
+    expect(await cachedReadinessSummary("gov:branch:2026-08", compute, ok)).toEqual({ status: "error", message: "engine down" });
+    expect(await cachedReadinessSummary("gov:branch:2026-08", compute, ok)).toEqual({ status: "checked", blockers: 0 });
+    expect(compute).toHaveBeenCalledTimes(2);
+    // and the good result IS reused
+    await cachedReadinessSummary("gov:branch:2026-08", compute, ok);
+    expect(compute).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("seedMonthGridOnce", () => {
+  it("seeds once per month inside the TTL, again after it, and per month independently", async () => {
+    const seed = vi.fn(async () => undefined);
+    await seedMonthGridOnce("2026-08", seed);
+    await seedMonthGridOnce("2026-08", seed);
+    expect(seed).toHaveBeenCalledTimes(1);
+    await seedMonthGridOnce("2026-09", seed);
+    expect(seed).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(GRID_SEED_TTL_MS + 1);
+    await seedMonthGridOnce("2026-08", seed);
+    expect(seed).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not remember a failed seed, so the next call retries", async () => {
+    const seed = vi.fn().mockRejectedValueOnce(new Error("insert failed")).mockResolvedValueOnce(undefined);
+    await expect(seedMonthGridOnce("2026-08", seed)).rejects.toThrow("insert failed");
+    await seedMonthGridOnce("2026-08", seed);
+    expect(seed).toHaveBeenCalledTimes(2);
+  });
+
+  it("a state-changing request resets it", async () => {
+    const seed = vi.fn(async () => undefined);
+    await seedMonthGridOnce("2026-08", seed);
+    invalidateReadinessSummaryCache();
+    await seedMonthGridOnce("2026-08", seed);
+    expect(seed).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("wiring", () => {
   const read = (f: string) => readFileSync(resolve(process.cwd(), "src/modules/payroll", f), "utf8");
 
@@ -101,6 +147,21 @@ describe("wiring", () => {
       const src = read(f);
       expect(src, f).toMatch(/req\.method !== "GET"[\s\S]{0,200}invalidateReadinessSummaryCache\(\)[\s\S]{0,120}res\.on\("finish", invalidateReadinessSummaryCache\)/);
     }
+  });
+
+  it("both summary routes use the cached governance summary and once-per-TTL grid seeding", () => {
+    for (const f of ["payroll-branch-readiness.routes.ts", "payroll-process-readiness.routes.ts"]) {
+      const src = read(f);
+      expect(src, f).toMatch(/await getOrgWideGovernanceSummaryCached\(month\)/);
+      expect(src, f).not.toMatch(/await getOrgWideGovernanceSummary\(month\)/);
+      expect(src, f).toMatch(/seedMonthGridOnce\(month, \(\) => payrollBranchReadinessService\.ensureMonthGrid\(month\)\)/);
+      expect(src, f).toMatch(/\(v\) => v\.status !== "error"/);
+    }
+  });
+
+  it("the payroll-calculation gate still calls the governance engine directly (uncached)", () => {
+    const src = read("payroll.routes.ts");
+    expect(src).not.toMatch(/cachedReadinessSummary|seedMonthGridOnce/);
   });
 
   it("the payment gate (readiness-categories) is deliberately NOT cached", () => {

@@ -20,7 +20,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
-import { invalidateReadinessSummaryCache } from "./payroll-readiness-summary-cache.js";
+import { invalidateReadinessSummaryCache, cachedReadinessSummary, seedMonthGridOnce } from "./payroll-readiness-summary-cache.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
@@ -139,6 +139,19 @@ async function getOrgWideGovernanceSummary(month: string): Promise<OrgWideGovern
   }
 }
 
+/**
+ * This block is informational on the readiness pages (it gates nothing here), but it runs the heavy
+ * payrollGovernanceService.readiness engine, so identical concurrent calls share one run and a good
+ * result is reused for 30 s. An {status:"error"} result is never reused. The payroll-calculation
+ * gate calls the engine directly and is unaffected.
+ */
+const getOrgWideGovernanceSummaryCached = (month: string) =>
+  cachedReadinessSummary<OrgWideGovernanceSummary>(
+    `gov:process:${month}`,
+    () => getOrgWideGovernanceSummary(month),
+    (v) => v.status !== "error",
+  );
+
 // ---------------------------------------------------------------------------
 // GET /grouped-summary?month=YYYY-MM
 // HO view: all branches each with their processes grouped
@@ -163,7 +176,7 @@ payrollProcessReadinessRouter.get(
       // on a readiness page reads as nothing being wrong. Idempotent INSERT IGNORE; a failure
       // here degrades to the previous partial view rather than failing the request.
       try {
-        await payrollBranchReadinessService.ensureMonthGrid(month);
+        await seedMonthGridOnce(month, () => payrollBranchReadinessService.ensureMonthGrid(month));
       } catch (seedErr: unknown) {
         console.warn(
           "[ProcessReadiness] ensureMonthGrid failed - summary may omit unvisited branch/process rows:",
@@ -181,7 +194,7 @@ payrollProcessReadinessRouter.get(
         : 0;
 
       // Org-wide, not per-process — see getOrgWideGovernanceSummary's comment.
-      const governance = await getOrgWideGovernanceSummary(month);
+      const governance = await getOrgWideGovernanceSummaryCached(month);
 
       return res.json({
         success: true,
