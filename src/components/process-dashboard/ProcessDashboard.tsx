@@ -19,6 +19,7 @@ import type { BreakdownRow } from "./types";
 import { WhyDrawer } from "./rootcause/WhyDrawer";
 import { openWhyState, parseWhy, writeWhy, type WhyState } from "./rootcause/whyState";
 
+const PacingPanel = lazy(() => import("./forecast/PacingPanel"));
 // The inbound dashboard pulls in the charting bundle; load it only when the Live inbound tab is opened.
 const InboundInsightsDashboard = lazy(() => import("@/components/process-performance/InboundInsightsDashboard").then((m) => ({ default: m.InboundInsightsDashboard })));
 
@@ -154,6 +155,7 @@ function AprDashboard({ processId, embedded = false }: { processId: string; embe
             </section>
           )}
           <KpiTiles kpis={ov?.kpis} activeKey={state.metric} onSelect={onTile} loading={d.overview.isLoading} onWhy={(key) => setWhy(openWhyState(key, state.from, state.to), true)} />
+          <Suspense fallback={<Skeleton className="h-16" />}><PacingPanel processId={processId} state={state} onChange={update} /></Suspense>
           {!d.overview.isLoading && !ov?.kpis?.length && !rows.length && <Empty>No data for {state.from} to {state.to}. Try a wider date range.</Empty>}
           <TrendPanel overview={ov} focusKey={state.metric} onFocusKey={(k) => update({ metric: k })} onDay={(day) => update({ day }, true)}
             selectedDay={state.day} onWhy={(metric, from, to) => setWhy(openWhyState(metric, from, to), true)} />
