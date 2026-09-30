@@ -149,10 +149,19 @@ async function loadSales(from: string, to: string): Promise<SalesAgg[]> {
   }));
 }
 
+/** Newest day that has either sales or received data, so the page can open on real data instead of an empty current month. */
+async function latestDataDate(): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(GREATEST(COALESCE((SELECT MAX(report_date) FROM bla_bli_blu_overall_sales_raw), '1000-01-01'),
+                                 COALESCE((SELECT MAX(report_date) FROM bla_dash_received), '1000-01-01')), '%Y-%m-%d') AS d`);
+  const d = rows[0]?.d ? String(rows[0].d) : null;
+  return d && d > "1000-01-01" ? d : null;
+}
+
 export async function getDashboard(fromRaw?: string, toRaw?: string) {
   const { from, to } = resolveRange(fromRaw, toRaw);
-  const [received, sales, targets] = await Promise.all([loadReceived(from, to), loadSales(from, to), getTargets()]);
-  return { from, to, ...buildDashboard(received, sales, targets) };
+  const [received, sales, targets, latest] = await Promise.all([loadReceived(from, to), loadSales(from, to), getTargets(), latestDataDate()]);
+  return { from, to, latestDataDate: latest, ...buildDashboard(received, sales, targets) };
 }
 
 /** "Product Wise Sales": SUMIFS of Count by category, split by Campaign and Payment status. */

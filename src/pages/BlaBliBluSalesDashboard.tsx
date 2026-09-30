@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Loader2, Target, TrendingUp, Upload, Users, IndianRupee } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -20,7 +20,7 @@ interface Row {
   saleAchievement: number; conversionAchievement: number; prepaidAchievement: number; revenueAchievement: number;
 }
 interface Block { lob: string; hasTarget: boolean; daily: Row[]; weekly: Row[]; mtd: Row }
-interface Overview { from: string; to: string; lobs: string[]; blocks: Block[]; all: Block }
+interface Overview { from: string; to: string; latestDataDate?: string | null; lobs: string[]; blocks: Block[]; all: Block }
 interface Product { product: string; cartAbc: number; inbound: number; upgrade: number; total: number; contributionPct: number; paid: number; cod: number }
 interface ProductWise { grandTotal: number; products: Product[] }
 interface UploadResult { validRows: number; totalRows: number; storedRows: number; datesReplaced: number; dateFrom: string | null; dateTo: string | null; skippedNoDate: number }
@@ -95,8 +95,10 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
   const [products, setProducts] = useState<ProductWise | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [jumpedTo, setJumpedTo] = useState<string | null>(null);
+  const autoJumped = useRef(false);
 
-  useEffect(() => setRange(init), [init]);
+  useEffect(() => { autoJumped.current = false; setJumpedTo(null); setRange(init); }, [init]);
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
@@ -106,6 +108,16 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
         hrmsApi.get<{ data: Overview }>(`/api/bla-bli-blu-dashboard/overview?${qs}`),
         hrmsApi.get<{ data: ProductWise }>(`/api/bla-bli-blu-dashboard/product-wise?${qs}`),
       ]);
+      // The chosen month has nothing yet (e.g. the new month before its first upload): open on the newest month that does.
+      const latest = o.data.latestDataDate;
+      if (!autoJumped.current && o.data.all.daily.length === 0 && latest && latest < range.from) {
+        autoJumped.current = true;
+        const [y, mo] = latest.split("-").map(Number);
+        const last = new Date(y, mo, 0).getDate();
+        setJumpedTo(`${y}-${String(mo).padStart(2, "0")}`);
+        setRange({ from: `${y}-${String(mo).padStart(2, "0")}-01`, to: `${y}-${String(mo).padStart(2, "0")}-${String(last).padStart(2, "0")}` });
+        return;
+      }
       setData(o.data); setProducts(p.data);
     } catch (e) { setErr(e instanceof Error ? e.message : "Failed to load dashboard"); }
     finally { setLoading(false); }
@@ -131,6 +143,7 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
         </div>
       </div>
 
+      {jumpedTo && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">No data yet for the month you picked, so this shows {jumpedTo}, the latest month with data. Change the dates above to look elsewhere.</p>}
       {err && <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-600">{err}</p>}
       {loading && <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>}
       {!loading && empty && <p className="rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No BLA / BLI / BLU data for this range. Upload Received Data below, and Overall Sales via the Bulk Upload Hub.</p>}
