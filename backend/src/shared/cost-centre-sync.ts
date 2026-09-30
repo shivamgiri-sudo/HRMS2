@@ -1,5 +1,6 @@
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../db/mysql.js";
+import { ensureProcessDashboardConfig } from "../modules/process-dashboard/pd.config.service.js";
 
 /**
  * After inserting a row into cost_centre_master, mirror it into the two tables
@@ -25,6 +26,9 @@ export async function syncCostCentreRelatedTables(opts: {
   process_id: string | null | undefined;
 }): Promise<void> {
   const { cost_centre_code, cost_centre_name, branch_id, client_id, process_id } = opts;
+
+  // A process that now has a cost centre gets an (unconfigured, disabled) Process Dashboard row. Never throws.
+  if (process_id) await ensureProcessDashboardConfig(process_id);
 
   // ── look-ups ───────────────────────────────────────────────────────────────
   let branchName: string | null = null;

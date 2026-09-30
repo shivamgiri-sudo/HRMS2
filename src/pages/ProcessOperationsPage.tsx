@@ -1,10 +1,12 @@
 import { Fragment, lazy, Suspense, useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { fetchConfigs as fetchProcessDashboardConfigs } from "@/components/process-dashboard/api";
 import { DiallerLivePanel, detectDiallerProcess } from "./DiallerLivePanel";
 
 // Onfido's dashboard lives only here (its old /onfido-process/dashboard URL
 // redirects in). Lazy: it is large and only one process ever opens it.
 const OnfidoProcessDashboard = lazy(() => import("./onfido-process/OnfidoProcessDashboard"));
+const ProcessDashboard = lazy(() => import("@/components/process-dashboard/ProcessDashboard"));
 const isOnfidoProcess = (name: string | null | undefined) => (name ?? "").toLowerCase().includes("onfido");
 import {
   BellavitaDashboard, GncDashboard, NeemansDashboard, AwDashboard,
@@ -97,7 +99,28 @@ function currentMonthStr() {
 }
 
 // Inline sales dashboard view — renders the correct component for the selected process.
-function ProcessSalesDashboardView({ processCode, processName }: { processCode: string; processName: string }) {
+/** Unmapped process: render the config-driven Process Dashboard when an admin has registered+enabled it, else point to Dashboard Setup. */
+function ConfigDrivenSalesView({ processId, processName }: { processId: string; processName: string }) {
+  const { data: configs, isLoading } = useQuery({ queryKey: ["process-dashboard", "configs"], queryFn: fetchProcessDashboardConfigs, staleTime: 60_000 });
+  const cfg = configs?.find((c) => c.processId === processId);
+  if (isLoading) return <div className="flex items-center gap-2 py-8 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Checking dashboard setup…</div>;
+  if (cfg?.enabled && cfg.configured) {
+    return (
+      <Suspense fallback={<div className="flex items-center gap-2 py-8 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading dashboard…</div>}>
+        <ProcessDashboard processId={processId} embedded />
+      </Suspense>
+    );
+  }
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
+      <p className="text-sm font-semibold text-slate-700">No dashboard for {processName} yet</p>
+      <p className="mx-auto mt-1 max-w-md text-xs text-slate-600">Not configured yet — ask an admin to map the APR table and this process gets a dashboard automatically.</p>
+      <Link to={`/performance/process-dashboard-admin?process=${encodeURIComponent(processId)}`} className="mt-3 inline-flex min-h-[44px] items-center rounded-lg bg-blue-700 px-4 text-sm font-semibold text-white hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">Open Dashboard Setup</Link>
+    </div>
+  );
+}
+
+function ProcessSalesDashboardView({ processId, processCode, processName }: { processId: string; processCode: string; processName: string }) {
   const [month, setMonth] = useState(currentMonthStr());
   // Match on the process name too, so the dashboard is found even if the process code is stored differently.
   const mapping = PROCESS_SALES_MAP[processCode] ?? (/\bbla\b.*\bbli\b|bla[\s_/-]*bli[\s_/-]*blu/i.test(processName) ? PROCESS_SALES_MAP.BLA_BLI_BLU : undefined);
@@ -106,14 +129,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
   // page's list, which offers the form to process_manager (who then gets 403).
   const canUpload = hasAnyRole("super_admin", "admin", "sales", "operations_manager");
 
-  if (!mapping) {
-    return (
-      <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
-        <p className="text-sm font-semibold text-slate-700">No sales dashboard for {processName}</p>
-        <p className="text-xs text-slate-400 mt-1">Sales data is only available for Bellavita, BLA / BLI / BLU, Neemans, GNC, AW, Clovia, Dalmia, SBI Card Collections, DU Digital, Eresolution (Lawyers Panel), and Housing processes.</p>
-      </div>
-    );
-  }
+  if (!mapping) return <ConfigDrivenSalesView processId={processId} processName={processName} />;
 
   return (
     <div className="space-y-5">
@@ -5183,7 +5199,9 @@ export default function ProcessOperationsPage() {
   const current = active ?? branchScopedProcesses[0]?.processId ?? null;
   const currentProcess = processes.find((p) => p.processId === current) ?? null;
   // Must be after currentProcess is declared (TDZ guard)
-  const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]);
+  const { data: pdConfigs } = useQuery({ queryKey: ["process-dashboard", "configs"], queryFn: fetchProcessDashboardConfigs, staleTime: 60_000, retry: false });
+  const hasConfigDashboard = !!(currentProcess && pdConfigs?.some((c) => c.processId === currentProcess.processId && c.enabled && c.configured));
+  const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]) || hasConfigDashboard;
 
   const { data: feedData } = useQuery({
     queryKey: ["process-operations", "feeds"],
@@ -5400,6 +5418,7 @@ export default function ProcessOperationsPage() {
           ) : view === "sales" && currentProcess ? (
             /* ── Sales Dashboard view ────────────────────────────────────────── */
             <ProcessSalesDashboardView
+              processId={currentProcess.processId}
               processCode={currentProcess.processCode ?? ""}
               processName={currentProcess.processName}
             />

@@ -302,6 +302,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/performance-feedback/team-reports",
   "/performance-hub",
   "/performance/command-center",
+  "/performance/process-dashboard-admin",
   "/performance/process-data-sources",
   "/performance/process-kpi-dashboard",
   "/performance/process-performance",

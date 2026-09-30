@@ -46,6 +46,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/performance/process-performance": "OPERATIONS_DASHBOARD",
   "/performance/process-kpi-dashboard": "PROCESS_KPI_DASHBOARD",
   "/performance/process-data-sources": "PROCESS_DATA_SOURCE",
+  "/performance/process-dashboard-admin": "PROCESS_DASHBOARD_ADMIN",
   "/kpi-studio": "KPI_STUDIO",
   "/dashboard-builder": "DASHBOARD_BUILDER",
   "/process-operations": "PROCESS_OPERATIONS",

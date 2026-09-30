@@ -306,6 +306,7 @@ import { neemansPerformanceDashboardRouter } from "./modules/process-performance
 import { bellavitaChatDashboardRouter } from "./modules/process-performance/bellavita-chat-dashboard.routes.js";
 import { dalmiaDashboardRouter } from "./modules/process-performance/dalmia-dashboard.routes.js";
 import { sbiCardDashboardRouter } from "./modules/process-performance/sbi-card-dashboard.routes.js";
+import { processDashboardRouter } from "./modules/process-dashboard/pd.routes.js";
 import { bellavitaCartDashboardRouter } from "./modules/process-performance/bellavita-cart-dashboard.routes.js";
 import { appreciateWealthDashboardRouter } from "./modules/process-performance/appreciate-wealth-dashboard.routes.js";
 import { dashboardExportRouter } from "./modules/process-performance/dashboard-export.routes.js";
@@ -1012,6 +1013,7 @@ app.use("/api/process-performance", satyaRetailReportRouter);
 app.use("/api/process-performance", cloviaLobDashboardRouter);
 app.use("/api/process-performance", dalmiaDashboardRouter);
 app.use("/api/process-performance", sbiCardDashboardRouter);
+app.use("/api/process-dashboard", processDashboardRouter);
 app.use("/api/process-performance", appreciateWealthDashboardRouter);
 app.use("/api/process-performance", dashboardExportRouter);
 app.use("/api/inbound-insights", tpzInsightsGate);

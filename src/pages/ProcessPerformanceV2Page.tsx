@@ -1,4 +1,8 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { ProcessDashboard } from "@/components/process-dashboard/ProcessDashboard";
+import { fetchConfigs as fetchProcessDashboardConfigs } from "@/components/process-dashboard/api";
+import type { ProcessConfigSummary } from "@/components/process-dashboard/types";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
@@ -101,7 +105,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" | "category_template" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -553,8 +557,11 @@ function MisPanel({ companyKey, companyLabel }: { companyKey: CompanyKey; compan
 export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
+  // Config-driven processes (admin-registered APR table + mapping): no per-client code, one generic "category_template" dashboard.
+  const [pdCompany, setPdCompany] = useState<ProcessConfigSummary | null>(null);
+  const { data: pdConfigs } = useQuery({ queryKey: ["process-dashboard", "configs"], queryFn: fetchProcessDashboardConfigs, staleTime: 60_000, retry: false });
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" | "category_template" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -585,6 +592,10 @@ export default function ProcessPerformanceV2Page() {
   }, [limited, showUploadStats]);
 
   const companyLabel = COMPANIES.find((c) => c.key === company)?.label ?? "";
+  const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const hardCoded = new Set(COMPANIES.flatMap((c) => [norm(c.key), norm(c.label)]));
+  const pdProcesses = (pdConfigs ?? []).filter((c) => c.enabled && c.configured && !hardCoded.has(norm(c.processName)) && !hardCoded.has(norm(c.label)) && !hardCoded.has(norm(c.processCode)));
+  const openPd = (c: ProcessConfigSummary) => { setPdCompany(c); setSection("dashboards"); setSelectedDashboard({ key: c.processId, label: c.label || c.processName, kind: "category_template" }); };
   // Companies with exactly one dashboard tile (Housing Owner, Housing Premium, Clovia, ...)
   // skip the pointless one-tile grid: "Dashboards" opens the dashboard directly.
   // Process Details (targets / add agent) is by explicit per-user grant only (page codes below, assigned in Access Control); everyone else
@@ -595,7 +606,7 @@ export default function ProcessPerformanceV2Page() {
   const dashboardsForCompany = company ? DASHBOARDS_BY_COMPANY[company]?.filter((d) => dashboardAllowed(d.kind)) : undefined;
   const singleDashboard = dashboardsForCompany && dashboardsForCompany.length === 1 ? dashboardsForCompany[0] : null;
 
-  const reset = () => { setCompany(null); setSection(null); setSelectedUploader(null); setSelectedDashboard(null); };
+  const reset = () => { setPdCompany(null); setCompany(null); setSection(null); setSelectedUploader(null); setSelectedDashboard(null); };
   const backToCompany = () => { setSection(null); setSelectedUploader(null); setSelectedDashboard(null); };
   const backToUploaderGrid = () => setSelectedUploader(null);
   const backToDashboardGrid = () => (singleDashboard ? backToCompany() : setSelectedDashboard(null));
@@ -604,7 +615,7 @@ export default function ProcessPerformanceV2Page() {
     <DashboardLayout>
       <div className="p-4 sm:p-6 space-y-4">
         {/* Level 1: company picker */}
-        {!company && (
+        {!company && !pdCompany && (
           <div className="space-y-6">
             <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-50 via-violet-50 to-fuchsia-50 p-6 sm:p-8">
               <p className="text-xs font-bold uppercase tracking-wider text-indigo-500">Welcome</p>
@@ -615,7 +626,7 @@ export default function ProcessPerformanceV2Page() {
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <StatCard icon={LayoutGrid} label={limited ? "Your Processes" : "Total Processes"} value={visibleCompanies.length} tone="emerald" />
+              <StatCard icon={LayoutGrid} label={limited ? "Your Processes" : "Total Processes"} value={visibleCompanies.length + (limited ? 0 : pdProcesses.length)} tone="emerald" />
               {showUploadStats && <StatCard icon={UploadCloud} label="Total Files Uploaded" value={stats.totalFilesUploaded} tone="indigo" loading={statsLoading} />}
               {showUploadStats && <StatCard icon={Users} label="Active Users" value={stats.activeUsers} tone="fuchsia" loading={statsLoading} />}
             </div>
@@ -648,6 +659,9 @@ export default function ProcessPerformanceV2Page() {
                     />
                   );
                 })}
+                {!limited && pdProcesses.map((c) => (
+                  <Box key={c.processId} icon={LayoutDashboard} tone="indigo" label={c.label || c.processName} description={`Auto dashboard · ${c.category.replace("_", " ")}`} onClick={() => openPd(c)} />
+                ))}
               </div>
             </div>
           </div>
@@ -707,9 +721,9 @@ export default function ProcessPerformanceV2Page() {
           </div>
         )}
 
-        {company && DASHBOARDS_BY_COMPANY[company] && section === "dashboards" && selectedDashboard && (
+        {((company && DASHBOARDS_BY_COMPANY[company]) || pdCompany) && section === "dashboards" && selectedDashboard && (
           <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Dashboards", selectedDashboard.label]} onBack={backToDashboardGrid} />
+            <Breadcrumb parts={pdCompany ? [pdCompany.label || pdCompany.processName, "Dashboard"] : [companyLabel, "Dashboards", selectedDashboard.label]} onBack={pdCompany ? reset : backToDashboardGrid} />
             {selectedDashboard.kind === "inbound" ? (
               // Dialer-backed inbound processes share one full dashboard (overview / hour / date /
               // agent / LOB / wait & abandon / callers, with call-level drill-down). GNC's earlier
@@ -749,6 +763,8 @@ export default function ProcessPerformanceV2Page() {
               <DalmiaDashboard />
             ) : selectedDashboard.kind === "sbi_card_dashboard" ? (
               <SbiCardDashboard />
+            ) : selectedDashboard.kind === "category_template" ? (
+              <ProcessDashboard key={selectedDashboard.key} processId={selectedDashboard.key} embedded />
             ) : selectedDashboard.kind === "bellavita_cart" ? (
               <BellavitaCartDashboard />
             ) : selectedDashboard.kind === "housing_owner_sale" ? (

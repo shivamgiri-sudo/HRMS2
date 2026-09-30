@@ -21,6 +21,8 @@ const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetric
 const ProcessPerformancePage = lazy(() => import("@/pages/ProcessPerformancePage"));
 const ProcessKpiDashboardPage = lazy(() => import("@/pages/ProcessKpiDashboardPage"));
 const ProcessDataSourcePage = lazy(() => import("@/pages/ProcessDataSourcePage"));
+const ProcessDashboardPage = lazy(() => import("@/pages/ProcessDashboardPage"));
+const ProcessDashboardAdminPage = lazy(() => import("@/pages/ProcessDashboardAdminPage"));
 const KpiStudioPage = lazy(() => import("@/pages/KpiStudioPage"));
 const DashboardStudioPage = lazy(() => import("@/pages/DashboardStudioPage"));
 const ProcessOperationsPage = lazy(() => import("@/pages/ProcessOperationsPage"));
@@ -127,6 +129,9 @@ export const performanceRouteElements = (
           above; same viewer set, separate page_catalog code (migration 1676). */}
       <Route path="/performance/process-kpi-dashboard" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_KPI_DASHBOARD"><ProcessKpiDashboardPage /></Gate></ProtectedRoute>} />
       <Route path="/performance/process-data-sources" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DATA_SOURCE"><ProcessDataSourcePage /></Gate></ProtectedRoute>} />
+      {/* Config-driven Process Dashboard: any process an admin has registered (APR table + column mapping) gets this, no per-client code. Setup page is admin-only. */}
+      <Route path="/performance/process-dashboard/:processId" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DASHBOARD"><ProcessDashboardPage /></Gate></ProtectedRoute>} />
+      <Route path="/performance/process-dashboard-admin" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','process_manager','operations_manager']}><Gate pageCode="PROCESS_DASHBOARD_ADMIN"><ProcessDashboardAdminPage /></Gate></ProtectedRoute>} />
       {/* Roles mirror kpi-studio.routes.ts's VIEW_ROLES; the router re-checks server-side. */}
       <Route path="/kpi-studio" element={<ProtectedRoute roles={['super_admin','admin','hr','process_manager','qa','tq_head','manager','branch_head','ceo','team_leader']}><Gate pageCode="KPI_STUDIO"><KpiStudioPage /></Gate></ProtectedRoute>} />
       {/* Dashboard Studio (v2). The server re-checks roles and applies each viewer's branch/process scope to every number. */}

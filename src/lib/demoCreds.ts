@@ -62,6 +62,8 @@ const ALL_PAGES = [
   // without it here the Process KPI Dashboard is unreachable under demo mode.
   "PROCESS_KPI_DASHBOARD",
   "PROCESS_DATA_SOURCE",
+  "PROCESS_DASHBOARD",
+  "PROCESS_DASHBOARD_ADMIN",
   "KPI_STUDIO",
   "DASHBOARD_BUILDER",
   // Same gap as the others above, one entry further on: PROCESS_OPERATIONS was

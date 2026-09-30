@@ -1243,6 +1243,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1921_capacity_mandate_editors.sql", // Registered 2026-09-30. Grants WFM_CAPACITY_DASHBOARD view to finance_head, finance, branch_admin, operations_manager. Additive INSERT IGNORE.
   "1931_bank_exception_email_template.sql", // Registered 2026-09-30. Adds branded HTML email template BANK_EXCEPTION_INVALID_ASSIGNED to communication_template and wires it into the bank_exception_invalid_assigned event_config (template_key was NULL since 1756, causing the fallback "no template configured" footer on every bank-exception notification).
   "1932_sbi_card_collections.sql", // Registered 2026-09-30. SBI Card Collections process (SBI_CARD): process_master row + sbi_card_dialer_mis / agent_mis / account_file / downtime / pen_estimation tables (upsert on natural keys) and their five SBI_CARD_* upload templates. Additive: new tables and template rows only.
+  "1941_process_dashboard_config.sql", // Registered 2026-09-30. Config-driven Process Dashboard: process_dashboard_config (APR table + column_map per process, category profile), page codes PROCESS_DASHBOARD / PROCESS_DASHBOARD_ADMIN with role access, and a DISABLED collections config row for SBI_CARD. Additive, idempotent; no backfill of existing processes.
 ];
 
 export type MigrationHealth = {

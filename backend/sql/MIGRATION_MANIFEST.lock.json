@@ -945,7 +945,8 @@
     "migrations/1951_analytics_dashboards.sql",
     "migrations/1921_capacity_mandate_editors.sql",
     "1931_bank_exception_email_template.sql",
-    "1932_sbi_card_collections.sql"
+    "1932_sbi_card_collections.sql",
+    "1941_process_dashboard_config.sql"
   ],
   "approvedDeletions": [
     {
