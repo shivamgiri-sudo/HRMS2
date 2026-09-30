@@ -501,14 +501,6 @@ export default function NativeBranchHeadApproval() {
     void loadStats();
   };
 
-  if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
-    return (
-      <DashboardLayout>
-        <div className="p-8 text-center text-rose-600 font-bold">You do not have access to this page.</div>
-      </DashboardLayout>
-    );
-  }
-
   // ── past decisions ────────────────────────────────────────────────────
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab') ?? 'pending';
@@ -563,6 +555,15 @@ export default function NativeBranchHeadApproval() {
   }, []);
 
   useEffect(() => { loadStats(); }, [loadStats]);
+
+  // Below every hook: an early return above them made the hooks conditional.
+  if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
+    return (
+      <DashboardLayout>
+        <div className="p-8 text-center text-rose-600 font-bold">You do not have access to this page.</div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
