@@ -52,7 +52,7 @@ describe("application shell routing contracts", () => {
       ["ATS Reconciliation", "/ats/reconciliation"],
       ["ATS Extensions", "/ats/extensions"],
       ["Attendance Integrity", "/wfm/attendance-integrity"],
-      ["WFM Manager Approvals", "/wfm-manager-approvals"],
+      ["RM Change Approvals", "/wfm-manager-approvals"],
       ["KPI Master", "/kpi-master"],
       ["My KPI", "/my-kpi"],
       ["PIP Management", "/pip-management"],
@@ -400,6 +400,32 @@ describe("application shell routing contracts", () => {
       // session's work.
       "/people/skill-roadmap",
       "/skill-roadmap",
+
+      // (f) Roster Command Center modernisation, 2026-09-30. Nine pre-merge WFM pages are now
+      // redirect-only — each mounts a <RosterCommandCenterRedirect toTab="..."> that bounces
+      // old bookmarks and Work-Inbox deep-links into the matching tab of /wfm/roster-command-center.
+      // The sidebar links to the command center directly; these old URLs stay resolvable only.
+      "/wfm/roster-view",
+      "/wfm/roster-analytics",
+      "/wfm/roster-compliance",
+      "/wfm/shift-effectiveness",
+      "/wfm/roster-interventions",
+      "/wfm/roster-audit",
+      "/wfm/capacity-dashboard",
+      "/wfm/team-comparison",
+      "/wfm/weekoff-fairness",
+
+      // (f) continued — real pages deliberately left outside the sidebar after the merge:
+      // /wfm/roster: removed per navConfig comment "duplicate of group header /wfm/roster-command-center".
+      "/wfm/roster",
+      // /wfm/mobile-roster: phone-oriented attendance view, same class as /wfm/mobile-attendance.
+      "/wfm/mobile-roster",
+      // WFM admin config pages (rest-policy, week-off-default, weekoff-day-rules, branch-spoc-config):
+      // admin/wfm-role-gated config surfaces opened from the WFM settings area, not the sidebar.
+      "/wfm/rest-policy",
+      "/wfm/week-off-default",
+      "/wfm/weekoff-day-rules",
+      "/wfm/branch-spoc-config",
     ]);
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),
