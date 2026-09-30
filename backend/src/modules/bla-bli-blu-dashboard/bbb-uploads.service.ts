@@ -42,21 +42,23 @@ export async function refreshDailySummary(from: string, to: string): Promise<voi
   try {
     await conn.beginTransaction();
     await conn.query(`DELETE FROM ${DAILY} WHERE report_date BETWEEN ? AND ?`, [from, to]);
+    // COALESCE on every SUM: a condition on a column that is NULL for the whole day (no answer-time value, say)
+    // makes SUM return NULL, not 0, and the summary columns are NOT NULL.
     await conn.query(
       `INSERT INTO ${DAILY}
          (report_date, lob, fresh_base, fresh_workable, total_workable, dnd, unique_attempt, connected, le30, lt1m, ge1m, total_rows, nc_rows)
        SELECT report_date, lob,
-              SUM(data_type = 'Fresh'),
-              SUM(data_type = 'Fresh' AND workable = 'Workable'),
-              SUM(workable = 'Workable'),
-              SUM(workable = 'DND'),
-              SUM(same_day_attempt > 0 AND workable = 'Workable'),
-              SUM(data_type = 'Fresh' AND final_dispo = 'Connected'),
-              SUM(data_type = 'Fresh' AND final_dispo = 'Connected' AND call_answer = 'Less Than 30 Sec'),
-              SUM(data_type = 'Fresh' AND final_dispo = 'Connected' AND call_answer = 'Less Than 1 Min'),
-              SUM(data_type = 'Fresh' AND final_dispo = 'Connected' AND call_answer IN ('Grater Than 1 Min','Greater Than 1 Min')),
+              COALESCE(SUM(data_type = 'Fresh'), 0),
+              COALESCE(SUM(data_type = 'Fresh' AND workable = 'Workable'), 0),
+              COALESCE(SUM(workable = 'Workable'), 0),
+              COALESCE(SUM(workable = 'DND'), 0),
+              COALESCE(SUM(same_day_attempt > 0 AND workable = 'Workable'), 0),
+              COALESCE(SUM(data_type = 'Fresh' AND final_dispo = 'Connected'), 0),
+              COALESCE(SUM(data_type = 'Fresh' AND final_dispo = 'Connected' AND call_answer = 'Less Than 30 Sec'), 0),
+              COALESCE(SUM(data_type = 'Fresh' AND final_dispo = 'Connected' AND call_answer = 'Less Than 1 Min'), 0),
+              COALESCE(SUM(data_type = 'Fresh' AND final_dispo = 'Connected' AND call_answer IN ('Grater Than 1 Min','Greater Than 1 Min')), 0),
               COUNT(*),
-              SUM(data_type <> 'Fresh')
+              COALESCE(SUM(data_type <> 'Fresh'), 0)
          FROM ${RECEIVED}
         WHERE live_key = 0 AND report_date BETWEEN ? AND ? AND lob IS NOT NULL
         GROUP BY report_date, lob`, [from, to]);

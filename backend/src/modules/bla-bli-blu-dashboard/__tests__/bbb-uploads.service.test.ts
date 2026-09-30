@@ -147,7 +147,10 @@ describe("read model", () => {
     await refreshDailySummary("2026-08-01", "2026-08-31");
     const order = sqls(conn.query);
     expect(order[0]).toMatch(/DELETE FROM bla_dash_received_daily WHERE report_date BETWEEN \? AND \?/);
-    expect(order[1]).toContain("SUM(data_type = 'Fresh' AND workable = 'Workable')");
+    expect(order[1]).toContain("COALESCE(SUM(data_type = 'Fresh' AND workable = 'Workable'), 0)");
+    // Every aggregate is NULL-safe: a day with no answer-time values must store 0, not fail the whole refresh.
+    expect(order[1].match(/SUM\(/g)).toHaveLength(10);
+    expect(order[1].match(/COALESCE\(SUM\(/g)).toHaveLength(10);
     expect(order[1]).toContain("WHERE live_key = 0 AND report_date BETWEEN ? AND ? AND lob IS NOT NULL");
     expect(conn.beginTransaction).toHaveBeenCalledTimes(1);
     expect(conn.commit).toHaveBeenCalledTimes(1);
