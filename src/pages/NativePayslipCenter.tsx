@@ -12,7 +12,7 @@ type PayrollRun = { id: string; run_month: string; status: string; total_employe
 function runMonth(r: PayrollRun): number { return r.run_month ? parseInt(r.run_month.split("-")[1] ?? "1", 10) : 0; }
 function runYear(r: PayrollRun): number { return r.run_month ? parseInt(r.run_month.split("-")[0] ?? "0", 10) : 0; }
 type PayrollLine = { employee_id: string; employee_name: string; employee_code?: string; gross_pay: number; net_pay: number; pf_employee: number; esic_employee: number; total_deductions: number; payslip_id?: string; payslip_status?: string; };
-type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; lwp_deduction?: number; lwp_days?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; eligible_weekoff_days?: number; eligible_holiday_days?: number | null; epf_number?: string; uan_number?: string; pan_number?: string; bank_account_masked?: string; bank_name?: string | null; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; cheque_no?: string | null; payment_mode?: string | null; payment_date?: string | null; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; employer_costs?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; ytd?: Record<string, number>; };
+type Payslip = { id: string; employee_id: string; employee_name: string; employee_code?: string; designation?: string; department?: string; month: number; year: number; basic: number; hra: number; other_allowances: number; gross_pay: number; ctc?: number; ctc_annual?: number; pf_employee: number; esic_employee: number; lwp_deduction?: number; lwp_days?: number; advance_recovery?: number; tds_amount?: number; total_deductions: number; net_pay: number; working_days?: number; present_days?: number; eligible_weekoff_days?: number; eligible_holiday_days?: number | null; epf_number?: string; uan_number?: string; pan_number?: string; bank_account_masked?: string; bank_name?: string | null; esi_number?: string; branch_name?: string; location_name?: string; payslip_ref?: string; cheque_no?: string | null; payment_mode?: string | null; payment_date?: string | null; earnings?: PayslipComponent[]; deductions?: PayslipComponent[]; employer_costs?: PayslipComponent[]; acknowledged_at?: string | null; status?: string; ytd?: Record<string, number>; ytd_by_type?: Record<string, Record<string, number>>; };
 type PayslipComponent = { component_code: string; component_name: string; component_type: string; amount: number | string; reason?: string; };
 type NeftSummary = { total: number; with_bank: number; missing_bank: number; total_net: number; };
 /**
@@ -160,12 +160,15 @@ async function downloadPayslipPdfV2(payslip: Payslip): Promise<void> {
   // PDF prints "-" rather than a fabricated 0.00.
   const ytdMap = payslip.ytd;
   const ytdFor = (...codes: string[]) => codes.reduce((t, c) => t + Number(ytdMap?.[c.toUpperCase()] ?? 0), 0);
-  const ytdUnslottedEarnings = ytdMap
-    ? Object.entries(ytdMap).filter(([code]) => !SLOTTED.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
-    : 0;
-  const ytdUnslottedDeductions = ytdMap
-    ? Object.entries(ytdMap).filter(([code]) => !SLOTTED_DED.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
-    : 0;
+  // The flat ytd map mixes earnings, deductions and employer costs, so "not in a
+  // named slot" has to be taken per side or each Other row sums the opposite side.
+  const ytdByType = payslip.ytd_by_type;
+  const ytdUnslotted = (side: "earning" | "deduction", slotted: Set<string>) =>
+    Object.entries(ytdByType?.[side] ?? {})
+      .filter(([code]) => !slotted.has(code.toUpperCase()))
+      .reduce((t, [, v]) => t + Number(v || 0), 0);
+  const ytdUnslottedEarnings = ytdUnslotted("earning", SLOTTED);
+  const ytdUnslottedDeductions = ytdUnslotted("deduction", SLOTTED_DED);
   const ytd = ytdMap ? {
     basic: ytdFor("BASIC"), hra: ytdFor("HRA"), bonus: ytdFor("BONUS"),
     conv: ytdFor("CONVEYANCE", "CONV"), pa: ytdFor("PA", "PERSONAL_ALLOWANCE", "PORTFOLIO"),

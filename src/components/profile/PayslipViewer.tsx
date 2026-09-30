@@ -149,6 +149,8 @@ interface PayslipRecord {
    *  via GET /api/payroll/payslip/:runId/:employeeId — the list endpoint this
    *  component normally reads from does not compute it for every row. */
   ytd?: Record<string, number>;
+  /** Same totals split by side (earning / deduction / employer_cost). */
+  ytd_by_type?: Record<string, Record<string, number>>;
   /** Reliable only via GET /api/payroll/payslip/:runId/:employeeId, which
    *  applies payslip.service.ts's zero-fallback derivation. The /payslip/my
    *  list this component normally reads from returns the raw, always-0 column. */
@@ -587,12 +589,15 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       }
     }
     const ytdFor = (...codes: string[]) => codes.reduce((t, c) => t + Number(ytdMap?.[c.toUpperCase()] ?? 0), 0);
-    const ytdUnslottedEarnings = ytdMap
-      ? Object.entries(ytdMap).filter(([code]) => !SLOTTED_EARNINGS.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
-      : 0;
-    const ytdUnslottedDeductions = ytdMap
-      ? Object.entries(ytdMap).filter(([code]) => !SLOTTED_DEDUCTIONS.has(code.toUpperCase())).reduce((t, [, v]) => t + Number(v || 0), 0)
-      : 0;
+    // The flat ytd map mixes earnings, deductions and employer costs, so "not in a
+    // named slot" has to be taken per side or each Other row sums the opposite side.
+    const ytdByType = detail?.ytd_by_type;
+    const ytdUnslotted = (side: "earning" | "deduction", slotted: Set<string>) =>
+      Object.entries(ytdByType?.[side] ?? {})
+        .filter(([code]) => !slotted.has(code.toUpperCase()))
+        .reduce((t, [, v]) => t + Number(v || 0), 0);
+    const ytdUnslottedEarnings = ytdUnslotted("earning", SLOTTED_EARNINGS);
+    const ytdUnslottedDeductions = ytdUnslotted("deduction", SLOTTED_DEDUCTIONS);
     const ytd = ytdMap ? {
       basic: ytdFor("BASIC"), hra: ytdFor("HRA"), bonus: ytdFor("BONUS"),
       conv: ytdFor("CONVEYANCE", "CONV"), pa: ytdFor("PA", "PERSONAL_ALLOWANCE", "PORTFOLIO"),
