@@ -38,7 +38,7 @@ export function daysInRange(from: string, to: string, today = new Date()): strin
   if (to > ymd(today)) throw new Error('The end date is in the future');
   const [y, m, d] = from.split('-').map(Number);
   const out: string[] = [];
-  for (let i = 0; i <= MAX_RANGE_DAYS; i++) {
+  for (let i = 0; i < MAX_RANGE_DAYS; i++) {
     const day = ymd(new Date(y, m - 1, d + i));
     out.push(day);
     if (day === to) return out;

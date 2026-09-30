@@ -979,7 +979,10 @@ export interface DefinitionFilters {
 }
 
 export async function listDefinitions(filters: DefinitionFilters = {}) {
-  if (!(await getStudioCapability()).tables) return [];
+  const listCap = await getStudioCapability();
+  if (!listCap.tables) return [];
+  // Whether the KPI is measured per person or per process. Selected only where the column exists (migration 1684).
+  const grainSelect = listCap.processGrain ? "COALESCE(d.grain, 'employee')" : "'employee'";
 
   const where: string[] = ['d.active_status = 1'];
   const params: unknown[] = [];
@@ -1013,7 +1016,8 @@ export async function listDefinitions(filters: DefinitionFilters = {}) {
        d.target_value, d.min_threshold, d.max_achievement, d.weightage, d.target_source,
        d.effective_from, d.effective_to, d.notes, d.created_at, d.updated_at,
        (d.effective_from <= CURDATE() AND (d.effective_to IS NULL OR d.effective_to >= CURDATE())) AS in_force,
-       (d.effective_from > CURDATE()) AS starts_later
+       (d.effective_from > CURDATE()) AS starts_later,
+       ${grainSelect} AS grain
      FROM kpi_studio_definition d
      JOIN kpi_metric_master m ON m.id = d.metric_id
      LEFT JOIN branch_master b       ON b.id = d.branch_id

@@ -27,6 +27,7 @@ import {
   useValidateDefinition,
   type KpiMetricOption,
 } from "@/hooks/useKpiStudio";
+import { friendlyError, type DefinitionDraft } from "./definition-model";
 
 /**
  * The KPI builder.
@@ -108,10 +109,21 @@ function describeScope(state: BuilderState): string | null {
   return parts.join(" + ");
 }
 
-export function KpiStudioBuilder({ onSaved }: { onSaved?: () => void }) {
-  const [step, setStep] = useState<Step>(1);
-  const [state, setState] = useState<BuilderState>(EMPTY);
-  const [employeeSearch, setEmployeeSearch] = useState("");
+export function KpiStudioBuilder({
+  onSaved,
+  initial,
+  mode = "new",
+}: {
+  onSaved?: () => void;
+  /** Prefills the form from an existing definition. Pass a `key` with it so the form resets. */
+  initial?: DefinitionDraft;
+  mode?: "new" | "edit" | "clone";
+}) {
+  // An edit already has its scope and KPI, so it opens on the calculation; a copy opens on the
+  // scope, because choosing a new one is the whole point of copying.
+  const [step, setStep] = useState<Step>(initial && mode === "edit" ? 3 : 1);
+  const [state, setState] = useState<BuilderState>(() => (initial ? { ...EMPTY, ...initial.values } : EMPTY));
+  const [employeeSearch, setEmployeeSearch] = useState(initial?.employee_search ?? "");
   const [metricSearch, setMetricSearch] = useState("");
   const [creatingMetric, setCreatingMetric] = useState(false);
   const [newMetric, setNewMetric] = useState({ code: "", name: "", unit: "count", direction: "higher_is_better", category: "custom" });
@@ -289,13 +301,32 @@ export function KpiStudioBuilder({ onSaved }: { onSaved?: () => void }) {
       setStep(2);
       onSaved?.();
     } catch (error) {
-      setSaveMessage({ ok: false, text: error instanceof Error ? error.message : "Could not save" });
+      setSaveMessage({ ok: false, text: friendlyError(error) });
     }
   }
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_18rem]">
       <div className="space-y-5">
+        {initial && mode !== "new" && (
+          <div role="note" className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>
+              <span className="font-medium">
+                {mode === "edit" ? `Editing ${initial.metric_name}. ` : `Copying ${initial.metric_name}. `}
+              </span>
+              {mode === "edit"
+                ? `Saving creates a new version from ${state.effective_from}. The current version ends the day before.`
+                : "Choose where this copy applies."}
+              {!initial.grain_known && capability.data?.processGrain && (
+                <span className="mt-1 block">
+                  Check "Measure this per" in step 3 before saving. It could not be read from the
+                  existing version and is set to each person.
+                </span>
+              )}
+            </span>
+          </div>
+        )}
         {/* ── Step rail ── */}
         <ol className="flex flex-wrap gap-1">
           {STEPS.map((entry) => {
@@ -815,6 +846,12 @@ export function KpiStudioBuilder({ onSaved }: { onSaved?: () => void }) {
           )}
 
           {/* ── Navigation ── */}
+          {step === 4 && saveMessage && !saveMessage.ok && (
+            <p role="alert" className="mt-5 flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-sm text-rose-800">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              {saveMessage.text}
+            </p>
+          )}
           <div className="mt-5 flex items-center justify-between border-t border-slate-200 pt-4">
             <Button variant="ghost" size="sm" onClick={() => setStep((current) => (current > 1 ? ((current - 1) as Step) : current))} disabled={step === 1}>
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back
@@ -845,7 +882,7 @@ export function KpiStudioBuilder({ onSaved }: { onSaved?: () => void }) {
           </div>
         </div>
 
-        {saveMessage && (
+        {saveMessage && (saveMessage.ok || step !== 4) && (
           <p
             role="status"
             className={`rounded-lg border p-3 text-sm ${

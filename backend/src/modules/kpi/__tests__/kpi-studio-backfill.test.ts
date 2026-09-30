@@ -17,6 +17,9 @@ describe('daysInRange', () => {
     expect(() => daysInRange('2026-09-12', '2026-09-01', TODAY)).toThrow(/after the end/);
     expect(() => daysInRange('2026-09-12', '2026-10-05', TODAY)).toThrow(/future/);
     expect(() => daysInRange('2026-01-01', '2026-09-01', TODAY)).toThrow(/at most 62 days/);
+    // Exactly 62 days is allowed; 63 is not.
+    expect(daysInRange('2026-07-01', '2026-08-31', TODAY)).toHaveLength(62);
+    expect(() => daysInRange('2026-07-01', '2026-09-01', TODAY)).toThrow(/at most 62 days/);
   });
 });
 
