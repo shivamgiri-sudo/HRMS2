@@ -39,6 +39,7 @@ import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { asArray, asNumber, asRecord, metricDetail, metricUnavailableReason, metricValue } from "../reference-dashboard-model";
 import { deriveAtsStageSnapshot } from "../dashboard-data-contracts";
 import { ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import { ExitAnalyticsPanel } from "@/components/dashboard/hr/ExitAnalyticsPanel";
 /*
  * Both panels were on this layout until 81075104 ("remove all dummy data") rewrote the HR
  * dashboard bespoke and dropped every shared panel with it. They were collateral, not the
@@ -806,6 +807,11 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
           ))}
         </div>
       </GlassPanel>
+
+      {/* Exit Analytics */}
+      <div className="mt-4">
+        <ExitAnalyticsPanel />
+      </div>
     </div>
   );
 }

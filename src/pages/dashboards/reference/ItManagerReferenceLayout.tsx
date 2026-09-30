@@ -46,6 +46,7 @@ import {
   OnboardingFunnelPanel,
 } from "./ReferenceSharedPanels";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
+import { ItAnalyticsPanel } from "@/components/dashboard/it/ItAnalyticsPanel";
 
 type Tab = "provisioning" | "helpdesk" | "employees" | "bulk_upload";
 
@@ -874,6 +875,10 @@ export function ItManagerReferenceLayout({ data, filters }: { data: ReferenceDas
       <div className="grid gap-4 xl:grid-cols-2">
         <OnboardingFunnelPanel data={data} />
         <ExitPipelinePanel data={data} />
+      </div>
+
+      <div className="mt-4">
+        <ItAnalyticsPanel />
       </div>
     </div>
   );

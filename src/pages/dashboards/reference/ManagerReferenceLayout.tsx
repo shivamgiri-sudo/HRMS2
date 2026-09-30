@@ -43,6 +43,7 @@ import {
   TrainingProgressPanel,
   LeaveApprovalPanel,
 } from "./ReferenceSharedPanels";
+import { ManagerAnalyticsPanel } from "@/components/dashboard/manager/ManagerAnalyticsPanel";
 
 export function ManagerReferenceLayout({ data, managerName, filters }: { data: ReferenceDashboardData; managerName: string; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
@@ -275,6 +276,10 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
         <AttendanceBreakdownPanel data={data} />
         <TrainingProgressPanel data={data} />
         <LeaveApprovalPanel data={data} />
+
+        <div className="mt-4">
+          <ManagerAnalyticsPanel />
+        </div>
       </div>
     </div>
   );

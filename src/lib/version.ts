@@ -1,5 +1,5 @@
 // Current application version - update this when releasing new versions
-export const APP_VERSION = "6943a1713";
+export const APP_VERSION = "51c51c513-dev";
 
 // Local-only deployment: no external version API
 export const VERSION_API_URL = "";

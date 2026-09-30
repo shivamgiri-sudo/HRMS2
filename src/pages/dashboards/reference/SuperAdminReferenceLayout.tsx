@@ -49,6 +49,7 @@ import {
   AttendanceExceptionPanel,
   DocumentCompliancePanel,
 } from "./ReferenceSharedPanels";
+import { SuperAdminAnalyticsPanel } from "@/components/dashboard/superadmin/SuperAdminAnalyticsPanel";
 
 export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
@@ -211,6 +212,10 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
         <ExitPipelinePanel data={data} />
         <AttendanceExceptionPanel data={data} />
         <DocumentCompliancePanel data={data} />
+      </div>
+
+      <div className="mt-4">
+        <SuperAdminAnalyticsPanel />
       </div>
     </div>
   );

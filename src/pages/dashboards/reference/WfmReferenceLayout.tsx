@@ -18,6 +18,7 @@ import {
   AttendanceExceptionPanel,
   BiometricCoveragePanel,
 } from "./ReferenceSharedPanels";
+import { WfmAnalyticsPanel } from "@/components/dashboard/wfm/WfmAnalyticsPanel";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { PayrollPrepWidget } from "@/components/dashboard/widgets/PayrollPrepWidget";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
@@ -231,6 +232,10 @@ export function WfmReferenceLayout({
 
           <AttendanceExceptionPanel data={data} />
           <BiometricCoveragePanel data={data} />
+
+          <div className="mt-4">
+            <WfmAnalyticsPanel />
+          </div>
         </div>
       </div>
     </div>
