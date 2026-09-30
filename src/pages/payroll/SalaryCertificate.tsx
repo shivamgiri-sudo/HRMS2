@@ -65,6 +65,7 @@ interface CertificateData {
   annual_ctc: number | null;
   period_from: string | null;
   period_to: string | null;
+  period_month_count: number | null;
   addressee: string;
   purpose: string;
   body_text: string;
@@ -121,13 +122,20 @@ function formatDt(val: string | undefined | null): string {
 // ---------------------------------------------------------------------------
 
 function CertificatePreview({ data }: { data: CertificateData }) {
-  // Format salary breakdown from body_text (temporary until backend provides structured data)
+  // Check if this is a period-based (yearly) certificate
+  const isPeriodCertificate = data.period_from && data.period_to && data.period_month_count;
+
+  // For period certificates, basic_salary and gross_salary are already totals from backend
+  // For monthly certificates, they are single month values
+  const basicValue = data.basic_salary ?? 0;
+
+  // Format salary breakdown (backend provides period totals when period_from/to specified)
   const salaryComponents = [
-    { label: "Basic", value: data.basic_salary ?? 0 },
-    { label: "HRA", value: Math.round((data.basic_salary ?? 0) * 0.44) }, // 44% of basic
-    { label: "Conveyance", value: Math.round((data.basic_salary ?? 0) * 0.10) }, // 10%
-    { label: "Bonus", value: Math.round((data.basic_salary ?? 0) * 0.083) }, // ~8.3%
-    { label: "Portfolio Allowance", value: Math.round((data.basic_salary ?? 0) * 0.083) },
+    { label: "Basic", value: basicValue },
+    { label: "HRA", value: Math.round(basicValue * 0.44) }, // 44% of basic
+    { label: "Conveyance", value: Math.round(basicValue * 0.10) }, // 10%
+    { label: "Bonus", value: Math.round(basicValue * 0.083) }, // ~8.3%
+    { label: "Portfolio Allowance", value: Math.round(basicValue * 0.083) },
     { label: "Incentive", value: 0 }, // Variable
   ];
 
