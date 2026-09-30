@@ -19,7 +19,12 @@ interface Props {
 export default function DashboardCanvas({ widgets, theme, datasets, settings, runtime, editing, selectedId, crossSourceId, onSelect, onWidgets, onDuplicate, onDelete, onCrossFilter, onResult }: Props) {
   const [bp, setBp] = useState<Breakpoint>("lg");
   const layouts = useMemo(() => layoutsFor(widgets), [widgets]);
-  const commit = (layout: Layout[]) => onWidgets(applyLayout(widgets, bp, layout.map((l) => ({ i: l.i, x: l.x, y: l.y, w: l.w, h: l.h }))));
+  // The grid reports a "drag stop" for a plain click too (and re-compacts positions when it does). Only a drag or
+  // resize that actually moved the item is a change worth storing.
+  const commit = (layout: Layout[], before?: Layout, after?: Layout) => {
+    if (before && after && before.x === after.x && before.y === after.y && before.w === after.w && before.h === after.h) return;
+    onWidgets(applyLayout(widgets, bp, layout.map((l) => ({ i: l.i, x: l.x, y: l.y, w: l.w, h: l.h }))));
+  };
   return (
     <div onClick={editing ? () => onSelect(null) : undefined} className="studio-canvas min-h-[50vh] rounded-xl p-1 sm:p-2" style={{ background: theme.canvas, colorScheme: theme.dark ? "dark" : "light" }}>
       <Grid
