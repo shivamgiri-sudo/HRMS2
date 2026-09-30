@@ -1,0 +1,331 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Add fast-check dev dependency and create SQL migration for all new tables": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091009
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510128411
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512584613
+      }
+    ],
+    "2.1 Create `backend/sql/{next}_correct_march_tds_due_date.sql`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091051
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512592518
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512933082
+      }
+    ],
+    "3. Checkpoint - Ensure schema migrations apply cleanly": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091102
+      }
+    ],
+    "4.1 Create `backend/src/modules/payroll/tds-deductor.service.ts` with input validation": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091137
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512593645
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512928949
+      }
+    ],
+    "5.1 Create `backend/src/modules/payroll/tds-deductor.routes.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091183
+      }
+    ],
+    "6.1 Wire `findActiveDeductorForScope` into the existing Form 16/130 Part B generation path": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091218
+      }
+    ],
+    "7. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091249
+      }
+    ],
+    "8.1 Create `backend/src/modules/payroll/tds-challan.service.ts` with `deriveCin` and validation": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091297
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512594591
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512930000
+      }
+    ],
+    "9.1 Create `backend/src/modules/payroll/tds-challan.routes.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091337
+      }
+    ],
+    "10. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091380
+      }
+    ],
+    "11.1 Create `backend/src/modules/payroll/tds-csi-import.service.ts` with `parseCsiFile`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091433
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512595699
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512931110
+      }
+    ],
+    "12.1 Implement `importCsiFile` in `tds-csi-import.service.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091466
+      }
+    ],
+    "13.1 Create `backend/src/modules/payroll/tds-reconciliation.service.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091496
+      }
+    ],
+    "14. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091528
+      }
+    ],
+    "15.1 Update `defaultDueDate()` in `backend/src/modules/payroll/payroll-statutory-filing.routes.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091559
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512596468
+      },
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787512932203
+      }
+    ],
+    "15.2 Extend the existing GET list route's status computation to self-heal incorrect March due dates": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091602
+      }
+    ],
+    "16.1 Create `backend/src/modules/payroll/tds-quarterly-obligation.service.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091648
+      }
+    ],
+    "16.2 Create `backend/src/modules/payroll/tds-quarterly-obligation.routes.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091680
+      }
+    ],
+    "17. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091713
+      }
+    ],
+    "18.1 Create `backend/src/modules/payroll/tds-return-file-generator.service.ts` skeleton and generation gate": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091746
+      }
+    ],
+    "18.2 Implement Annexure I and Annexure II builders": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091780
+      }
+    ],
+    "19.1 Implement the BH/CD/DD/FT file generator in `tds-return-file-generator.service.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091811
+      }
+    ],
+    "19.2 Implement `parseQuarterlyReturnFile` as the structural inverse of the generator": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091846
+      }
+    ],
+    "19.3 Implement `selfValidate` and wire it unconditionally into `generateQuarterlyReturn`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091880
+      }
+    ],
+    "20. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091912
+      }
+    ],
+    "21.1 Implement Form 27A generation in `tds-return-file-generator.service.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091954
+      }
+    ],
+    "22.1 Wire vault registration and single-response download tokens": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510091999
+      }
+    ],
+    "23.1 Create `backend/src/modules/payroll/tds-return-file-generator.routes.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092029
+      }
+    ],
+    "24. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092062
+      }
+    ],
+    "25.1 Write a small fixed integration/static check enumerating routes on the new routers": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092095
+      }
+    ],
+    "26.1 Register the four new routers in `backend/src/app.ts`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092130
+      }
+    ],
+    "27. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092162
+      }
+    ],
+    "28.1 Add a Deductor (TAN) management panel to `StatutoryCenter.tsx`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092197
+      }
+    ],
+    "28.2 Add a challan entry and CSI import panel to `StatutoryCenter.tsx`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092230
+      }
+    ],
+    "29.1 Add a Quarterly_Return obligation section to `StatutoryFilingTracker.tsx`": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092281
+      }
+    ],
+    "29.2 Add \"Generate Quarterly Return\" and \"Mark as Filed\" actions": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092313
+      }
+    ],
+    "30. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092351
+      }
+    ],
+    "31. Final end-to-end UAT sign-off": [
+      {
+        "executionId": "bc701d51-4c08-4cc4-9aa1-0e7b54c7a367",
+        "chatSessionId": "sess_3f451505-4316-4df2-b24a-6b4318ae11d0",
+        "timestamp": 1787510092383
+      }
+    ]
+  }
+}
