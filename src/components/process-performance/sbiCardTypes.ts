@@ -6,7 +6,7 @@ export interface SbiSummary extends SbiFunnel {
   contactRatePct: number | null; connectRatePct: number | null; ptpRatePct: number | null;
   amountCollected: number; agentsActive: number;
 }
-export interface SbiDailyRow extends SbiFunnel { date: string; campaign: string; contactRatePct: number | null; ptpRatePct: number | null }
+export interface SbiDailyRow extends SbiFunnel { date: string; campaign: string; contacts?: number; contactRatePct: number | null; ptpRatePct: number | null }
 export interface SbiCampaignRow extends SbiFunnel { campaign: string; contactRatePct: number | null; ptpRatePct: number | null }
 export interface SbiAgentRow {
   employeeId: string | null; dialerId: string | null; name: string | null; team: string | null; teamLeader: string | null;

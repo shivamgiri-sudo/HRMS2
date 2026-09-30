@@ -4,7 +4,7 @@ import { db } from "../../db/mysql.js";
 import { detectAnomalies } from "./pd.anomalies.js";
 import { METRICS, METRIC_BY_KEY, profileFor, type CategoryProfile } from "./pd.fields.js";
 import {
-  addQa, addRow, availableMetrics, computeMetrics, emptyAcc, kpiStatus, pctDelta, rankBy, totalAcc,
+  addQa, addRow, availableMetrics, computeMetrics, emptyAcc, kpiStatus, metricAvailable, pctDelta, rankBy, totalAcc,
   type Acc, type Metrics, type NormRow, type QaBucket,
 } from "./pd.metrics.js";
 import { loadTargets } from "./pd.config.service.js";
@@ -15,7 +15,13 @@ import { applyFilters, getFreshness, inRange, isIso, loadDataset, loadQa, previo
 export interface RangeQuery { from?: unknown; to?: unknown; tl?: unknown; lob?: unknown }
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim().slice(0, 120) : undefined);
 export const filtersOf = (q: RangeQuery): Filters => ({ tl: str(q.tl), lob: str(q.lob) });
-const profileOf = (l: Loaded): CategoryProfile => { const p = profileFor(l.cfg.category); if (!p) throw new PdError(409, "NOT_CONFIGURED", "No category profile"); return p; };
+/** The category's rank metric, or -- when its source field is not mapped (an inbound table with only "handled") -- the first available count metric of the profile. */
+export function effectiveRankMetric(p: CategoryProfile, mapped: ReadonlySet<string>): string {
+  if (metricAvailable(p.rankMetric, mapped)) return p.rankMetric;
+  const alt = [...p.columns, ...p.kpis].find((k) => METRIC_BY_KEY.get(k)?.unit === "count" && metricAvailable(k, mapped));
+  return alt ?? p.rankMetric;
+}
+const profileOf = (l: Loaded): CategoryProfile => { const p = profileFor(l.cfg.category); if (!p) throw new PdError(409, "NOT_CONFIGURED", "No category profile"); return { ...p, rankMetric: effectiveRankMetric(p, l.resolved.mapped) }; };
 
 interface Meta { name: string | null; tl: string | null; lob: string | null }
 function groupAgents(rows: NormRow[], qa: QaBucket[]): Map<string, { acc: Acc; meta: Meta }> {
@@ -174,12 +180,13 @@ export async function getAgentDrill(l: Loaded, agentCodeRaw: string, q: RangeQue
   };
 }
 
-export async function getDay(l: Loaded, date: string) {
+export async function getDay(l: Loaded, date: string, q: RangeQuery = {}) {
   if (!isIso(date)) throw new PdError(400, "BAD_DATE", "date must be YYYY-MM-DD");
   const profile = profileOf(l);
   const [ds, targets] = await Promise.all([loadDataset(l, date, date), loadTargets(l.cfg.processId)]);
-  const rows = inRange(ds.rows, date, date);
-  const qa = ds.qa.filter((x) => x.date === date);
+  const rows = applyFilters(inRange(ds.rows, date, date), filtersOf(q));
+  const inScope = new Set(rows.map((r) => r.agent_code));
+  const qa = ds.qa.filter((x) => x.date === date && inScope.has(x.agentCode));
   const agents: MRow[] = [...groupAgents(rows, qa).entries()].map(([agentCode, e]) => ({ agentCode, name: e.meta.name, tl: e.meta.tl, lob: e.meta.lob, ...computeMetrics(e.acc) }));
   const dir = METRIC_BY_KEY.get(profile.rankMetric)!.direction;
   const ranks = rankBy(agents.map((a) => ({ key: a.agentCode, value: (a[profile.rankMetric] as number | null) ?? null })), dir);

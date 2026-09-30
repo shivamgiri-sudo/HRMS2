@@ -71,7 +71,7 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
         onRefresh={() => void d.refreshAll()} onExport={(v) => void onExport(v)} exporting={exporting} embedded={embedded} fetching={d.overview.isFetching} />
       {exportError && <ErrorBox message={exportError} />}
       <FiltersBar state={state} tls={[...tlSeen.current.values()]} lobs={[...lobSeen.current.values()]} onChange={(p) => update(p)} />
-      {d.overview.isError && !ov ? <ErrorBox message={d.overview.error instanceof Error ? d.overview.error.message : "Could not load the dashboard."} onRetry={() => void d.overview.refetch()} /> : (
+      {d.overview.isError && !ov ? <ErrorBox message={d.overview.error instanceof Error ? d.overview.error.message : "Could not load the dashboard."} onRetry={() => void d.refreshAll()} /> : (
         <>
           {live.length > 0 && (
             <section aria-label="Today so far versus same weekday baseline" className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-950">
@@ -89,7 +89,7 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
             <BreakdownPanel title="By LOB" labelKey="lob" rows={ov?.byLob} kpis={ov?.kpis} active={state.lob} onPick={(lob) => update({ lob, page: 1 })} />
           </div>
           <QualityStrip quality={ov?.quality} />
-          {d.agents.isError && !agentsRes ? <ErrorBox message="Could not load agents." onRetry={() => void d.agents.refetch()} /> : (
+          {d.agents.isError && !agentsRes ? <ErrorBox message="Could not load agents." onRetry={() => void d.refreshAll()} /> : (
             <AgentsTable rows={rows} total={agentsRes?.total ?? rows.length} loading={d.agents.isFetching || d.agents.isLoading} cols={cols} state={state}
               onChange={(p) => update(p)} onAgent={(agent) => update({ agent }, true)} storageKey={`pd-cols-${processId}`} />
           )}

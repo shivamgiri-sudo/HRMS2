@@ -43,7 +43,7 @@ export interface KpiScorecardRow {
 export function formatKpiValue(v: number | null, unit: KpiScorecardRow["unit"]): string {
   if (v === null) return "—";
   switch (unit) {
-    case "percent": return `${v}%`;
+    case "percent": return `${Math.round(v * 10) / 10}%`;
     case "seconds": return v >= 3600 ? `${(v / 3600).toFixed(1)} hr` : `${Math.round(v)}s`;
     case "currency": return `₹${Math.round(v).toLocaleString("en-IN")}`;
     case "ratio": return `${v.toFixed(2)}x`;

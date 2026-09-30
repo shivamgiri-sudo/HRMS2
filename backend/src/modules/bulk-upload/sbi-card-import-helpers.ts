@@ -28,8 +28,10 @@ export function coerceCol(c: SbiCol, raw: unknown): number | null {
 
 /** A sheet date; dates before 2000 (Excel shows a blank day counter as 1900-01-xx) are rejected by the shared parser. */
 export function parseSbiDate(raw: unknown): string | null {
-  if (raw instanceof Date) return Number.isNaN(raw.getTime()) ? null : raw.toISOString().slice(0, 10);
-  return parseFlexibleDate(raw);
+  const d = raw instanceof Date ? (Number.isNaN(raw.getTime()) ? null : raw.toISOString().slice(0, 10)) : parseFlexibleDate(raw);
+  // A blank day counter (Excel serial 1..31) renders as "1/1/00".."31/1/00", which a two-digit-year reader turns into 2000-01-xx
+  // (seen live on the Master / Overall rollup sheets). No SBI Card report predates 2010, so anything earlier is not a real day.
+  return d && d >= "2010-01-01" ? d : null;
 }
 
 /** "9:00:46" / "18:40" / Excel day fraction -> "HH:mm:ss" or null. */

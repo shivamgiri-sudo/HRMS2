@@ -23,7 +23,7 @@ export interface DialerTotals {
   accounts: number; dials: number; answers: number; connects: number; ptp: number; pad: number; otp: number;
   contacts: number; contactRatePct: number; connectRatePct: number; ptpRatePct: number;
 }
-export interface DailyOut { date: string; campaign: string; accounts: number; dials: number; answers: number; connects: number; ptp: number; pad: number; otp: number; contactRatePct: number; ptpRatePct: number }
+export interface DailyOut { date: string; campaign: string; accounts: number; dials: number; answers: number; connects: number; ptp: number; pad: number; otp: number; contacts: number; contactRatePct: number; ptpRatePct: number }
 export interface CampaignOut { campaign: string; accounts: number; dials: number; answers: number; connects: number; ptp: number; pad: number; otp: number; contactRatePct: number; ptpRatePct: number }
 
 export function totalsOf(rows: DialerRow[]): DialerTotals {
@@ -43,7 +43,7 @@ export function dailyRows(rows: DialerRow[]): DailyOut[] {
       const t = totalsOf([r]);
       return {
         date: r.date, campaign: r.campaign, accounts: t.accounts, dials: t.dials, answers: t.answers, connects: t.connects,
-        ptp: t.ptp, pad: t.pad, otp: t.otp, contactRatePct: t.contactRatePct, ptpRatePct: t.ptpRatePct,
+        ptp: t.ptp, pad: t.pad, otp: t.otp, contacts: t.contacts, contactRatePct: t.contactRatePct, ptpRatePct: t.ptpRatePct,
       };
     })
     .sort((a, b) => a.date.localeCompare(b.date) || a.campaign.localeCompare(b.campaign));

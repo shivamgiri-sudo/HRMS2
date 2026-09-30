@@ -48,14 +48,14 @@ export function SbiCardDashboard() {
 
   const daily: SbiDailyRow[] = useMemo(() => (data?.daily ?? []).filter((r) => !campaign || r.campaign === campaign), [data, campaign]);
   const trend = useMemo(() => {
-    const m = new Map<string, { date: string; accounts: number; dials: number; answers: number; connects: number; ptp: number }>();
+    const m = new Map<string, { date: string; accounts: number; dials: number; answers: number; connects: number; ptp: number; contacts: number }>();
     for (const r of daily) {
-      const t = m.get(r.date) ?? { date: r.date, accounts: 0, dials: 0, answers: 0, connects: 0, ptp: 0 };
-      t.accounts += r.accounts; t.dials += r.dials; t.answers += r.answers; t.connects += r.connects; t.ptp += r.ptp;
+      const t = m.get(r.date) ?? { date: r.date, accounts: 0, dials: 0, answers: 0, connects: 0, ptp: 0, contacts: 0 };
+      t.accounts += r.accounts; t.dials += r.dials; t.answers += r.answers; t.connects += r.connects; t.ptp += r.ptp; t.contacts += r.contacts ?? 0;
       m.set(r.date, t);
     }
     return [...m.values()].sort((a, b) => a.date.localeCompare(b.date)).map((t) => ({
-      ...t, contactRate: ratio(t.connects, t.accounts), ptpRate: ratio(t.ptp, t.connects),
+      ...t, contactRate: ratio(t.contacts, t.accounts), ptpRate: ratio(t.ptp, t.contacts),
     }));
   }, [daily]);
 
@@ -64,9 +64,10 @@ export function SbiCardDashboard() {
     if (!data) return null;
     const s = data.summary;
     if (!campaign) return { ...s, scoped: false };
+    const contacts = daily.reduce((n, r) => n + (r.contacts ?? 0), 0);
     const dials = sum(daily, "dials"), connects = sum(daily, "connects"), answers = sum(daily, "answers"), ptp = sum(daily, "ptp");
     return { ...s, dials, answers, connects, ptp, pad: sum(daily, "pad"), otp: sum(daily, "otp"), accounts: sum(daily, "accounts"),
-      contactRatePct: ratio(connects, sum(daily, "accounts")), connectRatePct: ratio(connects, dials), ptpRatePct: ratio(ptp, connects), scoped: true };
+      contactRatePct: ratio(contacts, sum(daily, "accounts")), connectRatePct: ratio(connects, dials), ptpRatePct: ratio(ptp, contacts), scoped: true };
   }, [data, daily, campaign]);
 
   const hasData = !!data && (data.daily.length > 0 || data.byCampaign.length > 0 || data.agents.length > 0 || data.summary.dials > 0);
@@ -94,7 +95,7 @@ export function SbiCardDashboard() {
         </div>
       ) : !data || !kpis ? <Empty>No data.</Empty> : (
         <>
-          {tab === "overview" && (!hasData ? <Empty>No SBI Card data for {from} to {to}. Upload the Dialer MIS, Agent MIS or Account File from the Uploaders tab.</Empty> : (
+          {tab === "overview" && (!hasData ? <Empty>No SBI Card data for {from} to {to}. Upload the Dialer MIS, Agent MIS or Account File from Process Performance → SBI Card → Uploaders, or the Bulk Upload Hub.</Empty> : (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
                 <KpiCard icon={Layers} tone="sky" label="Accounts" value={nz(kpis.accounts)} />

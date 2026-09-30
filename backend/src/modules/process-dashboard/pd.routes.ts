@@ -103,7 +103,7 @@ router.get("/:processId/config", viewer, h(async (req, res) => {
 router.get("/:processId/overview", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getOverview(l, req.query) }); }));
 router.get("/:processId/agents", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getAgents(l, req.query) }); }));
 router.get("/:processId/agents/:agentCode", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getAgentDrill(l, req.params.agentCode, req.query) }); }));
-router.get("/:processId/days/:date", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getDay(l, req.params.date) }); }));
+router.get("/:processId/days/:date", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getDay(l, req.params.date, req.query) }); }));
 router.get("/:processId/live", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getLive(l, req.query) }); }));
 router.get("/:processId/export.csv", viewer, scoped(async (l, req, res) => { await streamCsv(l, res, q1(req.query.view) || "agents", req.query); }));
 

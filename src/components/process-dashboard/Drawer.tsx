@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 
-const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'summary,a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 /** Modal side drawer: focus trap, Esc to close, focus returns to the opener, background scroll locked. */
 export function Drawer({ title, subtitle, onClose, children }: { title: string; subtitle?: string; onClose: () => void; children: ReactNode }) {
@@ -22,8 +22,15 @@ export function Drawer({ title, subtitle, onClose, children }: { title: string; 
       if (e.shiftKey && (document.activeElement === first || document.activeElement === node)) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
+    // Safety net for focusable elements the selector above cannot know about (keyboard-focusable scroll containers, native widgets): if focus
+    // ever lands outside the dialog, pull it back in instead of letting it escape to the page behind the modal.
+    const onFocusIn = (e: FocusEvent) => {
+      if (!node || !(e.target instanceof Node) || node.contains(e.target)) return;
+      (node.querySelector<HTMLElement>("[data-autofocus]") ?? node).focus();
+    };
     document.addEventListener("keydown", onKey, true);
-    return () => { document.removeEventListener("keydown", onKey, true); document.body.style.overflow = prevOverflow; opener?.focus?.(); };
+    document.addEventListener("focusin", onFocusIn);
+    return () => { document.removeEventListener("keydown", onKey, true); document.removeEventListener("focusin", onFocusIn); document.body.style.overflow = prevOverflow; opener?.focus?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (

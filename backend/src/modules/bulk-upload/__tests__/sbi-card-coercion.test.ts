@@ -21,7 +21,8 @@ describe("cell coercion", () => {
     expect(parseSbiDate("2026-08-01")).toBe("2026-08-01");
     expect(parseSbiDate(new Date(Date.UTC(2026, 7, 1)))).toBe("2026-08-01");
     expect(parseSbiDate("Average")).toBeNull();
-    expect(parseSbiDate(new Date(Date.UTC(1900, 0, 11)))).toBe("1900-01-11"); // Date objects pass; the dialer mapper skips all-blank rows
+    expect(parseSbiDate(new Date(Date.UTC(1900, 0, 11)))).toBeNull(); // blank day counter
+    expect(parseSbiDate("1/1/00")).toBeNull(); // the same counter as a two-digit-year string must not become 2000-01-01
   });
   it("reads clock times, leakage seconds and downtime durations", () => {
     expect(parseSbiTime("9:00:46")).toBe("09:00:46");

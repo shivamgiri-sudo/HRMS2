@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { fetchAgent, fetchAgents, fetchConfigs, fetchDay, fetchLive, fetchOverview } from "./api";
 import { usePolling } from "./usePolling";
 import { apiUrl } from "@/lib/apiBase";
+import { getAuthToken } from "@/lib/hrmsApi";
 import { PD_API } from "./api";
 import type { DashUrlState } from "./urlState";
 import type { LiveResponse } from "./types";
@@ -39,28 +40,46 @@ export function useDashboardData(processId: string, s: DashUrlState) {
     if (had || res.etag === undefined) void qc.invalidateQueries({ queryKey: [KEY, processId] });
   }, [processId, qc]);
 
-  // Optional SSE push (cookie auth). Any failure closes it quietly: the /live polling below is the authoritative fallback.
-  useEffect(() => {
-    if (!ready || typeof EventSource === "undefined") return undefined;
-    let es: EventSource | null = null;
-    try {
-      es = new EventSource(apiUrl(`${PD_API}/${encodeURIComponent(processId)}/stream`), { withCredentials: true });
-      es.addEventListener("live", (ev) => {
-        try {
-          const res = (JSON.parse((ev as MessageEvent).data) as { data?: LiveResponse }).data;
-          if (!res || res.changed === false || (res.etag !== undefined && res.etag === etag.current)) return;
-          const had = etag.current !== undefined;
-          if (res.etag !== undefined) etag.current = res.etag;
-          setLive(res); setLastCheckedAt(Date.now());
-          if (had) void qc.invalidateQueries({ queryKey: [KEY, processId] });
-        } catch { /* malformed frame: ignore */ }
-      });
-      es.onerror = () => { es?.close(); es = null; };
-    } catch { es = null; }
-    return () => { es?.close(); };
-  }, [ready, processId, qc]);
-
   const poll = usePolling(tick, config?.refreshSeconds ?? 30, ready);
+  // Optional SSE push. EventSource cannot send the Bearer header this app authenticates with (it 401s on every connect), so the stream is read
+  // with fetch. It is closed while the user has paused or the tab is hidden, and on any failure: the /live polling below is the authoritative fallback.
+  const streamOn = ready && !poll.paused && !poll.hidden;
+  useEffect(() => {
+    if (!streamOn || typeof fetch === "undefined" || typeof TextDecoder === "undefined") return undefined;
+    const ctrl = new AbortController();
+    const onFrame = (frame: string) => {
+      const ev = frame.split("\n").find((l) => l.startsWith("event:"))?.slice(6).trim();
+      const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
+      if (ev !== "live" || !dataLine) return;
+      try {
+        const res = (JSON.parse(dataLine.slice(5).trim()) as { data?: LiveResponse }).data;
+        if (!res || res.changed === false || (res.etag !== undefined && res.etag === etag.current)) return;
+        const had = etag.current !== undefined;
+        if (res.etag !== undefined) etag.current = res.etag;
+        setLive(res); setLastCheckedAt(Date.now());
+        if (had) void qc.invalidateQueries({ queryKey: [KEY, processId] });
+      } catch { /* malformed frame: ignore */ }
+    };
+    void (async () => {
+      try {
+        const token = getAuthToken();
+        const r = await fetch(apiUrl(`${PD_API}/${encodeURIComponent(processId)}/stream`), {
+          headers: { Accept: "text/event-stream", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, credentials: "include", signal: ctrl.signal,
+        });
+        if (!r.ok || !r.body) return;
+        const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          buf += dec.decode(value, { stream: true });
+          let i: number;
+          while ((i = buf.indexOf("\n\n")) >= 0) { onFrame(buf.slice(0, i)); buf = buf.slice(i + 2); }
+        }
+      } catch { /* aborted or network failure: polling covers it */ }
+    })();
+    return () => ctrl.abort();
+  }, [streamOn, processId, qc]);
+
   const refreshAll = useCallback(async () => {
     await Promise.all([qc.invalidateQueries({ queryKey: [KEY, processId] }), poll.refreshNow()]);
   }, [qc, processId, poll]);

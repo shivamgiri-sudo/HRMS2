@@ -26,6 +26,11 @@ describe("dialer totals", () => {
     const c = byCampaign(rows);
     expect(c.find((x) => x.campaign === "A")!.dials).toBe(800);
   });
+  it("daily rows carry the contacts the client needs to re-aggregate rates with the server's definition", () => {
+    const r = dailyRows([d({ totalContacts: 50, accountsCalled: 200 })])[0]!;
+    expect(r.contacts).toBe(totalsOf([d({ totalContacts: 50, accountsCalled: 200 })]).contacts);
+    expect(r.contacts).toBe(50);
+  });
 });
 
 describe("agents, teams, accounts", () => {
