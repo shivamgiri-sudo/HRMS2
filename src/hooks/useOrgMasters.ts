@@ -33,6 +33,7 @@ interface Client {
   id: string;
   client_code: string;
   client_name: string;
+  legal_entity_name?: string | null;
   active_status?: boolean | number;
 }
 

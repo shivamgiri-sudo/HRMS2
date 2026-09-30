@@ -42,6 +42,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatISTDate } from "@/lib/utils";
+import { ClientHierarchy } from "@/components/clients/ClientHierarchy";
 
 // Types
 interface Client {
@@ -49,6 +50,8 @@ interface Client {
   client_code: string;
   client_name: string;
   legal_entity_name?: string;
+  active_cost_centre_count?: number;
+  active_process_count?: number;
   industry?: string;
   primary_contact_name?: string;
   primary_contact_email?: string;
@@ -791,6 +794,10 @@ export default function EnhancedClientMaster() {
                           </div>
                         </CardHeader>
                         <CardContent className="space-y-2">
+                          <div className="text-sm">
+                            <span className="text-muted-foreground">Official name: </span>
+                            {client.legal_entity_name || <span className="text-muted-foreground">not set</span>}
+                          </div>
                           {client.industry && (
                             <div className="flex items-center text-sm text-muted-foreground">
                               <Building2 className="h-4 w-4 mr-2" />
@@ -809,6 +816,11 @@ export default function EnhancedClientMaster() {
                               {client.city}, {client.country}
                             </div>
                           )}
+                          <ClientHierarchy
+                            clientId={client.id}
+                            costCentreCount={Number(client.active_cost_centre_count ?? 0)}
+                            processCount={Number(client.active_process_count ?? 0)}
+                          />
                           <div className="flex items-center justify-between pt-2">
                             <span className="text-xs text-muted-foreground">
                               {client.billing_cycle} billing

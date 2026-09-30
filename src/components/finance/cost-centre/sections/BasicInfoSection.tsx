@@ -17,6 +17,14 @@ export function BasicInfoSection({ data, onChange, disabled, isEdit }: BasicInfo
   const { data: branches } = useOrgMasters("branches");
   const { data: processes } = useOrgMasters("processes");
 
+  // Process belongs to the client (process_master.client_id). Show only the selected client's
+  // processes plus ones not yet assigned to any client, so a cost centre cannot be filed under
+  // one client against another client's process.
+  const selectedClient = (clients as any[] | undefined)?.find((c: any) => c.id === data.client_id);
+  const clientProcesses = data.client_id
+    ? (processes as any[] | undefined)?.filter((p: any) => !p.client_id || p.client_id === data.client_id)
+    : [];
+
   return (
     <div className="grid gap-4 p-4">
       <div className="grid grid-cols-2 gap-4">
@@ -47,7 +55,14 @@ export function BasicInfoSection({ data, onChange, disabled, isEdit }: BasicInfo
           <Label>Client *</Label>
           <Select
             value={data.client_id ?? ""}
-            onValueChange={(v) => onChange({ client_id: v })}
+            onValueChange={(v) => {
+              // Changing client invalidates a process picked for the previous one.
+              const keep = (processes as any[] | undefined)?.find((p: any) => p.id === data.process_id);
+              onChange({
+                client_id: v,
+                ...(keep && keep.client_id && keep.client_id !== v ? { process_id: "" } : {}),
+              });
+            }}
             disabled={disabled}
           >
             <SelectTrigger>
@@ -61,6 +76,9 @@ export function BasicInfoSection({ data, onChange, disabled, isEdit }: BasicInfo
               ))}
             </SelectContent>
           </Select>
+          {selectedClient?.legal_entity_name && (
+            <p className="text-xs text-muted-foreground">Official name: {selectedClient.legal_entity_name}</p>
+          )}
         </div>
         <div className="space-y-2">
           <Label>LOB *</Label>
@@ -108,13 +126,13 @@ export function BasicInfoSection({ data, onChange, disabled, isEdit }: BasicInfo
           <Select
             value={data.process_id ?? ""}
             onValueChange={(v) => onChange({ process_id: v })}
-            disabled={disabled}
+            disabled={disabled || !data.client_id}
           >
             <SelectTrigger>
-              <SelectValue placeholder="Select process" />
+              <SelectValue placeholder={data.client_id ? "Select process" : "Select a client first"} />
             </SelectTrigger>
             <SelectContent>
-              {processes?.map((p: any) => (
+              {clientProcesses?.map((p: any) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.process_name}
                 </SelectItem>

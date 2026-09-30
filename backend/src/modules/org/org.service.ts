@@ -820,6 +820,24 @@ export const costCentreService = {
     }
 
     /**
+     * The process must belong to the chosen client. process_master.client_id is the link that
+     * says so; a process with no client yet is claimed by this client in syncCostCentreRelatedTables.
+     * Without this check a cost centre could be created under Client A against Client B's process,
+     * which is how the client/process/cost-centre split got out of step.
+     */
+    const [[procRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT client_id FROM process_master WHERE id = ? LIMIT 1`,
+      [data.process_id.trim()]
+    );
+    if (!procRow) {
+      throw Object.assign(new Error("Process not found"), { statusCode: 400 });
+    }
+    const procClientId = (procRow as { client_id?: string | null }).client_id;
+    if (procClientId && procClientId !== data.client_id.trim()) {
+      throw Object.assign(new Error("Selected process belongs to a different client"), { statusCode: 400 });
+    }
+
+    /**
      * Denormalised copies of the client and company, resolved once here.
      *
      * cost_centre_master.client_name is not redundant with client_id — it is the column the

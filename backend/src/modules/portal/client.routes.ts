@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import {
   listClients,
   getClient,
+  getClientHierarchy,
   createClient,
   updateClient,
   toggleClientStatus,
@@ -102,6 +103,15 @@ router.get("/clients/:id", requireRole("admin", "hr"), h(async (req: Authenticat
   }
 
   return res.json({ success: true, data: client });
+}));
+
+/**
+ * GET /api/clients/:id/hierarchy
+ * Client -> Process -> Cost Centre tree
+ */
+router.get("/clients/:id/hierarchy", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await getClientHierarchy(req.params.id);
+  return res.json({ success: true, data });
 }));
 
 /**
