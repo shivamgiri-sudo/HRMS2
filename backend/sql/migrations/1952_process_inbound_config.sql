@@ -9,6 +9,9 @@
 -- EXACT matching process_code exists (process_code is UNIQUE, so the match is unambiguous). Processes with no such row keep using the
 -- static list in code. Idempotent: re-running changes nothing.
 
+-- No foreign key to process_master, deliberately: creating one takes a metadata lock on that very busy table, and on
+-- 2026-09-30 that wait timed out at startup (Lock wait timeout exceeded), blocked the boot and rolled the deploy back.
+-- process_id is still indexed; rows of a deleted process are simply never read.
 CREATE TABLE IF NOT EXISTS process_inbound_config (
   id               CHAR(36)     NOT NULL DEFAULT (UUID()),
   process_id       CHAR(36)     NOT NULL,
@@ -28,8 +31,7 @@ CREATE TABLE IF NOT EXISTS process_inbound_config (
   PRIMARY KEY (id),
   UNIQUE KEY uq_pic_process (process_id),
   UNIQUE KEY uq_pic_project_key (project_key),
-  KEY idx_pic_enabled (enabled),
-  CONSTRAINT fk_pic_process FOREIGN KEY (process_id) REFERENCES process_master (id) ON DELETE CASCADE
+  KEY idx_pic_enabled (enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT IGNORE INTO process_inbound_config (id, process_id, project_key, dialer_table, pattern, campaigns, mandate, required, has_fcr, fcr_client_id, sl_seconds, enabled)

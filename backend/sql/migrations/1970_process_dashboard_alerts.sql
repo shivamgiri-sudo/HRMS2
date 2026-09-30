@@ -5,6 +5,9 @@
 -- ADDITIVE ONLY: three new tables, no backfill, no change to existing tables. Idempotent (CREATE TABLE IF NOT EXISTS).
 -- recipients is a JSON spec {roles:[], tls:[], employeeIds:[]}; it is re-checked against the process scope every time it is used (never trusted from here).
 
+-- No foreign key to process_master, deliberately: creating one takes a metadata lock on that very busy table, and on
+-- 2026-09-30 that wait timed out at startup (Lock wait timeout exceeded), blocked the boot and rolled the deploy back.
+-- process_id is still indexed; rows of a deleted process are simply never read.
 CREATE TABLE IF NOT EXISTS process_dashboard_alert_rule (
   id               CHAR(36)      NOT NULL DEFAULT (UUID()),
   process_id       CHAR(36)      NOT NULL,
@@ -27,8 +30,7 @@ CREATE TABLE IF NOT EXISTS process_dashboard_alert_rule (
   created_at       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  KEY idx_pdar_process (process_id, enabled),
-  CONSTRAINT fk_pdar_process FOREIGN KEY (process_id) REFERENCES process_master (id) ON DELETE CASCADE
+  KEY idx_pdar_process (process_id, enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS process_dashboard_alert_event (
@@ -67,6 +69,5 @@ CREATE TABLE IF NOT EXISTS process_dashboard_digest (
   updated_at       TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_pdd_process_freq (process_id, frequency),
-  KEY idx_pdd_enabled (enabled),
-  CONSTRAINT fk_pdd_process FOREIGN KEY (process_id) REFERENCES process_master (id) ON DELETE CASCADE
+  KEY idx_pdd_enabled (enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
