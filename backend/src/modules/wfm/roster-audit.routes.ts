@@ -26,7 +26,7 @@ import {
   resolvePeriod,
 } from './roster-audit.helpers.js';
 import { actorName, resolveActors } from './roster-audit.actors.js';
-import { registerAuditDetailRoutes } from './roster-audit-detail.routes.js';
+import { mountAuditDetailRoutes } from './roster-audit-detail.routes.js';
 
 const router = Router();
 const wrap = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -482,7 +482,7 @@ router.get(
   }),
 );
 
-registerAuditDetailRoutes(router, wrap, ROLES);
+mountAuditDetailRoutes(router, wrap, ROLES);
 
 // Re-exported for existing importers/tests.
 export { formatDecisionType, isEngineErrorRule };

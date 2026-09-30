@@ -22,7 +22,7 @@ interface TimelineEntry { at: string | null; event: string; actor: string; decis
 
 const byTime = (a: TimelineEntry, b: TimelineEntry) => String(a.at ?? '').localeCompare(String(b.at ?? ''));
 
-export function registerAuditDetailRoutes(
+export function mountAuditDetailRoutes(
   router: Router,
   wrap: (fn: Function) => (req: any, res: any, next: any) => void,
   roles: readonly string[],
