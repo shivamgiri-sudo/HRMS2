@@ -43,7 +43,8 @@ export interface KpiMetricDef {
   label: string;
   family: KpiFamily;
   unit: KpiUnit;
-  target: number;
+  /** null = no business target supplied yet (set one in KPI Targets); the scorecard then shows the value with no RAG. */
+  target: number | null;
   direction: KpiDirection;
   lobLabel: string;
   /** Real metric_code in kpi_metric_master, or null if nothing measures this yet. */
@@ -159,12 +160,12 @@ export const PROCESS_KPI_REGISTRY: ProcessKpiSet[] = [
     billingName: "SBI Card Collections",
     projectName: "SBI Card",
     metrics: [
-      { metricKey: "sbi_contact_rate_pct", label: "Contact Rate %", family: "rate", unit: "percent", target: 20, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
-      { metricKey: "sbi_connect_rate_pct", label: "Connect Rate %", family: "rate", unit: "percent", target: 10, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
-      { metricKey: "sbi_ptp_rate_pct", label: "PTP Rate %", family: "rate", unit: "percent", target: 30, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
-      { metricKey: "sbi_amount_collected", label: "Amount Collected", family: "volume", unit: "currency", target: 100000, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
-      { metricKey: "sbi_calls_per_agent", label: "Calls per Agent", family: "volume", unit: "count", target: 150, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
-      { metricKey: "sbi_leakage_sec", label: "Login Leakage (avg per agent per day)", family: "duration", unit: "seconds", target: 1800, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_contact_rate_pct", label: "Contact Rate %", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_connect_rate_pct", label: "Connect Rate %", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_ptp_rate_pct", label: "PTP Rate %", family: "rate", unit: "percent", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_amount_collected", label: "Amount Collected", family: "volume", unit: "currency", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_calls_per_agent", label: "Calls per Agent", family: "volume", unit: "count", target: null, direction: "higher_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
+      { metricKey: "sbi_leakage_sec", label: "Login Leakage (avg per agent per day)", family: "duration", unit: "seconds", target: null, direction: "lower_is_better", lobLabel: "Collections", kpiMetricCode: null, processSource: { grain: "process" }, notTrackedNote: NO_METRIC_CODE },
     ],
   },
   {
