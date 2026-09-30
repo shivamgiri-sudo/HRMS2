@@ -35,6 +35,7 @@ export const AUTO_RETRY_SAFE_RPCS: ReadonlySet<string> = new Set([
   "import_bla_bli_blu_after_hour_batch",
   "import_bla_bli_blu_auto_callback_batch",
   "import_bla_bli_blu_call_disposition_batch",
+  "import_bla_bli_blu_abandon_batch",
   "import_bla_bli_blu_overall_sales_batch",
   "import_bla_bli_blu_shopify_sales_batch",
   "import_clovia_chat_daily_batch",

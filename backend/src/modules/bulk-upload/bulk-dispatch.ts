@@ -333,6 +333,12 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_bla_bli_blu_abandon_batch") {
+    const { importBlaBliBluAbandonBatch } = await import("./bla-bli-blu-abandon-bulk.service.js");
+    const data = await importBlaBliBluAbandonBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_bla_bli_blu_overall_sales_batch") {
     const { importBlaBliBluOverallSalesBatch } = await import("./bla-bli-blu-overall-sales-bulk.service.js");
     const data = await importBlaBliBluOverallSalesBatch(id, userId);

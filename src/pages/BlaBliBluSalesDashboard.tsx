@@ -255,7 +255,7 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
           <UploadBox title="Received Data" hint="Daily data allocation sheet (Date, LOB, Data Type, Workable, Same Day Attempt, Final Dispo…). Re-uploading a date replaces it." endpoint="/api/bla-bli-blu-dashboard/upload/received-data" onDone={() => void load()} />
           <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
             <p className="text-sm font-semibold text-slate-700">Overall Sales</p>
-            <p className="text-xs text-slate-400">Sales come from the BLA / BLI / BLU Overall Sales upload in the Bulk Upload Hub (choose "BLA_BLI_BLU_OVERALL_SALES"; use the "Overall Sales" sheet of the workbook). Rows are keyed by OrderID, so re-uploading a file does not duplicate orders.</p>
+            <p className="text-xs text-slate-400">Both uploads are also in the Bulk Upload Hub: "Bla Bli Blu — Overall Sales Raw" (the workbook's Overall Sales sheet) and "Bla Bli Blu — Abandon (Received Data)" (the Received Data sheet). Rows are keyed by OrderID, so re-uploading a file does not duplicate orders.</p>
             <a href="/bulk-upload" className="mt-2 inline-block text-xs font-semibold text-blue-600 underline">Open Bulk Upload Hub</a>
           </div>
         </div>
