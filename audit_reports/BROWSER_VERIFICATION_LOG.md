@@ -313,3 +313,9 @@ Verified on production data via the localhost preview API + Playwright (zero con
 **Bugs found by these runs and fixed:** Audit tab read a non-existent `.data` field (whole tab dead); sticky filter bar hidden under the top bar; merged tabs scrolled off-screen at 1440 px; Live tab showed "All clear" on error; `GET /wfm/roster-imports/status-summary` was shadowed by `/:batchId` (400); `workforce_mandate.shrinkage_buffer_pct` does not exist (budget silently stuck at 8%).
 
 **NOT verified:** production data and volumes (the unbounded quality query took ~115 s on a large range in an earlier measurement); real login and per-role tab visibility (only super_admin); write actions against production; dark theme; screen reader; `db_audit` collation in production (`intervention-cases.service.ts` joins `cqa.User` to `employees.employee_code` without COLLATE, as existing code does). Mock payloads are my reading of the types, not captured responses.
+
+## 2026-09-30 — GNC_APR source repoint + KPI compute dry-run
+- Migration 1930 repointed KPI source GNC_APR from stale `db_masmis.gnc_apr` (no `pause_seconds`) to own `gnc_apr_daily_actual`; verified on prod (`source_object = gnc_apr_daily_actual`). Table is empty until GNC uploads its APR.
+- Manual dry-run of `computeStudioKpis` for 2026-09-29 on prod (nothing written): 1040 definitions, 592 would be written, 87 no-data, 0 errors (the pause_seconds error is gone). One source failure: dialler table `vicidial_agent_log_11_5` is marked crashed (BELLA_AGENT_LOG) -- dialler DBA must repair.
+- The compute only handles yesterday, so it does not backfill the ~20 stale days.
+- Finance tiles now say "Calculating…" and re-check every 15s while the server's first P&L calculation runs (not reproduced visually after deploy).
