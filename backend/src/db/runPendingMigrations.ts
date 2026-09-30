@@ -1236,6 +1236,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1917_onfido_manpower_plan_total_queue.sql", // Registered 2026-09-30. Appends TOTAL to the onfido_manpower_plan.process_queue ENUM so one company-wide approved HC (181) can be entered; additive ENUM extension, existing rows untouched.
   "migrations/1918_operations_command_indexes.sql", // Registered 2026-09-30. Operations Command dashboard: additive information_schema-guarded indexes (employees joining/exit dates, attendance date+branch/process and a covering attendance scan index, exit_request, kpi_daily_actual, break_daily_summary, employee_warning, pip_record, job_requisition, wfm_attendance_session, wfm_slot_requirement, process_metric_employee_actual). No data changes.
   "migrations/1919_ats_dashboard_indexes.sql", // Registered 2026-09-30. ATS dashboard indexes (covering aggregate index incl. record_type/candidate_code, recruiter and channel drill-down indexes, queue arrival). Additive online CREATE INDEX, each guarded by an information_schema check.
+  "migrations/1920_satya_retail_process.sql", // Registered 2026-09-30, at the owner's request. Adds one active "Satya Retail" process (code SATYA_RETAIL) when no process with that code or a "satya" name exists, so its existing dashboards' data can be selected on Process Operations and shown by Business datapoints. Additive and idempotent: one guarded INSERT, no ALTER, no DELETE.
 ];
 
 export type MigrationHealth = {
