@@ -317,3 +317,9 @@ Verified on production data via the localhost preview API + Playwright (zero con
 | Root cause of the stopped KPI feeds | The nightly KPI compute worker is disabled by design (KPI_STUDIO_COMPUTE_ENABLED unset; the code requires an operator to enable it). Not changed; awaiting the owner's decision |
 
 **Not verified:** a real production login and per-role scoping; dark mode.
+
+## 2026-09-30 — Satya Retail process + KPI compute report-only
+- Migration 1920 inserted `SATYA_RETAIL` / "Satya Retail" into `process_master` (id 031129fa-…, active). Verified on prod via read-only query; Business datapoints adapter resolves to `SATYA_RETAIL`. Deploy run 36670627626 succeeded.
+- KPI Studio nightly compute enabled on prod in DRY-RUN (`KPI_STUDIO_COMPUTE_ENABLED=true`, `KPI_STUDIO_COMPUTE_DRY_RUN=true`; `.env` backup `.env.bak-20260930-101150`). Review `pm2 logs hrms2-workers | grep KpiStudioCompute` after the 02:00 run before setting DRY_RUN=false.
+- Known: a KPI source references non-existent column `pause_seconds`; ~70% of metrics have no target.
+- Not verified: real-login per-role scoping, dark mode.
