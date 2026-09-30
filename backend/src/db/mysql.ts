@@ -89,6 +89,16 @@ const CONNECTION_PRESSURE_DB_ERROR_CODES = new Set([
   "POOL_ENQUEUELIMIT",
 ]);
 
+/**
+ * Lock contention (metadata-lock / row-lock waits). Not a DB-availability problem: do not retry it
+ * (a retry just holds another connection) and do not let it trip the circuit breaker.
+ * Referenced by isLockContentionDbError(); 5083898f6 used it without defining it, which failed typecheck.
+ */
+const LOCK_CONTENTION_DB_ERROR_CODES = new Set([
+  "ER_LOCK_WAIT_TIMEOUT",
+  "ER_LOCK_DEADLOCK",
+]);
+
 const MAX_DB_RETRIES = 3;
 
 /**
