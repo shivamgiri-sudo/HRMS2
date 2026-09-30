@@ -102,6 +102,8 @@ export interface PnlTrendResult {
 
 const TREND_HOT_MONTHS = 4;
 const HISTORY_TTL_MS = 6 * 60 * 60 * 1000;
+/** Hot (recent) payroll months can still move, but not by the minute: one scan per filter per 5 minutes is plenty. */
+const HOT_COST_TTL_MS = 5 * 60 * 1000;
 const REAL_MONTHS_TTL_MS = 10 * 60 * 1000;
 const swrStore = new Map<string, { at: number; value: Promise<unknown> }>();
 const swrEnabled = process.env.VITEST !== "true" && process.env.NODE_ENV !== "test";
@@ -251,7 +253,10 @@ export async function getPnlTrend(
   const coldKey = JSON.stringify({ b: filters.branchId ?? null, p: processList ? [...processList].sort() : null, m: coldMonths.length });
   const [coldCost, hotCost] = await Promise.all([
     coldMonths.length ? swrCache(`cold-cost:${coldKey}`, HISTORY_TTL_MS, () => runCost(coldMonths)) : Promise.resolve([] as RowDataPacket[]),
-    runCost(hotMonths),
+    // Cached too (2026-09-30): this read scans every salary line of the recent months (>60s on production,
+    // allowed 15 min) and used to run on EVERY request, so a few open tabs or refreshes stacked these and
+    // loaded the whole database. SWR also shares one in-flight load between concurrent requests.
+    swrCache(`hot-cost:${coldKey}:${hotMonths.join(",")}`, HOT_COST_TTL_MS, () => runCost(hotMonths)),
   ]);
   const costRows = [...coldCost, ...hotCost];
 
