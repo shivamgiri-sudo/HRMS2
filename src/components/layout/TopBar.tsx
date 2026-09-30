@@ -38,6 +38,7 @@ import { useEmployeeSearchOptions } from "@/hooks/useEmployees";
 import { useUserRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
+import { useBreadcrumbLabels } from "@/lib/breadcrumbLabel";
 import { navGroups } from "./navConfig";
 
 interface TopBarProps {
@@ -54,6 +55,7 @@ function useBreadcrumbs() {
   const location = useLocation();
   const parts = location.pathname.split("/").filter(Boolean);
   const labelByHref = new Map<string, string>();
+  const pageLabels = useBreadcrumbLabels();
 
   navGroups.forEach((group) => {
     group.items.forEach((item) => {
@@ -68,6 +70,7 @@ function useBreadcrumbs() {
   })).map((crumb) => ({
     ...crumb,
     label:
+      pageLabels.get(crumb.href) ||
       labelByHref.get(crumb.href) ||
       // A record id in the URL (e.g. an open dashboard) is not a readable crumb.
       (/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(crumb.href) ? "Details" : "") ||

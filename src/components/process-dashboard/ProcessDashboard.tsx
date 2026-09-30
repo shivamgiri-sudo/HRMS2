@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { Settings2 } from "lucide-react";
+import { PhoneIncoming, SearchX, Settings2 } from "lucide-react";
 import { AgentsTable, resolveColumns } from "./AgentsTable";
 import { AgentDrawer, DayDrawer } from "./DetailDrawers";
 import { DashboardHeader } from "./DashboardHeader";
@@ -8,12 +9,15 @@ import { FiltersBar } from "./FiltersBar";
 import { AnomaliesPanel, BreakdownPanel, QualityStrip, TopBottomPanel } from "./InsightPanels";
 import { KpiTiles } from "./KpiTiles";
 import { TrendPanel } from "./TrendPanel";
-import { downloadCsv } from "./api";
+import { downloadCsv, fetchConfigs, fetchInboundTab, probeProcess } from "./api";
 import { formatValue } from "./format";
-import { Empty, ErrorBox, Skeleton } from "./ui";
+import { Empty, ErrorBox, FOCUS, Skeleton } from "./ui";
 import { parseUrlState, serializeUrlState, type DashUrlState } from "./urlState";
 import { useDashboardData } from "./useDashboardData";
 import type { BreakdownRow } from "./types";
+
+// The inbound dashboard pulls in the charting bundle; load it only when the Live inbound tab is opened.
+const InboundInsightsDashboard = lazy(() => import("@/components/process-performance/InboundInsightsDashboard").then((m) => ({ default: m.InboundInsightsDashboard })));
 
 export const ADMIN_PATH = "/performance/process-dashboard-admin";
 
@@ -30,8 +34,69 @@ function NotConfigured({ processId, reason }: { processId: string; reason: "miss
   );
 }
 
-/** Config-driven process dashboard. Everything shown (tiles, columns, labels) comes from the API's category profile. */
+export function NotFoundOrForbidden() {
+  return (
+    <div role="alert" className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
+      <SearchX className="mx-auto h-8 w-8 text-slate-500" aria-hidden="true" />
+      <h2 className="mt-2 text-base font-bold text-slate-900">Process not found</h2>
+      <p className="mx-auto mt-1 max-w-md text-sm text-slate-700">This process was not found or you do not have access.</p>
+    </div>
+  );
+}
+
+type View = "apr" | "inbound";
+const tabCls = (on: boolean) => `inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 border-b-2 px-4 text-sm font-semibold ${FOCUS} ${on ? "border-blue-700 text-blue-800" : "border-transparent text-slate-700 hover:text-slate-900"}`;
+
+/**
+ * Entry point. Decides what this reader may see for the process: the APR-driven dashboard, the Live inbound tab (a support process with a
+ * saved dialer source), both as tabs, "Not configured yet", or "not found / no access". Unknown/out-of-scope ids are told apart from
+ * real-but-unconfigured ones by /configs membership plus the /:processId/config probe (403 vs 404).
+ */
 export function ProcessDashboard({ processId, embedded = false }: { processId: string; embedded?: boolean }) {
+  const [sp, setSp] = useSearchParams();
+  const configs = useQuery({ queryKey: ["process-dashboard", "configs"], queryFn: fetchConfigs, staleTime: 60_000 });
+  const config = configs.data?.find((c) => c.processId === processId) ?? null;
+  const loaded = configs.isSuccess;
+  const probe = useQuery({ queryKey: ["process-dashboard", processId, "probe"], queryFn: () => probeProcess(processId), enabled: loaded && !config, retry: false, staleTime: 60_000 });
+  const mayHaveInbound = loaded && (config ? config.category === "support_inbound" || config.category === "unconfigured" : probe.isSuccess && probe.data !== "forbidden");
+  const inbound = useQuery({ queryKey: ["process-dashboard", processId, "inbound"], queryFn: () => fetchInboundTab(processId), enabled: mayHaveInbound, retry: false, staleTime: 30_000 });
+
+  if (configs.isLoading) return <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-16" /><Skeleton className="h-64" /></div>;
+  if (configs.isError) return <ErrorBox message="Could not load dashboard configuration." onRetry={() => void configs.refetch()} />;
+  if (!config) {
+    if (probe.isLoading) return <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
+    if (probe.data === "forbidden") return <NotFoundOrForbidden />;
+  }
+  if (mayHaveInbound && inbound.isLoading) return <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
+  const tab = inbound.data ?? null;
+  if (!tab) {
+    if (!config && probe.data === "missing") return <NotConfigured processId={processId} reason="missing" />;
+    return <AprDashboard processId={processId} embedded={embedded} />;
+  }
+  const aprReady = !!config?.configured && config.enabled;
+  const view: View = sp.get("view") === "inbound" || (!aprReady && sp.get("view") !== "apr") ? "inbound" : "apr";
+  const setView = (v: View) => setSp((cur) => { const n = new URLSearchParams(cur); if (v === "inbound") n.set("view", "inbound"); else n.delete("view"); return n; }, { replace: true });
+  return (
+    <div className="space-y-4">
+      <div role="tablist" aria-label="Dashboard views" className="flex flex-wrap gap-1 border-b border-slate-200">
+        <button type="button" role="tab" id="pd-tab-apr" aria-selected={view === "apr"} aria-controls="pd-panel-apr" className={tabCls(view === "apr")} onClick={() => setView("apr")}>Process overview</button>
+        <button type="button" role="tab" id="pd-tab-inbound" aria-selected={view === "inbound"} aria-controls="pd-panel-inbound" className={tabCls(view === "inbound")} onClick={() => setView("inbound")}><PhoneIncoming className="h-4 w-4" aria-hidden="true" />Live inbound</button>
+      </div>
+      {view === "inbound" ? (
+        <div role="tabpanel" id="pd-panel-inbound" aria-labelledby="pd-tab-inbound">
+          <Suspense fallback={<div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>}>
+            <InboundInsightsDashboard key={tab.projectKey} projectKey={tab.projectKey} projectName={tab.name} />
+          </Suspense>
+        </div>
+      ) : (
+        <div role="tabpanel" id="pd-panel-apr" aria-labelledby="pd-tab-apr"><AprDashboard processId={processId} embedded={embedded} /></div>
+      )}
+    </div>
+  );
+}
+
+/** The APR-driven dashboard. Everything shown (tiles, columns, labels) comes from the API's category profile. */
+function AprDashboard({ processId, embedded = false }: { processId: string; embedded?: boolean }) {
   const [sp, setSp] = useSearchParams();
   const state = useMemo(() => parseUrlState(sp), [sp]);
   const d = useDashboardData(processId, state);

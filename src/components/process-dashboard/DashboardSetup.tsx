@@ -5,6 +5,7 @@ import { CheckCircle2, Save, Sparkles, TableProperties, Eye } from "lucide-react
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { PD_API } from "./api";
 import { CANONICAL_FIELDS, CATEGORY_OPTIONS, SOURCE_SCHEMAS, TIME_UNIT_OPTIONS, emptyForm, toConfigPayload, validateSetup, type SetupForm } from "./canonicalFields";
+import { InboundSourcePanel } from "./InboundSourcePanel";
 import { SimpleTable } from "./SimpleTable";
 import { Empty, ErrorBox, FOCUS, Panel, Skeleton, btn } from "./ui";
 import type { ProcessConfigSummary } from "./types";
@@ -31,10 +32,10 @@ export function DashboardSetup({ initialProcessId = "" }: { initialProcessId?: s
   const set = (patch: Partial<SetupForm>) => { setForm((f) => ({ ...f, ...patch })); setSaved(null); };
 
   const processes = useQuery({ queryKey: ["pd-admin", "processes"], queryFn: async () => (await hrmsApi.get<HrmsEnvelope<ProcessRow[]>>("/api/process-operations/processes")).data ?? [] });
-  // The list endpoint omits the mapping, so the stored config is read per process (404 = nothing saved yet).
+  // The list endpoint omits the mapping, so the stored config is read per process (200 with data null = nothing saved yet).
   const stored = useQuery({
     queryKey: ["pd-admin", "config", form.processId], enabled: !!form.processId, retry: false,
-    queryFn: async (): Promise<StoredConfig | null> => { try { return (await hrmsApi.get<HrmsEnvelope<StoredConfig>>(`${PD_API}/admin/configs/${encodeURIComponent(form.processId)}`)).data ?? null; } catch { return null; } },
+    queryFn: async (): Promise<StoredConfig | null> => (await hrmsApi.get<HrmsEnvelope<StoredConfig | null>>(`${PD_API}/admin/configs/${encodeURIComponent(form.processId)}`)).data ?? null,
   });
   const tables = useQuery({ queryKey: ["pd-admin", "tables", form.aprSchema], queryFn: async () => (await hrmsApi.get<HrmsEnvelope<TableRow[]>>(`${PD_API}/admin/tables?schema=${encodeURIComponent(form.aprSchema)}`)).data ?? [], enabled: !!form.aprSchema });
   const columns = useQuery({ queryKey: ["pd-admin", "columns", form.aprSchema, form.aprTable], queryFn: async () => (await hrmsApi.get<HrmsEnvelope<ColumnRow[]>>(`${PD_API}/admin/columns?schema=${encodeURIComponent(form.aprSchema)}&table=${encodeURIComponent(form.aprTable)}`)).data ?? [], enabled: !!form.aprSchema && !!form.aprTable });
@@ -158,6 +159,8 @@ export function DashboardSetup({ initialProcessId = "" }: { initialProcessId?: s
           </div>
         )}
       </Panel>
+
+      {form.category === "support_inbound" && <InboundSourcePanel processId={form.processId} />}
 
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4">
         <button type="button" className={`${btn} bg-blue-700 text-white hover:bg-blue-800 border-blue-700`} disabled={errors.length > 0 || save.isPending} onClick={() => save.mutate(form.enabled)}><Save className="h-3.5 w-3.5" aria-hidden="true" />{save.isPending ? "Saving..." : "Save mapping"}</button>

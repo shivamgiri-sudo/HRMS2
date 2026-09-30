@@ -134,7 +134,8 @@ function AgentDailyDrawer({
  * still use unchanged.
  */
 
-export type InboundInsightProject = "dubangladesh" | "exicom" | "viega" | "dalmia" | "neemans" | "gnc" | "bellavita" | "clovia";
+/** One of the eight hard-coded keys (dubangladesh, exicom, viega, dalmia, neemans, gnc, bellavita, clovia) or any key an admin registered via process_inbound_config -- the API decides which exist. */
+export type InboundInsightProject = string;
 
 interface Metrics {
   offered: number; answered: number; abandoned: number; answeredPct: number;
@@ -207,7 +208,8 @@ interface DrillSpec {
   params: Record<string, string | number>;
 }
 
-const PROJECT_LABEL: Record<InboundInsightProject, { name: string; gradient: string }> = {
+const DEFAULT_GRADIENT = "from-blue-600 via-indigo-600 to-blue-700";
+const PROJECT_LABEL: Record<string, { name: string; gradient: string }> = {
   dubangladesh: { name: "DU Bangladesh", gradient: "from-amber-600 via-orange-600 to-amber-700" },
   exicom: { name: "Exicom", gradient: "from-blue-600 via-sky-600 to-blue-700" },
   viega: { name: "Viega", gradient: "from-rose-600 via-red-600 to-rose-700" },
@@ -306,14 +308,16 @@ interface PeriodsPayload {
 }
 const fmtPeriodCell = (v: number, fmt: string) => (fmt === "pct" ? `${Math.round(v * 10) / 10}%` : fmt === "sec" ? fmtSec(v) : fmt === "dec1" ? String(Math.round(v * 10) / 10) : fmtNum(v));
 
-export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChange }: {
+export function InboundInsightsDashboard({ projectKey, projectName, initialRange, onRangeChange }: {
   projectKey: InboundInsightProject;
+  /** Display name for a project that has no built-in label (an admin-registered process). */
+  projectName?: string;
   /** Optional: start on this range instead of the last 30 days (used when embedded in another dashboard). */
   initialRange?: { from: string; to: string };
   /** Optional: told whenever the user changes the range, so a host can keep its own views in step. */
   onRangeChange?: (from: string, to: string) => void;
 }) {
-  const meta = PROJECT_LABEL[projectKey];
+  const meta = PROJECT_LABEL[projectKey] ?? { name: projectName ?? projectKey, gradient: DEFAULT_GRADIENT };
   const initial = useMemo(() => initialRange ?? currentMonthRange(), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
