@@ -111,7 +111,7 @@ export function RecruitersTab({ recruiterTable, loading }: RecruitersTabProps) {
                   <p className="truncate text-[11px] text-slate-500">{S(r.Branch) || "No branch"}</p>
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="mt-3 grid grid-cols-4 gap-2">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sourced</p>
                   <p className="text-sm font-bold tabular-nums text-slate-900">{num(N(r.SourcedCount))}</p>
@@ -123,6 +123,11 @@ export function RecruitersTab({ recruiterTable, loading }: RecruitersTabProps) {
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sel %</p>
                   <p className="text-sm font-bold tabular-nums text-emerald-700">{pct(N(r.SelectionRate))}</p>
                   <p className="text-[10px] text-slate-400">of attended</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Join %</p>
+                  <p className="text-sm font-bold tabular-nums text-violet-700">{pct(N(r.JoiningRate))}</p>
+                  <p className="text-[10px] text-slate-400">of selected</p>
                 </div>
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">SLA %</p>
@@ -205,7 +210,7 @@ export function RecruitersTab({ recruiterTable, loading }: RecruitersTabProps) {
           <EmptyState label="No recruiter data" height={140} />
         ) : (
           <div className="max-h-[460px] overflow-auto rounded-lg border border-slate-200">
-            <table className="w-full min-w-[760px] text-xs">
+            <table className="w-full min-w-[980px] text-xs">
               <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="border-b border-slate-200 text-slate-600">
                   <th className="px-3 py-2 text-left font-semibold">Recruiter</th>
@@ -213,7 +218,10 @@ export function RecruitersTab({ recruiterTable, loading }: RecruitersTabProps) {
                   <th className="px-3 py-2 text-right font-semibold">Sourced</th>
                   <th className="px-3 py-2 text-right font-semibold">Share</th>
                   <th className="px-3 py-2 text-right font-semibold">Attended</th>
-                  <th className="px-3 py-2 text-right font-semibold">Sel %</th>
+                  <th className="px-3 py-2 text-right font-semibold" title="Selected ÷ sourced">Sel %</th>
+                  <th className="px-3 py-2 text-right font-semibold" title="Joined (onboarded / converted) ÷ selected">Joining %</th>
+                  <th className="px-3 py-2 text-right font-semibold" title="Selected in the Ops round ÷ candidates who reached it">Ops Sel %</th>
+                  <th className="px-3 py-2 text-right font-semibold" title="Rejected in the Ops round ÷ candidates who reached it">Ops Rej %</th>
                   <th className="px-3 py-2 text-right font-semibold">SLA %</th>
                   <th className="px-3 py-2 text-right font-semibold">Avg Wait</th>
                   <th className="px-3 py-2 text-left font-semibold">Flag</th>
@@ -231,6 +239,15 @@ export function RecruitersTab({ recruiterTable, loading }: RecruitersTabProps) {
                     <td className="px-3 py-2 text-right tabular-nums text-slate-700">{num(N(r.AttendedCount))}</td>
                     <td className="px-3 py-2 text-right font-semibold tabular-nums text-emerald-700">
                       {pct(N(r.SelectionRate))}
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-violet-700" title={`${num(N(r.JoinedCount))} joined of ${num(N(r.OfferedCount))} selected`}>
+                      {pct(N(r.JoiningRate))}
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-emerald-700" title={`${num(N(r.OpsSelectedCount))} of ${num(N(r.OpsReachedCount))} reached Ops`}>
+                      {N(r.OpsReachedCount) ? pct(N(r.OpsSelectionRate)) : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-rose-700" title={`${num(N(r.OpsRejectedCount))} of ${num(N(r.OpsReachedCount))} reached Ops`}>
+                      {N(r.OpsReachedCount) ? pct(N(r.OpsRejectionRate)) : "—"}
                     </td>
                     <td className="px-3 py-2 text-right font-semibold tabular-nums text-blue-700">
                       {pct(N(r.SlaCompliancePercent))}
@@ -258,7 +275,10 @@ export function RecruitersTab({ recruiterTable, loading }: RecruitersTabProps) {
                   <td className="px-3 py-2 text-right tabular-nums">
                     {num(rows.reduce((sum, r) => sum + N(r.AttendedCount), 0))}
                   </td>
-                  <td className="px-3 py-2" colSpan={4} />
+                  <td className="px-3 py-2 text-right tabular-nums text-violet-700">
+                    {pct(ratio(rows.reduce((sum, r) => sum + N(r.JoinedCount), 0), rows.reduce((sum, r) => sum + N(r.OfferedCount), 0)) ?? 0)}
+                  </td>
+                  <td className="px-3 py-2" colSpan={5} />
                 </tr>
               </tfoot>
             </table>
