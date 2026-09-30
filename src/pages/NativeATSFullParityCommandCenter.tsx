@@ -77,7 +77,7 @@ const TAB_IDS = ["Cover", "Dashboard", "Trends", "Rejections", "Recruiters", "So
 const INSIGHTS_ROLES = ["super_admin", "admin", "hr", "manager", "ceo"] as const;
 
 export default function NativeATSFullParityCommandCenter() {
-  const { hasAnyRole } = useWorkforceAccess();
+  const { hasAnyRole, isResolved: rolesResolved } = useWorkforceAccess();
   const canSeeInsights = hasAnyRole(...INSIGHTS_ROLES);
   // Insights sits right after Cover, not at the end of 12 tabs where it went unnoticed.
   const tabIds = canSeeInsights ? [TAB_IDS[0], "Insights", ...TAB_IDS.slice(1)] : TAB_IDS;
@@ -85,19 +85,20 @@ export default function NativeATSFullParityCommandCenter() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("Cover");
-  // Roles resolve after first render, so the default is applied once they do. The user can still switch to Cover, and
-  // switching is never overridden afterwards.
-  const openedInsights = useRef(false);
-  useEffect(() => {
-    if (canSeeInsights && !openedInsights.current) { openedInsights.current = true; setTab("Insights"); }
-  }, [canSeeInsights]);
+  // The opening tab is DERIVED from the role rather than set in an effect, so the very first render after roles resolve is
+  // already on Insights. A tab the user picks always wins.
+  const [tabChoice, setTabChoice] = useState<string | null>(null);
+  const tab = tabChoice ?? (canSeeInsights ? "Insights" : "Cover");
+  // Insights is served by /api/ats/dashboard/* and does not use the command-center payload below (~9 MB, 25,000 rows
+  // aggregated in JS, which regularly runs past the 30 s client timeout under load), so do not fetch it there.
+  const needsCommandCenterData = tab !== "Insights";
   const [period, setPeriod] = useState("ALL");
   const [branch, setBranch] = useState("");
   const [process, setProcess] = useState("");
   const [recruiter, setRecruiter] = useState("");
   const [jobRunning, setJobRunning] = useState<Record<string, boolean>>({});
   const didInitLoad = useRef(false);
+  const loadedKey = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (didInitLoad.current) setRefreshing(true);
@@ -111,6 +112,7 @@ export default function NativeATSFullParityCommandCenter() {
       if (recruiter) q.set("recruiter", recruiter);
       const res = await hrmsApi.get<CommandCenterData>(`/api/ats-full-parity/command-center?${q.toString()}`);
       setData(res);
+      loadedKey.current = `${period}|${branch}|${process}|${recruiter}`;
     } catch (e: unknown) {
       setError((e as { message?: string })?.message || String(e));
     } finally {
@@ -126,13 +128,17 @@ export default function NativeATSFullParityCommandCenter() {
    * one per option. The first load is not delayed; only subsequent filter changes are.
    */
   useEffect(() => {
+    // Wait for roles so we know which tab we open on, and skip the heavy call while on Insights.
+    if (!rolesResolved || !needsCommandCenterData) return;
+    // Already holding exactly this view (e.g. Cover -> Insights -> Cover): no re-request. Refresh reloads on demand.
+    if (loadedKey.current === `${period}|${branch}|${process}|${recruiter}`) return;
     if (!didInitLoad.current) {
       void load();
       return;
     }
     const t = setTimeout(() => void load(), 350);
     return () => clearTimeout(t);
-  }, [load]);
+  }, [load, rolesResolved, needsCommandCenterData, period, branch, process, recruiter]);
 
   // HealthTab fetches /health itself on mount. A second copy here meant every activation of
   // that tab fired the probe twice.
@@ -302,7 +308,7 @@ export default function NativeATSFullParityCommandCenter() {
         </div>
 
         {/* Tabs — horizontally scrollable on mobile */}
-        <Tabs value={tab} onValueChange={setTab}>
+        <Tabs value={tab} onValueChange={setTabChoice}>
           <div className="overflow-x-auto">
             <TabsList className="flex h-auto w-max gap-0.5 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
               {tabIds.map((t) => (
