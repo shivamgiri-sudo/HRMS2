@@ -948,7 +948,8 @@
     "migrations/1921_capacity_mandate_editors.sql",
     "1931_bank_exception_email_template.sql",
     "1932_sbi_card_collections.sql",
-    "1941_process_dashboard_config.sql"
+    "1941_process_dashboard_config.sql",
+    "1962_budget_topup_cancel.sql"
   ],
   "approvedDeletions": [
     {
