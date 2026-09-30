@@ -325,3 +325,8 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - Checked (Playwright chromium, temp harness page, mocked /api, harness deleted): per-process rows render (mandated/required/active/available/coverage/gap), no "Failed to load", zero console/page errors. finance_head: Mandate buttons shown, Save disabled until reason entered, PATCH body correct. team_leader: no edit buttons.
 - Live DB (read-only): 21 active mandates; long-leave query measured ~3.6s without a covering index.
 - NOT verified: per-process GROUP BY queries and PATCH scope check against a DB through the real handler; migration 1921 and index idx_lr_capacity_cover not yet applied; login-gated real page; production data.
+
+## 2026-09-30 — BLA/BLI/BLU dashboard placement (commits f80261c, 2705d7d)
+- Cause of "not visible under Bla Bli Blu": the view only existed as a sub-tab of the Bella-Vita sales toggle; process BLA_BLI_BLU was missing from PROCESS_SALES_MAP, so its Sales Dashboard tab said "No sales dashboard". Now mapped (code or name match) and still available under Bella-Vita.
+- Data on prod: bla_bli_blu_overall_sales_raw = 2,400 rows, all August 2026; bla_dash_received = 0 rows. Dashboard now opens on the latest month with data (banner says so). Server-side check: Aug = 31 days, 2,063 real-time sales, Rs 13.73L, 13 product rows; workable/target columns 0 until Received Data is uploaded; September empty.
+- Not verified in a browser this time (both browser tools were locked by a stale session); verified via server-side service call and passing tests.
