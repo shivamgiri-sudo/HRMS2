@@ -752,6 +752,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "cost_centre_code", label: "Cost Center", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre Name", format: "text", width: 180 },
       { key: "process_name", label: "Process Name", format: "text", width: 140 },
       { key: "lob_name", label: "LOB", format: "text", width: 120 },
       { key: "attendance_source", label: "Attendance Source", format: "text", width: 120 },

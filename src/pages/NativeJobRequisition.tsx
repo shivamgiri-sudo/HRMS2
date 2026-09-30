@@ -20,6 +20,16 @@ type RequisitionPriority = 'low' | 'normal' | 'high' | 'urgent';
 type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern' | 'trainee';
 type SortKey = 'deadline_asc' | 'deadline_desc' | 'priority' | 'aging_desc' | 'created_desc' | 'fill_rate';
 
+interface MetaScreeningConfig {
+  auto_notify?: boolean;
+  gender?: 'any' | 'male' | 'female';
+  certifications?: string[];
+  language_requirements?: Array<{ language: string; skills: Array<'speak' | 'read' | 'write'> }>;
+  min_typing_speed_wpm?: number | null;
+  written_english_level?: 'basic' | 'intermediate' | 'advanced' | null;
+  custom_field_rules?: Array<{ field: string; op: string; value: string; label?: string }>;
+}
+
 interface JobRequisition {
   id: string;
   requisition_code: string;
@@ -61,6 +71,14 @@ interface JobRequisition {
   process_id?: string | null;
   planned_batch_no?: string | null;
   training_start_date?: string | null;
+  // META campaign targeting — job_requisition columns returned via `jr.*`
+  // (mirrors backend/src/modules/job-requisition/job-requisition.types.ts).
+  bmi_assessment_url?: string | null;
+  meta_target_age_min?: number | null;
+  meta_target_age_max?: number | null;
+  meta_target_locations?: string[] | null;
+  meta_target_radius_km?: number | null;
+  meta_screening_config?: MetaScreeningConfig | null;
 }
 
 interface DashboardMetrics {

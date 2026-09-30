@@ -527,7 +527,7 @@ export function PaymentVouchersContent() {
                                   className="h-7 w-28 text-xs"
                                   value={raiseForm.grnAllocations[r.id]}
                                   onChange={(e) => setRaiseForm((f) => {
-                                    const next = { ...f.grnAllocations, [r.id]: e.target.value };
+                                    const next: Record<string, string> = { ...f.grnAllocations, [r.id]: e.target.value };
                                     const total = Object.values(next).reduce((s, a) => s + (Number(a) || 0), 0);
                                     return { ...f, grnAllocations: next, amount: total > 0 ? String(total) : "" };
                                   })}

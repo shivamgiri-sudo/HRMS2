@@ -97,7 +97,7 @@ export function SliceDetailPanel({ open, onClose, metric, reportCode, from, to }
               </p>
             </div>
 
-            <Button onClick={openEmployeeList} className="w-full">
+            <Button onClick={() => openEmployeeList()} className="w-full">
               View employees
             </Button>
           </div>

@@ -204,6 +204,7 @@ type IBSummary = {
   offered:number; handled:number; abandoned:number; abndWithin:number; abndAfter:number;
   calls20:number; sl:number; al:number; ahtSec:number; aht:string;
   avgWrapSec:number; avgWrap:string; loginCount:number; cpa:number;
+  handledTalkSec:number; handledAcwSec:number; holdSec:number; holdCount:number; holdTimeSec:number;
   talkSecTotal:number; talkTime:string; acwSecTotal:number; acwTime:string; callDurationSec:number;
   abandonRate:number; within20Rate:number; dailyAverage:number;
   healthScore:number; healthStatus:string; from:string; to:string; generatedAt:string;
@@ -402,7 +403,7 @@ function IBHourly({ f }: { f:Filters }) {
     {h:"Repeat",k:"repeatCalls"},{h:"Repeat %",k:"repeatPct",fmt:v=>`${Number(v).toFixed(1)}%`},
   ];
 
-  const total: Partial<SlotRow> = data.reduce((acc,r) => ({
+  const total = data.reduce<Partial<SlotRow>>((acc,r) => ({
     offered:(acc.offered??0)+r.offered, handled:(acc.handled??0)+r.handled,
     abandoned:(acc.abandoned??0)+r.abandoned, calls20:(acc.calls20??0)+r.calls20,
     abndWithin:(acc.abndWithin??0)+r.abndWithin, abndAfter:(acc.abndAfter??0)+r.abndAfter,

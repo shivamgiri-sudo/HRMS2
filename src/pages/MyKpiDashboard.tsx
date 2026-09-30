@@ -190,7 +190,7 @@ export default function MyKpiDashboard() {
     setNoKpis(false);
     try {
       const dateQuery = p === "day" ? `&date=${selectedDate}` : "";
-      const res = await hrmsApi.get<unknown>(`/api/kpi-master/live?period=${p}${dateQuery}`);
+      const res = await hrmsApi.get<{ data?: unknown }>(`/api/kpi-master/live?period=${p}${dateQuery}`);
       const envelope = res.data as { success?: boolean; data?: LivePerformanceData } | LivePerformanceData | null;
       const d: LivePerformanceData | null = envelope && typeof envelope === "object" && "data" in envelope
         ? (envelope as { data?: LivePerformanceData }).data ?? null
@@ -232,7 +232,7 @@ export default function MyKpiDashboard() {
     queryKey: ["quality-calls-paged", callsPage, callsSort],
     queryFn: () =>
       hrmsApi
-        .get<unknown>(
+        .get<{ data?: unknown }>(
           `/api/agent/calls-review?limit=${CALLS_PAGE_SIZE}&offset=${callsPage * CALLS_PAGE_SIZE}&sort=${callsSort}`
         )
         .then((r) => {
@@ -446,8 +446,8 @@ export default function MyKpiDashboard() {
                       />
                       <div className="flex-1 min-w-0 flex flex-col justify-center gap-4">
                         <AIInsightPanel
-                          context="performance_kpi"
-                          contextData={{ period, metrics: data.metrics.slice(0, 5) }}
+                          contextType="performance_kpi"
+                          data={{ period, metrics: data.metrics.slice(0, 5) }}
                         />
                         <div className="flex gap-3 flex-wrap">
                           {[

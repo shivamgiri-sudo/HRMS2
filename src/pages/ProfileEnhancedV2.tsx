@@ -250,10 +250,10 @@ function EnhancedAttendanceTab({ employeeId }: { employeeId: string }) {
   const { data: attRows = [], isLoading } = useAttendanceDailyRecords(employeeId, attFrom, attTo);
 
   // Summary stats
-  const present = attRows.filter(r => r.final_status === "P" || r.final_status === "present").length;
-  const absent = attRows.filter(r => r.final_status === "A" || r.final_status === "absent").length;
-  const halfDay = attRows.filter(r => r.final_status === "H" || r.final_status === "half_day").length;
-  const leave = attRows.filter(r => r.final_status === "L" || r.final_status === "leave").length;
+  const present = attRows.filter(r => r.status === "P" || r.status === "present").length;
+  const absent = attRows.filter(r => r.status === "A" || r.status === "absent").length;
+  const halfDay = attRows.filter(r => r.status === "H" || r.status === "half_day").length;
+  const leave = attRows.filter(r => r.status === "L" || r.status === "leave" || r.status === "leave_approved").length;
 
   return (
     <div className="space-y-4">

@@ -453,10 +453,10 @@ function AttendanceTab({ employeeId }: { employeeId: string }) {
   const attTo = `${attMonth.y}-${String(attMonth.m + 1).padStart(2, "0")}-${String(new Date(attMonth.y, attMonth.m + 1, 0).getDate()).padStart(2, "0")}`;
   const { data: attRows = [], isLoading } = useAttendanceDailyRecords(employeeId, attFrom, attTo);
 
-  const present = attRows.filter(r => r.final_status === "P" || r.final_status === "present").length;
-  const absent = attRows.filter(r => r.final_status === "A" || r.final_status === "absent").length;
-  const halfDay = attRows.filter(r => r.final_status === "H" || r.final_status === "half_day").length;
-  const leave = attRows.filter(r => r.final_status === "L" || r.final_status === "leave").length;
+  const present = attRows.filter(r => r.status === "P" || r.status === "present").length;
+  const absent = attRows.filter(r => r.status === "A" || r.status === "absent").length;
+  const halfDay = attRows.filter(r => r.status === "H" || r.status === "half_day").length;
+  const leave = attRows.filter(r => r.status === "L" || r.status === "leave" || r.status === "leave_approved").length;
   const workingDays = attRows.length;
   const attendanceRate = workingDays > 0 ? ((present + halfDay * 0.5) / workingDays * 100).toFixed(1) : "0.0";
 

@@ -101,6 +101,12 @@ interface PayslipRecord {
   short_collection?: number | string;
   asset_recovery?: number | string;
   leave_deduction?: number | string;
+  // legacy_payroll_snapshot columns returned by GET /api/payroll/payslip/my
+  epf_employee?: number | string;
+  other_deduction?: number | string;
+  other_deductions?: number | string;
+  // present on both modern (salary_payroll_lines) and legacy rows
+  professional_tax?: number | string;
   ctc_monthly?: number | string;
   earned_days?: number | string;
   gross_salary: number | string;
@@ -571,7 +577,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
         const res = await hrmsApi.get<{ success: boolean; data: PayslipRecord }>(
           `/api/payroll/payslip/${record.run_id}/${employeeId}`,
         );
-        detail = res.data?.data;
+        detail = res.data;
         bankName = detail?.bank_name || "";
         ytdMap = detail?.ytd;
         weekOffDays = Number(detail?.eligible_weekoff_days ?? 0);

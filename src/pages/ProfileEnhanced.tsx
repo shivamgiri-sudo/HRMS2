@@ -89,11 +89,12 @@ const formatTime = (time: string | null) => {
 // ENHANCED UI COMPONENTS
 // ════════════════════════════════════════════════════════════════════════════
 
-function GlassCard({ children, className, glow }: { children: React.ReactNode; className?: string; glow?: 'blue' | 'green' | 'purple' }) {
+function GlassCard({ children, className, glow }: { children: React.ReactNode; className?: string; glow?: 'blue' | 'green' | 'purple' | 'amber' }) {
   const glowColors = {
     blue: 'before:bg-blue-500/20',
     green: 'before:bg-emerald-500/20',
     purple: 'before:bg-purple-500/20',
+    amber: 'before:bg-amber-500/20',
   };
   return (
     <div className={cn(

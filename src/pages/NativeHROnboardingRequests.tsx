@@ -390,7 +390,7 @@ function toneForStatus(raw: unknown): ChipTone {
 function prettyStatus(raw: unknown): string {
   const v = String(raw ?? '').trim();
   if (!v) return '—';
-  return v.includes('_') ? v.replace(/_/g, ' ').replace(/\w/g, (m) => m.toUpperCase()) : v;
+  return v.includes('_') ? v.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : v;
 }
 
 function StatusChip({ value, tone }: { value: unknown; tone?: ChipTone }) {
@@ -3698,35 +3698,30 @@ export default function NativeHROnboardingRequests() {
         <PackageBuilderDialog
           open={showPackageBuilder}
           onOpenChange={setShowPackageBuilder}
-          defaultBand={offer.salary_band || undefined}
-          defaultCtc={offer.offered_ctc ? Number(offer.offered_ctc) : undefined}
-          defaultPfOpt={!offer.pf_eligible}
-          defaultEsiOpt={!offer.esi_eligible}
-          onSave={(pkg) => {
+          defaultBranch={selected?.branch_name ?? ''}
+          // The dialog's contract is onPackageCreated(packageId, draft); it closes itself.
+          // Draft carries monthly figures under the salary_package_master column names
+          // (epf_* rather than pf_*), same as selectPackage() above.
+          onPackageCreated={(_pkgId, pkg) => {
             setOffer((prev) => ({
               ...prev,
               offered_ctc: String(pkg.ctc),
-              salary_band: pkg.band,
-              pf_eligible: !pkg.pfOptOut,
-              esi_eligible: !pkg.esiOptOut,
+              salary_band: pkg.band_code || prev.salary_band,
             }));
             setSalaryPreview({
               gross: pkg.gross,
-              net_in_hand: pkg.net,
+              net_in_hand: pkg.net_in_hand,
               basic: pkg.basic,
               hra: pkg.hra,
               conveyance: pkg.conveyance ?? 0,
-              special_allowance: pkg.specialAllowance ?? 0,
+              special_allowance: pkg.special_allowance ?? 0,
               bonus: pkg.bonus ?? 0,
-              pf_employee: pkg.pfEmployee,
-              pf_employer: pkg.pfEmployer,
-              esic_employee: pkg.esicEmployee,
-              esic_employer: pkg.esicEmployer,
-              professional_tax: pkg.pt ?? 0,
-              lwf_employee: pkg.lwfEmployee ?? 0,
-              lwf_employer: pkg.lwfEmployer ?? 0,
+              pf_employee: pkg.epf_employee,
+              pf_employer: pkg.epf_employer,
+              esic_employee: pkg.esic_employee,
+              esic_employer: pkg.esic_employer,
+              admin_charges: pkg.admin_charges ?? 0,
             });
-            setShowPackageBuilder(false);
           }}
         />
 

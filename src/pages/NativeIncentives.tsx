@@ -1291,12 +1291,12 @@ function DbBillSnapshotTab() {
 
   const { data: dedMonths } = useQuery<{ data: string[] }>({
     queryKey: ["deduction-snapshot-months"],
-    queryFn: () => hrmsApi.get("/api/payroll/deduction-snapshot/months").then((r) => r.data),
+    queryFn: () => hrmsApi.get<{ data: string[] }>("/api/payroll/deduction-snapshot/months"),
   });
 
   const { data: qualMonths } = useQuery<{ data: { sal_year: string; sal_month: string }[] }>({
     queryKey: ["qual-incentive-snapshot-months"],
-    queryFn: () => hrmsApi.get("/api/payroll/qual-incentive-snapshot/months").then((r) => r.data),
+    queryFn: () => hrmsApi.get<{ data: { sal_year: string; sal_month: string }[] }>("/api/payroll/qual-incentive-snapshot/months"),
   });
 
   const {
@@ -1304,10 +1304,12 @@ function DbBillSnapshotTab() {
     isLoading: dedLoading,
   } = useQuery<{ data: DeductionSummaryRow[]; totals: DeductionTotals; salary_month: string }>({
     queryKey: ["deduction-snapshot-summary", deductionMonth],
+    // hrmsApi.get takes (path, timeoutMs) and resolves to the response body itself —
+    // it has no axios-style `{ params }` option and no `.data` wrapper around the body.
     queryFn: () =>
-      hrmsApi
-        .get("/api/payroll/deduction-snapshot/summary", { params: { salary_month: deductionMonth } })
-        .then((r) => r.data),
+      hrmsApi.get<{ data: DeductionSummaryRow[]; totals: DeductionTotals; salary_month: string }>(
+        `/api/payroll/deduction-snapshot/summary?${new URLSearchParams({ salary_month: deductionMonth }).toString()}`,
+      ),
     enabled: !!deductionMonth,
   });
 
@@ -1317,11 +1319,9 @@ function DbBillSnapshotTab() {
   } = useQuery<{ data: QualIncentiveSummaryRow[]; totals: QualIncentiveTotals }>({
     queryKey: ["qual-incentive-snapshot-summary", qualYear, qualMonth],
     queryFn: () =>
-      hrmsApi
-        .get("/api/payroll/qual-incentive-snapshot/summary", {
-          params: { sal_year: qualYear, sal_month: qualMonth },
-        })
-        .then((r) => r.data),
+      hrmsApi.get<{ data: QualIncentiveSummaryRow[]; totals: QualIncentiveTotals }>(
+        `/api/payroll/qual-incentive-snapshot/summary?${new URLSearchParams({ sal_year: qualYear, sal_month: qualMonth }).toString()}`,
+      ),
     enabled: !!qualYear && !!qualMonth,
   });
 

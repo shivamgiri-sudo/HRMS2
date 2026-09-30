@@ -50,7 +50,8 @@ export function useWfmAnalytics(enabled = true) {
     queryKey: ["wfm", "analytics"],
     queryFn: async () => {
       const response = await hrmsApi.get<{ success?: boolean; data?: WfmAnalytics }>("/wfm/analytics");
-      return response.data ?? response;
+      // The route returns the { success, data } envelope; the fallback tolerates a bare payload.
+      return response.data ?? (response as unknown as WfmAnalytics);
     },
     enabled,
     staleTime: 2 * 60 * 1000, // 2 min (real-time data)

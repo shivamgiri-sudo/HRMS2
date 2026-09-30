@@ -313,9 +313,9 @@ export function Step2Personal({
         <SectionHead icon={User} color="indigo">Basic Information</SectionHead>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <F label="Title" value={employee.title} onChange={(v) => upd("title", v)} opts={TITLES} required />
-          <F label="First Name" value={employee.firstName} onChange={(v) => upd("firstName", v)} required placeholder="Given name" />
-          <F label="Middle Name" value={employee.middleName} onChange={(v) => upd("middleName", v)} placeholder="Optional" />
-          <F label="Last Name" value={employee.lastName} onChange={(v) => upd("lastName", v)} required placeholder="Family / surname" />
+          <div className="sm:col-span-1 lg:col-span-3">
+            <F label="Full Name" value={employee.employeeName} onChange={(v) => upd("employeeName", v)} required placeholder="As per Aadhaar / PAN" />
+          </div>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -328,15 +328,15 @@ export function Step2Personal({
         <SectionHead icon={Phone} color="emerald">Contact Information</SectionHead>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <F label="Mobile Number" value={employee.mobileNumber} onChange={(v) => upd("mobileNumber", v)} mode="tel" required placeholder="10-digit mobile" />
-          <F label="Alternate Mobile" value={employee.alternateMobile} onChange={(v) => upd("alternateMobile", v)} mode="tel" placeholder="Optional" />
-          <F label="Personal Email" value={employee.personalEmail} onChange={(v) => upd("personalEmail", v)} type="email" required placeholder="your.email@gmail.com" />
+          <F label="Alternate Mobile" value={employee.altMobileNumber} onChange={(v) => upd("altMobileNumber", v)} mode="tel" placeholder="Optional" />
+          <F label="Personal Email" value={employee.personalEmailId} onChange={(v) => upd("personalEmailId", v)} type="email" required placeholder="your.email@gmail.com" />
         </div>
 
         <SectionHead icon={Heart} color="pink">Parent / Guardian</SectionHead>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <F label="Father's Name" value={employee.fatherName} onChange={(v) => upd("fatherName", v)} required placeholder="Full name" />
+          <F label="Relation Type" value={employee.relation} onChange={(v) => upd("relation", v)} opts={RELATIONS} />
+          <F label="Father / Guardian Name" value={employee.fatherHusbandName} onChange={(v) => upd("fatherHusbandName", v)} required placeholder="Full name" />
           <F label="Mother's Name" value={employee.motherName} onChange={(v) => upd("motherName", v)} placeholder="Full name" />
-          <F label="Spouse Name" value={employee.spouseName} onChange={(v) => upd("spouseName", v)} placeholder="If married" />
         </div>
 
         <div className="flex justify-end pt-4 border-t border-slate-100">
@@ -379,12 +379,10 @@ export function Step3AddressKyc({
   const copyPerm = () => {
     setEmployee((p) => ({
       ...p,
-      currentAddr1: p.permanentAddr1,
-      currentAddr2: p.permanentAddr2,
-      currentCity: p.permanentCity,
-      currentState: p.permanentState,
-      currentPincode: p.permanentPincode,
-      currentCountry: p.permanentCountry,
+      presentAddress: p.permanentAddress,
+      presentCity: p.permanentCity,
+      presentState: p.permanentState,
+      presentPincode: p.permanentPincode,
     }));
     setSameAddr(true);
   };
@@ -462,15 +460,11 @@ export function Step3AddressKyc({
         <SectionHead icon={Home} color="purple">Permanent Address</SectionHead>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="sm:col-span-2 lg:col-span-3">
-            <F label="Address Line 1" value={employee.permanentAddr1} onChange={(v) => upd("permanentAddr1", v)} required placeholder="House/Flat No., Building Name" />
-          </div>
-          <div className="sm:col-span-2 lg:col-span-3">
-            <F label="Address Line 2" value={employee.permanentAddr2} onChange={(v) => upd("permanentAddr2", v)} placeholder="Street, Landmark" />
+            <F label="Full Permanent Address" value={employee.permanentAddress} onChange={(v) => upd("permanentAddress", v)} required placeholder="House/Flat No., Building, Street, Landmark" />
           </div>
           <F label="State" value={employee.permanentState} onChange={(v) => { upd("permanentState", v); upd("permanentCity", ""); }} opts={INDIA_STATES} required />
           <CityField key={employee.permanentState} state={employee.permanentState} city={employee.permanentCity} onChange={(v) => upd("permanentCity", v)} />
           <F label="PIN Code" value={employee.permanentPincode} onChange={(v) => upd("permanentPincode", v)} mode="numeric" required placeholder="6-digit PIN" />
-          <F label="Country" value={employee.permanentCountry || "India"} onChange={(v) => upd("permanentCountry", v)} />
         </div>
 
         <SectionHead icon={MapPin} color="teal">Current Address</SectionHead>
@@ -488,14 +482,11 @@ export function Step3AddressKyc({
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="sm:col-span-2 lg:col-span-3">
-            <F label="Address Line 1" value={employee.currentAddr1} onChange={(v) => upd("currentAddr1", v)} required placeholder="House/Flat No., Building Name" />
+            <F label="Full Present Address" value={employee.presentAddress} onChange={(v) => upd("presentAddress", v)} required placeholder="House/Flat No., Building, Street, Landmark" />
           </div>
-          <div className="sm:col-span-2 lg:col-span-3">
-            <F label="Address Line 2" value={employee.currentAddr2} onChange={(v) => upd("currentAddr2", v)} placeholder="Street, Landmark" />
-          </div>
-          <F label="State" value={employee.currentState} onChange={(v) => { upd("currentState", v); upd("currentCity", ""); }} opts={INDIA_STATES} required />
-          <CityField key={employee.currentState} state={employee.currentState} city={employee.currentCity} onChange={(v) => upd("currentCity", v)} />
-          <F label="PIN Code" value={employee.currentPincode} onChange={(v) => upd("currentPincode", v)} mode="numeric" required placeholder="6-digit PIN" />
+          <F label="State" value={employee.presentState} onChange={(v) => { upd("presentState", v); upd("presentCity", ""); }} opts={INDIA_STATES} required />
+          <CityField key={employee.presentState} state={employee.presentState} city={employee.presentCity} onChange={(v) => upd("presentCity", v)} />
+          <F label="PIN Code" value={employee.presentPincode} onChange={(v) => upd("presentPincode", v)} mode="numeric" required placeholder="6-digit PIN" />
         </div>
 
         <SectionHead icon={CreditCard} color="amber">Identity Documents</SectionHead>
@@ -680,8 +671,8 @@ export function Step4Documents({
           ) : (
             <LiveSelfieCapture
               onCapture={handleSelfieCapture}
+              captured={selfieUploaded}
               disabled={selfieUploading}
-              loading={selfieUploading}
             />
           )}
         </div>
@@ -976,7 +967,13 @@ export function Step6Bank({
                 <p className="text-sm text-emerald-600">Verify account ownership by penny drop</p>
               </div>
             </div>
-            <PennyDropButton token={token} />
+            <PennyDropButton
+              token={token}
+              accountNo={bank.accountNo || ""}
+              ifscCode={bank.ifscCode || ""}
+              accountHolderName={bank.accountHolderName || ""}
+              disabled={mismatch}
+            />
           </div>
         )}
 
