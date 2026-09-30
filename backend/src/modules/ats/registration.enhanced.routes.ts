@@ -12,6 +12,7 @@ import {
   generateTokenNumber,
 } from "./ats.enhanced.service.js";
 import { atsService } from "./ats.service.js";
+import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
 import { getIstDateString } from '../../utils/dateUtils.js';
 import { syncHiringActivityFromCandidateRegistration } from "./recruiter-hiring.service.js";
 import {
@@ -215,7 +216,25 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
     );
     const existingCandidate = existingCandidateRows[0] ?? null;
 
+    // A former employee coming back for an interview keeps the old candidate row, which still
+    // carries employee_code / 'onboarded'. When every employee record on this mobile has left
+    // (none active), the person is a rehire: let them re-register instead of blocking them.
+    let isRehire = false;
     if (existingCandidate && (existingCandidate.employee_code || existingCandidate.profile_status === "onboarded")) {
+      const [rehireRows] = await db.execute<RowDataPacket[]>(
+        `SELECT 1
+           FROM employees e
+          WHERE e.mobile = ?
+            AND LOWER(COALESCE(e.employment_status, '')) IN (${nonReactivatableSqlList()})
+            AND NOT EXISTS (SELECT 1 FROM employees e2 WHERE e2.mobile = e.mobile
+                             AND LOWER(COALESCE(e2.employment_status, '')) NOT IN (${nonReactivatableSqlList()}))
+          LIMIT 1`,
+        [input.mobile]
+      );
+      isRehire = rehireRows.length > 0;
+    }
+
+    if (existingCandidate && !isRehire && (existingCandidate.employee_code || existingCandidate.profile_status === "onboarded")) {
       return res.status(409).json({
         success: false,
         message: "This mobile is already linked to an onboarded candidate",
@@ -282,7 +301,7 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
              profile_status = 'registered',
              record_type = 'candidate',
              current_stage = CASE
-               WHEN current_stage IS NULL OR current_stage IN ('Applied', 'New', 'Screening')
+               WHEN ? = 1 OR current_stage IS NULL OR current_stage IN ('Applied', 'New', 'Screening')
                THEN 'Arrived'
                ELSE current_stage
              END,
@@ -310,6 +329,7 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
           input.ownsTwoWheeler ?? null,
           input.idProofAvailable ?? null,
           input.educationProofAvailable ?? null,
+          isRehire ? 1 : 0,
           existingCandidate.id,
         ]
       );
