@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { getDialerPool } from "../../db/dialerDb.js";
-import { PROJECTS } from "./inbound.service.js";
+import { getInboundProject } from "./inbound-projects.js";
 import { buildPeriodColumns } from "../process-performance/clovia-lob.shared.js";
 
 /**
@@ -119,9 +119,14 @@ export function isInsightProject(key: string): boolean {
   return (INSIGHT_PROJECT_KEYS as readonly string[]).includes(key);
 }
 
-function getProject(key: string) {
-  const p = PROJECTS.find((x) => x.key === key);
-  if (!p || !isInsightProject(key)) {
+/** Static keys plus any project an admin registered (process_inbound_config) -- resolved through the shared loader. */
+export async function isInsightProjectAsync(key: string): Promise<boolean> {
+  return isInsightProject(key) || Boolean(await getInboundProject(key));
+}
+
+async function getProject(key: string) {
+  const p = await getInboundProject(key);
+  if (!p) {
     throw new Error(`Inbound insights are not available for project: ${key}`);
   }
   return p;
@@ -158,11 +163,11 @@ function maskPhone(phone: string): string {
 }
 
 async function loadCalls(projectKey: string, f: InsightFilters): Promise<{ rows: CallRow[]; truncated: boolean; campaigns: string[]; slSec: number }> {
-  const p = getProject(projectKey);
+  const p = await getProject(projectKey);
   assertRange(f);
   if (f.campaign && !p.campaigns.includes(f.campaign)) throw new Error("Unknown campaign for this project");
 
-  const slSec = p.pattern === "A" ? SL_SEC_A : SL_SEC_B;
+  const slSec = p.slSeconds ?? (p.pattern === "A" ? SL_SEC_A : SL_SEC_B);
   const campaigns = f.campaign ? [f.campaign] : p.campaigns;
   const ph = campaigns.map(() => "?").join(",");
   const pool = await getDialerPool();
@@ -442,7 +447,7 @@ function buildBellavitaGroups(rows: CallRow[]) {
 export async function getInboundInsights(projectKey: string, f: InsightFilters) {
   const fcrP = loadFcrWithinBudget(projectKey, f); // started now so it overlaps the CDR load
   const { rows, truncated, campaigns, slSec } = await loadCalls(projectKey, f);
-  const p = getProject(projectKey);
+  const p = await getProject(projectKey);
 
   const total = newAcc();
   const shared = detectSharedNumber(rows);

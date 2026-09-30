@@ -39,6 +39,9 @@
   "modules/process-dashboard/pd.config.service.ts": [
     "process_dashboard_config"
   ],
+  "modules/process-dashboard/pd.inbound.service.ts": [
+    "process_inbound_config"
+  ],
   "modules/process-performance/process-targets.service.ts": [
     "db_masmis"
   ],

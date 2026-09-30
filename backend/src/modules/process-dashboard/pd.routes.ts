@@ -5,6 +5,8 @@ import { logger } from "../../logger.js";
 import { ADMIN_ROLES, VIEWER_ROLES, getConfig, isConfigured, isProcessReadable, isProcessWritable, listAllConfigsAdmin, listReadableConfigs, loadTargets, saveConfig } from "./pd.config.service.js";
 import { listColumns, listTables, PdError, assertSourceName } from "./pd.source.js";
 import { preview, suggest } from "./pd.admin.service.js";
+import { getInboundConfig, getInboundTab, listCandidateTables, previewInbound, saveInboundConfig } from "./pd.inbound.service.js";
+import { INBOUND_INSIGHT_ROLES } from "../call-master/inbound-projects.js";
 import { loadConfigOrThrow } from "./pd.dataset.js";
 import { getAgentDrill, getAgents, getDay, getOverview, categoryProfileOut } from "./pd.service.js";
 import { getLive, liveEtag, streamCsv } from "./pd.live.js";
@@ -58,8 +60,31 @@ router.get("/admin/configs/:processId", admin, h(async (req, res) => {
   if (!UUID_RE.test(processId)) throw new PdError(400, "BAD_PROCESS", "Invalid process id");
   if (!(await isProcessWritable(req.authUser!.id, processId))) return res.status(403).json(OUT_OF_SCOPE);
   const cfg = await getConfig(processId);
-  if (!cfg) return res.status(404).json({ success: false, code: "NO_CONFIG", message: "No configuration yet" });
-  res.json({ success: true, data: { ...cfg, configured: isConfigured(cfg) } });
+  // A process with no config yet is a normal state for the setup screen, not an error: 200 with data null (no console 404).
+  res.json({ success: true, data: cfg ? { ...cfg, configured: isConfigured(cfg) } : null });
+}));
+
+/* Support/inbound dialer source (process_inbound_config). Static paths first so ":processId" never swallows "tables"/"preview". */
+router.get("/admin/inbound/tables", admin, h(async (_req, res) => {
+  res.json({ success: true, data: await listCandidateTables() });
+}));
+router.post("/admin/inbound/preview", admin, h(async (req, res) => {
+  const b = (req.body ?? {}) as { processId?: string; config?: Record<string, unknown> };
+  if (!b.processId || !UUID_RE.test(b.processId)) throw new PdError(400, "BAD_PROCESS", "processId is required");
+  if (!(await isProcessWritable(req.authUser!.id, b.processId))) return res.status(403).json(OUT_OF_SCOPE);
+  res.json({ success: true, data: await previewInbound(b.processId, b.config ?? {}) });
+}));
+router.get("/admin/inbound/:processId", admin, h(async (req, res) => {
+  const { processId } = req.params;
+  if (!UUID_RE.test(processId)) throw new PdError(400, "BAD_PROCESS", "Invalid process id");
+  if (!(await isProcessWritable(req.authUser!.id, processId))) return res.status(403).json(OUT_OF_SCOPE);
+  res.json({ success: true, data: await getInboundConfig(processId) });
+}));
+router.put("/admin/inbound/:processId", admin, h(async (req, res) => {
+  const { processId } = req.params;
+  if (!UUID_RE.test(processId)) throw new PdError(400, "BAD_PROCESS", "Invalid process id");
+  if (!(await isProcessWritable(req.authUser!.id, processId))) return res.status(403).json(OUT_OF_SCOPE);
+  res.json({ success: true, data: await saveInboundConfig(req.authUser!.id, processId, (req.body ?? {}) as Record<string, unknown>) });
 }));
 router.put("/admin/configs/:processId", admin, h(async (req, res) => {
   const { processId } = req.params;
@@ -98,6 +123,14 @@ router.get("/:processId/config", viewer, h(async (req, res) => {
     try { const l = await loadConfigOrThrow(processId, { requireEnabled: false }); categoryProfile = categoryProfileOut(l, await loadTargets(processId)); } catch (e) { if (!(e instanceof PdError)) throw e; }
   }
   res.json({ success: true, data: { ...base, categoryProfile } });
+}));
+
+/** Does this process have a live inbound dashboard (Live inbound tab)? Same role gate as /api/inbound-insights, which the tab then calls. */
+router.get("/:processId/inbound", requireRole(...INBOUND_INSIGHT_ROLES), h(async (req, res) => {
+  const { processId } = req.params;
+  if (!UUID_RE.test(processId)) throw new PdError(400, "BAD_PROCESS", "Invalid process id");
+  if (!(await isProcessReadable(req.authUser!.id, processId))) return res.status(403).json(OUT_OF_SCOPE);
+  res.json({ success: true, data: await getInboundTab(processId) });
 }));
 
 router.get("/:processId/overview", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getOverview(l, req.query) }); }));
