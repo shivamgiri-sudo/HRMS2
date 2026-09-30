@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ChevronDown, Database, Headphones, IndianRupee, Loader2, ShieldCheck, Target, Users } from "lucide-react";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 
-type Unit = "currency" | "percentage" | "count" | "seconds";
+type Unit = "currency" | "percentage" | "count" | "seconds" | "rating";
 type Theme = "sales" | "calls" | "leads" | "workforce" | "quality";
 interface Card {
   key: string; label: string; value: number | null; unit: Unit; target?: number | null;
@@ -19,8 +19,13 @@ interface Payload {
 /** Processes whose sales / calling systems are wired (mirrors SUPPORTED_PROCESS_CODES in business-datapoints.service.ts). */
 export const BUSINESS_DATAPOINT_CODES = [
   "BELLA_VITA", "BLA_BLI_BLU", "NEEMANS", "GNC", "HOUSING_OWNER", "HOUSING_PREMIUM", "CLOVIA", "BIRLANU",
-  "DALMIA_CEMENT", "APPRICIATE_WEALTH", "ERESOLUTION", "DU_DIGITAL", "EXICOM", "VIEGA",
+  "DALMIA_CEMENT", "APPRICIATE_WEALTH", "ERESOLUTION", "DU_DIGITAL", "EXICOM", "VIEGA", "SATYA_RETAIL",
 ];
+
+/** Whether a process has a sales / calling connection: by code, or (Satya Retail has no fixed code) by name. Mirrors adapterKeyFor() on the server. */
+export function supportsBusinessDatapoints(code: string | null, name?: string | null): boolean {
+  return (!!code && BUSINESS_DATAPOINT_CODES.includes(code)) || (!!name && /satya/i.test(name));
+}
 
 const CARD = "rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900";
 const THEMES: Record<Theme, { label: string; color: string; icon: typeof Database }> = {
@@ -35,6 +40,7 @@ export function formatDatapoint(v: number | null, unit: Unit): string {
   if (v === null || Number.isNaN(v)) return "—";
   if (unit === "percentage") return `${v.toFixed(1)}%`;
   if (unit === "count") return Math.round(v).toLocaleString("en-IN");
+  if (unit === "rating") return `${v.toFixed(1)} / 5`;
   if (unit === "seconds") {
     const s = Math.round(v);
     return s < 90 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
@@ -159,9 +165,9 @@ function GroupSection({ g, defaultOpen }: { g: Group; defaultOpen: boolean }) {
  * Sales, revenue, payment-mix, RTO, calling and funnel figures from the process's own sales and dialler systems, which the
  * KPI metric list does not carry. Loaded on request (the Bella-Vita source alone takes ~20s), read-only.
  */
-export function BusinessDatapoints({ processId, processCode, period }: { processId: string; processCode: string | null; period: string }) {
+export function BusinessDatapoints({ processId, processCode, processName, period }: { processId: string; processCode: string | null; processName?: string | null; period: string }) {
   const [enabled, setEnabled] = useState(false);
-  const supported = !!processCode && BUSINESS_DATAPOINT_CODES.includes(processCode);
+  const supported = supportsBusinessDatapoints(processCode, processName);
   const { data, isFetching, isError, refetch } = useQuery({
     queryKey: ["process-operations", "business-datapoints", processId, period],
     queryFn: () => hrmsApi.get<HrmsEnvelope<Payload>>(`/api/process-operations/${processId}/business-datapoints?period=${period}`, 120_000),

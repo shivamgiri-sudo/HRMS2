@@ -5524,7 +5524,7 @@ export default function ProcessOperationsPage() {
                   />
 
                   {current && (
-                    <BusinessDatapoints processId={current} processCode={currentProcess?.processCode ?? null} period={period} />
+                    <BusinessDatapoints processId={current} processCode={currentProcess?.processCode ?? null} processName={currentProcess?.processName ?? null} period={period} />
                   )}
 
                   <div className="flex items-center gap-3 py-1">

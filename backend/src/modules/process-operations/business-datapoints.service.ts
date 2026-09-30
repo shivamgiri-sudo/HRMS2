@@ -1,8 +1,12 @@
 import type { RowDataPacket } from "mysql2";
+import {
+  card, hasAny, iso, round1, series,
+  type DatapointCard, type DatapointGroup, type DatapointTheme, type DatapointUnit, type FunnelStage, type Loose,
+} from "./business-datapoints.shared.js";
+export type { DatapointCard, DatapointGroup, DatapointTheme, DatapointUnit, FunnelStage } from "./business-datapoints.shared.js";
 import { db } from "../../db/mysql.js";
 import { readableProcessIds } from "./process-operations.service.js";
 import { getBellavitaSaleDashboard } from "../process-performance/bellavita-sale-dashboard.service.js";
-import { getBellavitaCartSummary as _cartSummary } from "../process-performance/bellavita-cart-dashboard.service.js";
 import { getGncSaleDashboard } from "../process-performance/gnc-sale-dashboard.service.js";
 import { getNeemansPerformanceDashboard } from "../process-performance/neemans-performance-dashboard.service.js";
 import { getDashboard as getBlaDashboard } from "../bla-bli-blu-dashboard/bla-bli-blu-dashboard.service.js";
@@ -14,6 +18,9 @@ import { getAppreciateWealthDashboard, parseFilters as parseAwFilters } from "..
 import { getLpFeedbackDashboard } from "../process-performance/lp-feedback-dashboard.service.js";
 import { getLpOnboardingDashboard } from "../process-performance/lp-onboarding-dashboard.service.js";
 import { getProjectOverview } from "../call-master/inbound.service.js";
+import {
+  appreciateWealthCentres, bellavitaCart, bellavitaChat, cloviaChannels, dalmiaExtras, gncAbandonCart, gncChat, satyaRetail,
+} from "./business-datapoints.more.js";
 
 /**
  * Business datapoints for the KPI Metrics page: the sales / revenue / payment-mix / RTO / funnel
@@ -25,18 +32,6 @@ import { getProjectOverview } from "../call-master/inbound.service.js";
  * (Bella-Vita's sale dashboard alone takes ~20-45s on production).
  */
 
-export type DatapointUnit = "currency" | "percentage" | "count" | "seconds";
-export type DatapointTheme = "sales" | "calls" | "leads" | "workforce" | "quality";
-export interface DatapointCard {
-  key: string; label: string; value: number | null; unit: DatapointUnit;
-  target?: number | null; direction?: "higher_is_better" | "lower_is_better"; hint?: string;
-  /** Daily series behind the number (drawn as a sparkline). */
-  trend?: Array<{ date: string; value: number }>;
-  /** One of the few headline figures shown large at the top. */
-  hero?: boolean;
-}
-export interface FunnelStage { stage: string; count: number; pctOfBase: number }
-export interface DatapointGroup { key: string; title: string; source: string; theme?: DatapointTheme; cards: DatapointCard[]; funnel?: FunnelStage[] }
 export interface BusinessDatapoints {
   supported: boolean; available: boolean; reason: string | null;
   processCode: string | null; window: { from: string; to: string; label: string } | null;
@@ -47,11 +42,16 @@ export interface BusinessDatapoints {
 
 export const SUPPORTED_PROCESS_CODES = [
   "BELLA_VITA", "BLA_BLI_BLU", "NEEMANS", "GNC", "HOUSING_OWNER", "HOUSING_PREMIUM", "CLOVIA", "BIRLANU",
-  "DALMIA_CEMENT", "APPRICIATE_WEALTH", "ERESOLUTION", "DU_DIGITAL", "EXICOM", "VIEGA",
+  "DALMIA_CEMENT", "APPRICIATE_WEALTH", "ERESOLUTION", "DU_DIGITAL", "EXICOM", "VIEGA", "SATYA_RETAIL",
 ] as const;
+
+/** Satya Retail has no fixed process code; a process whose name contains "satya" maps to it. */
+export function adapterKeyFor(code: string | null, name: string | null): string | null {
+  if (code && ADAPTERS[code]) return code;
+  return name && /satya/i.test(name) ? "SATYA_RETAIL" : null;
+}
 type Period = "trend" | "today" | "wtd" | "mtd";
 
-const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 export function windowFor(period: Period, now = new Date()): { from: string; to: string; label: string } {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -66,13 +66,9 @@ export function windowFor(period: Period, now = new Date()): { from: string; to:
   return { from: iso(from), to, label: "Last 30 days" };
 }
 
-const n = (v: unknown): number | null => { const x = Number(v); return v === null || v === undefined || !Number.isFinite(x) ? null : x; };
-const card = (key: string, label: string, value: unknown, unit: DatapointUnit, extra: Partial<DatapointCard> = {}): DatapointCard =>
-  ({ key, label, value: n(value), unit, ...extra });
-const hasAny = (cards: DatapointCard[]) => cards.some((c) => c.value !== null && c.value !== 0);
 
 async function bella(from: string, to: string): Promise<DatapointGroup[]> {
-  const [sale, cart] = await Promise.all([getBellavitaSaleDashboard(from, to), _cartSummary(from, to)]);
+  const sale = await getBellavitaSaleDashboard(from, to);
   const h = sale.headline;
   const groups: DatapointGroup[] = [{
     key: "sales", title: "Sales and revenue", source: "Bella-Vita sale upload (deduplicated orders)",
@@ -96,21 +92,6 @@ async function bella(from: string, to: string): Promise<DatapointGroup[]> {
       ]),
     });
   }
-  const conv = cart.workableCases > 0 ? Math.round((cart.abandonCartSaleCount / cart.workableCases) * 10000) / 100 : null;
-  groups.push({
-    key: "cart", title: "Abandon-cart calling", source: "Bella-Vita cart upload",
-    cards: [
-      card("carts", "Total carts", cart.totalCarts, "count"),
-      card("workable", "Workable cases", cart.workableCases, "count"),
-      card("cartSales", "Cart sales", cart.abandonCartSaleCount, "count", { direction: "higher_is_better" }),
-      card("cartConv", "Conversion on workable", conv, "percentage", { direction: "higher_is_better" }),
-    ],
-    funnel: cart.totalCarts > 0 ? [
-      { stage: "Total carts", count: cart.totalCarts, pctOfBase: 100 },
-      { stage: "Workable", count: cart.workableCases, pctOfBase: Math.round((cart.workableCases / cart.totalCarts) * 1000) / 10 },
-      { stage: "Sale", count: cart.abandonCartSaleCount, pctOfBase: Math.round((cart.abandonCartSaleCount / cart.totalCarts) * 1000) / 10 },
-    ] : undefined,
-  });
   return groups;
 }
 
@@ -137,6 +118,7 @@ async function bla(from: string, to: string): Promise<DatapointGroup[]> {
 async function neemans(from: string, to: string): Promise<DatapointGroup[]> {
   const d = await getNeemansPerformanceDashboard(from, to);
   const s = d.sale.headline, o = d.overview;
+  const ch: Loose = d.chat.headline, ct: Loose = d.cart.headline, pr: Loose = d.productivity.headline;
   return [
     {
       key: "sales", title: "Sales and revenue", source: "Neemans sale upload",
@@ -158,6 +140,37 @@ async function neemans(from: string, to: string): Promise<DatapointGroup[]> {
         card("tickets", "Chat tickets", o.totalChatTickets, "count"),
         card("resolved", "Chat resolved", o.chatResolvedPct, "percentage", { direction: "higher_is_better" }),
         card("occ", "Average occupancy", o.avgOccupancyPct, "percentage", { direction: "higher_is_better" }),
+      ],
+    },
+    {
+      key: "chat", title: "Chat performance", source: "Neemans chat upload", theme: "quality",
+      cards: [
+        card("ch-tickets", "Chat tickets", ch.totalTickets, "count", { hero: true, trend: series(d.chat.dateWiseTrend as Loose[], (x) => x.tickets) }),
+        card("ch-resolved", "Resolved", ch.resolvedPct, "percentage", { direction: "higher_is_better", hero: true }),
+        card("ch-frt", "First response within target", ch.frtTatCompliancePct, "percentage", { direction: "higher_is_better" }),
+        card("ch-res", "Resolution within target", ch.resolutionTatCompliancePct, "percentage", { direction: "higher_is_better" }),
+        card("ch-csat", "Customer rating", ch.avgCsat, "rating", { direction: "higher_is_better" }),
+      ],
+    },
+    {
+      key: "cart", title: "Abandoned-cart calling", source: "Neemans cart upload", theme: "leads",
+      cards: [
+        card("ct-total", "Carts", ct.totalCarts, "count", { hero: true, trend: series(d.cart.dateWiseTrend as Loose[], (x) => x.cartCount) }),
+        card("ct-value", "Cart value", ct.totalCartValue, "currency", { hero: true }),
+        card("ct-avg", "Average cart value", ct.avgCartValue, "currency"),
+        card("ct-cust", "Unique customers", ct.uniqueCustomers, "count"),
+        card("ct-agents", "Agents", ct.activeAgents, "count"),
+      ],
+    },
+    {
+      key: "prod", title: "Productivity", source: "Neemans agent productivity (APR) upload", theme: "workforce",
+      cards: [
+        card("pr-calls", "Calls logged", pr.totalCalls, "count", { trend: series(d.productivity.dateWiseTrend as Loose[], (x) => x.calls) }),
+        card("pr-agents", "Active agents", pr.activeAgents, "count"),
+        card("pr-occ", "Average occupancy", pr.avgOccupancyPct, "percentage", { direction: "higher_is_better" }),
+        card("pr-days", "Attendance days", pr.attendanceDays, "count"),
+        card("pr-login", "Average net login", pr.avgNetLoginSec, "seconds"),
+        card("pr-break", "Average break time", pr.avgTotalBreakSec, "seconds"),
       ],
     },
   ];
@@ -183,10 +196,6 @@ async function gnc(from: string, to: string): Promise<DatapointGroup[]> {
 }
 
 
-type Loose = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-const series = (rows: Loose[] | undefined, pick: (r: Loose) => unknown, last = 31): Array<{ date: string; value: number }> =>
-  (rows ?? []).slice(-last).map((r) => ({ date: String(r.date), value: Number(pick(r)) })).filter((p) => Number.isFinite(p.value));
-const round1 = (v: unknown) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 10) / 10);
 
 /** Shared dialler inbound figures (offered / answered / answer level / service level / handle time / staffing). */
 function inboundAdapter(projectKey: string, title = "Inbound calls") {
@@ -365,16 +374,17 @@ async function lawyerPanel(from: string, to: string): Promise<DatapointGroup[]> 
 
 type Adapter = (from: string, to: string) => Promise<DatapointGroup[]>;
 const ADAPTERS: Record<string, Adapter[]> = {
-  BELLA_VITA: [bella, inboundAdapter("bellavita")],
+  BELLA_VITA: [bella, bellavitaChat, bellavitaCart, inboundAdapter("bellavita")],
   BLA_BLI_BLU: [bla],
   NEEMANS: [neemans, inboundAdapter("neemans")],
-  GNC: [gnc, inboundAdapter("gnc")],
+  GNC: [gnc, gncAbandonCart, gncChat, inboundAdapter("gnc")],
   HOUSING_OWNER: [housingOwner],
   HOUSING_PREMIUM: [housingPremium],
-  CLOVIA: [inboundAdapter("clovia")],
+  CLOVIA: [inboundAdapter("clovia"), cloviaChannels],
   BIRLANU: [birlanu],
-  DALMIA_CEMENT: [dalmia],
-  APPRICIATE_WEALTH: [appreciateWealth],
+  DALMIA_CEMENT: [dalmia, dalmiaExtras],
+  APPRICIATE_WEALTH: [appreciateWealth, appreciateWealthCentres],
+  SATYA_RETAIL: [satyaRetail],
   ERESOLUTION: [lawyerPanel],
   DU_DIGITAL: [inboundAdapter("dubangladesh")],
   EXICOM: [inboundAdapter("exicom")],
@@ -429,10 +439,11 @@ async function compute(processCode: string, w: { from: string; to: string; label
 export async function getBusinessDatapoints(userId: string, processId: string, period: Period): Promise<BusinessDatapoints | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
-  const [rows] = await db.execute<RowDataPacket[]>("SELECT process_code FROM process_master WHERE id = ? LIMIT 1", [processId]);
-  const code = rows[0]?.process_code ? String(rows[0].process_code) : null;
-  if (!code || !ADAPTERS[code]) {
-    return { supported: false, available: false, reason: "No sales-system connection is set up for this process yet.", processCode: code, window: null, groups: [] };
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT process_code, process_name FROM process_master WHERE id = ? LIMIT 1", [processId]);
+  const rawCode = rows[0]?.process_code ? String(rows[0].process_code) : null;
+  const code = adapterKeyFor(rawCode, rows[0]?.process_name ? String(rows[0].process_name) : null);
+  if (!code) {
+    return { supported: false, available: false, reason: "No sales-system connection is set up for this process yet.", processCode: rawCode, window: null, groups: [] };
   }
   const w = windowFor(period);
   const key = `${code}|${w.from}|${w.to}`;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUSINESS_DATAPOINT_CODES, formatDatapoint, pickHeroes, statusOf, withoutHeroes } from "../BusinessDatapoints";
+import { BUSINESS_DATAPOINT_CODES, formatDatapoint, pickHeroes, statusOf, supportsBusinessDatapoints, withoutHeroes } from "../BusinessDatapoints";
 
 describe("business datapoints formatting", () => {
   it("formats rupees in Indian units, percentages and counts", () => {
@@ -9,6 +9,13 @@ describe("business datapoints formatting", () => {
     expect(formatDatapoint(65.54, "percentage")).toBe("65.5%");
     expect(formatDatapoint(4727, "count")).toBe("4,727");
     expect(formatDatapoint(null, "count")).toBe("—");
+  });
+  it("formats ratings out of five", () => { expect(formatDatapoint(4.26, "rating")).toBe("4.3 / 5"); });
+  it("supports a process by code, or Satya Retail by name", () => {
+    expect(supportsBusinessDatapoints("GNC")).toBe(true);
+    expect(supportsBusinessDatapoints("SOMETHING_ELSE", "Satya E-Com Services Limited")).toBe(true);
+    expect(supportsBusinessDatapoints("SOMETHING_ELSE", "Godfrey Philips")).toBe(false);
+    expect(supportsBusinessDatapoints(null, null)).toBe(false);
   });
   it("formats durations", () => {
     expect(formatDatapoint(45, "seconds")).toBe("45s");
@@ -31,6 +38,6 @@ describe("business datapoints formatting", () => {
     expect(withoutHeroes(g, new Set(["a", "c"])).cards.map((x) => x.key)).toEqual(["b"]);
   });
   it("lists the processes with a wired sales system (kept in step with the backend adapters)", () => {
-    expect(BUSINESS_DATAPOINT_CODES).toEqual(["BELLA_VITA", "BLA_BLI_BLU", "NEEMANS", "GNC", "HOUSING_OWNER", "HOUSING_PREMIUM", "CLOVIA", "BIRLANU", "DALMIA_CEMENT", "APPRICIATE_WEALTH", "ERESOLUTION", "DU_DIGITAL", "EXICOM", "VIEGA"]);
+    expect(BUSINESS_DATAPOINT_CODES).toEqual(["BELLA_VITA", "BLA_BLI_BLU", "NEEMANS", "GNC", "HOUSING_OWNER", "HOUSING_PREMIUM", "CLOVIA", "BIRLANU", "DALMIA_CEMENT", "APPRICIATE_WEALTH", "ERESOLUTION", "DU_DIGITAL", "EXICOM", "VIEGA", "SATYA_RETAIL"]);
   });
 });
