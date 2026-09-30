@@ -4,7 +4,7 @@
  * rows from pd.dataset (loadDataset/applyFilters/getFreshness) -- so an alert can never disagree with the tile it is about.
  */
 import { detectAnomalies, type Anomaly } from "../pd.anomalies.js";
-import { applyFilters, getFreshness, loadDataset, loadConfigOrThrow, type Dataset, type Filters, type Loaded } from "../pd.dataset.js";
+import { applyFilters, getFreshness, loadDataset, loadConfigOrThrow, localIso, type Dataset, type Filters, type Loaded } from "../pd.dataset.js";
 import { METRIC_BY_KEY, profileFor } from "../pd.fields.js";
 import { computeMetrics, metricAvailable, totalAcc, type NormRow, type QaBucket } from "../pd.metrics.js";
 import { loadTargets } from "../pd.config.service.js";
@@ -15,12 +15,15 @@ export interface AlertContext { loaded: Loaded; asOf: string; ds: Dataset; from:
 /** Days of history loaded around asOf: backtest span + widest rule window + anomaly baseline (BASELINE_DAYS = 14) + slack. */
 export const CONTEXT_LOOKBACK_DAYS = 60;
 
+/** Today is still being loaded (the pacing forecast never counts it either), so a rule is judged on the latest COMPLETE day: never later than yesterday. */
+export const alertAsOf = (latestDate: string, today: string = localIso()): string => (latestDate >= today ? addDaysIso(today, -1) : latestDate);
+
 /** Loads the dataset the dashboard would show for this process, ending on its latest data date. null when the process has no data yet. */
 export async function loadAlertContext(processId: string, lookbackDays = CONTEXT_LOOKBACK_DAYS): Promise<AlertContext | null> {
   const loaded = await loadConfigOrThrow(processId, { requireEnabled: true });
   const fresh = await getFreshness(loaded);
   if (!fresh.latestDate) return null;
-  const asOf = fresh.latestDate;
+  const asOf = alertAsOf(fresh.latestDate);
   const from = addDaysIso(asOf, -lookbackDays);
   return { loaded, asOf, from, ds: await loadDataset(loaded, from, asOf) };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../../../db/mysql.js", () => ({ db: { execute: vi.fn() } }));
-const { anomaliesAt, lastDates, metricSeries } = await import("../alerts.data.js");
+const { alertAsOf, anomaliesAt, lastDates, metricSeries } = await import("../alerts.data.js");
 import type { NormRow } from "../../pd.metrics.js";
 
 const row = (date: string, agent: string, o: Partial<NormRow> = {}): NormRow => ({ date, agent_code: agent, agent_name: null, tl_name: null, lob: null, hour: null, calls: null, login_sec: null, talk_sec: null, wait_sec: null, dispo_sec: null,
@@ -34,3 +34,13 @@ describe("anomaliesAt", () => {
 });
 
 describe("lastDates", () => { it("is ascending and ends on asOf", () => { expect(lastDates("2026-03-02", 3)).toEqual(["2026-02-28", "2026-03-01", "2026-03-02"]); }); });
+
+describe("alertAsOf: a rule is judged on the latest complete day", () => {
+  it("never on today's partial day", () => {
+    expect(alertAsOf("2026-09-30", "2026-09-30")).toBe("2026-09-29");
+    expect(alertAsOf("2026-10-01", "2026-09-30")).toBe("2026-09-29");
+    expect(alertAsOf("2026-09-29", "2026-09-30")).toBe("2026-09-29");
+    expect(alertAsOf("2026-09-20", "2026-09-30")).toBe("2026-09-20");
+    expect(alertAsOf("2026-03-01", "2026-03-01")).toBe("2026-02-28");
+  });
+});
