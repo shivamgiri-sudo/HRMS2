@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Loader2, Target, TrendingUp, Upload, Users, IndianRupee } from "lucide-react";
+import BlaAnalytics from "@/components/process-operations/BlaAnalytics";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 /**
@@ -21,7 +22,7 @@ interface Row {
 }
 interface Block { lob: string; hasTarget: boolean; daily: Row[]; weekly: Row[]; mtd: Row }
 interface Overview { from: string; to: string; latestDataDate?: string | null; lobs: string[]; blocks: Block[]; all: Block }
-interface Product { product: string; cartAbc: number; inbound: number; upgrade: number; total: number; contributionPct: number; paid: number; cod: number }
+interface Product { product: string; cartAbc: number; inbound: number; upgrade: number; other?: number; total: number; contributionPct: number; paid: number; cod: number }
 interface ProductWise { grandTotal: number; products: Product[] }
 interface UploadResult { validRows: number; totalRows: number; storedRows: number; datesReplaced: number; dateFrom: string | null; dateTo: string | null; skippedNoDate: number }
 
@@ -229,19 +230,21 @@ export default function BlaBliBluSalesDashboard({ month, canUpload }: { month?: 
         </>
       )}
 
+      {!loading && !empty && <BlaAnalytics from={range.from} to={range.to} funnel={m ? { freshBase: m.freshBase, freshWorkable: m.freshWorkable, uniqueAttempt: m.uniqueAttempt, connected: m.connected, realTimeSale: m.realTimeSale } : undefined} />}
+
       {!loading && products && products.products.length > 0 && (
         <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
           <p className="mb-3 text-sm font-semibold text-slate-700">Product Wise Sales</p>
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead className="bg-slate-50 text-left text-slate-500">
-                <tr>{["Product / Category", "Cart ABC", "Inbound", "Upgrade", "Total", "Contribution", "Paid", "COD"].map((h) => <th key={h} className="px-2 py-2 font-semibold">{h}</th>)}</tr>
+                <tr>{["Product / Category", "Cart ABC", "Inbound", "Upgrade", "Repeat / other", "Total", "Contribution", "Paid", "COD"].map((h) => <th key={h} className="px-2 py-2 font-semibold">{h}</th>)}</tr>
               </thead>
               <tbody>
                 {products.products.map((p) => (
                   <tr key={p.product} className="border-t border-slate-100">
                     <td className="px-2 py-1.5">{p.product}</td><td className="px-2">{fmt(p.cartAbc)}</td><td className="px-2">{fmt(p.inbound)}</td><td className="px-2">{fmt(p.upgrade)}</td>
-                    <td className="px-2 font-semibold">{fmt(p.total)}</td><td className="px-2">{pct(p.contributionPct)}</td><td className="px-2">{fmt(p.paid)}</td><td className="px-2">{fmt(p.cod)}</td>
+                    <td className="px-2">{fmt(p.other ?? 0)}</td><td className="px-2 font-semibold">{fmt(p.total)}</td><td className="px-2">{pct(p.contributionPct)}</td><td className="px-2">{fmt(p.paid)}</td><td className="px-2">{fmt(p.cod)}</td>
                   </tr>
                 ))}
               </tbody>

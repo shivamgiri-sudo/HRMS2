@@ -181,6 +181,7 @@ export async function getProductWise(fromRaw?: string, toRaw?: string) {
     from, to, grandTotal: grand,
     products: rows.map((r) => ({
       product: String(r.category), cartAbc: n(r.cart_abc), inbound: n(r.inbound), upgrade: n(r.upgrade_qty),
+      other: Math.max(0, n(r.total) - n(r.cart_abc) - n(r.inbound) - n(r.upgrade_qty)),
       total: n(r.total), contributionPct: grand > 0 ? n(r.total) / grand : 0, paid: n(r.paid), cod: n(r.cod),
     })),
   };

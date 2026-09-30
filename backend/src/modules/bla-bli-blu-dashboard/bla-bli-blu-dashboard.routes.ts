@@ -27,6 +27,11 @@ blaBliBluDashboardRouter.get("/product-wise", requireRole(...VIEWER_ROLES), h(as
   res.json({ success: true, data: await svc.getProductWise(q(req, "from"), q(req, "to")) });
 }));
 
+blaBliBluDashboardRouter.get("/analytics", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const { getBlaAnalytics } = await import("./bla-analytics.service.js");
+  res.json({ success: true, data: await getBlaAnalytics(q(req, "from"), q(req, "to")) });
+}));
+
 blaBliBluDashboardRouter.get("/targets", requireRole(...VIEWER_ROLES), h(async (_req, res) => {
   res.json({ success: true, data: await svc.getTargets() });
 }));
