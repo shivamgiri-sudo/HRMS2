@@ -302,3 +302,18 @@ Verified on production data via the localhost preview API + Playwright (zero con
 | Server: Bella-Vita chat / cart, GNC abandon cart | Load with funnels (4 and 5 stages) |
 
 **Not verified:** a real production login and per-role scoping; the new sections were not re-rendered in a browser this round (same component as the earlier verified layout); Satya Retail cannot appear on the KPI page until a process record for it exists (none in process_master); Puresta has no dashboard in V2 either.
+
+---
+
+## 2026-09-30 — Hour-by-hour calls view, plain-language source failures
+
+**Method:** GNC Business datapoints rendered in a browser on live data through the read-only harness (harness removed afterwards); hour-by-hour view run on the production server with the deployed build.
+
+| Check | Result |
+|---|---|
+| GNC Business datapoints (browser) | Headline strip (turnover ₹38.93L, 981 sales, AOV ₹3,968, recovered sales 940) with sparklines; Sales/Abandon-cart/Chat sections with funnels; each headline figure shown once |
+| Source-failure banner | Found showing a raw database error twice ("Access denied for user ''@..."). Fixed: one plain sentence; technical reason now goes to the server log only |
+| Hour-by-hour (server, 8 processes) | Bella-Vita peak 10:00 = 2,449 calls, weakest answer level 19:00 = 64.5%; Neemans peak 10:00 = 744; GNC peak 10:00 = 1,807, weakest service level 12:00 = 53.7%; Clovia, Dalmia, DU Bangladesh, Exicom (weakest answer level 20:00 = 14.3%, small volume) and Viega all return 10-16 hourly bars |
+| Root cause of the stopped KPI feeds | The nightly KPI compute worker is disabled by design (KPI_STUDIO_COMPUTE_ENABLED unset; the code requires an operator to enable it). Not changed; awaiting the owner's decision |
+
+**Not verified:** a real production login and per-role scoping; dark mode.
