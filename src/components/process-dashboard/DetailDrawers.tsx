@@ -6,6 +6,7 @@ import { DASH, formatValue, humanize } from "./format";
 import { Empty, ErrorBox, Panel, SERIES_COLORS, Skeleton, reduceMotion } from "./ui";
 import { SimpleTable, type SimpleCol } from "./SimpleTable";
 import type { AgentDetail, DayDetail, Kpi } from "./types";
+import { WhyButton } from "./rootcause/WhyButton";
 
 const scalar = (v: unknown) => typeof v === "string" || typeof v === "number" || typeof v === "boolean";
 const cell = (v: unknown) => (typeof v === "number" ? formatValue(v) : v == null || v === "" ? DASH : String(v));
@@ -79,7 +80,7 @@ export function AgentDrawer({ code, query, kpis, focusKey, onClose, onDay }: { c
   );
 }
 
-export function DayDrawer({ day, query, kpis, onClose, onAgent }: { day: string; query: UseQueryResult<DayDetail>; kpis: Kpi[]; onClose: () => void; onAgent: (c: string) => void }) {
+export function DayDrawer({ day, query, kpis, onClose, onAgent, onWhy }: { day: string; query: UseQueryResult<DayDetail>; kpis: Kpi[]; onClose: () => void; onAgent: (c: string) => void; onWhy?: (metric: string) => void }) {
   const d = query.data;
   const rows = (d?.agents ?? []) as Array<Record<string, unknown>>;
   const hourlyRaw = d?.hourly ?? [];
@@ -90,6 +91,7 @@ export function DayDrawer({ day, query, kpis, onClose, onAgent }: { day: string;
     <Drawer title={`Day breakdown: ${day}`} subtitle="Per-agent performance for the selected day" onClose={onClose}>
       {query.isLoading ? <Skeleton className="h-64" /> : query.isError ? <ErrorBox message={errMsg(query.error)} onRetry={() => void query.refetch()} /> : rows.length === 0 ? <Empty>No activity recorded on this day.</Empty> : (
         <>
+          {onWhy && metricCols.length > 0 && <Panel title="Why did it change? (vs the same weekday last week)"><div className="flex flex-wrap gap-2">{metricCols.map((k) => <WhyButton key={k.key} label={`${k.label} on ${day}`} text={`Why ${k.label}?`} onClick={() => onWhy(k.key)} />)}</div></Panel>}
           {hourKeys.length > 0 && <Panel title="Hourly"><div role="img" aria-label="Hourly breakdown" className="h-48"><ResponsiveContainer width="100%" height="100%">
             <LineChart data={hourly}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="hour" tick={{ fontSize: 10 }} /><YAxis tick={{ fontSize: 10 }} width={44} /><Tooltip /><Legend wrapperStyle={{ fontSize: 11 }} />
               {hourKeys.map((k, i) => <Line key={k.key} type="monotone" dataKey={k.key} name={k.label} stroke={SERIES_COLORS[i]} strokeWidth={2} dot={false} isAnimationActive={!reduceMotion()} />)}</LineChart></ResponsiveContainer></div></Panel>}

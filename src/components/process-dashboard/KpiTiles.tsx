@@ -2,11 +2,12 @@ import { ArrowDownRight, ArrowUpRight, Minus, Target } from "lucide-react";
 import { formatDelta, formatValue, statusMeta } from "./format";
 import { FOCUS, Skeleton, Sparkline } from "./ui";
 import type { Kpi } from "./types";
+import { WhyButton } from "./rootcause/WhyButton";
 
 const TONE = { good: "text-emerald-800", bad: "text-red-800", neutral: "text-slate-700" } as const;
 const BAR = { good: "bg-emerald-500", warn: "bg-amber-500", bad: "bg-red-500", nodata: "bg-slate-300" } as const;
 
-export function KpiTiles({ kpis, activeKey, onSelect, loading }: { kpis?: Kpi[]; activeKey: string; onSelect: (key: string) => void; loading: boolean }) {
+export function KpiTiles({ kpis, activeKey, onSelect, loading, onWhy }: { kpis?: Kpi[]; activeKey: string; onSelect: (key: string) => void; loading: boolean; onWhy?: (key: string) => void }) {
   if (loading && !kpis) return <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-[112px]" />)}</div>;
   const shown = (kpis ?? []).filter((k) => k.available !== false); // unmapped metrics are hidden, not shown as zero
   if (!shown.length) return null;
@@ -18,7 +19,7 @@ export function KpiTiles({ kpis, activeKey, onSelect, loading }: { kpis?: Kpi[];
         const Arrow = d.arrow === "up" ? ArrowUpRight : d.arrow === "down" ? ArrowDownRight : Minus;
         const active = activeKey === k.key;
         return (
-          <li key={k.key}>
+          <li key={k.key} className="relative">
             <button type="button" onClick={() => onSelect(k.key)} aria-pressed={active}
               aria-label={`${k.label}: ${formatValue(k.value, k.unit)}. ${d.srText}. ${st.label}. Focus trend and sort table by this metric.`}
               className={`group relative flex h-full w-full cursor-pointer flex-col overflow-hidden rounded-xl border bg-white p-3 text-left shadow-sm transition-shadow hover:shadow-md ${FOCUS} ${active ? "border-blue-600 ring-1 ring-blue-600" : "border-slate-200"}`}>
@@ -37,6 +38,7 @@ export function KpiTiles({ kpis, activeKey, onSelect, loading }: { kpis?: Kpi[];
                 {k.available === false && <span className="text-[10px] font-semibold text-slate-600">Field not mapped</span>}
               </span>
             </button>
+            {onWhy && k.value !== null && <WhyButton label={k.label} onClick={() => onWhy(k.key)} className="absolute right-2 top-2 bg-white/90" />}
           </li>
         );
       })}

@@ -16,6 +16,8 @@ import { useBreadcrumbLabel } from "@/lib/breadcrumbLabel";
 import { parseUrlState, serializeUrlState, type DashUrlState } from "./urlState";
 import { useDashboardData } from "./useDashboardData";
 import type { BreakdownRow } from "./types";
+import { WhyDrawer } from "./rootcause/WhyDrawer";
+import { openWhyState, parseWhy, writeWhy, type WhyState } from "./rootcause/whyState";
 
 // The inbound dashboard pulls in the charting bundle; load it only when the Live inbound tab is opened.
 const InboundInsightsDashboard = lazy(() => import("@/components/process-performance/InboundInsightsDashboard").then((m) => ({ default: m.InboundInsightsDashboard })));
@@ -117,6 +119,9 @@ function AprDashboard({ processId, embedded = false }: { processId: string; embe
   ov?.byTl?.forEach((r) => r.tl && tlSeen.current.set(r.tl, r));
   ov?.byLob?.forEach((r) => r.lob && lobSeen.current.set(r.lob, r));
 
+  const why = useMemo(() => parseWhy(sp, state), [sp, state]);
+  const setWhy = useCallback((w: WhyState | null, push = false) => setSp((cur) => writeWhy(w, cur), { replace: !push }), [setSp]);
+  const mappedFields = (ov?.categoryProfile?.mappedFields as string[] | undefined) ?? [];
   const onTile = (key: string) => update({ metric: key, sort: key, dir: "desc", page: 1 });
   const onExport = async (view: "agents" | "daily") => {
     setExporting(true); setExportError(null);
@@ -148,9 +153,10 @@ function AprDashboard({ processId, embedded = false }: { processId: string; embe
               {live.slice(0, 6).map((k) => <span key={k.key} className="ml-4 inline-block">{k.label ?? k.key} <b className="tabular-nums">{formatValue(k.value, k.unit)}</b>{k.deltaPct != null && <span> ({k.deltaPct > 0 ? "+" : ""}{k.deltaPct.toFixed(1)}% vs usual)</span>}</span>)}
             </section>
           )}
-          <KpiTiles kpis={ov?.kpis} activeKey={state.metric} onSelect={onTile} loading={d.overview.isLoading} />
+          <KpiTiles kpis={ov?.kpis} activeKey={state.metric} onSelect={onTile} loading={d.overview.isLoading} onWhy={(key) => setWhy(openWhyState(key, state.from, state.to), true)} />
           {!d.overview.isLoading && !ov?.kpis?.length && !rows.length && <Empty>No data for {state.from} to {state.to}. Try a wider date range.</Empty>}
-          <TrendPanel overview={ov} focusKey={state.metric} onFocusKey={(k) => update({ metric: k })} onDay={(day) => update({ day }, true)} />
+          <TrendPanel overview={ov} focusKey={state.metric} onFocusKey={(k) => update({ metric: k })} onDay={(day) => update({ day }, true)}
+            selectedDay={state.day} onWhy={(metric, from, to) => setWhy(openWhyState(metric, from, to), true)} />
           <div className="grid gap-4 lg:grid-cols-2">
             <AnomaliesPanel anomalies={ov?.anomalies} onAgent={(agent) => update({ agent }, true)} />
             <TopBottomPanel data={ov?.topBottom} onAgent={(agent) => update({ agent }, true)} />
@@ -164,8 +170,15 @@ function AprDashboard({ processId, embedded = false }: { processId: string; embe
           )}
         </>
       )}
-      {state.agent && <AgentDrawer code={state.agent} query={d.agent} kpis={ov?.kpis ?? []} focusKey={state.metric} onClose={() => update({ agent: "" })} onDay={(day) => update({ day, agent: "" }, true)} />}
-      {state.day && !state.agent && <DayDrawer day={state.day} query={d.day} kpis={ov?.kpis ?? []} onClose={() => update({ day: "" })} onAgent={(agent) => update({ agent, day: "" }, true)} />}
+      {why && <WhyDrawer processId={processId} state={why} scope={{ tl: state.tl, lob: state.lob }} metricLabel={ov?.kpis?.find((k) => k.key === why.metric)?.label}
+        dims={{ tl: mappedFields.includes("tl_name"), lob: mappedFields.includes("lob"), hour: mappedFields.includes("hour") }}
+        onChange={(patch) => setWhy({ ...why, ...patch })} onClose={() => setWhy(null)}
+        onPick={(seg, dim) => {
+          setSp((cur) => { const n = writeWhy(null, cur); const cs = parseUrlState(n); return serializeUrlState({ ...cs, ...(dim === "agent" ? { agent: seg.key } : dim === "tl" ? { tl: seg.key, page: 1 } : { lob: seg.key, page: 1 }) }, n); }, { replace: false });
+        }} />}
+      {state.agent && !why && <AgentDrawer code={state.agent} query={d.agent} kpis={ov?.kpis ?? []} focusKey={state.metric} onClose={() => update({ agent: "" })} onDay={(day) => update({ day, agent: "" }, true)} />}
+      {state.day && !state.agent && !why && <DayDrawer day={state.day} query={d.day} kpis={ov?.kpis ?? []} onClose={() => update({ day: "" })} onAgent={(agent) => update({ agent, day: "" }, true)}
+        onWhy={(metric) => setSp((cur) => { const n = writeWhy(openWhyState(metric, state.day, state.day), serializeUrlState({ ...parseUrlState(cur), day: "" }, cur)); return n; }, { replace: false })} />}
     </div>
   );
 }

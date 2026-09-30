@@ -10,6 +10,7 @@ import { INBOUND_INSIGHT_ROLES } from "../call-master/inbound-projects.js";
 import { loadConfigOrThrow } from "./pd.dataset.js";
 import { getAgentDrill, getAgents, getDay, getOverview, categoryProfileOut } from "./pd.service.js";
 import { getLive, liveEtag, streamCsv } from "./pd.live.js";
+import { getWhy } from "./rootcause/why.service.js";
 
 /**
  * /api/process-dashboard -- config-driven dashboards for any process whose APR table has been registered (see sql/1941).
@@ -134,6 +135,7 @@ router.get("/:processId/inbound", requireRole(...INBOUND_INSIGHT_ROLES), h(async
 }));
 
 router.get("/:processId/overview", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getOverview(l, req.query) }); }));
+router.get("/:processId/why", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getWhy(l, req.query) }); }));
 router.get("/:processId/agents", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getAgents(l, req.query) }); }));
 router.get("/:processId/agents/:agentCode", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getAgentDrill(l, req.params.agentCode, req.query) }); }));
 router.get("/:processId/days/:date", viewer, scoped(async (l, req, res) => { res.json({ success: true, data: await getDay(l, req.params.date, req.query) }); }));
