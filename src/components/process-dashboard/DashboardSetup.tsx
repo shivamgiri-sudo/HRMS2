@@ -6,6 +6,8 @@ import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { PD_API } from "./api";
 import { CANONICAL_FIELDS, CATEGORY_OPTIONS, SOURCE_SCHEMAS, TIME_UNIT_OPTIONS, emptyForm, toConfigPayload, validateSetup, type SetupForm } from "./canonicalFields";
 import { InboundSourcePanel } from "./InboundSourcePanel";
+import { OutboundSourcePanel } from "./outbound/OutboundSourcePanel";
+import { SalesSourcePanel } from "./sales/SalesSourcePanel";
 import { SimpleTable } from "./SimpleTable";
 import { Empty, ErrorBox, FOCUS, Panel, Skeleton, btn } from "./ui";
 import type { ProcessConfigSummary } from "./types";
@@ -161,6 +163,8 @@ export function DashboardSetup({ initialProcessId = "" }: { initialProcessId?: s
       </Panel>
 
       {form.category === "support_inbound" && <InboundSourcePanel processId={form.processId} />}
+      {form.category === "sales" && <SalesSourcePanel processId={form.processId} />}
+      {form.category === "outbound" && <OutboundSourcePanel processId={form.processId} />}
 
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4">
         <button type="button" className={`${btn} bg-blue-700 text-white hover:bg-blue-800 border-blue-700`} disabled={errors.length > 0 || save.isPending} onClick={() => save.mutate(form.enabled)}><Save className="h-3.5 w-3.5" aria-hidden="true" />{save.isPending ? "Saving..." : "Save mapping"}</button>

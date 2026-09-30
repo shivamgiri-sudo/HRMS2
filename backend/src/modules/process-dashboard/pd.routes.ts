@@ -13,6 +13,8 @@ import { getLive, liveEtag, streamCsv } from "./pd.live.js";
 import { getWhy } from "./rootcause/why.service.js";
 import { getForecast } from "./forecast/fc.service.js";
 import { alertsRouter } from "./alerts/alerts.routes.js";
+import { salesRouter } from "./sales/sales.routes.js";
+import { outboundRouter } from "./outbound/outbound.routes.js";
 
 /**
  * /api/process-dashboard -- config-driven dashboards for any process whose APR table has been registered (see sql/1941).
@@ -34,6 +36,9 @@ const OUT_OF_SCOPE = { success: false, code: "OUT_OF_SCOPE", message: "That proc
 const q1 = (v: unknown): string => (typeof v === "string" ? v : "");
 
 router.use(requireAuth);
+// Sales / Outbound category templates (sql/1961): own routers, own role gates; /admin/sales|outbound/* and /:processId/sales|outbound/*.
+router.use(salesRouter);
+router.use(outboundRouter);
 
 /* ---------------- admin ---------------- */
 const admin = requireRole(...ADMIN_ROLES);

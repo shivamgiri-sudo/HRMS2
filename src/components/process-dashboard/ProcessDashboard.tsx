@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { PhoneIncoming, SearchX, Settings2 } from "lucide-react";
+import { PhoneIncoming, PhoneOutgoing, SearchX, Settings2, ShoppingCart } from "lucide-react";
 import { AgentsTable, resolveColumns } from "./AgentsTable";
 import { AgentDrawer, DayDrawer } from "./DetailDrawers";
 import { DashboardHeader } from "./DashboardHeader";
@@ -10,6 +10,7 @@ import { AnomaliesPanel, BreakdownPanel, QualityStrip, TopBottomPanel } from "./
 import { KpiTiles } from "./KpiTiles";
 import { TrendPanel } from "./TrendPanel";
 import { downloadCsv, fetchConfigs, fetchInboundTab, probeProcess } from "./api";
+import { fetchTab } from "./sales/extApi";
 import { formatValue } from "./format";
 import { Empty, ErrorBox, FOCUS, Skeleton } from "./ui";
 import { useBreadcrumbLabel } from "@/lib/breadcrumbLabel";
@@ -24,6 +25,10 @@ import { openWhyState, parseWhy, writeWhy, type WhyState } from "./rootcause/why
 const PacingPanel = lazy(() => import("./forecast/PacingPanel"));
 // The inbound dashboard pulls in the charting bundle; load it only when the Live inbound tab is opened.
 const InboundInsightsDashboard = lazy(() => import("@/components/process-performance/InboundInsightsDashboard").then((m) => ({ default: m.InboundInsightsDashboard })));
+
+// Sales / Outbound tabs (data-driven category templates, sql/1961) pull in the charting bundle too: lazy as well.
+const SalesDashboard = lazy(() => import("./sales/SalesDashboard").then((m) => ({ default: m.SalesDashboard })));
+const OutboundDashboard = lazy(() => import("./outbound/OutboundDashboard").then((m) => ({ default: m.OutboundDashboard })));
 
 export const ADMIN_PATH = "/performance/process-dashboard-admin";
 
@@ -50,7 +55,7 @@ export function NotFoundOrForbidden() {
   );
 }
 
-type View = "apr" | "inbound";
+type View = "apr" | "inbound" | "sales" | "outbound";
 const tabCls = (on: boolean) => `inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 border-b-2 px-4 text-sm font-semibold ${FOCUS} ${on ? "border-blue-700 text-blue-800" : "border-transparent text-slate-700 hover:text-slate-900"}`;
 
 /**
@@ -66,9 +71,14 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
   const probe = useQuery({ queryKey: ["process-dashboard", processId, "probe"], queryFn: () => probeProcess(processId), enabled: loaded && !config, retry: false, staleTime: 60_000 });
   const mayHaveInbound = loaded && (config ? config.category === "support_inbound" || config.category === "unconfigured" : probe.isSuccess && probe.data !== "forbidden");
   const inbound = useQuery({ queryKey: ["process-dashboard", processId, "inbound"], queryFn: () => fetchInboundTab(processId), enabled: mayHaveInbound, retry: false, staleTime: 30_000 });
+  const probeOk = probe.isSuccess && probe.data !== "forbidden";
+  const maySales = loaded && (config ? config.category === "sales" || config.category === "unconfigured" : probeOk);
+  const mayOutbound = loaded && (config ? config.category === "outbound" || config.category === "unconfigured" : probeOk);
+  const sales = useQuery({ queryKey: ["process-dashboard", processId, "sales"], queryFn: () => fetchTab(processId, "sales"), enabled: maySales, retry: false, staleTime: 30_000 });
+  const outbound = useQuery({ queryKey: ["process-dashboard", processId, "outbound"], queryFn: () => fetchTab(processId, "outbound"), enabled: mayOutbound, retry: false, staleTime: 30_000 });
 
   // The TopBar breadcrumb would otherwise end in the raw process id (standalone page only; the embedded tile has no such crumb).
-  useBreadcrumbLabel(`/performance/process-dashboard/${processId}`, embedded ? null : config ? config.label || config.processName : inbound.data?.name ?? null);
+  useBreadcrumbLabel(`/performance/process-dashboard/${processId}`, embedded ? null : config ? config.label || config.processName : inbound.data?.name ?? sales.data?.name ?? outbound.data?.name ?? null);
 
   if (configs.isLoading) return <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-16" /><Skeleton className="h-64" /></div>;
   if (configs.isError) return <ErrorBox message="Could not load dashboard configuration." onRetry={() => void configs.refetch()} />;
@@ -76,27 +86,36 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
     if (probe.isLoading) return <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
     if (probe.data === "forbidden") return <NotFoundOrForbidden />;
   }
-  if (mayHaveInbound && inbound.isLoading) return <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
+  if ((mayHaveInbound && inbound.isLoading) || (maySales && sales.isLoading) || (mayOutbound && outbound.isLoading)) return <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   const tab = inbound.data ?? null;
-  if (!tab) {
+  const extra = ([tab && "inbound", sales.data && "sales", outbound.data && "outbound"].filter(Boolean)) as Array<Exclude<View, "apr">>;
+  if (!extra.length) {
     if (!config && probe.data === "missing") return <NotConfigured processId={processId} reason="missing" />;
     return <AprDashboard processId={processId} embedded={embedded} />;
   }
   const aprReady = !!config?.configured && config.enabled;
-  const view: View = sp.get("view") === "inbound" || (!aprReady && sp.get("view") !== "apr") ? "inbound" : "apr";
-  const setView = (v: View) => setSp((cur) => { const n = new URLSearchParams(cur); if (v === "inbound") n.set("view", "inbound"); else n.delete("view"); return n; }, { replace: true });
+  const want = sp.get("view");
+  const view: View = want === "apr" || (extra as string[]).includes(want ?? "") ? (want as View) : aprReady ? "apr" : extra[0];
+  const setView = (v: View) => setSp((cur) => { const n = new URLSearchParams(cur); if (v !== "apr") n.set("view", v); else n.delete("view"); return n; }, { replace: true });
+  const fallback = <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   return (
     <div className="space-y-4">
       <div role="tablist" aria-label="Dashboard views" className="flex flex-wrap gap-1 border-b border-slate-200">
         <button type="button" role="tab" id="pd-tab-apr" aria-selected={view === "apr"} aria-controls="pd-panel-apr" className={tabCls(view === "apr")} onClick={() => setView("apr")}>Process overview</button>
-        <button type="button" role="tab" id="pd-tab-inbound" aria-selected={view === "inbound"} aria-controls="pd-panel-inbound" className={tabCls(view === "inbound")} onClick={() => setView("inbound")}><PhoneIncoming className="h-4 w-4" aria-hidden="true" />Live inbound</button>
+        {tab && <button type="button" role="tab" id="pd-tab-inbound" aria-selected={view === "inbound"} aria-controls="pd-panel-inbound" className={tabCls(view === "inbound")} onClick={() => setView("inbound")}><PhoneIncoming className="h-4 w-4" aria-hidden="true" />Live inbound</button>}
+        {sales.data && <button type="button" role="tab" id="pd-tab-sales" aria-selected={view === "sales"} aria-controls="pd-panel-sales" className={tabCls(view === "sales")} onClick={() => setView("sales")}><ShoppingCart className="h-4 w-4" aria-hidden="true" />Sales</button>}
+        {outbound.data && <button type="button" role="tab" id="pd-tab-outbound" aria-selected={view === "outbound"} aria-controls="pd-panel-outbound" className={tabCls(view === "outbound")} onClick={() => setView("outbound")}><PhoneOutgoing className="h-4 w-4" aria-hidden="true" />Outbound</button>}
       </div>
-      {view === "inbound" ? (
+      {view === "inbound" && tab ? (
         <div role="tabpanel" id="pd-panel-inbound" aria-labelledby="pd-tab-inbound">
-          <Suspense fallback={<div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>}>
+          <Suspense fallback={fallback}>
             <InboundInsightsDashboard key={tab.projectKey} projectKey={tab.projectKey} projectName={tab.name} />
           </Suspense>
         </div>
+      ) : view === "sales" && sales.data ? (
+        <div role="tabpanel" id="pd-panel-sales" aria-labelledby="pd-tab-sales"><Suspense fallback={fallback}><SalesDashboard key={processId} processId={processId} name={sales.data.name} refreshSeconds={sales.data.refreshSeconds} /></Suspense></div>
+      ) : view === "outbound" && outbound.data ? (
+        <div role="tabpanel" id="pd-panel-outbound" aria-labelledby="pd-tab-outbound"><Suspense fallback={fallback}><OutboundDashboard key={processId} processId={processId} name={outbound.data.name} refreshSeconds={outbound.data.refreshSeconds} /></Suspense></div>
       ) : (
         <div role="tabpanel" id="pd-panel-apr" aria-labelledby="pd-tab-apr"><AprDashboard processId={processId} embedded={embedded} /></div>
       )}
