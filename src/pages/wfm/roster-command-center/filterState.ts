@@ -6,7 +6,7 @@ import type { RosterConsoleFilters } from "./RosterConsoleFilterContext";
 
 export type FilterKey = "branch" | "process" | "lob" | "dates";
 
-/** Which shared filters each tab honours — drives the "This tab uses" line. */
+/** Which shared filters each tab honours — drives whether the date range shows. */
 export const TAB_FILTER_SUPPORT: Record<string, FilterKey[]> = {
   live: ["branch", "process", "lob"],
   "team-roster": ["branch", "process", "lob"],
@@ -17,13 +17,6 @@ export const TAB_FILTER_SUPPORT: Record<string, FilterKey[]> = {
   interventions: ["branch", "process", "lob"],
   audit: ["branch", "process", "lob", "dates"],
 };
-
-const KEY_LABEL: Record<FilterKey, string> = { branch: "Branch", process: "Process", lob: "LOB", dates: "Dates" };
-
-export function describeTabFilters(tabKey: string): string {
-  const keys = TAB_FILTER_SUPPORT[tabKey] ?? [];
-  return keys.length ? `This tab uses: ${keys.map((k) => KEY_LABEL[k]).join(" · ")}` : "This tab has its own controls";
-}
 
 export function isoDate(offsetDays = 0, now: Date = new Date()): string {
   const d = new Date(now);
@@ -96,20 +89,4 @@ export function scopeParams(
   if (!isAll(filters.processId)) p.set("processId", filters.processId);
   if (!isAll(filters.lobId)) p.set("lobId", filters.lobId);
   return p;
-}
-
-export interface FilterChipModel { key: "branchId" | "processId" | "lob" | "dates"; label: string; value: string }
-
-export function buildChips(
-  filters: RosterConsoleFilters,
-  names: { branch?: string; process?: string; lob?: string },
-  now: Date = new Date(),
-): FilterChipModel[] {
-  const chips: FilterChipModel[] = [];
-  if (filters.branchId) chips.push({ key: "branchId", label: "Branch", value: names.branch ?? filters.branchId });
-  if (filters.processId) chips.push({ key: "processId", label: "Process", value: names.process ?? filters.processId });
-  if (filters.lobId) chips.push({ key: "lob", label: "LOB", value: filters.lobId === "__none__" ? "Unassigned" : (names.lob ?? filters.lobId) });
-  const d = defaultFilters(now);
-  if (filters.from !== d.from || filters.to !== d.to) chips.push({ key: "dates", label: "Dates", value: `${filters.from} → ${filters.to}` });
-  return chips;
 }

@@ -13,7 +13,7 @@
  *  2. A chart that shows only part of its data says so, in words, next to itself.
  *     Silent top-N truncation is the most common way a dashboard misleads.
  */
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Info } from "lucide-react";
 
 /* ── Colour ──────────────────────────────────────────────────────────────────
@@ -115,6 +115,7 @@ export function StatTile({
   intent = "neutral",
   icon,
   provisional,
+  onClick,
 }: {
   label: string;
   value: ReactNode;
@@ -124,6 +125,8 @@ export function StatTile({
   intent?: "neutral" | "good" | "warning" | "critical";
   icon?: ReactNode;
   provisional?: boolean;
+  /** When set the tile is a button (keyboard-focusable) that drills into the figure. */
+  onClick?: () => void;
 }) {
   const accent = {
     neutral: "before:bg-slate-300",
@@ -134,8 +137,11 @@ export function StatTile({
 
   return (
     <div
+      {...(onClick
+        ? { role: "button", tabIndex: 0, onClick, onKeyDown: (e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } }
+        : {})}
       className={`relative overflow-hidden rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm transition-shadow duration-200 hover:shadow-md
-                  before:absolute before:inset-y-0 before:left-0 before:w-1 ${accent}`}
+                  before:absolute before:inset-y-0 before:left-0 before:w-1 ${accent} ${onClick ? "cursor-pointer" : ""}`}
     >
       <div className="flex items-start justify-between gap-2 pl-1.5">
         <div className="min-w-0">

@@ -12,7 +12,9 @@ interface DrillDownContextValue {
   popToChip: (index: number) => void;
   clear: () => void;
   showEmployeeList: boolean;
-  openEmployeeList: () => void;
+  /** Metric forced by whoever opened the list (e.g. the Overall Attrition Rate tile), or null to use the page metric. */
+  listMetric: "headcount" | "exits" | "shrinkage" | null;
+  openEmployeeList: (metricOverride?: "headcount" | "exits" | "shrinkage") => void;
   closeEmployeeList: () => void;
   selectedEmployeeId: string | null;
   selectEmployee: (id: string) => void;
@@ -41,6 +43,7 @@ export function applyPopToChip(chips: DrillDownChip[], index: number): DrillDown
 export function DrillDownProvider({ children }: { children: React.ReactNode }) {
   const [chips, setChips] = useState<DrillDownChip[]>([]);
   const [showEmployeeList, setShowEmployeeList] = useState(false);
+  const [listMetric, setListMetric] = useState<"headcount" | "exits" | "shrinkage" | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
   const pushChip = useCallback((chip: DrillDownChip) => {
@@ -54,10 +57,17 @@ export function DrillDownProvider({ children }: { children: React.ReactNode }) {
   const clear = useCallback(() => {
     setChips([]);
     setShowEmployeeList(false);
+    setListMetric(null);
   }, []);
 
-  const openEmployeeList = useCallback(() => setShowEmployeeList(true), []);
-  const closeEmployeeList = useCallback(() => setShowEmployeeList(false), []);
+  const openEmployeeList = useCallback((metricOverride?: "headcount" | "exits" | "shrinkage") => {
+    setListMetric(typeof metricOverride === "string" ? metricOverride : null);
+    setShowEmployeeList(true);
+  }, []);
+  const closeEmployeeList = useCallback(() => {
+    setShowEmployeeList(false);
+    setListMetric(null);
+  }, []);
   const selectEmployee = useCallback((id: string) => setSelectedEmployeeId(id), []);
   const deselectEmployee = useCallback(() => setSelectedEmployeeId(null), []);
 
@@ -68,6 +78,7 @@ export function DrillDownProvider({ children }: { children: React.ReactNode }) {
       popToChip,
       clear,
       showEmployeeList,
+      listMetric,
       openEmployeeList,
       closeEmployeeList,
       selectedEmployeeId,
@@ -80,6 +91,7 @@ export function DrillDownProvider({ children }: { children: React.ReactNode }) {
       popToChip,
       clear,
       showEmployeeList,
+      listMetric,
       openEmployeeList,
       closeEmployeeList,
       selectedEmployeeId,

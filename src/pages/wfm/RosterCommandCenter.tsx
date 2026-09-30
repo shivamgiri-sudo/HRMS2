@@ -49,6 +49,7 @@ import {
   RosterConsoleFilterProvider,
   type RosterConsoleFilters,
 } from "./roster-command-center/RosterConsoleFilterContext";
+import { clearTabLocalParams } from "./roster-command-center/useTabParams";
 import { RosterConsoleFilterBar } from "./roster-command-center/RosterConsoleFilterBar";
 import { ConsoleTabsBar } from "./roster-command-center/ConsoleTabsBar";
 import { EmbeddedInConsole } from "@/components/wfm/console/EmbeddableLayout";
@@ -162,7 +163,8 @@ export default function RosterCommandCenter() {
     (nextKey: string) => {
       setSearchParams(
         (prev) => {
-          const next = new URLSearchParams(prev);
+          // Tab-local filters (month, week, search…) belong to the tab being left.
+          const next = clearTabLocalParams(prev);
           next.set("tab", nextKey);
           return next;
         },

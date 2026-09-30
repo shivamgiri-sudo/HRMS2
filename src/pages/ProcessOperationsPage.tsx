@@ -73,6 +73,7 @@ const PROCESS_MASMIS_UPLOADS: Record<string, Array<{ code: string; label: string
 // Process code → sales dashboard type. Derived from live process list 2026-09-15.
 const PROCESS_SALES_MAP: Record<string, { type: string; label: string }> = {
   BELLA_VITA:          { type: "bellavita", label: "Bellavita / BVO" },
+  BLA_BLI_BLU:         { type: "blabliblu", label: "BLA / BLI / BLU" },
   NEEMANS:             { type: "neemans",   label: "Neemans" },
   GNC:                 { type: "gnc",       label: "GNC" },
   APPRICIATE_WEALTH:   { type: "aw",        label: "AW (Aarohan Wealth)" },
@@ -96,7 +97,8 @@ function currentMonthStr() {
 // Inline sales dashboard view — renders the correct component for the selected process.
 function ProcessSalesDashboardView({ processCode, processName }: { processCode: string; processName: string }) {
   const [month, setMonth] = useState(currentMonthStr());
-  const mapping = PROCESS_SALES_MAP[processCode];
+  // Match on the process name too, so the dashboard is found even if the process code is stored differently.
+  const mapping = PROCESS_SALES_MAP[processCode] ?? (/\bbla\b.*\bbli\b|bla[\s_/-]*bli[\s_/-]*blu/i.test(processName) ? PROCESS_SALES_MAP.BLA_BLI_BLU : undefined);
   const { hasAnyRole } = useWorkforceAccess();
   // The roles POST /api/sales-upload/upload/* accepts — not the Brand Sales
   // page's list, which offers the form to process_manager (who then gets 403).
@@ -106,7 +108,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
     return (
       <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center shadow-sm">
         <p className="text-sm font-semibold text-slate-700">No sales dashboard for {processName}</p>
-        <p className="text-xs text-slate-400 mt-1">Sales data is only available for Bellavita, Neemans, GNC, AW, Clovia, Dalmia, DU Digital, Eresolution (Lawyers Panel), and Housing processes.</p>
+        <p className="text-xs text-slate-400 mt-1">Sales data is only available for Bellavita, BLA / BLI / BLU, Neemans, GNC, AW, Clovia, Dalmia, DU Digital, Eresolution (Lawyers Panel), and Housing processes.</p>
       </div>
     );
   }
@@ -124,6 +126,7 @@ function ProcessSalesDashboardView({ processCode, processName }: { processCode: 
 
       {/* Render the process-specific dashboard */}
       {mapping.type === "bellavita" && <BellavitaBvoToggle month={month} canUpload={canUpload} />}
+      {mapping.type === "blabliblu" && <BlaBliBluSalesDashboard month={month} canUpload={canUpload} />}
       {mapping.type === "neemans"   && <NeemansDashboard month={month} />}
       {mapping.type === "gnc"       && <GncDashboard month={month} />}
       {mapping.type === "aw"        && <AwDashboard month={month} />}

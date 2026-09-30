@@ -212,6 +212,16 @@ function GapBanner({ items }: { items: Array<{ label: string; detail: string }> 
 /* ── Overview ──────────────────────────────────────────────────────────────── */
 
 /**
+ * "Overall Attrition Rate" tile that opens the exits list (agent, process, tenure, reason for
+ * leaving) for the whole date range. A child component because `useDrillDown` needs a
+ * `DrillDownProvider` ancestor, which `Overview` itself renders.
+ */
+function HeadlineAttritionTile(props: Omit<React.ComponentProps<typeof StatTile>, "onClick">) {
+  const { clear, openEmployeeList } = useDrillDown();
+  return <StatTile {...props} onClick={() => { clear(); openEmployeeList("exits"); }} />;
+}
+
+/**
  * One heatmap cell, made clickable.
  *
  * `pushChip` here bypasses Panel 1 (SliceDetailPanel) and opens Panel 2 (Employee List)
@@ -644,7 +654,7 @@ function Overview({ from, to, branchId, designationId, headlineRate }: { from: s
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {!loading && !headlineRate.isLoading && headlineRate.data?.[headlineRate.data.length - 1] && (
-          <StatTile
+          <HeadlineAttritionTile
             label="Overall Attrition Rate"
             value={pct(Number(headlineRate.data[headlineRate.data.length - 1].attrition_rate_pct ?? NaN))}
             denominator={`${num(Number(headlineRate.data[headlineRate.data.length - 1].exits ?? 0))} exits over avg ${num(Number(headlineRate.data[headlineRate.data.length - 1].avg_total_headcount ?? 0))} headcount`}
