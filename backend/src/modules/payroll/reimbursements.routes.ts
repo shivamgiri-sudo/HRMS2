@@ -9,7 +9,10 @@ import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { randomUUID } from "crypto";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
@@ -22,7 +25,11 @@ export const reimbursementsRouter = Router();
 // ---------------------------------------------------------------------------
 const h =
   (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
-  (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void): void => {
+  (
+    req: AuthenticatedRequest,
+    res: Response,
+    next: (err?: unknown) => void,
+  ): void => {
     void fn(req, res).catch(next);
   };
 
@@ -64,9 +71,15 @@ async function ensureTable(attempt = 1): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
   } catch (err: any) {
-    if ((err?.code === 'ER_LOCK_WAIT_TIMEOUT' || err?.code === 'ER_LOCK_DEADLOCK') && attempt < 5) {
-      console.log(`[reimbursements] Table ensure retry ${attempt}/5 after lock timeout`);
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+    if (
+      (err?.code === "ER_LOCK_WAIT_TIMEOUT" ||
+        err?.code === "ER_LOCK_DEADLOCK") &&
+      attempt < 5
+    ) {
+      console.log(
+        `[reimbursements] Table ensure retry ${attempt}/5 after lock timeout`,
+      );
+      await new Promise((r) => setTimeout(r, 1000 * attempt));
       return ensureTable(attempt + 1);
     }
     throw err;
@@ -74,19 +87,27 @@ async function ensureTable(attempt = 1): Promise<void> {
 }
 
 void ensureTable().catch((err) =>
-  console.error("[reimbursements] Table ensure failed after retries:", err)
+  console.error("[reimbursements] Table ensure failed after retries:", err),
 );
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const APPROVER_ROLES = ["admin", "hr", "payroll_head", "finance", "super_admin"] as const;
+const APPROVER_ROLES = [
+  "admin",
+  "hr",
+  "payroll_head",
+  "finance",
+  "super_admin",
+] as const;
 const PROCESSOR_ROLES = ["payroll_head", "super_admin"] as const;
 
-async function resolveEmployeeIdForUser(userId: string): Promise<string | null> {
+async function resolveEmployeeIdForUser(
+  userId: string,
+): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
-    [userId]
+    [userId],
   );
   return (rows as { id: string }[])[0]?.id ?? null;
 }
@@ -100,11 +121,17 @@ reimbursementsRouter.get(
   requireAuth,
   requireRole(...APPROVER_ROLES),
   h(async (req, res) => {
-    const { status, claim_month, employee_id } = req.query as Record<string, string | undefined>;
-    const rawPage  = parseInt(String(req.query.page  ?? "1"), 10);
+    const { status, claim_month, employee_id } = req.query as Record<
+      string,
+      string | undefined
+    >;
+    const rawPage = parseInt(String(req.query.page ?? "1"), 10);
     const rawLimit = parseInt(String(req.query.limit ?? "50"), 10);
-    const page  = Math.max(1, Number.isNaN(rawPage)  ? 1  : rawPage);
-    const limit = Math.min(200, Math.max(1, Number.isNaN(rawLimit) ? 50 : rawLimit));
+    const page = Math.max(1, Number.isNaN(rawPage) ? 1 : rawPage);
+    const limit = Math.min(
+      200,
+      Math.max(1, Number.isNaN(rawLimit) ? 50 : rawLimit),
+    );
     const offset = (page - 1) * limit;
 
     const conditions: string[] = [];
@@ -123,13 +150,14 @@ reimbursementsRouter.get(
       params.push(employee_id);
     }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const where =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total
          FROM employee_reimbursement_claim erc
          ${where}`,
-      params
+      params,
     );
     const total = Number((countRows as RowDataPacket[])[0]?.total ?? 0);
 
@@ -147,11 +175,11 @@ reimbursementsRouter.get(
          -- because limit and offset are derived from parseInt above, NaN-guarded and clamped to
          -- 1..200 before this point; every real filter stays a bound parameter.
          LIMIT ${limit} OFFSET ${offset}`,
-      params
+      params,
     );
 
     return res.json({ success: true, data: rows, total, page, limit });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -164,7 +192,12 @@ reimbursementsRouter.get(
     const userId = req.authUser!.id;
     const employeeId = await resolveEmployeeIdForUser(userId);
     if (!employeeId) {
-      return res.status(404).json({ success: false, message: "No active employee record linked to your user account" });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "No active employee record linked to your user account",
+        });
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -172,11 +205,11 @@ reimbursementsRouter.get(
          FROM employee_reimbursement_claim erc
         WHERE erc.employee_id = ?
         ORDER BY erc.created_at DESC`,
-      [employeeId]
+      [employeeId],
     );
 
     return res.json({ success: true, data: rows });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -189,7 +222,12 @@ reimbursementsRouter.post(
     const userId = req.authUser!.id;
     const employeeId = await resolveEmployeeIdForUser(userId);
     if (!employeeId) {
-      return res.status(404).json({ success: false, message: "No active employee record linked to your user account" });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "No active employee record linked to your user account",
+        });
     }
 
     const body = req.body as {
@@ -200,15 +238,33 @@ reimbursementsRouter.post(
     };
 
     const validTypes = ["LTA", "MEDICAL", "INTERNET", "PHONE", "FUEL", "OTHER"];
-    if (!body.claim_type || !validTypes.includes(String(body.claim_type).toUpperCase())) {
-      return res.status(400).json({ success: false, message: `claim_type must be one of: ${validTypes.join(", ")}` });
+    if (
+      !body.claim_type ||
+      !validTypes.includes(String(body.claim_type).toUpperCase())
+    ) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: `claim_type must be one of: ${validTypes.join(", ")}`,
+        });
     }
     if (!body.claim_month || !/^\d{4}-\d{2}$/.test(String(body.claim_month))) {
-      return res.status(400).json({ success: false, message: "claim_month must be in YYYY-MM format" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "claim_month must be in YYYY-MM format",
+        });
     }
     const amount = Number(body.amount_claimed);
     if (!amount || Number.isNaN(amount) || amount <= 0) {
-      return res.status(400).json({ success: false, message: "amount_claimed must be a positive number" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "amount_claimed must be a positive number",
+        });
     }
 
     const id = randomUUID();
@@ -223,15 +279,17 @@ reimbursementsRouter.post(
         String(body.claim_month),
         amount,
         body.description ? String(body.description) : null,
-      ]
+      ],
     );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_reimbursement_claim WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
-    return res.status(201).json({ success: true, data: (rows as RowDataPacket[])[0] });
-  })
+    return res
+      .status(201)
+      .json({ success: true, data: (rows as RowDataPacket[])[0] });
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -244,31 +302,49 @@ reimbursementsRouter.post(
     const userId = req.authUser!.id;
     const employeeId = await resolveEmployeeIdForUser(userId);
     if (!employeeId) {
-      return res.status(404).json({ success: false, message: "No active employee record linked to your user account" });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "No active employee record linked to your user account",
+        });
     }
 
     const { id } = req.params;
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_reimbursement_claim WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     type ClaimRow = RowDataPacket & { status: string; employee_id: string };
     const claim = (rows as ClaimRow[])[0];
-    if (!claim) return res.status(404).json({ success: false, message: "Claim not found" });
+    if (!claim)
+      return res
+        .status(404)
+        .json({ success: false, message: "Claim not found" });
     if (claim.employee_id !== employeeId) {
-      return res.status(403).json({ success: false, message: "You can only submit your own claims" });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "You can only submit your own claims",
+        });
     }
     if (claim.status !== "draft") {
-      return res.status(400).json({ success: false, message: `Only draft claims can be submitted (current: ${claim.status})` });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: `Only draft claims can be submitted (current: ${claim.status})`,
+        });
     }
 
     await db.execute<ResultSetHeader>(
       "UPDATE employee_reimbursement_claim SET status = 'submitted', submitted_at = NOW() WHERE id = ?",
-      [id]
+      [id],
     );
 
     return res.json({ success: true, message: "Claim submitted for approval" });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -285,24 +361,36 @@ reimbursementsRouter.patch(
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_reimbursement_claim WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
-    type ClaimRow = RowDataPacket & { status: string; amount_claimed: string | number };
+    type ClaimRow = RowDataPacket & {
+      status: string;
+      amount_claimed: string | number;
+    };
     const claim = (rows as ClaimRow[])[0];
-    if (!claim) return res.status(404).json({ success: false, message: "Claim not found" });
+    if (!claim)
+      return res
+        .status(404)
+        .json({ success: false, message: "Claim not found" });
     if (claim.status !== "submitted") {
-      return res.status(400).json({ success: false, message: `Only submitted claims can be approved (current: ${claim.status})` });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: `Only submitted claims can be approved (current: ${claim.status})`,
+        });
     }
 
-    const approvedAmt = body.amount_approved != null
-      ? Number(body.amount_approved)
-      : Number(claim.amount_claimed);
+    const approvedAmt =
+      body.amount_approved != null
+        ? Number(body.amount_approved)
+        : Number(claim.amount_claimed);
 
     await db.execute<ResultSetHeader>(
       `UPDATE employee_reimbursement_claim
           SET status = 'approved', approved_by = ?, approved_at = NOW(), amount_approved = ?
         WHERE id = ?`,
-      [userId, approvedAmt, id]
+      [userId, approvedAmt, id],
     );
 
     void logSensitiveAction({
@@ -313,12 +401,16 @@ reimbursementsRouter.patch(
       entity_type: "employee_reimbursement_claim",
       entity_id: id,
       old_value_json: { status: "submitted" },
-      new_value_json: { status: "approved", amount_approved: approvedAmt, remarks: body.remarks ?? null },
+      new_value_json: {
+        status: "approved",
+        amount_approved: approvedAmt,
+        remarks: body.remarks ?? null,
+      },
       req,
     });
 
     return res.json({ success: true, message: "Claim approved" });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -334,25 +426,35 @@ reimbursementsRouter.patch(
     const body = req.body as { reason?: string };
 
     if (!body.reason?.trim()) {
-      return res.status(400).json({ success: false, message: "Rejection reason is required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Rejection reason is required" });
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_reimbursement_claim WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     type ClaimRow = RowDataPacket & { status: string };
     const claim = (rows as ClaimRow[])[0];
-    if (!claim) return res.status(404).json({ success: false, message: "Claim not found" });
+    if (!claim)
+      return res
+        .status(404)
+        .json({ success: false, message: "Claim not found" });
     if (claim.status !== "submitted") {
-      return res.status(400).json({ success: false, message: `Only submitted claims can be rejected (current: ${claim.status})` });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: `Only submitted claims can be rejected (current: ${claim.status})`,
+        });
     }
 
     await db.execute<ResultSetHeader>(
       `UPDATE employee_reimbursement_claim
           SET status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
         WHERE id = ?`,
-      [userId, body.reason.trim(), id]
+      [userId, body.reason.trim(), id],
     );
 
     void logSensitiveAction({
@@ -363,12 +465,15 @@ reimbursementsRouter.patch(
       entity_type: "employee_reimbursement_claim",
       entity_id: id,
       old_value_json: { status: "submitted" },
-      new_value_json: { status: "rejected", rejection_reason: body.reason.trim() },
+      new_value_json: {
+        status: "rejected",
+        rejection_reason: body.reason.trim(),
+      },
       req,
     });
 
     return res.json({ success: true, message: "Claim rejected" });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -385,20 +490,28 @@ reimbursementsRouter.patch(
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_reimbursement_claim WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     type ClaimRow = RowDataPacket & { status: string };
     const claim = (rows as ClaimRow[])[0];
-    if (!claim) return res.status(404).json({ success: false, message: "Claim not found" });
+    if (!claim)
+      return res
+        .status(404)
+        .json({ success: false, message: "Claim not found" });
     if (claim.status !== "approved") {
-      return res.status(400).json({ success: false, message: `Only approved claims can be processed (current: ${claim.status})` });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: `Only approved claims can be processed (current: ${claim.status})`,
+        });
     }
 
     await db.execute<ResultSetHeader>(
       `UPDATE employee_reimbursement_claim
           SET status = 'processed', processed_at = NOW(), payroll_run_id = ?
         WHERE id = ?`,
-      [body.payroll_run_id ?? null, id]
+      [body.payroll_run_id ?? null, id],
     );
 
     void logSensitiveAction({
@@ -409,12 +522,15 @@ reimbursementsRouter.patch(
       entity_type: "employee_reimbursement_claim",
       entity_id: id,
       old_value_json: { status: "approved" },
-      new_value_json: { status: "processed", payroll_run_id: body.payroll_run_id ?? null },
+      new_value_json: {
+        status: "processed",
+        payroll_run_id: body.payroll_run_id ?? null,
+      },
       req,
     });
 
     return res.json({ success: true, message: "Claim marked as processed" });
-  })
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -427,83 +543,207 @@ reimbursementsRouter.delete(
     const userId = req.authUser!.id;
     const employeeId = await resolveEmployeeIdForUser(userId);
     if (!employeeId) {
-      return res.status(404).json({ success: false, message: "No active employee record linked to your user account" });
+      return res
+        .status(404)
+        .json({
+          success: false,
+          message: "No active employee record linked to your user account",
+        });
     }
 
     const { id } = req.params;
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_reimbursement_claim WHERE id = ? LIMIT 1",
-      [id]
+      [id],
     );
     type ClaimRow = RowDataPacket & { status: string; employee_id: string };
     const claim = (rows as ClaimRow[])[0];
-    if (!claim) return res.status(404).json({ success: false, message: "Claim not found" });
+    if (!claim)
+      return res
+        .status(404)
+        .json({ success: false, message: "Claim not found" });
     if (claim.employee_id !== employeeId) {
-      return res.status(403).json({ success: false, message: "You can only delete your own claims" });
+      return res
+        .status(403)
+        .json({
+          success: false,
+          message: "You can only delete your own claims",
+        });
     }
     if (claim.status !== "draft") {
-      return res.status(400).json({ success: false, message: "Only draft claims can be deleted" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Only draft claims can be deleted" });
     }
 
     await db.execute<ResultSetHeader>(
       "DELETE FROM employee_reimbursement_claim WHERE id = ?",
-      [id]
+      [id],
     );
 
     return res.json({ success: true, message: "Draft claim deleted" });
-  })
+  }),
 );
 
 // MULTI-LEVEL APPROVAL ENDPOINTS
-reimbursementsRouter.get("/manager-queue", requireAuth, h(async (req, res) => {
-  const claims = await reimbursementService.getManagerQueue(req.authUser!.id);
-  return res.json({ success: true, data: claims });
-}));
+reimbursementsRouter.get(
+  "/manager-queue",
+  requireAuth,
+  h(async (req, res) => {
+    const claims = await reimbursementService.getManagerQueue(req.authUser!.id);
+    return res.json({ success: true, data: claims });
+  }),
+);
 
-reimbursementsRouter.get("/branch-head-queue", requireAuth, requireRole("branch_head", "super_admin"), h(async (req, res) => {
-  const [scopeRows] = await db.execute<RowDataPacket[]>(`SELECT DISTINCT COALESCE(uas.branch_id, e.branch_id) AS branch_id FROM user_roles ur LEFT JOIN user_assignment_scope uas ON uas.user_id = ur.user_id AND uas.active_status = 1 LEFT JOIN employees e ON e.user_id = ur.user_id WHERE ur.user_id = ? AND ur.role_key IN ('branch_head', 'super_admin') AND (uas.branch_id IS NOT NULL OR e.branch_id IS NOT NULL)`, [req.authUser!.id]);
-  let branchIds = (scopeRows as RowDataPacket[]).map((r) => r.branch_id as string).filter(Boolean);
-  if (req.authUser!.role === "super_admin" && !branchIds.length) { const [all] = await db.execute<RowDataPacket[]>("SELECT id FROM branch_master WHERE active_status = 1"); branchIds = (all as RowDataPacket[]).map((r) => r.id as string); }
-  const claims = await reimbursementService.getBranchHeadQueue(branchIds);
-  return res.json({ success: true, data: claims });
-}));
+reimbursementsRouter.get(
+  "/branch-head-queue",
+  requireAuth,
+  requireRole("branch_head", "super_admin"),
+  h(async (req, res) => {
+    const [scopeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT COALESCE(uas.branch_id, e.branch_id) AS branch_id FROM user_roles ur LEFT JOIN user_assignment_scope uas ON uas.user_id = ur.user_id AND uas.active_status = 1 LEFT JOIN employees e ON e.user_id = ur.user_id WHERE ur.user_id = ? AND ur.role_key IN ('branch_head', 'super_admin') AND (uas.branch_id IS NOT NULL OR e.branch_id IS NOT NULL)`,
+      [req.authUser!.id],
+    );
+    let branchIds = (scopeRows as RowDataPacket[])
+      .map((r) => r.branch_id as string)
+      .filter(Boolean);
+    if (req.authUser!.role === "super_admin" && !branchIds.length) {
+      const [all] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM branch_master WHERE active_status = 1",
+      );
+      branchIds = (all as RowDataPacket[]).map((r) => r.id as string);
+    }
+    const claims = await reimbursementService.getBranchHeadQueue(branchIds);
+    return res.json({ success: true, data: claims });
+  }),
+);
 
-reimbursementsRouter.get("/conversion-queue", requireAuth, requireRole("branch_admin", "imprest_manager", "finance_head", "finance", "super_admin"), h(async (req, res) => {
-  const userRole = req.authUser!.role ?? "";
-  const isWide = ["finance_head", "finance", "super_admin"].includes(userRole);
-  let branchIds: string[] | undefined;
-  if (!isWide) { const [scopeRows] = await db.execute<RowDataPacket[]>(`SELECT DISTINCT COALESCE(uas.branch_id, e.branch_id) AS branch_id FROM user_roles ur LEFT JOIN user_assignment_scope uas ON uas.user_id = ur.user_id AND uas.active_status = 1 LEFT JOIN employees e ON e.user_id = ur.user_id WHERE ur.user_id = ? AND (uas.branch_id IS NOT NULL OR e.branch_id IS NOT NULL)`, [req.authUser!.id]); branchIds = (scopeRows as RowDataPacket[]).map((r) => r.branch_id as string).filter(Boolean); }
-  const claims = await reimbursementService.getConversionQueue(branchIds);
-  return res.json({ success: true, data: claims });
-}));
+reimbursementsRouter.get(
+  "/conversion-queue",
+  requireAuth,
+  requireRole(
+    "branch_admin",
+    "imprest_manager",
+    "finance_head",
+    "finance",
+    "super_admin",
+  ),
+  h(async (req, res) => {
+    const userRole = req.authUser!.role ?? "";
+    const isWide = ["finance_head", "finance", "super_admin"].includes(
+      userRole,
+    );
+    let branchIds: string[] | undefined;
+    if (!isWide) {
+      const [scopeRows] = await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT COALESCE(uas.branch_id, e.branch_id) AS branch_id FROM user_roles ur LEFT JOIN user_assignment_scope uas ON uas.user_id = ur.user_id AND uas.active_status = 1 LEFT JOIN employees e ON e.user_id = ur.user_id WHERE ur.user_id = ? AND (uas.branch_id IS NOT NULL OR e.branch_id IS NOT NULL)`,
+        [req.authUser!.id],
+      );
+      branchIds = (scopeRows as RowDataPacket[])
+        .map((r) => r.branch_id as string)
+        .filter(Boolean);
+    }
+    const claims = await reimbursementService.getConversionQueue(branchIds);
+    return res.json({ success: true, data: claims });
+  }),
+);
 
-reimbursementsRouter.patch("/:id/manager-approve", requireAuth, h(async (req, res) => {
-  const body = req.body as { note?: string; amount_approved?: number };
-  await reimbursementService.managerApprove(req.params.id, req.authUser!.id, body.note, body.amount_approved, req);
-  return res.json({ success: true, message: "Claim approved by manager" });
-}));
+reimbursementsRouter.patch(
+  "/:id/manager-approve",
+  requireAuth,
+  h(async (req, res) => {
+    const body = req.body as { note?: string; amount_approved?: number };
+    await reimbursementService.managerApprove(
+      req.params.id,
+      req.authUser!.id,
+      body.note,
+      body.amount_approved,
+      req,
+    );
+    return res.json({ success: true, message: "Claim approved by manager" });
+  }),
+);
 
-reimbursementsRouter.patch("/:id/manager-reject", requireAuth, h(async (req, res) => {
-  const body = req.body as { reason?: string };
-  if (!body.reason?.trim()) return res.status(400).json({ success: false, message: "Rejection reason required" });
-  await reimbursementService.managerReject(req.params.id, req.authUser!.id, body.reason, req);
-  return res.json({ success: true, message: "Claim rejected" });
-}));
+reimbursementsRouter.patch(
+  "/:id/manager-reject",
+  requireAuth,
+  h(async (req, res) => {
+    const body = req.body as { reason?: string };
+    if (!body.reason?.trim())
+      return res
+        .status(400)
+        .json({ success: false, message: "Rejection reason required" });
+    await reimbursementService.managerReject(
+      req.params.id,
+      req.authUser!.id,
+      body.reason,
+      req,
+    );
+    return res.json({ success: true, message: "Claim rejected" });
+  }),
+);
 
-reimbursementsRouter.patch("/:id/branch-head-approve", requireAuth, requireRole("branch_head", "super_admin"), h(async (req, res) => {
-  const body = req.body as { note?: string; amount_approved?: number };
-  await reimbursementService.branchHeadApprove(req.params.id, req.authUser!.id, body.note, body.amount_approved, req);
-  return res.json({ success: true, message: "Claim approved by branch head" });
-}));
+reimbursementsRouter.patch(
+  "/:id/branch-head-approve",
+  requireAuth,
+  requireRole("branch_head", "super_admin"),
+  h(async (req, res) => {
+    const body = req.body as { note?: string; amount_approved?: number };
+    await reimbursementService.branchHeadApprove(
+      req.params.id,
+      req.authUser!.id,
+      body.note,
+      body.amount_approved,
+      req,
+    );
+    return res.json({
+      success: true,
+      message: "Claim approved by branch head",
+    });
+  }),
+);
 
-reimbursementsRouter.patch("/:id/branch-head-reject", requireAuth, requireRole("branch_head", "super_admin"), h(async (req, res) => {
-  const body = req.body as { reason?: string };
-  if (!body.reason?.trim()) return res.status(400).json({ success: false, message: "Rejection reason required" });
-  await reimbursementService.branchHeadReject(req.params.id, req.authUser!.id, body.reason, req);
-  return res.json({ success: true, message: "Claim rejected" });
-}));
+reimbursementsRouter.patch(
+  "/:id/branch-head-reject",
+  requireAuth,
+  requireRole("branch_head", "super_admin"),
+  h(async (req, res) => {
+    const body = req.body as { reason?: string };
+    if (!body.reason?.trim())
+      return res
+        .status(400)
+        .json({ success: false, message: "Rejection reason required" });
+    await reimbursementService.branchHeadReject(
+      req.params.id,
+      req.authUser!.id,
+      body.reason,
+      req,
+    );
+    return res.json({ success: true, message: "Claim rejected" });
+  }),
+);
 
-reimbursementsRouter.post("/:id/convert-to-grn", requireAuth, requireRole("branch_admin", "imprest_manager", "finance_head", "finance", "super_admin"), h(async (req, res) => {
-  const result = await reimbursementService.convertToImprestGrn(req.params.id, req.authUser!.id, req.authUser!.role ?? "unknown");
-  return res.json({ success: true, message: `Converted to GRN ${result.grnNumber}`, grnId: result.grnId, grnNumber: result.grnNumber });
-}));
+reimbursementsRouter.post(
+  "/:id/convert-to-grn",
+  requireAuth,
+  requireRole(
+    "branch_admin",
+    "imprest_manager",
+    "finance_head",
+    "finance",
+    "super_admin",
+  ),
+  h(async (req, res) => {
+    const result = await reimbursementService.convertToImprestGrn(
+      req.params.id,
+      req.authUser!.id,
+      req.authUser!.role ?? "unknown",
+    );
+    return res.json({
+      success: true,
+      message: `Converted to GRN ${result.grnNumber}`,
+      grnId: result.grnId,
+      grnNumber: result.grnNumber,
+    });
+  }),
+);

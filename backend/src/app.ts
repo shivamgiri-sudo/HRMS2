@@ -70,7 +70,11 @@ import { nocCaseRouter } from "./modules/payroll/noc-case.routes.js";
 import { runningSalaryRouter } from "./modules/payroll/running-salary.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
 import employeeMappingGapsRouter from "./modules/employees/employee-mapping-gaps.routes.js";
-import { requireAuth as requireAuthForDpdpGuard } from "./middleware/authMiddleware.js";
+import {
+  requireAuth,
+  requireAuth as requireAuthForDpdpGuard,
+} from "./middleware/authMiddleware.js";
+import { requireRole } from "./middleware/requireRole.js";
 import { checkDpdpRestriction } from "./modules/privacy/dpdpRestrictionGuard.js";
 import { employeeReportMasterRouter } from "./modules/employees/employee.report-master.routes.js";
 import { employeeSecureRouter } from "./modules/employees/employee.secure.routes.js";
@@ -109,7 +113,12 @@ import { eventsRouter } from "./modules/org/events.routes.js";
 import { orgSettingsRouter } from "./modules/org/org_settings.routes.js";
 import { bulkUploadRouter } from "./modules/bulk-upload/bulk-upload.routes.js";
 import { tpzAccessRouter } from "./modules/tpz-access/tpz-access.routes.js";
-import { tpzPerformanceGate, tpzInsightsGate, tpzInboundProjectGate, tpzUploadGate } from "./modules/tpz-access/tpz-access.middleware.js";
+import {
+  tpzPerformanceGate,
+  tpzInsightsGate,
+  tpzInboundProjectGate,
+  tpzUploadGate,
+} from "./modules/tpz-access/tpz-access.middleware.js";
 import { bulkApprovalRouter } from "./modules/bulk-upload/bulk-approval.routes.js";
 import { workflowRouter } from "./modules/workflow/workflow.routes.js";
 import { lifecycleRouter } from "./modules/lifecycle/lifecycle.routes.js";
@@ -1109,6 +1118,34 @@ app.use("/api/process-live", processLiveDashboardRouter);
 // 1,428-message storm; it is safe today only because MCNMEET_ENABLED defaults to
 // false. Both are now registered in workers/all-workers.ts and started from
 // server.ts behind the WORKERS_EXTERNAL guard like every other scheduler.
+
+// Admin: DB circuit breaker management — super_admin only.
+// Added after 2026-09-30 outage so a stuck-open breaker can be cleared
+// in seconds without a PM2 restart.
+import { resetCircuitBreaker, getCircuitBreakerStatus } from "./db/mysql.js";
+
+app.post(
+  "/api/admin/db/circuit-breaker/reset",
+  requireAuth,
+  requireRole("super_admin"),
+  (_req, res) => {
+    resetCircuitBreaker();
+    res.json({
+      success: true,
+      message: "Circuit breaker reset",
+      status: getCircuitBreakerStatus(),
+    });
+  },
+);
+
+app.get(
+  "/api/admin/db/circuit-breaker/status",
+  requireAuth,
+  requireRole("super_admin"),
+  (_req, res) => {
+    res.json({ success: true, status: getCircuitBreakerStatus() });
+  },
+);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

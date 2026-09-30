@@ -1,6 +1,15 @@
-import mysql, { type RowDataPacket, type FieldPacket, type QueryResult, type Pool, type PoolConnection } from "mysql2/promise";
+import mysql, {
+  type RowDataPacket,
+  type FieldPacket,
+  type QueryResult,
+  type Pool,
+  type PoolConnection,
+} from "mysql2/promise";
 import { env } from "../config/env.js";
-import { isSchemaOrLogicDbError, describeDbError } from "./db-error-classification.js";
+import {
+  isSchemaOrLogicDbError,
+  describeDbError,
+} from "./db-error-classification.js";
 import {
   DEFAULT_CIRCUIT_BREAKER_CONFIG,
   checkCircuitBreakerState,
@@ -21,22 +30,22 @@ import {
  * - Circuit breaker: fast-fails when DB is overwhelmed
  */
 const _pool: Pool = mysql.createPool({
-  host:               env.DB_HOST,
-  port:               env.DB_PORT,
-  user:               env.DB_USER,
-  password:           env.DB_PASSWORD,
-  database:           env.DB_NAME,
-  connectionLimit:    env.DB_POOL_MAX,
+  host: env.DB_HOST,
+  port: env.DB_PORT,
+  user: env.DB_USER,
+  password: env.DB_PASSWORD,
+  database: env.DB_NAME,
+  connectionLimit: env.DB_POOL_MAX,
   waitForConnections: true,
-  queueLimit:         100, // SECURITY: bounded queue prevents memory exhaustion
-  connectTimeout:     10000, // 10s timeout to establish connection
-  timezone:           "+05:30",  // Always IST regardless of server OS timezone
-  dateStrings:        true,      // Return DATETIME/TIMESTAMP as strings, not JS Date objects
-  decimalNumbers:     true,
-  enableKeepAlive:    true,
+  queueLimit: 100, // SECURITY: bounded queue prevents memory exhaustion
+  connectTimeout: 10000, // 10s timeout to establish connection
+  timezone: "+05:30", // Always IST regardless of server OS timezone
+  dateStrings: true, // Return DATETIME/TIMESTAMP as strings, not JS Date objects
+  decimalNumbers: true,
+  enableKeepAlive: true,
   keepAliveInitialDelay: 30000, // 30s keep-alive
-  maxIdle:            env.DB_POOL_MAX_IDLE,
-  idleTimeout:        env.DB_POOL_IDLE_TIMEOUT_MS,
+  maxIdle: env.DB_POOL_MAX_IDLE,
+  idleTimeout: env.DB_POOL_IDLE_TIMEOUT_MS,
 });
 
 // 0 = no limit (MySQL default). Only the API process sets one: without it a SELECT keeps running
@@ -48,7 +57,7 @@ export function setSessionMaxExecutionTime(ms: number): void {
   sessionMaxExecutionMs = Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0;
 }
 
-_pool.on('connection', (conn) => {
+_pool.on("connection", (conn) => {
   conn.query("SET time_zone = '+05:30'");
   if (sessionMaxExecutionMs > 0) {
     conn.query(`SET SESSION max_execution_time = ${sessionMaxExecutionMs}`);
@@ -75,7 +84,7 @@ const TRANSIENT_DB_ERROR_CODES = new Set([
  * not open the process-wide breaker on the first spike.
  */
 const CONNECTION_PRESSURE_DB_ERROR_CODES = new Set([
-  "ER_CON_COUNT_ERROR",  // Connection exhaustion -- retry makes it worse
+  "ER_CON_COUNT_ERROR", // Connection exhaustion -- retry makes it worse
   "ER_TOO_MANY_USER_CONNECTIONS",
   "POOL_ENQUEUELIMIT",
 ]);
@@ -104,13 +113,18 @@ function isTransientDbError(error: unknown): boolean {
   return TRANSIENT_DB_ERROR_CODES.has(getErrorCode(error));
 }
 
+function isLockContentionDbError(error: unknown): boolean {
+  return LOCK_CONTENTION_DB_ERROR_CODES.has(getErrorCode(error));
+}
+
 function isConnectionPressureDbError(error: unknown): boolean {
   const code = getErrorCode(error);
   if (CONNECTION_PRESSURE_DB_ERROR_CODES.has(code)) return true;
   const message = error instanceof Error ? error.message : "";
-  return /queue limit reached|too many connections|too many user connections/i.test(message);
+  return /queue limit reached|too many connections|too many user connections/i.test(
+    message,
+  );
 }
-
 
 /**
  * RELIABILITY: Check circuit breaker before attempting operation.
@@ -120,10 +134,16 @@ function checkCircuitBreaker(): void {
   const now = Date.now();
 
   if (circuitBreaker.status === "open") {
-    circuitBreaker = checkCircuitBreakerState(circuitBreaker, CIRCUIT_BREAKER_CONFIG, now);
+    circuitBreaker = checkCircuitBreakerState(
+      circuitBreaker,
+      CIRCUIT_BREAKER_CONFIG,
+      now,
+    );
     if (circuitBreaker.status === "open") {
       const retryAfter = Math.ceil((circuitBreaker.nextProbeTime - now) / 1000);
-      const error = new Error(`Database circuit breaker open. Retry after ${retryAfter}s`);
+      const error = new Error(
+        `Database circuit breaker open. Retry after ${retryAfter}s`,
+      );
       (error as any).code = "CIRCUIT_BREAKER_OPEN";
       (error as any).retryAfter = retryAfter;
       throw error;
@@ -135,7 +155,10 @@ function checkCircuitBreaker(): void {
  * RELIABILITY: Record operation success for circuit breaker.
  */
 function recordSuccess(): void {
-  circuitBreaker = recordCircuitBreakerSuccess(circuitBreaker, CIRCUIT_BREAKER_CONFIG);
+  circuitBreaker = recordCircuitBreakerSuccess(
+    circuitBreaker,
+    CIRCUIT_BREAKER_CONFIG,
+  );
 }
 
 /**
@@ -171,8 +194,15 @@ function recordFailure(error?: unknown): void {
   //
   // Math.random() lives here rather than in circuitBreaker.ts so that module stays pure
   // and its tests keep asserting an exact `now + recoveryTimeMs`.
-  const jitterMs = Math.floor(Math.random() * CIRCUIT_BREAKER_CONFIG.recoveryTimeMs * 0.4);
-  circuitBreaker = recordCircuitBreakerFailure(circuitBreaker, CIRCUIT_BREAKER_CONFIG, now, jitterMs);
+  const jitterMs = Math.floor(
+    Math.random() * CIRCUIT_BREAKER_CONFIG.recoveryTimeMs * 0.4,
+  );
+  circuitBreaker = recordCircuitBreakerFailure(
+    circuitBreaker,
+    CIRCUIT_BREAKER_CONFIG,
+    now,
+    jitterMs,
+  );
 
   if (circuitBreaker.status === "open" && previous !== "open") {
     // Distinguish the two ways the breaker opens. Reopening from half-open does NOT touch the
@@ -180,9 +210,10 @@ function recordFailure(error?: unknown): void {
     // "OPEN after 0 consecutive failure(s)" — which reads as a counter bug and sends whoever
     // is debugging an outage looking in the wrong place. It is a single failed probe, and
     // saying so is the whole point of the line.
-    const cause = previous === "half-open"
-      ? "a failed recovery probe"
-      : `${circuitBreaker.failures} consecutive failure(s)`;
+    const cause =
+      previous === "half-open"
+        ? "a failed recovery probe"
+        : `${circuitBreaker.failures} consecutive failure(s)`;
     console.error(
       `[mysql] circuit breaker OPEN after ${cause}; ` +
         // Derived from nextProbeTime, not the nominal config value, so the line stays
@@ -233,6 +264,13 @@ async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
         throw error;
       }
 
+      // InnoDB lock contention: log it, fail fast, no retry, no circuit breaker.
+      // The blocker is another transaction; retrying wastes a connection.
+      if (isLockContentionDbError(error)) {
+        console.error(`[mysql] ${describeDbError(error)}`);
+        throw error;
+      }
+
       // Application/SQL errors (bad query, wrong arguments, missing column, etc.)
       // do NOT count against the circuit breaker — they are code bugs, not DB failures.
       throw error;
@@ -249,18 +287,45 @@ async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
 type ExecuteParams = Parameters<Pool["execute"]>[1];
 
 export const db = {
-  execute<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]> {
-    return withTransientRetry(() => _pool.execute<T>(sql, params as ExecuteParams));
+  execute<T extends QueryResult = RowDataPacket[]>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[T, FieldPacket[]]> {
+    return withTransientRetry(() =>
+      _pool.execute<T>(sql, params as ExecuteParams),
+    );
   },
-  executeRun(sql: string, params?: unknown[]): Promise<[QueryResult, FieldPacket[]]> {
-    return withTransientRetry(() => _pool.execute(sql, params as ExecuteParams));
+  executeRun(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[QueryResult, FieldPacket[]]> {
+    return withTransientRetry(() =>
+      _pool.execute(sql, params as ExecuteParams),
+    );
   },
-  async getConnection(): Promise<PoolConnection & { execute<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]> }> {
+  async getConnection(): Promise<
+    PoolConnection & {
+      execute<T extends QueryResult = RowDataPacket[]>(
+        sql: string,
+        params?: unknown[],
+      ): Promise<[T, FieldPacket[]]>;
+    }
+  > {
     const conn = await withTransientRetry(() => _pool.getConnection());
-    return conn as unknown as PoolConnection & { execute<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]> };
+    return conn as unknown as PoolConnection & {
+      execute<T extends QueryResult = RowDataPacket[]>(
+        sql: string,
+        params?: unknown[],
+      ): Promise<[T, FieldPacket[]]>;
+    };
   },
-  query<T extends QueryResult = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, FieldPacket[]]> {
-    return withTransientRetry(() => _pool.query<T>(sql, params as ExecuteParams));
+  query<T extends QueryResult = RowDataPacket[]>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<[T, FieldPacket[]]> {
+    return withTransientRetry(() =>
+      _pool.query<T>(sql, params as ExecuteParams),
+    );
   },
   end: _pool.end.bind(_pool),
   // Safe literal-escaping for the rare case a value must be interpolated into SQL text

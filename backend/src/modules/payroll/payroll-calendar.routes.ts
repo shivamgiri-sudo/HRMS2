@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
@@ -9,8 +12,10 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 export const payrollCalendarRouter = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const h = (fn: (req: any, res: any) => Promise<unknown>) =>
-  (req: any, res: any, next: any) => fn(req, res).catch(next);
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
 
 payrollCalendarRouter.use(requireAuth);
 
@@ -61,7 +66,9 @@ payrollCalendarRouter.get(
     const month = (req.query.month as string | undefined) ?? defaultMonth;
 
     if (!/^\d{4}-\d{2}$/.test(month)) {
-      return res.status(400).json({ success: false, message: "Invalid month format. Use YYYY-MM" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid month format. Use YYYY-MM" });
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -124,7 +131,12 @@ payrollCalendarRouter.post(
     };
 
     if (!calendar_month || !/^\d{4}-\d{2}$/.test(calendar_month)) {
-      return res.status(400).json({ success: false, message: "calendar_month (YYYY-MM) is required" });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "calendar_month (YYYY-MM) is required",
+        });
     }
 
     const createdBy = req.authUser?.id ?? null;
@@ -175,7 +187,9 @@ payrollCalendarRouter.patch(
 
     const { month } = req.params;
     if (!/^\d{4}-\d{2}$/.test(month)) {
-      return res.status(400).json({ success: false, message: "Invalid month format. Use YYYY-MM" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid month format. Use YYYY-MM" });
     }
 
     const allowedFields = [
@@ -199,11 +213,15 @@ payrollCalendarRouter.patch(
     }
 
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ success: false, message: "No valid fields to update" });
+      return res
+        .status(400)
+        .json({ success: false, message: "No valid fields to update" });
     }
 
     // Upsert — if the month row doesn't exist yet, create it
-    const setClauses = (Object.keys(updates) as AllowedField[]).map((f) => `${f} = ?`).join(", ");
+    const setClauses = (Object.keys(updates) as AllowedField[])
+      .map((f) => `${f} = ?`)
+      .join(", ");
     const values = Object.values(updates);
 
     const [existing] = await db.execute<RowDataPacket[]>(
@@ -213,8 +231,14 @@ payrollCalendarRouter.patch(
 
     if (existing.length === 0) {
       // insert with only provided fields
-      const colList = ["calendar_month", "created_by", ...Object.keys(updates)].join(", ");
-      const valPlaceholders = Array(2 + Object.keys(updates).length).fill("?").join(", ");
+      const colList = [
+        "calendar_month",
+        "created_by",
+        ...Object.keys(updates),
+      ].join(", ");
+      const valPlaceholders = Array(2 + Object.keys(updates).length)
+        .fill("?")
+        .join(", ");
       await db.execute(
         `INSERT INTO payroll_calendar (${colList}) VALUES (${valPlaceholders})`,
         [month, req.authUser?.id ?? null, ...values],
