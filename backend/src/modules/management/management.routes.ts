@@ -576,7 +576,8 @@ router.get("/manager-analytics", h(async (req: AuthenticatedRequest, res: Respon
   const emp = await getEmployeeForUser(req.authUser!.id);
   if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
 
-  const summary = await getManagerAnalyticsSummary(Number(emp.id));
+  // employees.id is a CHAR(36) UUID: Number() made it NaN, which matches no team.
+  const summary = await getManagerAnalyticsSummary(emp.id);
   res.json({ success: true, data: summary });
 }));
 
