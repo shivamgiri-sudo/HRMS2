@@ -19,7 +19,7 @@ import { getLpFeedbackDashboard } from "../process-performance/lp-feedback-dashb
 import { getLpOnboardingDashboard } from "../process-performance/lp-onboarding-dashboard.service.js";
 import { getProjectOverview } from "../call-master/inbound.service.js";
 import {
-  appreciateWealthCentres, bellavitaCart, bellavitaChat, cloviaChannels, dalmiaExtras, gncAbandonCart, gncChat, satyaRetail,
+  appreciateWealthCentres, bellavitaCart, bellavitaChat, cloviaChannels, dalmiaExtras, gncAbandonCart, gncChat, inboundHourly, satyaRetail,
 } from "./business-datapoints.more.js";
 
 /**
@@ -374,21 +374,21 @@ async function lawyerPanel(from: string, to: string): Promise<DatapointGroup[]> 
 
 type Adapter = (from: string, to: string) => Promise<DatapointGroup[]>;
 const ADAPTERS: Record<string, Adapter[]> = {
-  BELLA_VITA: [bella, bellavitaChat, bellavitaCart, inboundAdapter("bellavita")],
+  BELLA_VITA: [bella, bellavitaChat, bellavitaCart, inboundAdapter("bellavita"), inboundHourly("bellavita")],
   BLA_BLI_BLU: [bla],
-  NEEMANS: [neemans, inboundAdapter("neemans")],
-  GNC: [gnc, gncAbandonCart, gncChat, inboundAdapter("gnc")],
+  NEEMANS: [neemans, inboundAdapter("neemans"), inboundHourly("neemans")],
+  GNC: [gnc, gncAbandonCart, gncChat, inboundAdapter("gnc"), inboundHourly("gnc")],
   HOUSING_OWNER: [housingOwner],
   HOUSING_PREMIUM: [housingPremium],
-  CLOVIA: [inboundAdapter("clovia"), cloviaChannels],
+  CLOVIA: [inboundAdapter("clovia"), inboundHourly("clovia"), cloviaChannels],
   BIRLANU: [birlanu],
-  DALMIA_CEMENT: [dalmia, dalmiaExtras],
+  DALMIA_CEMENT: [dalmia, dalmiaExtras, inboundHourly("dalmia")],
   APPRICIATE_WEALTH: [appreciateWealth, appreciateWealthCentres],
   SATYA_RETAIL: [satyaRetail],
   ERESOLUTION: [lawyerPanel],
-  DU_DIGITAL: [inboundAdapter("dubangladesh")],
-  EXICOM: [inboundAdapter("exicom")],
-  VIEGA: [inboundAdapter("viega")],
+  DU_DIGITAL: [inboundAdapter("dubangladesh"), inboundHourly("dubangladesh")],
+  EXICOM: [inboundAdapter("exicom"), inboundHourly("exicom")],
+  VIEGA: [inboundAdapter("viega"), inboundHourly("viega")],
 };
 
 /** Newest date the sales system holds, so a stopped upload shows its last real month instead of an empty window. */
@@ -405,11 +405,17 @@ const cache = new Map<string, { at: number; p: Promise<BusinessDatapoints> }>();
 
 async function runAdapters(processCode: string, from: string, to: string): Promise<{ groups: DatapointGroup[]; notes: string[] }> {
   const settled = await Promise.allSettled(ADAPTERS[processCode].map((fn) => fn(from, to)));
-  const groups: DatapointGroup[] = []; const notes: string[] = [];
+  const groups: DatapointGroup[] = [];
+  let failed = 0;
   for (const r of settled) {
     if (r.status === "fulfilled") groups.push(...r.value);
-    else notes.push(`One source could not be read: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+    else {
+      failed++;
+      // The technical reason (database host, credentials, SQL) is for administrators: it goes to the server log, never to the page.
+      console.warn(`[business-datapoints] ${processCode} source failed:`, r.reason instanceof Error ? r.reason.message : String(r.reason));
+    }
   }
+  const notes = failed ? [`${failed} source${failed === 1 ? "" : "s"} could not be loaded right now, so those figures are missing. Everything else is shown.`] : [];
   groups.forEach((g) => { g.theme ??= g.key.startsWith("cart") || g.key === "ops" ? "workforce" : "sales"; });
   const keep = groups.filter((g) => hasAny(g.cards) || (g.funnel?.length ?? 0) > 0);
   return { groups: keep, notes };
@@ -432,7 +438,8 @@ async function compute(processCode: string, w: { from: string; to: string; label
       ? { ...base, available: true, reason: null, groups, notes: notes.length ? notes : undefined }
       : { ...base, available: false, reason: notes[0] ?? `The sales system for this process has no rows between ${w.from} and ${w.to}. Its uploads may have stopped; try a longer window.`, groups: [] };
   } catch (e) {
-    return { ...base, available: false, reason: `Could not read the sales system: ${(e as Error).message}`, groups: [] };
+    console.warn(`[business-datapoints] ${processCode} failed:`, (e as Error).message);
+    return { ...base, available: false, reason: "The sales and calling systems could not be read right now. Please try again in a moment.", groups: [] };
   }
 }
 

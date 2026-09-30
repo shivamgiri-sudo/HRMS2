@@ -9,6 +9,7 @@ import { getAwInboundCenter } from "../process-performance/appreciate-wealth-inb
 import { getAwOutboundCenter } from "../process-performance/appreciate-wealth-outbound-center.service.js";
 import { getAwCdrCenter } from "../process-performance/appreciate-wealth-cdr-center.service.js";
 import { getDalmiaDashboard } from "../process-performance/dalmia-dashboard.service.js";
+import { getInboundInsights } from "../call-master/inbound-insights.service.js";
 
 /**
  * Second half of the business-datapoint adapters: the V2 dashboards the first pass did not cover (Bellavita chat and
@@ -269,4 +270,37 @@ export async function dalmiaExtras(from: string, to: string): Promise<DatapointG
     });
   }
   return groups;
+}
+
+/**
+ * Hour-by-hour view of a dialler inbound project: which hours carry the calls and which hours the service is weakest.
+ * Built from the existing insights service (the same hourly table the inbound dashboards show). Hours with fewer than
+ * 5 calls are ignored when naming the weakest hour, so one stray call cannot look like a failing hour.
+ */
+export function inboundHourly(projectKey: string) {
+  return async (from: string, to: string): Promise<DatapointGroup[]> => {
+    const d: Loose = await getInboundInsights(projectKey, { startDate: from, endDate: to });
+    const hours = (d.hourly as Loose[] | undefined) ?? [];
+    const busy = hours.filter((h) => Number(h.offered) > 0);
+    if (!busy.length) return [];
+    const total = busy.reduce((s, h) => s + Number(h.offered), 0);
+    const peak = [...busy].sort((a, b) => Number(b.offered) - Number(a.offered))[0];
+    const solid = busy.filter((h) => Number(h.offered) >= 5);
+    const weakAl = [...solid].sort((a, b) => Number(a.answeredPct) - Number(b.answeredPct))[0];
+    const weakSl = [...solid].sort((a, b) => Number(a.slPct) - Number(b.slPct))[0];
+    return [{
+      key: `hourly-${projectKey}`, title: "Calls by hour of day", source: "Dialler inbound call records, grouped by hour", theme: "calls",
+      cards: [
+        card("hr-peak", `Peak hour (${peak.label})`, peak.offered, "count", { hint: `${round1((100 * Number(peak.offered)) / total)}% of all calls, ${peak.avgPerDay} a day` }),
+        card("hr-weak-al", weakAl ? `Weakest answer level (${weakAl.label})` : "Weakest answer level", weakAl?.answeredPct ?? null, "percentage", { direction: "higher_is_better", hint: weakAl ? `${weakAl.offered} calls in that hour` : undefined }),
+        card("hr-weak-sl", weakSl ? `Weakest service level (${weakSl.label})` : "Weakest service level", weakSl?.slPct ?? null, "percentage", { direction: "higher_is_better", hint: weakSl ? `${weakSl.answered} answered in that hour` : undefined }),
+        card("hr-active", "Hours with calls", busy.length, "count"),
+      ],
+      funnel: busy.map((h) => ({
+        stage: `${h.label} · AL ${Math.round(Number(h.answeredPct))}% · SL ${Math.round(Number(h.slPct))}%`,
+        count: Number(h.offered),
+        pctOfBase: round1((100 * Number(h.offered)) / Number(peak.offered)) ?? 0,
+      })),
+    }];
+  };
 }
