@@ -87,6 +87,7 @@ export interface PayslipData {
   /** Financial-year-to-date total per component_code, summed across finalized
    *  runs from the FY's April up to and including this payslip's run_month. */
   ytd?: Record<string, number>;
+  ytd_by_type?: Record<string, Record<string, number>>;
 }
 
 export const payslipService = {
@@ -388,7 +389,19 @@ export const payslipService = {
     );
 
     if (rec.run_month) {
-      rec.ytd = await this.getYtdComponents(employeeId, rec.run_month);
+      const ytdByType = await this.getYtdComponentsByType(employeeId, rec.run_month);
+      // `ytd` stays a flat code -> amount map for existing readers. It cannot say
+      // which side of the payslip a code belongs to, so "everything not in a named
+      // slot" summed earnings into Other Deduction and deductions into Other
+      // Allowance. `ytd_by_type` carries the side.
+      const flat: Record<string, number> = {};
+      for (const type of Object.keys(ytdByType)) {
+        for (const code of Object.keys(ytdByType[type])) {
+          flat[code] = (flat[code] ?? 0) + ytdByType[type][code];
+        }
+      }
+      rec.ytd = flat;
+      rec.ytd_by_type = ytdByType;
     }
 
     return rec;
@@ -402,18 +415,18 @@ export const payslipService = {
    * not double-counted, extended to component-level (component_code +
    * component_type) instead of the flat salary_prep_line columns.
    */
-  async getYtdComponents(
+  async getYtdComponentsByType(
     employeeId: string,
     uptoRunMonth: string,
-  ): Promise<Record<string, number>> {
+  ): Promise<Record<string, Record<string, number>>> {
     const [yr, mo] = uptoRunMonth.split("-").map(Number);
     const fyStart = mo >= 4 ? yr : yr - 1;
     const fyFirstMonth = `${fyStart}-04`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT component_code, COALESCE(SUM(amount), 0) AS amount
+      `SELECT component_code, component_type, COALESCE(SUM(amount), 0) AS amount
          FROM (
-           SELECT splc.component_code, splc.amount,
+           SELECT splc.component_code, splc.component_type, splc.amount,
                   ROW_NUMBER() OVER (
                     PARTITION BY spr.run_month, splc.component_code, splc.component_type
                     ORDER BY FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
@@ -428,15 +441,17 @@ export const payslipService = {
               AND spl.status NOT IN ('excluded', 'blocked')
          ) canonical
         WHERE canonical.rn = 1
-        GROUP BY component_code`,
+        GROUP BY component_code, component_type`,
       [employeeId, fyFirstMonth, uptoRunMonth],
     );
-    const ytd: Record<string, number> = {};
+    const ytd: Record<string, Record<string, number>> = {};
     for (const row of rows as Array<{
       component_code: string;
+      component_type: string | null;
       amount: number;
     }>) {
-      ytd[row.component_code] = Number(row.amount ?? 0);
+      const type = String(row.component_type ?? "").toLowerCase();
+      (ytd[type] ??= {})[row.component_code] = Number(row.amount ?? 0);
     }
     return ytd;
   },

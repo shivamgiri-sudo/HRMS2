@@ -143,8 +143,19 @@ const h =
 router.use(requireAuth);
 
 // ─── Payroll Analytics (Dashboard) ────────────────────────────────────────────
+// This registration (5fb5ded2d) shares its URL with the older run-level analytics endpoint
+// further down ("GET /analytics?dimension=…&runMonth=…", the Payroll Analytics page), and being
+// registered first it shadowed it: that page received the dashboard summary instead of
+// { kpi, data, meta }, and `hr` — allowed there, not here — got a 403. The two callers are
+// told apart by the query string: the page always sends `dimension`, the dashboard sends
+// nothing. A request carrying either parameter is handed on to the original handler, before
+// this route's own role check runs.
 router.get(
   "/analytics",
+  (req: any, _res: any, next: any) =>
+    req.query.dimension !== undefined || req.query.runMonth !== undefined
+      ? next("route")
+      : next(),
   requireRole("super_admin", "admin", "payroll", "payroll_head", "finance", "ceo", "coo"),
   h(async (req, res) => {
     const summary = await getPayrollAnalyticsSummary();

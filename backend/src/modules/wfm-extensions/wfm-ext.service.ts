@@ -376,7 +376,11 @@ export const rosterConflictService = {
       employee_names: [row.employee_name ?? row.employee_code ?? row.employee_id],
       severity: String(row.conflict_type ?? "").toLowerCase().includes("overlap") ? "high" : "medium",
       status: row.resolved ? "resolved" : "open",
-      resolution_remarks: row.description ?? null,
+      description: row.description ?? null,
+      resolution_action: row.resolution_action ?? null,
+      resolution_remarks: row.resolution_remarks ?? null,
+      resolved_by: row.resolved_by ?? null,
+      resolved_at: row.resolved_at ?? null,
       created_at: row.detected_at,
     }));
   },
@@ -387,9 +391,55 @@ export const rosterConflictService = {
     return id;
   },
 
-  async resolve(id: string, resolvedBy: string, req?: Request) {
-    await db.execute("UPDATE wfm_roster_conflict_log SET resolved = 1 WHERE id = ?", [id]);
-    await logSensitiveAction({ actor_user_id: resolvedBy, action_type: "ROSTER_CONFLICT_RESOLVED", module_key: "WFM", entity_type: "wfm_roster_conflict_log", entity_id: id, req });
+  // RR12/RR13: the resolution decision is persisted (migration 1759), the caller's row scope is
+  // applied, and a missing / already-resolved conflict is reported instead of returning success.
+  async resolve(
+    id: string,
+    resolvedBy: string,
+    input: { resolution_action: string; resolution_remarks?: string | null; scope: { sql: string; params: unknown[] } },
+    req?: Request,
+  ) {
+    const { scope } = input;
+    const fullAction = String(input.resolution_action ?? "").trim();
+    if (!fullAction) throw Object.assign(new Error("resolution_action is required"), { statusCode: 400 });
+    // resolution_action is VARCHAR(100); the untruncated text is always kept in resolution_remarks.
+    const resolutionAction = fullAction.slice(0, 100);
+    const resolutionRemarks = String(input.resolution_remarks ?? "").trim() || fullAction;
+
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT c.id, c.employee_id, c.resolved
+         FROM wfm_roster_conflict_log c
+         JOIN employees e ON e.id = c.employee_id
+        WHERE c.id = ? AND (${scope.sql})
+        LIMIT 1`,
+      [id, ...scope.params],
+    );
+    const conflict = existing[0];
+    // Out-of-scope rows are reported as not found, so the endpoint does not confirm their existence.
+    if (!conflict) throw Object.assign(new Error("Roster conflict not found"), { statusCode: 404 });
+    if (Number(conflict.resolved) === 1) throw Object.assign(new Error("Roster conflict is already resolved"), { statusCode: 409 });
+
+    const [result] = await db.execute<ResultSetHeader>(
+      `UPDATE wfm_roster_conflict_log
+          SET resolved = 1, resolution_action = ?, resolution_remarks = ?, resolved_by = ?, resolved_at = NOW()
+        WHERE id = ? AND resolved = 0`,
+      [resolutionAction, resolutionRemarks, resolvedBy, id],
+    );
+    if (result.affectedRows !== 1) throw Object.assign(new Error("Roster conflict is already resolved"), { statusCode: 409 });
+
+    await logSensitiveAction({
+      actor_user_id: resolvedBy,
+      action_type: "ROSTER_CONFLICT_RESOLVED",
+      module_key: "WFM",
+      entity_type: "wfm_roster_conflict_log",
+      entity_id: id,
+      change_summary: {
+        employee_id: conflict.employee_id,
+        before: { resolved: 0 },
+        after: { resolved: 1, resolution_action: resolutionAction, resolution_remarks: resolutionRemarks, resolved_by: resolvedBy },
+      },
+      req,
+    });
   },
 };
 
@@ -400,25 +450,59 @@ export const coverageService = {
     const snapshotParams: unknown[] = [date];
     if (filters.process_id) { snapshotConds.push("s.process_id = ?"); snapshotParams.push(filters.process_id); }
     if (filters.branch_id) { snapshotConds.push("s.branch_id = ?"); snapshotParams.push(filters.branch_id); }
+    // RR17: the caller's row scope applies to the snapshot branch too, not only the live fallback.
+    // Only an explicit "1=1" (admin/hr/wfm/ceo) is unscoped; a missing predicate fails closed.
+    const isUnscoped = (filters.sql ?? "").trim() === "1=1";
+    if (!isUnscoped) {
+      // A scoped caller only sees process+branch grain rows that contain an employee they are
+      // scoped to. Coarser rows (process-wide or whole-org, NULL ids) span scopes they do not own.
+      snapshotConds.push("s.process_id IS NOT NULL");
+      snapshotConds.push("s.branch_id IS NOT NULL");
+      snapshotConds.push(
+        `EXISTS (SELECT 1 FROM employees e WHERE e.process_id = s.process_id AND e.branch_id = s.branch_id AND (${filters.sql ?? "1=0"}))`,
+      );
+      snapshotParams.push(...(filters.params ?? []));
+    }
     const [snapshotRows] = await db.execute<RowDataPacket[]>(
       `SELECT s.*, p.process_name, b.branch_name
          FROM wfm_coverage_snapshot s
          LEFT JOIN process_master p ON p.id = s.process_id
          LEFT JOIN branch_master b ON b.id = s.branch_id
         WHERE ${snapshotConds.join(" AND ")}
-        ORDER BY s.created_at DESC
-        LIMIT 200`,
+        ORDER BY s.created_at DESC`,
       snapshotParams,
     );
     if (snapshotRows.length) {
-      const required = snapshotRows.reduce((sum: number, row: any) => sum + Number(row.planned_headcount ?? 0), 0);
-      const available = snapshotRows.reduce((sum: number, row: any) => sum + Number(row.actual_headcount ?? 0), 0);
+      // RR16: a whole-scope aggregate row (NULL process and branch) and per-process/branch
+      // component rows can coexist for one date, and NULLs do not collide in the unique key, so
+      // summing every row double counts. Sum ONE grain, newest row per grain key.
+      const seenGrain = new Set<string>();
+      const dedupe = (rows: any[]) => rows.filter((row: any) => {
+        const key = `${row.process_id ?? "*"}|${row.branch_id ?? "*"}`;
+        if (seenGrain.has(key)) return false;
+        seenGrain.add(key);
+        return true;
+      });
+      const fineRows = snapshotRows.filter((row: any) => row.process_id != null && row.branch_id != null);
+      // A half-specified row (process-wide or branch-wide) is dropped when a process+branch row
+      // already covers part of it, so the two grains are never added together.
+      const overlapsFiner = (row: any) => fineRows.some((fine: any) => (row.process_id != null ? fine.process_id === row.process_id : fine.branch_id === row.branch_id));
+      const componentRows = dedupe(snapshotRows.filter((row: any) =>
+        (row.process_id != null && row.branch_id != null) || ((row.process_id != null || row.branch_id != null) && !overlapsFiner(row))));
+      const aggregateRows = dedupe(snapshotRows.filter((row: any) => row.process_id == null && row.branch_id == null));
+      const rowsForSum: any[] = componentRows.length > 0 ? componentRows : aggregateRows;
+      const required = rowsForSum.reduce((sum: number, row: any) => sum + Number(row.planned_headcount ?? 0), 0);
+      const available = rowsForSum.reduce((sum: number, row: any) => sum + Number(row.actual_headcount ?? 0), 0);
       return {
+        source: "snapshot" as const,
+        snapshot_grain: componentRows.length > 0 ? ("component" as const) : ("aggregate" as const),
+        snapshot_rows_considered: snapshotRows.length,
+        snapshot_rows_summed: rowsForSum.length,
         required_headcount: required,
         available_headcount: available,
         coverage_pct: required > 0 ? Math.round((available / required) * 10000) / 100 : 0,
-        gaps: snapshotRows.filter((row: any) => Number(row.planned_headcount ?? 0) > Number(row.actual_headcount ?? 0)).map((row: any) => ({ process: row.process_name, branch: row.branch_name, gap_count: Math.max(0, Number(row.planned_headcount ?? 0) - Number(row.actual_headcount ?? 0)), note: `Shrinkage ${Number(row.shrinkage_pct ?? 0).toFixed(2)}%` })),
-        data: snapshotRows,
+        gaps: rowsForSum.filter((row: any) => Number(row.planned_headcount ?? 0) > Number(row.actual_headcount ?? 0)).map((row: any) => ({ process: row.process_name, branch: row.branch_name, gap_count: Math.max(0, Number(row.planned_headcount ?? 0) - Number(row.actual_headcount ?? 0)), note: `Shrinkage ${Number(row.shrinkage_pct ?? 0).toFixed(2)}%` })),
+        data: rowsForSum,
       };
     }
 
@@ -445,6 +529,7 @@ export const coverageService = {
     const required = liveRows.reduce((sum: number, row: any) => sum + Number(row.planned_headcount ?? 0), 0);
     const available = liveRows.reduce((sum: number, row: any) => sum + Number(row.actual_headcount ?? 0), 0);
     return {
+      source: "live" as const,
       required_headcount: required,
       available_headcount: available,
       coverage_pct: required > 0 ? Math.round((available / required) * 10000) / 100 : 0,

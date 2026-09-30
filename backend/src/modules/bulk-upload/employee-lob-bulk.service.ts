@@ -37,6 +37,7 @@ import {
 import { resolveWfmScope } from "../wfm/wfm-scope-fallback.js";
 import { DashboardScopeConfigurationError } from "../../shared/dashboardScope.js";
 import { clearOnfidoResponseCache } from "../onfido-process/onfido-response-cache.js";
+import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
 import {
   chunk,
   marks,
@@ -612,6 +613,20 @@ export async function importEmployeeLobBatch(
   // Dashboards (e.g. the Onfido Capacity Builder card) cache their LOB-derived reads for up to
   // 30 minutes; a mapping change here must be visible right away, not after that TTL expires.
   if (changes.length > 0) clearOnfidoResponseCache();
+
+  // A process move is a change of supervision even when reporting_manager_id is untouched,
+  // so it opens an effective-dated period — otherwise attrition and shrinkage keep charging
+  // the old process for everyone this file moved. After the commit, and non-blocking: see
+  // manager-attribution.service.ts. LOB / cost-centre-only changes are not supervisory.
+  for (const c of changes) {
+    if (String(c.old.processId ?? "") === String(c.next.processId)) continue;
+    await recordSupervisoryChange({
+      employeeId: c.employeeId,
+      processId: c.next.processId,
+      changedBy: importedByUserId,
+      reason: "Bulk employee cost centre / process / LOB upload",
+    });
+  }
 
   await writeAuditLog({
     actor_user_id: importedByUserId,

@@ -161,7 +161,23 @@ router.get("/roster/conflicts", requireRole("admin", "hr", "wfm", "manager", "as
 }));
 
 router.post("/roster/conflicts/:id/resolve", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"), h(async (req: AuthenticatedRequest, res: Response) => {
-  await rosterConflictService.resolve(req.params.id, req.authUser!.id, req);
+  const resolutionAction = typeof req.body?.resolution_action === "string" ? req.body.resolution_action.trim() : "";
+  if (!resolutionAction) {
+    res.status(400).json({ success: false, error: "resolution_action is required" });
+    return;
+  }
+  const remarks = req.body?.resolution_remarks ?? req.body?.remarks;
+  const scope = await employeeScope(req.authUser!.id);
+  await rosterConflictService.resolve(
+    req.params.id,
+    req.authUser!.id,
+    {
+      resolution_action: resolutionAction,
+      resolution_remarks: typeof remarks === "string" ? remarks : null,
+      scope,
+    },
+    req,
+  );
   res.json({ success: true, ok: true });
 }));
 

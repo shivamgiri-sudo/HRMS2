@@ -62,6 +62,7 @@ function summaryRow(emp: SheetEmployee): Record<string, unknown> {
     employee_name: emp.employeeName,
     branch_name: emp.branch ?? "",
     cost_centre_code: emp.costCentre ?? "",
+    cost_centre_name: emp.costCentreName ?? "",
     process_name: emp.process ?? "",
     lob_name: emp.lob ?? "",
     attendance_source: emp.attendanceSource,

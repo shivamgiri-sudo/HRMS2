@@ -5021,6 +5021,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "cost_centre_code", label: "Cost Center", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre Name", format: "text", width: 180 },
       { key: "process_name", label: "Process Name", format: "text", width: 140 },
       { key: "lob_name", label: "LOB", format: "text", width: 120 },
       { key: "attendance_source", label: "Attendance Source", format: "text", width: 120 },
@@ -5063,6 +5064,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "cost_center", label: "CostCenter", format: "text", width: 130 },
       { key: "emp_location", label: "EmpLocation", format: "text", width: 100 },
       { key: "process_name", label: "Process Name", format: "text", width: 140 },
+      { key: "process_lob_name", label: "Process LOB", format: "text", width: 130 },
       { key: "date_of_joining", label: "Joining Date", format: "date", width: 110 },
       { key: "salary_start_date", label: "Salary Start Date", format: "date", width: 120 },
       { key: "billable", label: "Billable", format: "text", width: 70, align: "center" },
@@ -5261,6 +5263,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "loan_type", label: "Type", format: "text", width: 100 },
       { key: "loan_amount", label: "Amount", format: "currency", width: 120, align: "right" },
@@ -5348,6 +5352,8 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 140 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "nominee_name", label: "Nominee Name", format: "text", width: 160 },
       { key: "relationship", label: "Relationship", format: "text", width: 120 },
@@ -5389,4 +5395,4 @@ export function canExportReport(code: string, roles: string[]): boolean {
   const report = getReportDefinition(code);
   if (!report) return false;
   return report.exportRoles.some(er => roles.includes(er));
-}
+}

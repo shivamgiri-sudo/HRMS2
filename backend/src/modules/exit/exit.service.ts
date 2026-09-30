@@ -964,11 +964,22 @@ export const exitService = {
       "cancelled",
       "withdrawn",
     ].includes(nextStatus);
-    if (confirmedLwdInput && !isReversalOutcome) {
-      const [dueRows] = await db.execute<RowDataPacket[]>(
-        `SELECT 1 FROM exit_request WHERE id = ? AND last_working_day_confirmed <= CURDATE()`,
-        [id],
-      );
+    //
+    // "exited" always needs its tasks, LWD or not. The ruling above moved creation off the
+    // accept-time transition; it did not mean an employee can leave with no clearance chain at
+    // all — yet that was the result whenever an exit reached "exited" before its confirmed
+    // LWD came due (early release, no LWD confirmed, or marked before the 8am sweep): this
+    // branch did not fire, and the sweep treats "exited" as terminal and never revisits it.
+    // Zero tasks also means nothing for the F&F approval guard to count as open.
+    // createDefaultClearanceTasks is idempotent, so an exit that already has tasks is untouched.
+    const clearanceDueNow = nextStatus === "exited";
+    if ((confirmedLwdInput || clearanceDueNow) && !isReversalOutcome) {
+      const [dueRows] = clearanceDueNow
+        ? [[{ due: 1 }]]
+        : await db.execute<RowDataPacket[]>(
+            `SELECT 1 FROM exit_request WHERE id = ? AND last_working_day_confirmed <= CURDATE()`,
+            [id],
+          );
       if (dueRows[0]) {
         await createDefaultClearanceTasks(id, employeeIdForExit).catch(
           (err: unknown) => {

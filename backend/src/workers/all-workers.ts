@@ -42,6 +42,7 @@ import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./emp
 // ats-reminders when it lived in one file only.
 import { initBusinessActionSyncJobs, stopBusinessActionSyncJobs } from "../cron/business-action-sync.cron.js";
 import { startEmployeeMasterSnapshotScheduler, stopEmployeeMasterSnapshotScheduler } from "../cron/employee-master-snapshot.cron.js";
+import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "../cron/exitAutoAdvance.cron.js";
 import { startDbbillMigrationReportCron } from "../cron/dbbill-migration-report.cron.js";
 import { startDashboardSnapshotScheduler, stopDashboardSnapshotScheduler } from "../modules/dashboards/dashboard-snapshot.cron.js";
 import {
@@ -326,6 +327,20 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => startEmployeeMasterSnapshotScheduler(),
   },
   {
+    // Was registered in server.ts ONLY (inside the !WORKERS_EXTERNAL block), so in
+    // the external-workers topology exits whose LWD had passed with clearance
+    // complete were never auto-advanced to exited. Daily at 00:30 IST.
+    //
+    // Off unless EXIT_AUTO_ADVANCE_ENABLED=true. It has never run in production, so
+    // the first run would move the whole backlog to exited and notify for each one;
+    // that is the owner's call to make, not a side effect of fixing the registration.
+    name: "exit-auto-advance",
+    start: () => {
+      if (process.env.EXIT_AUTO_ADVANCE_ENABLED === "true") startExitAutoAdvanceScheduler();
+      return Promise.resolve();
+    },
+  },
+  {
     name: "lms-sync",
     start: startLmsSyncWorker,
   },
@@ -556,6 +571,7 @@ function shutdown(): void {
   // no stop function, so they are not listed — their timers die with the process.
   stopBusinessActionSyncJobs();
   stopEmployeeMasterSnapshotScheduler();
+  stopExitAutoAdvanceScheduler();
   stopDashboardSnapshotScheduler();
   stopPerformanceScorecardSnapshotScheduler();
   stopAttendanceReconciliationWorker();

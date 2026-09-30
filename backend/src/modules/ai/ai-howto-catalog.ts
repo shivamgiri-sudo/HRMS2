@@ -449,7 +449,12 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'statutory_filing',
     title: 'Track PF, ESI, PT or TDS statutory filing',
-    aliases: [/\b(pf|esi|pt|tds)\b.*\b(filing|status|due|compliance)\b/i, /\bstatutory\s*filing\b/i, /\bstatutory\s*compliance\s*status\b/i, /\bchallan\b/i],
+    // "statutory compliance status" is deliberately NOT an alias here: it is the verbatim
+    // title of statutory_compliance (/compliance/statutory), and first-match-wins meant this
+    // entry answered that question with its own static role list instead of the
+    // STATUTORY_COMPLIANCE page grant — hr was refused a page it holds, admin/finance were
+    // sent to a different page. An entry must stay reachable by its own title.
+    aliases: [/\b(pf|esi|pt|tds)\b.*\b(filing|status|due|compliance)\b/i, /\bstatutory\s*filing\b/i, /\bchallan\b/i],
     steps: [
       '1. Go to Payroll → Statutory Center.',
       '2. The Filing tab shows PF/ESI/PT/TDS filing status, due dates, and outstanding amounts.',
