@@ -8,6 +8,7 @@ import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
 import { sharedInFlight } from "../dashboards/metrics-in-flight.js";
 import {
+  COMMAND_CENTER_STALE_MS,
   COMMAND_CENTER_TTL_MS,
   commandCenterCache,
   commandCenterCacheKey,
@@ -126,14 +127,21 @@ atsFullParityRouter.get("/command-center", requireRole("admin", "hr", "recruiter
   // Keyed by actor + scope + filters, so one user's scoped result is never served to another.
   const key = commandCenterCacheKey(actorId, bypassScope, query);
   const hit = commandCenterCache.get(key);
-  if (hit && Date.now() - hit.at < COMMAND_CENTER_TTL_MS) return res.json(hit.value);
-  const data = await sharedInFlight(key, async () => {
+  const age = hit ? Date.now() - hit.at : Number.POSITIVE_INFINITY;
+  if (hit && age < COMMAND_CENTER_TTL_MS) return res.json(hit.value);
+  const refresh = () => sharedInFlight(key, async () => {
     const value = (await svc.commandCenterData({ ...query, actorId, bypassScope })) as Record<string, unknown>;
     commandCenterCache.set(key, { at: Date.now(), value });
     pruneCommandCenterCache();
     return value;
   });
-  res.json(data);
+  // Stale-while-revalidate: answer at once from a result up to COMMAND_CENTER_STALE_MS old and refresh in the background
+  // (shared in-flight, so many visitors start one refresh). Failures are never cached and never reach this response.
+  if (hit && age < COMMAND_CENTER_STALE_MS) {
+    void refresh().catch((e) => console.error("[command-center] background refresh failed:", (e as Error).message));
+    return res.json(hit.value);
+  }
+  res.json(await refresh());
 }));
 
 atsFullParityRouter.get("/queue", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
