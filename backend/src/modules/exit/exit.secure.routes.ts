@@ -617,6 +617,77 @@ async function handleExitStatusUpdate(req: any, res: any) {
   });
 }
 
+/**
+ * POST /bulk-status — apply one status to many exit requests in a single round-trip.
+ *
+ * The Bulk Actions tab used to loop over the selection and PATCH /:id/status once per employee,
+ * sequentially, swallowing every error. Ten people meant ten serial round-trips, and a row that
+ * failed (wrong current status, not the reporting manager, no remarks) was just counted as
+ * "failed" with no reason, so nothing appeared to change.
+ *
+ * Every id still goes through handleExitStatusUpdate itself, so the FSM, role gate, scope check,
+ * row lock and audit log are exactly the single-item ones; this only removes the network hops and
+ * reports why each failure failed. A small worker pool keeps the DB pool from being flooded.
+ */
+const BULK_EXIT_MAX = 500;
+const BULK_EXIT_CONCURRENCY = 8;
+
+exitSecureRouter.post(
+  "/bulk-status",
+  h(async (req: any, res: any) => {
+    const ids: string[] = Array.isArray(req.body?.ids)
+      ? [...new Set(req.body.ids.map((x: unknown) => String(x)))].filter(Boolean) as string[]
+      : [];
+    if (ids.length === 0) {
+      return res.status(400).json({ success: false, message: "ids is required" });
+    }
+    if (ids.length > BULK_EXIT_MAX) {
+      return res
+        .status(400)
+        .json({ success: false, message: `At most ${BULK_EXIT_MAX} exit requests per bulk action` });
+    }
+
+    type Result = { id: string; ok: boolean; status: number; message: string };
+    const results: Result[] = new Array(ids.length);
+    let next = 0;
+
+    const runOne = async (id: string): Promise<Result> => {
+      let code = 200;
+      let payload: any = null;
+      const capture = {
+        status(c: number) { code = c; return capture; },
+        json(body: unknown) { payload = body; return capture; },
+      };
+      try {
+        await handleExitStatusUpdate(
+          {
+            authUser: req.authUser,
+            params: { id },
+            body: { status: req.body?.status, remarks: req.body?.remarks },
+            query: {},
+          },
+          capture,
+        );
+      } catch (err: any) {
+        return { id, ok: false, status: Number(err?.statusCode ?? 500), message: String(err?.message ?? "Failed") };
+      }
+      const ok = code >= 200 && code < 300 && payload?.success !== false;
+      return { id, ok, status: code, message: String(payload?.message ?? (ok ? "Updated" : "Failed")) };
+    };
+
+    const worker = async () => {
+      while (next < ids.length) {
+        const i = next++;
+        results[i] = await runOne(ids[i]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(BULK_EXIT_CONCURRENCY, ids.length) }, worker));
+
+    const succeeded = results.filter((r) => r.ok).length;
+    return res.json({ success: true, total: ids.length, succeeded, failed: ids.length - succeeded, results });
+  }),
+);
+
 exitSecureRouter.patch("/:id/status", h(handleExitStatusUpdate));
 exitSecureRouter.post("/:id/status", h(handleExitStatusUpdate));
 

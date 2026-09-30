@@ -198,7 +198,8 @@ async function fetchOnce(
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000, signal?: AbortSignal): Promise<T> {
+// 600s default (was 30s): long-running actions were aborted client-side while the server was still working.
+async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 600000, signal?: AbortSignal): Promise<T> {
   const normalizedPath = normalizeRequestPath(path);
 
   let res = await fetchOnce(normalizedPath, method, body, timeoutMs, signal);
