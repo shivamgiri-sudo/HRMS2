@@ -196,6 +196,9 @@ export function BellavitaMasmisUploader({
   const [dragOver, setDragOver] = useState(false);
   const [showAllLog, setShowAllLog] = useState(false);
   const [lastBatchId, setLastBatchId] = useState<string | null>(null);
+  // SBI Card account files carry no report date; the operator picks the snapshot date (defaults to today).
+  const [reportDate, setReportDate] = useState(() => new Date().toLocaleDateString("en-CA"));
+  const needsReportDate = templateCode === "SBI_CARD_ACCOUNT_FILE";
   const [downloadingErrorsId, setDownloadingErrorsId] = useState<string | null>(null);
   const [downloadingAllId, setDownloadingAllId] = useState<string | null>(null);
   const coverageQ = useUploadCoverage([templateCode]);
@@ -379,6 +382,9 @@ export function BellavitaMasmisUploader({
     const rows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[picked.name]!, {
       defval: "", raw: false, range: picked.headerRow,
     });
+    if (needsReportDate) {
+      for (const r of rows) if (getNormalized(r, "Report Date") === "") r["Report Date"] = reportDate;
+    }
     // Blank spacer rows would otherwise be staged as "X is required" errors.
     return { rows: isSbiCardCode(code) ? (dropBlankRows(rows, required, normalizeHeaderKey).rows as Record<string, string>[]) : rows, summary: null };
   }
@@ -507,6 +513,15 @@ export function BellavitaMasmisUploader({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Dropzone + status */}
         <div className="lg:col-span-2">
+          {needsReportDate && (
+            <label className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              Report date for this account file
+              <input type="date" value={reportDate} max={new Date().toLocaleDateString("en-CA")} disabled={busy}
+                onChange={(e) => setReportDate(e.target.value)}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" />
+              <span className="text-slate-400">Used for rows without a Report Date column.</span>
+            </label>
+          )}
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
