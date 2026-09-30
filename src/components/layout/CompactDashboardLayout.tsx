@@ -436,6 +436,7 @@ function DashboardLayoutShell({ children, subheader }: Props) {
         style={{
           height: "100dvh",
           overflowY: "auto",
+          overflowX: "hidden",
           paddingBottom: "calc(58px + env(safe-area-inset-bottom, 0px) + 0.5rem)",
         }}
       >

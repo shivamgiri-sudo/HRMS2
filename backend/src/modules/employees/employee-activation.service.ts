@@ -326,7 +326,10 @@ async function checkProvisioningSlaWarnings(employeeId: string): Promise<string[
 /**
  * Find all provisioning tasks that have exceeded the 24h SLA
  */
-export async function findSlaViolations(taskCode?: string): Promise<SlaViolation[]> {
+export async function findSlaViolations(taskCode?: string, branchIds?: string[]): Promise<SlaViolation[]> {
+  const branchClause = branchIds?.length
+    ? `AND e.branch_id IN (${branchIds.map(() => '?').join(',')})`
+    : '';
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        r.employee_id,
@@ -343,8 +346,9 @@ export async function findSlaViolations(taskCode?: string): Promise<SlaViolation
        AND r.status IN ('pending', 'pending_unassigned', 'assigned', 'in_progress')
        AND e.active_status = 1
        ${taskCode ? 'AND r.task_code = ?' : ''}
+       ${branchClause}
      ORDER BY hours_overdue DESC`,
-    taskCode ? [taskCode] : []
+    [...(taskCode ? [taskCode] : []), ...(branchIds ?? [])]
   );
 
   const taskNames: Record<string, string> = {

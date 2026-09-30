@@ -726,7 +726,15 @@ router.post(
 router.get('/sla/violations', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm', 'branch_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const { findSlaViolations } = await import('../employees/employee-activation.service.js');
   const taskCode = req.query.task_code ? String(req.query.task_code) : undefined;
-  const violations = await findSlaViolations(taskCode);
+  const userId = req.authUser!.id;
+  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
+  let branchIds: string[] | undefined;
+  if (!isAdmin) {
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
+  }
+  const violations = await findSlaViolations(taskCode, branchIds);
   return res.json({ success: true, data: violations, count: violations.length });
 }));
 
@@ -780,25 +788,37 @@ router.post('/sla/bulk-waive', requireRole('admin', 'super_admin', 'hr'), h(asyn
 
 router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm', 'branch_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const taskCode = req.query.task_code ? String(req.query.task_code) : null;
+  const userId = req.authUser!.id;
+  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
+  let branchIds: string[] | undefined;
+  if (!isAdmin) {
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
+  }
+  const branchClause = branchIds?.length
+    ? `AND r.employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => '?').join(',')}))`
+    : '';
   const [summary] = await db.execute<RowDataPacket[]>(
     `SELECT
-       task_code,
+       r.task_code,
        COUNT(*) AS total,
-       SUM(CASE WHEN status IN ('actioned','verified','waived') THEN 1 ELSE 0 END) AS completed,
-       SUM(CASE WHEN sla_due_at IS NOT NULL AND sla_due_at < NOW()
-                 AND status NOT IN ('actioned','verified','waived','cancelled') THEN 1 ELSE 0 END) AS overdue,
-       SUM(CASE WHEN assignment_exception = 1 THEN 1 ELSE 0 END) AS unassigned,
+       SUM(CASE WHEN r.status IN ('actioned','verified','waived') THEN 1 ELSE 0 END) AS completed,
+       SUM(CASE WHEN r.sla_due_at IS NOT NULL AND r.sla_due_at < NOW()
+                 AND r.status NOT IN ('actioned','verified','waived','cancelled') THEN 1 ELSE 0 END) AS overdue,
+       SUM(CASE WHEN r.assignment_exception = 1 THEN 1 ELSE 0 END) AS unassigned,
        AVG(CASE
-         WHEN sla_due_at IS NOT NULL AND status IN ('actioned','verified')
-         THEN TIMESTAMPDIFF(HOUR, created_at, actioned_at)
+         WHEN r.sla_due_at IS NOT NULL AND r.status IN ('actioned','verified')
+         THEN TIMESTAMPDIFF(HOUR, r.created_at, r.actioned_at)
        END) AS avg_completion_hours
-     FROM it_provisioning_request
-     WHERE request_type = 'join'
-       AND created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
-       ${taskCode ? 'AND task_code = ?' : ''}
-     GROUP BY task_code
-     ORDER BY task_code`,
-    taskCode ? [taskCode] : []
+     FROM it_provisioning_request r
+     WHERE r.request_type = 'join'
+       AND r.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
+       ${taskCode ? 'AND r.task_code = ?' : ''}
+       ${branchClause}
+     GROUP BY r.task_code
+     ORDER BY r.task_code`,
+    [...(taskCode ? [taskCode] : []), ...(branchIds ?? [])]
   );
   return res.json({ success: true, data: summary });
 }));
