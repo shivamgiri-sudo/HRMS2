@@ -314,6 +314,7 @@ import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.
 import { processDataSourceRouter } from "./modules/process-data-source/process-data-source.routes.js";
 import { dashboardBuilderRouter } from "./modules/dashboard-builder/dashboard-builder.routes.js";
 import { analyticsCatalogueRouter } from "./modules/analytics-catalogue/analytics.routes.js";
+import { dashboardsRouter } from "./modules/analytics-catalogue/dashboards.routes.js";
 import { processOperationsRouter } from "./modules/process-operations/process-operations.routes.js";
 import { onfidoProcessDashboardRouter } from "./modules/onfido-process/onfido-process-dashboard.routes.js";
 import { onfidoNameMappingRouter } from "./modules/onfido-process/onfido-name-mapping.routes.js";
@@ -1019,6 +1020,7 @@ app.use("/api/process-performance", misExportRouter);
 app.use("/api/process-kpi-dashboard", kpiScorecardRouter);
 app.use("/api/process-data-source", processDataSourceRouter);
 app.use("/api/dashboard-builder", dashboardBuilderRouter);
+app.use("/api/analytics-catalogue/dashboards", dashboardsRouter);
 app.use("/api/analytics-catalogue", analyticsCatalogueRouter);
 app.use("/api/process-operations", processOperationsRouter);
 // Mounted BEFORE the broader /api/onfido-process router below: Express dispatches

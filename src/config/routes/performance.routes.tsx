@@ -22,7 +22,7 @@ const ProcessPerformancePage = lazy(() => import("@/pages/ProcessPerformancePage
 const ProcessKpiDashboardPage = lazy(() => import("@/pages/ProcessKpiDashboardPage"));
 const ProcessDataSourcePage = lazy(() => import("@/pages/ProcessDataSourcePage"));
 const KpiStudioPage = lazy(() => import("@/pages/KpiStudioPage"));
-const DashboardBuilderPage = lazy(() => import("@/pages/DashboardBuilderPage"));
+const DashboardStudioPage = lazy(() => import("@/pages/DashboardStudioPage"));
 const ProcessOperationsPage = lazy(() => import("@/pages/ProcessOperationsPage"));
 const OpsControlTowerPage = lazy(() => import("@/pages/ops/OpsControlTowerPage"));
 const ProcessPerformanceV2Page = lazy(() => import("@/pages/ProcessPerformanceV2Page"));
@@ -129,7 +129,9 @@ export const performanceRouteElements = (
       <Route path="/performance/process-data-sources" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','branch_wfm','wfm','qa','quality_analyst','tq_head']}><Gate pageCode="PROCESS_DATA_SOURCE"><ProcessDataSourcePage /></Gate></ProtectedRoute>} />
       {/* Roles mirror kpi-studio.routes.ts's VIEW_ROLES; the router re-checks server-side. */}
       <Route path="/kpi-studio" element={<ProtectedRoute roles={['super_admin','admin','hr','process_manager','qa','tq_head','manager','branch_head','ceo','team_leader']}><Gate pageCode="KPI_STUDIO"><KpiStudioPage /></Gate></ProtectedRoute>} />
-      <Route path="/dashboard-builder" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardBuilderPage /></Gate></ProtectedRoute>} />
+      {/* Dashboard Studio (v2). The server re-checks roles and applies each viewer's branch/process scope to every number. */}
+      <Route path="/dashboard-builder" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardStudioPage /></Gate></ProtectedRoute>} />
+      <Route path="/dashboard-builder/:id" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardStudioPage /></Gate></ProtectedRoute>} />
       <Route path="/process-operations" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader','wfm','branch_wfm']}><Gate pageCode="PROCESS_OPERATIONS"><ProcessOperationsPage /></Gate></ProtectedRoute>} />
       <Route path="/ops/control-tower" element={<ProtectedRoute roles={['super_admin','admin','ceo','hr','hr_admin','branch_head','operations_manager','wfm','payroll_head']}><Gate pageCode="OPS_CONTROL_TOWER"><OpsControlTowerPage /></Gate></ProtectedRoute>} />
       <Route path="/performance/process-performance-v2" element={<TpzRoute><ProcessPerformanceV2Page /></TpzRoute>} />

@@ -57,7 +57,7 @@ function aggExpr(agg: Agg, c: string | null): string {
 
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`);
 
-export interface CompiledQuery { sql: string; params: unknown[]; columns: ResultColumn[]; limit: number }
+export interface CompiledQuery { sql: string; params: unknown[]; columns: ResultColumn[]; limit: number; /** true when the limit is the dataset's own cap, not the user's top-N */ capped: boolean }
 
 export function compileQuery(ds: Dataset, spec: QuerySpec, scope: ScopeClause, range: Range | null): CompiledQuery {
   assertSafeIdentifier(ds.sourceTable, "table");
@@ -152,5 +152,5 @@ export function compileQuery(ds: Dataset, spec: QuerySpec, scope: ScopeClause, r
     // One extra row tells the caller the result was cut off.
     `LIMIT ${limit + 1}`,
   ].filter(Boolean).join("\n");
-  return { sql, params, columns, limit };
+  return { sql, params, columns, limit, capped: limit === ds.maxRows };
 }

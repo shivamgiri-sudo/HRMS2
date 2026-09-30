@@ -39,8 +39,10 @@ export function runQuery(userId: string, spec: QuerySpec): Promise<QueryResult> 
   const p = (async (): Promise<QueryResult> => {
     const range = resolveRange(spec.dateRange);
     const { compiled, rows } = await execute(spec, userId, range);
-    const truncated = rows.length > compiled.limit;
-    const out = truncated ? rows.slice(0, compiled.limit) : rows;
+    const over = rows.length > compiled.limit;
+    const out = over ? rows.slice(0, compiled.limit) : rows;
+    // Only a hit on the dataset's own cap is "truncated"; a user's top-N is what they asked for.
+    const truncated = over && compiled.capped;
     const totals = await totalsFor(spec, userId, range, out, compiled.columns.length);
     let compare: QueryResult["compare"];
     if (spec.compare && range) {
