@@ -323,3 +323,10 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - KPI Studio nightly compute enabled on prod in DRY-RUN (`KPI_STUDIO_COMPUTE_ENABLED=true`, `KPI_STUDIO_COMPUTE_DRY_RUN=true`; `.env` backup `.env.bak-20260930-101150`). Review `pm2 logs hrms2-workers | grep KpiStudioCompute` after the 02:00 run before setting DRY_RUN=false.
 - Known: a KPI source references non-existent column `pause_seconds`; ~70% of metrics have no target.
 - Not verified: real-login per-role scoping, dark mode.
+
+## 2026-09-30 — Production browser audit + speed fixes (deploy run 36672530773)
+- Logged in on https://mcnhrms.teammas.in as a Manager; called the page's own APIs for all 393 process entries (45 have KPI metrics, 682 metrics). Deck, All Processes, drill-down popup (56% width), Voice of the Customer, Business datapoints all render with real data.
+- Fixes shipped: Business datapoints served stale-while-revalidate (6h) with a background warm-up; P&L warm-up starts 10s after boot; drill-down percent gaps now read "pt" and the volume axis is compact.
+- Measured after warm-up: Bella-Vita business-datapoints 36-75s -> 0.2s; Clovia/Dalmia/Satya 0.1-0.4s; Operating % Bella-Vita 35.5% (2026-08 payroll, labelled), Neemans 3.3%, Clovia -0.9%, Dalmia -10.1%, Guardian 26.0%.
+- Still blank by data, not code: GNC and Bla Bli Blu (no accounting revenue and no processed payroll). Any API restart (also by other people's deploys) resets the caches; first ~5 min after a restart can still be slow.
+- Not verified: dark mode, phone width on prod, non-Manager roles.
