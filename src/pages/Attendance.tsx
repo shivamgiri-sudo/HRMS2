@@ -97,7 +97,17 @@ const isOfficeMode = (mode?: string | null) =>
 function getExpectedHours(workStart: string, workEnd: string): number {
   const [sh, sm] = workStart.split(":").map(Number);
   const [eh, em] = workEnd.split(":").map(Number);
-  return Math.max(0, (eh * 60 + em - (sh * 60 + sm)) / 60);
+  let minutes = eh * 60 + em - (sh * 60 + sm);
+  if (minutes < 0) minutes += 24 * 60; // overnight shift, e.g. 22:00-07:00
+  return minutes / 60;
+}
+
+interface RosterDay {
+  roster_date: string;
+  is_week_off: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  shift_name: string | null;
 }
 
 function safeFormatDate(value: string | null | undefined, fmt: string, fallback = "-"): string {
@@ -321,6 +331,51 @@ const Attendance = () => {
     retry: 2,
   });
 
+  // Uploaded/generated roster for the viewed month plus today. The profile hours above are only a
+  // fallback: a roster upload writes wfm_roster_assignment, never employees.working_hours_*.
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const monthFrom = `${selectedYear}-${pad2(parseInt(selectedMonth) + 1)}-01`;
+  const monthTo = `${selectedYear}-${pad2(parseInt(selectedMonth) + 1)}-${pad2(new Date(parseInt(selectedYear), parseInt(selectedMonth) + 1, 0).getDate())}`;
+  const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const fetchRoster = async (from: string, to: string) => {
+    const res = await hrmsApi.get<{ data: RosterDay[] }>(`/api/wfm/my-roster/range?from=${from}&to=${to}`);
+    return res.data ?? [];
+  };
+  const { data: monthRoster } = useQuery({
+    queryKey: ["my-roster-range", user?.id, monthFrom, monthTo],
+    queryFn: () => fetchRoster(monthFrom, monthTo),
+    enabled: !!user?.id,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const { data: todayRoster } = useQuery({
+    queryKey: ["my-roster-range", user?.id, todayKey, todayKey],
+    queryFn: () => fetchRoster(todayKey, todayKey),
+    enabled: !!user?.id,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const rosterByDate = useMemo(() => {
+    const m = new Map<string, RosterDay>();
+    [...(monthRoster ?? []), ...(todayRoster ?? [])].forEach((r) => m.set(r.roster_date, r));
+    return m;
+  }, [monthRoster, todayRoster]);
+
+  /** Shift for a calendar day: roster first, then the employee's profile hours. */
+  const scheduleFor = (
+    dateKey: string | null | undefined,
+    profile?: { working_hours_start: string | null; working_hours_end: string | null } | null,
+  ): { start: string; end: string; weekOff: boolean } => {
+    const r = dateKey ? rosterByDate.get(String(dateKey).slice(0, 10)) : undefined;
+    if (r?.is_week_off) return { start: "00:00:00", end: "00:00:00", weekOff: true };
+    if (r?.start_time && r?.end_time) return { start: r.start_time, end: r.end_time, weekOff: false };
+    return {
+      start: profile?.working_hours_start || currentEmployee?.working_hours_start || "09:00:00",
+      end: profile?.working_hours_end || currentEmployee?.working_hours_end || "18:00:00",
+      weekOff: false,
+    };
+  };
+
   const { data: todayRecord, isLoading: todayLoading } =
     useTodayAttendance(currentEmployee?.id);
   const { data: livePunch } = useTodayLivePunch(currentEmployee?.id);
@@ -381,10 +436,8 @@ const Attendance = () => {
   const longBreakCount = safeNumber(
     breakSummary?.long_break_count ?? todayRecord?.long_break_count ?? 0
   );
-  const scheduledShiftHours = getExpectedHours(
-    currentEmployee?.working_hours_start || "09:00:00",
-    currentEmployee?.working_hours_end || "18:00:00"
-  );
+  const todaySchedule = scheduleFor(todayKey);
+  const scheduledShiftHours = getExpectedHours(todaySchedule.start, todaySchedule.end);
   const hasMetShiftHours =
     displayHours != null && displayHours + 0.01 >= scheduledShiftHours;
   const isShiftCompleted = !!displayClockOut && hasMetShiftHours;
@@ -418,6 +471,7 @@ const Attendance = () => {
     clock_in: string | null;
     clock_out: string | null;
     total_hours: number | null;
+    date?: string;
     employee?: {
       working_hours_start: string | null;
       working_hours_end: string | null;
@@ -425,16 +479,8 @@ const Attendance = () => {
   }): number => {
     if (!record.clock_out || !record.total_hours) return 0;
 
-    const workStart =
-      record.employee?.working_hours_start ||
-      currentEmployee?.working_hours_start ||
-      "09:00:00";
-    const workEnd =
-      record.employee?.working_hours_end ||
-      currentEmployee?.working_hours_end ||
-      "18:00:00";
-
-    const expectedHours = getExpectedHours(workStart, workEnd);
+    const sched = scheduleFor(record.date, record.employee);
+    const expectedHours = getExpectedHours(sched.start, sched.end);
     const overtime = record.total_hours - expectedHours;
 
     return overtime > 0 ? overtime : 0;
@@ -448,21 +494,22 @@ const Attendance = () => {
       0
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attendanceRecords, currentEmployee]);
+  }, [attendanceRecords, currentEmployee, rosterByDate]);
 
   const calculateLateArrival = (
     clockInTime: string | null,
     employeeSchedule?: {
       working_hours_start: string | null;
       working_hours_end: string | null;
-    }
+    },
+    dateKey?: string | null,
   ): number => {
     if (!clockInTime) return 0;
 
-    const workStart =
-      employeeSchedule?.working_hours_start ||
-      currentEmployee?.working_hours_start ||
-      "09:00:00";
+    const sched = scheduleFor(dateKey ?? todayKey, employeeSchedule);
+    // Week-off: no scheduled start, so nothing can be "late".
+    if (sched.weekOff) return 0;
+    const workStart = sched.start;
 
     const [startHour, startMin] = workStart.split(":").map(Number);
     // Parse clock-in in IST: tag naive "YYYY-MM-DD HH:mm:ss" with +05:30 so
@@ -1328,7 +1375,8 @@ const Attendance = () => {
                         const overtime = calculateOvertime(record);
                         const lateMinutes = calculateLateArrival(
                           record.clock_in,
-                          record.employee
+                          record.employee,
+                          record.date
                         );
 
                         return (
