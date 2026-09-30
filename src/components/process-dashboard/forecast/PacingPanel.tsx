@@ -58,7 +58,7 @@ export function PacingPanel({ processId, state, onChange }: { processId: string;
       </div>
       {open && (
         <div id="pd-pacing-body" className="space-y-4 border-t border-slate-100 p-4">
-          {q.isLoading ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-56" />)}</div>
+          {q.isLoading ? <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-56" />)}</div>
             : q.isError && !d ? <ErrorBox message={q.error instanceof Error ? q.error.message : "Could not load the forecast."} onRetry={() => void q.refetch()} />
             : !d || !shown.length ? <Empty>No forecastable KPIs for this process yet.</Empty> : (
               <>
@@ -66,7 +66,7 @@ export function PacingPanel({ processId, state, onChange }: { processId: string;
                   <span>{monthLabel(d.month)}: {d.calendar.workingDays.elapsed} of {d.calendar.workingDays.total} working days done{d.asOf ? `, data complete to ${d.asOf}` : ", no complete day yet"}. {d.calendar.note}
                     {(state.tl || state.lob) && ` Filtered to ${[state.tl, state.lob].filter(Boolean).join(" / ")}.`}</span></p>
                 {d.warnings.length > 0 && <ul className="space-y-1" aria-label="Forecast notes">{d.warnings.map((w) => <li key={w} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-950">{w}</li>)}</ul>}
-                <ul aria-label="Pacing by KPI" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <ul aria-label="Pacing by KPI" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {shown.map((k) => <PacingCard key={k.key} k={k} selected={selected?.key === k.key} onSelect={() => setKpiKey(k.key)} />)}
                 </ul>
                 {hidden > 0 && <p className="text-xs text-slate-700">{hidden} KPI{hidden > 1 ? "s" : ""} hidden: the source field is not mapped.</p>}

@@ -82,7 +82,7 @@ export function RuleBuilder({ processId, rule, metrics, tlOptions, lobOptions, o
             <optgroup label="Anomalies">{metrics.filter((x) => x.kind === "anomaly").map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}</optgroup>
           </select>
         </Lbl>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {!anomaly && <Lbl label="Condition" htmlFor="ar-cmp"><select id="ar-cmp" className={`${field} cursor-pointer`} value={f.comparator} onChange={(e) => set("comparator", e.target.value as Comparator)}>{(Object.keys(CMP_LABEL) as Comparator[]).map((c) => <option key={c} value={c}>{CMP_LABEL[c]}</option>)}</select></Lbl>}
           <Lbl label={anomaly ? "Minimum agents flagged" : `Threshold${unitHint(m?.unit) ? ` (${unitHint(m?.unit)})` : ""}`} htmlFor="ar-thr" hint={thr.trim() !== "" && !Number.isFinite(thrNum) ? "Enter a number" : undefined}>
             <input id="ar-thr" className={field} inputMode="decimal" value={thr} onChange={(e) => setThr(e.target.value)} aria-invalid={thr.trim() !== "" && !Number.isFinite(thrNum)} />
@@ -93,7 +93,7 @@ export function RuleBuilder({ processId, rule, metrics, tlOptions, lobOptions, o
           <Lbl label="Team leader scope" htmlFor="ar-tl"><select id="ar-tl" className={`${field} cursor-pointer`} value={f.scopeTl ?? ""} onChange={(e) => set("scopeTl", e.target.value || null)}><option value="">Whole process</option>{tlOptions.map((t) => <option key={t} value={t}>{t}</option>)}</select></Lbl>
           <Lbl label="LOB scope" htmlFor="ar-lob"><select id="ar-lob" className={`${field} cursor-pointer`} value={f.scopeLob ?? ""} onChange={(e) => set("scopeLob", e.target.value || null)}><option value="">All LOBs</option>{lobOptions.map((t) => <option key={t} value={t}>{t}</option>)}</select></Lbl>
         </div>
-        <fieldset className="grid gap-3 sm:grid-cols-2">
+        <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <legend className="mb-1 text-xs font-bold text-slate-800">Delivery</legend>
           <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Severity">
             {(["info", "warn", "critical"] as Severity[]).map((s) => (

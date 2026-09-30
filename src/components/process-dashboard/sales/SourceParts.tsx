@@ -17,7 +17,7 @@ export function TablePicker({ kind, idPrefix, schema, table, onChange, label }: 
     return table && !list.some((t) => t.table === table) ? [{ table, rows: null }, ...list] : list;
   }, [tables.data, needle, table]);
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
       <div><label className={lbl} htmlFor={`${idPrefix}-schema`}>Schema</label>
         <select id={`${idPrefix}-schema`} className={`${input} cursor-pointer`} value={schema} onChange={(e) => onChange(e.target.value, "")}>{SOURCE_SCHEMAS.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
       <div><label className={lbl} htmlFor={`${idPrefix}-find`}>Find a table</label>
@@ -34,7 +34,7 @@ export function TablePicker({ kind, idPrefix, schema, table, onChange, label }: 
 /** Optional "this table mixes several processes" filter. */
 export function FilterFields({ idPrefix, columns, column, value, onChange }: { idPrefix: string; columns: ColumnInfo[]; column: string; value: string; onChange: (column: string, value: string) => void }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <div><label className={lbl} htmlFor={`${idPrefix}-fcol`}>Process filter column (optional)</label>
         <select id={`${idPrefix}-fcol`} className={`${input} cursor-pointer`} value={column} onChange={(e) => onChange(e.target.value, "")}>
           <option value="">No filter: the table holds only this process</option>{columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select>

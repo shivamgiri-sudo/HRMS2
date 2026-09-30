@@ -73,10 +73,10 @@ export function SalesDashboard({ processId, name, refreshSeconds }: { processId:
         </Panel>)}
       <Panel title="Daily trend"><TrendChart name="Sales trend" data={d.trend as unknown as Array<Record<string, unknown> & { date: string }>} onDay={(day) => update({ day }, true)}
         series={[{ key: "orders", label: "Orders", unit: "count", type: "bar", axis: "l" }, ...(caps.amount ? [{ key: "netRevenue", label: "Net revenue", unit: "currency", type: "line" as const, axis: "r" as const }] : [])]} /></Panel>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel title="Order status funnel">{d.funnel.length ? <BarList name="Orders by status" items={funnelItems(d.funnel)} /> : <Empty>Map the order status column to see the funnel.</Empty>}
           {d.quality.unmappedStatuses.length > 0 && <p className="mt-2 text-[11px] text-amber-900">Statuses not yet classified: {d.quality.unmappedStatuses.slice(0, 5).map((s) => `${s.value} (${s.orders})`).join(", ")}. Assign them in Dashboard Setup.</p>}</Panel>
-        <Panel title="Top and bottom agents"><div className="grid gap-3 sm:grid-cols-2">
+        <Panel title="Top and bottom agents"><div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <RankList title="Top" rows={d.topBottom.top} onAgent={(a) => update({ agent: a }, true)} /><RankList title="Bottom" rows={d.topBottom.bottom} onAgent={(a) => update({ agent: a }, true)} /></div></Panel>
         <Panel title="By team leader"><GroupTable rows={d.byTl} caption="Sales by team leader" label="Team leader" onPick={(k) => update({ tl: k === "Unassigned" ? "" : k })} /></Panel>
         <Panel title="By product"><GroupTable rows={d.byProduct} caption="Sales by product" label="Product" onPick={(k) => update({ product: k === "Unassigned" ? "" : k })} /></Panel>

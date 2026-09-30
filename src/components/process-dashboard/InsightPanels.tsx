@@ -53,7 +53,7 @@ export function TopBottomPanel({ data, onAgent }: { data?: Overview["topBottom"]
   return (
     <Panel title={`Top and bottom performers${metric ? ` — ${humanize(metric)}` : ""}`}>
       {!data?.top?.length && !data?.bottom?.length ? <Empty>No agent ranking available.</Empty> : (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Performers title="Top" rows={data?.top ?? []} icon={TrendingUp} onAgent={onAgent} />
           <Performers title="Bottom" rows={data?.bottom ?? []} icon={TrendingDown} onAgent={onAgent} />
         </div>

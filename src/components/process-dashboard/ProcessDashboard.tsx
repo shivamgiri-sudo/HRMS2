@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { PhoneIncoming, PhoneOutgoing, SearchX, Settings2, ShoppingCart } from "lucide-react";
+import { Bell, PhoneIncoming, PhoneOutgoing, SearchX, Settings2, ShoppingCart } from "lucide-react";
 import { AgentsTable, resolveColumns } from "./AgentsTable";
 import { AgentDrawer, DayDrawer } from "./DetailDrawers";
 import { DashboardHeader } from "./DashboardHeader";
@@ -55,7 +55,12 @@ export function NotFoundOrForbidden() {
   );
 }
 
-type View = "apr" | "inbound" | "sales" | "outbound";
+type View = "apr" | "inbound" | "sales" | "outbound" | "alerts";
+/** ?view= drives the outer tab strip: any tab that exists, else the overview (or the first extra tab when there is no APR dashboard). */
+export function resolveView(want: string | null, extra: Array<Exclude<View, "apr" | "alerts">>, aprReady: boolean): View {
+  if (want === "apr" || (want === "alerts" && aprReady) || (extra as string[]).includes(want ?? "")) return want as View;
+  return aprReady ? "apr" : extra[0];
+}
 const tabCls = (on: boolean) => `inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 border-b-2 px-4 text-sm font-semibold ${FOCUS} ${on ? "border-blue-700 text-blue-800" : "border-transparent text-slate-700 hover:text-slate-900"}`;
 
 /**
@@ -69,11 +74,12 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
   const config = configs.data?.find((c) => c.processId === processId) ?? null;
   const loaded = configs.isSuccess;
   const probe = useQuery({ queryKey: ["process-dashboard", processId, "probe"], queryFn: () => probeProcess(processId), enabled: loaded && !config, retry: false, staleTime: 60_000 });
-  const mayHaveInbound = loaded && (config ? config.category === "support_inbound" || config.category === "unconfigured" : probe.isSuccess && probe.data !== "forbidden");
+  // Each extra tab is driven by its own saved source config, not by the APR category: a process can have an APR mapping AND sales/outbound/inbound sources.
+  const mayHaveInbound = loaded && (config ? true : probe.isSuccess && probe.data !== "forbidden");
   const inbound = useQuery({ queryKey: ["process-dashboard", processId, "inbound"], queryFn: () => fetchInboundTab(processId), enabled: mayHaveInbound, retry: false, staleTime: 30_000 });
   const probeOk = probe.isSuccess && probe.data !== "forbidden";
-  const maySales = loaded && (config ? config.category === "sales" || config.category === "unconfigured" : probeOk);
-  const mayOutbound = loaded && (config ? config.category === "outbound" || config.category === "unconfigured" : probeOk);
+  const maySales = loaded && (config ? true : probeOk);
+  const mayOutbound = loaded && (config ? true : probeOk);
   const sales = useQuery({ queryKey: ["process-dashboard", processId, "sales"], queryFn: () => fetchTab(processId, "sales"), enabled: maySales, retry: false, staleTime: 30_000 });
   const outbound = useQuery({ queryKey: ["process-dashboard", processId, "outbound"], queryFn: () => fetchTab(processId, "outbound"), enabled: mayOutbound, retry: false, staleTime: 30_000 });
 
@@ -88,14 +94,14 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
   }
   if ((mayHaveInbound && inbound.isLoading) || (maySales && sales.isLoading) || (mayOutbound && outbound.isLoading)) return <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   const tab = inbound.data ?? null;
-  const extra = ([tab && "inbound", sales.data && "sales", outbound.data && "outbound"].filter(Boolean)) as Array<Exclude<View, "apr">>;
+  const extra = ([tab && "inbound", sales.data && "sales", outbound.data && "outbound"].filter(Boolean)) as Array<Exclude<View, "apr" | "alerts">>;
   if (!extra.length) {
     if (!config && probe.data === "missing") return <NotConfigured processId={processId} reason="missing" />;
     return <AprDashboard processId={processId} embedded={embedded} />;
   }
   const aprReady = !!config?.configured && config.enabled;
   const want = sp.get("view");
-  const view: View = want === "apr" || (extra as string[]).includes(want ?? "") ? (want as View) : aprReady ? "apr" : extra[0];
+  const view = resolveView(want, extra, aprReady);
   const setView = (v: View) => setSp((cur) => { const n = new URLSearchParams(cur); if (v !== "apr") n.set("view", v); else n.delete("view"); return n; }, { replace: true });
   const fallback = <div className="space-y-3"><Skeleton className="h-28" /><Skeleton className="h-64" /></div>;
   return (
@@ -105,6 +111,7 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
         {tab && <button type="button" role="tab" id="pd-tab-inbound" aria-selected={view === "inbound"} aria-controls="pd-panel-inbound" className={tabCls(view === "inbound")} onClick={() => setView("inbound")}><PhoneIncoming className="h-4 w-4" aria-hidden="true" />Live inbound</button>}
         {sales.data && <button type="button" role="tab" id="pd-tab-sales" aria-selected={view === "sales"} aria-controls="pd-panel-sales" className={tabCls(view === "sales")} onClick={() => setView("sales")}><ShoppingCart className="h-4 w-4" aria-hidden="true" />Sales</button>}
         {outbound.data && <button type="button" role="tab" id="pd-tab-outbound" aria-selected={view === "outbound"} aria-controls="pd-panel-outbound" className={tabCls(view === "outbound")} onClick={() => setView("outbound")}><PhoneOutgoing className="h-4 w-4" aria-hidden="true" />Outbound</button>}
+        {aprReady && <button type="button" role="tab" id="pd-tab-alerts" aria-selected={view === "alerts"} aria-controls="pd-panel-alerts" className={tabCls(view === "alerts")} onClick={() => setView("alerts")}><Bell className="h-4 w-4" aria-hidden="true" />Alerts</button>}
       </div>
       {view === "inbound" && tab ? (
         <div role="tabpanel" id="pd-panel-inbound" aria-labelledby="pd-tab-inbound">
@@ -116,6 +123,8 @@ export function ProcessDashboard({ processId, embedded = false }: { processId: s
         <div role="tabpanel" id="pd-panel-sales" aria-labelledby="pd-tab-sales"><Suspense fallback={fallback}><SalesDashboard key={processId} processId={processId} name={sales.data.name} refreshSeconds={sales.data.refreshSeconds} /></Suspense></div>
       ) : view === "outbound" && outbound.data ? (
         <div role="tabpanel" id="pd-panel-outbound" aria-labelledby="pd-tab-outbound"><Suspense fallback={fallback}><OutboundDashboard key={processId} processId={processId} name={outbound.data.name} refreshSeconds={outbound.data.refreshSeconds} /></Suspense></div>
+      ) : view === "alerts" ? (
+        <div role="tabpanel" id="pd-panel-alerts" aria-labelledby="pd-tab-alerts"><AlertsTab processId={processId} config={config} /></div>
       ) : (
         <div role="tabpanel" id="pd-panel-apr" aria-labelledby="pd-tab-apr"><AprDashboard processId={processId} embedded={embedded} /></div>
       )}
@@ -182,7 +191,7 @@ function AprDashboard({ processId, embedded = false }: { processId: string; embe
           {!d.overview.isLoading && !ov?.kpis?.length && !rows.length && <Empty>No data for {state.from} to {state.to}. Try a wider date range.</Empty>}
           <TrendPanel overview={ov} focusKey={state.metric} onFocusKey={(k) => update({ metric: k })} onDay={(day) => update({ day }, true)}
             selectedDay={state.day} onWhy={(metric, from, to) => setWhy(openWhyState(metric, from, to), true)} />
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <AnomaliesPanel anomalies={ov?.anomalies} onAgent={(agent) => update({ agent }, true)} />
             <TopBottomPanel data={ov?.topBottom} onAgent={(agent) => update({ agent }, true)} />
             <BreakdownPanel title="By team leader" labelKey="tl" rows={ov?.byTl} kpis={ov?.kpis} active={state.tl} onPick={(tl) => update({ tl, page: 1 })} />

@@ -81,7 +81,7 @@ export function InboundSourcePanel({ processId }: { processId: string }) {
       <p className="mb-3 text-xs text-slate-700">Pick the dialer table and campaigns this support process takes calls on. The same inbound dashboard the existing companies use then appears as a Live inbound tab.</p>
       {stored.isLoading ? <Skeleton className="h-32" /> : (
         <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="sm:col-span-2"><label className={lbl} htmlFor="ib-table">Dialer table <span className="text-red-700">*</span></label>
               <select id="ib-table" className={`${input} cursor-pointer`} value={form.dialerTable} onChange={(e) => pickTable(e.target.value)} disabled={candidates.isLoading}>
                 <option value="">{candidates.isLoading ? "Loading tables..." : "Select a dialer table"}</option>
@@ -109,7 +109,7 @@ export function InboundSourcePanel({ processId }: { processId: string }) {
               </div>)}
           </fieldset>
 
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div><label className={lbl} htmlFor="ib-mandate">Mandate (agents)</label><input id="ib-mandate" inputMode="numeric" className={input} value={form.mandate} onChange={(e) => set({ mandate: e.target.value })} /></div>
             <div><label className={lbl} htmlFor="ib-required">Required (agents)</label><input id="ib-required" inputMode="numeric" className={input} value={form.required} onChange={(e) => set({ required: e.target.value })} /></div>
             <div><label className={lbl} htmlFor="ib-sl">Service level (seconds)</label><input id="ib-sl" inputMode="numeric" className={input} value={form.slSeconds} placeholder={form.pattern === "A" ? "20 (default)" : "30 (default)"} onChange={(e) => set({ slSeconds: e.target.value })} /></div>

@@ -82,7 +82,7 @@ export function DashboardSetup({ initialProcessId = "" }: { initialProcessId?: s
     <div className="space-y-4">
       <Panel title="1. Process and category">
         {processes.isError && <ErrorBox message={msg(processes.error)} onRetry={() => void processes.refetch()} />}
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div><label className={lbl} htmlFor="pd-process">Process</label>
             <select id="pd-process" className={`${input} cursor-pointer`} value={form.processId} onChange={(e) => set({ processId: e.target.value })}>
               <option value="">Select a process</option>
@@ -97,7 +97,7 @@ export function DashboardSetup({ initialProcessId = "" }: { initialProcessId?: s
       </Panel>
 
       <Panel title="2. APR source table">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div><label className={lbl} htmlFor="pd-schema">Schema</label>
             <select id="pd-schema" className={`${input} cursor-pointer`} value={form.aprSchema} onChange={(e) => set({ aprSchema: e.target.value, aprTable: "", columnMap: {} })}>
               {SOURCE_SCHEMAS.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>

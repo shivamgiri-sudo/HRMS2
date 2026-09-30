@@ -46,3 +46,15 @@ describe("serializeUrlState", () => {
     expect(out.get("process")).toBe("abc"); expect(out.get("view")).toBe("sales"); expect(out.has("agent")).toBe(false);
   });
 });
+
+import { resolveView } from "../ProcessDashboard";
+describe("resolveView (outer tab strip)", () => {
+  const all = ["inbound", "sales", "outbound"] as Array<"inbound" | "sales" | "outbound">;
+  it("honours every existing tab including alerts", () => {
+    for (const v of ["apr", "inbound", "sales", "outbound", "alerts"]) expect(resolveView(v, all, true)).toBe(v);
+  });
+  it("falls back to the overview, or the first extra tab without an APR dashboard", () => {
+    expect(resolveView("nope", all, true)).toBe("apr"); expect(resolveView(null, all, true)).toBe("apr");
+    expect(resolveView("alerts", all, false)).toBe("inbound"); expect(resolveView("sales", ["inbound"], false)).toBe("inbound");
+  });
+});

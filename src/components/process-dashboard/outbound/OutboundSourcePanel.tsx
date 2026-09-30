@@ -88,7 +88,7 @@ export function OutboundSourcePanel({ processId }: { processId: string }) {
                 </div></fieldset>)}
           </section>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div><label className={lbl} htmlFor="ob-refresh">Refresh every (seconds)</label><input id="ob-refresh" inputMode="numeric" className={input} value={form.refreshSeconds} onChange={(e) => set({ refreshSeconds: e.target.value })} /></div>
             <div className="flex items-end"><label className="flex min-h-[40px] cursor-pointer items-center gap-2 text-sm font-semibold text-slate-900"><input type="checkbox" role="switch" className={`h-4 w-4 ${FOCUS}`} checked={form.enabled} onChange={(e) => set({ enabled: e.target.checked })} />Outbound tab on</label></div>
           </div>

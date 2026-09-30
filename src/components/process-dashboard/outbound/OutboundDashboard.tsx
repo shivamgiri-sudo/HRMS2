@@ -91,10 +91,10 @@ export function OutboundDashboard({ processId, name, refreshSeconds }: { process
       <Tiles tiles={tiles} label="Outbound key metrics" />
       <Panel title="Daily trend"><TrendChart name="Outbound trend" data={d.trend as unknown as Array<Record<string, unknown> & { date: string }>}
         series={[{ key: "dials", label: "Dials", unit: "count", type: "bar", axis: "l" }, { key: "connects", label: "Connects", unit: "count", type: "bar", axis: "l" }, { key: "connectRate", label: "Connect rate", unit: "percent", type: "line", axis: "r" }]} /></Panel>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel title="Disposition mix"><BarList name="Calls by disposition" valueLabel="calls" items={dispItems(d.dispositions)} />
           {d.dispositions.length > 12 && <p className="mt-2 text-[11px] text-slate-600">Showing the 12 most frequent of {d.dispositions.length} dispositions.</p>}</Panel>
-        <Panel title="Top and bottom agents by connect rate"><div className="grid gap-3 sm:grid-cols-2">
+        <Panel title="Top and bottom agents by connect rate"><div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <RankList title="Top" rows={d.topBottom.top} onAgent={(a) => update({ agent: a }, true)} /><RankList title="Bottom" rows={d.topBottom.bottom} onAgent={(a) => update({ agent: a }, true)} /></div>
           <p className="mt-2 text-[11px] text-slate-600">Agents with at least 20 dials in the range.</p></Panel>
         <Panel title="Hourly activity"><HeatGrid cells={d.heat} /></Panel>

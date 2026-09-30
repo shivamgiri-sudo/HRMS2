@@ -712,7 +712,7 @@ export function InboundInsightsDashboard({ projectKey, projectName, initialRange
                 {h.fcrPct != null && <KpiCard icon={Gauge} label="FCR %" value={`${h.fcrPct}%`} sub="first-contact resolution" tone="teal" />}
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <div className="lg:col-span-2">
                   <SectionCard icon={PhoneCall} title="Daily call volume" tone="blue">
                     <ResponsiveContainer width="100%" height={250}>
@@ -770,7 +770,7 @@ export function InboundInsightsDashboard({ projectKey, projectName, initialRange
                 </SectionCard>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Clock3} title="Hourly volume & AL %" tone="teal">
                   <ResponsiveContainer width="100%" height={240}>
                     <ComposedChart data={data.hourly} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
@@ -1057,7 +1057,7 @@ export function InboundInsightsDashboard({ projectKey, projectName, initialRange
                   })()}
                 </div>
               )}
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Users} title="Calls handled by agent" tone="indigo">
                   <ResponsiveContainer width="100%" height={Math.max(180, data.agents.length * 34)}>
                     <BarChart data={data.agents} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
@@ -1195,7 +1195,7 @@ export function InboundInsightsDashboard({ projectKey, projectName, initialRange
                 </ResponsiveContainer>
               </SectionCard>
               {data.lobGroups && (
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {([["Brand", data.lobGroups.byBrand], ["Language", data.lobGroups.byLanguage]] as const).map(([title, rows]) => (
                     <SectionCard key={title} icon={Layers} title={`${title}-wise roll-up`} tone="indigo" footnote="Grouped from the campaign names (H_ = Hindi, E_ = English; brand is the middle word).">
                       <TableShell minWidth={520}>
@@ -1260,7 +1260,7 @@ export function InboundInsightsDashboard({ projectKey, projectName, initialRange
           {/* ─────────────────────────── Wait & Abandon ─────────────────────────── */}
           {tab === "wait" && (
             <div className="space-y-4">
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Hourglass} title="Queue wait distribution" tone="amber" footnote="How long callers waited before an agent picked up (answered) or they hung up (abandoned). Click a bar's row below for calls.">
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={data.waitBuckets} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
@@ -1287,7 +1287,7 @@ export function InboundInsightsDashboard({ projectKey, projectName, initialRange
                 </SectionCard>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Hourglass} title="Wait bucket detail" tone="amber">
                   <TableShell minWidth={380}>
                     <thead><tr className={THEAD}><Head first>Wait</Head><Head>Answered</Head><Head>Abandoned</Head><Head>Abandon %</Head></tr></thead>
@@ -1324,7 +1324,7 @@ export function InboundInsightsDashboard({ projectKey, projectName, initialRange
                 </SectionCard>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <SectionCard icon={Layers} title="Disposition" tone="blue">
                   <TableShell minWidth={300}>
                     <thead><tr className={THEAD}><Head first>Disposition</Head><Head>Calls</Head><Head>Share</Head></tr></thead>

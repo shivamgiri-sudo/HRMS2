@@ -55,7 +55,7 @@ export function DigestPanel({ processId, tlOptions, canManage }: { processId: st
   if (q.isError) return <ErrorBox message={errMsg(q.error, "Could not load digests.")} onRetry={() => void q.refetch()} />;
   const by = (f: Freq) => q.data?.find((d) => d.frequency === f);
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {(["daily", "weekly"] as Freq[]).map((f) => <DigestCard key={f} processId={processId} frequency={f} saved={by(f)} tlOptions={tlOptions} canManage={canManage} />)}
     </div>
   );
