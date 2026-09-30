@@ -565,15 +565,17 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     let ytdMap: Record<string, number> | undefined;
     let weekOffDays = 0;
     let paidHolidays = 0;
+    let detail: PayslipRecord | undefined;
     if (record.run_id) {
       try {
         const res = await hrmsApi.get<{ success: boolean; data: PayslipRecord }>(
           `/api/payroll/payslip/${record.run_id}/${employeeId}`,
         );
-        bankName = res.data?.bank_name || "";
-        ytdMap = res.data?.ytd;
-        weekOffDays = Number(res.data?.eligible_weekoff_days ?? 0);
-        paidHolidays = Number(res.data?.eligible_holiday_days ?? 0);
+        detail = res.data?.data;
+        bankName = detail?.bank_name || "";
+        ytdMap = detail?.ytd;
+        weekOffDays = Number(detail?.eligible_weekoff_days ?? 0);
+        paidHolidays = Number(detail?.eligible_holiday_days ?? 0);
       } catch {
         // Non-fatal — download proceeds without YTD/bank name/leave breakdown.
       }
@@ -605,14 +607,14 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       location: record.branch_name || record.location_name || "N/A",
       bankName,
       ytd,
-      epfNo: record.epf_number || "",
-      uanNo: record.uan_number || "",
-      esiNo: record.esi_number || "",
-      panNo: record.pan_number || "",
-      bankAccount: record.bank_account_masked || "",
-      paymentDate: record.payment_date || "",
-      chequeNo: record.cheque_no || "",
-      paymentMode: record.payment_mode || "",
+      epfNo: detail?.epf_number || record.epf_number || "",
+      uanNo: detail?.uan_number || record.uan_number || "",
+      esiNo: detail?.esi_number || record.esi_number || "",
+      panNo: detail?.pan_number || record.pan_number || "",
+      bankAccount: detail?.bank_account_masked || record.bank_account_masked || "",
+      paymentDate: detail?.payment_date || record.payment_date || "",
+      chequeNo: detail?.cheque_no || record.cheque_no || "",
+      paymentMode: detail?.payment_mode || record.payment_mode || "",
       lwpDays: Number(record.lwp_days ?? 0),
       employerPf: Number(record.pf_employer ?? 0),
       employerEsic: Number(record.esic_employer ?? 0),
