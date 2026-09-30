@@ -403,7 +403,7 @@ interface QueryPlan {
   keyKind: string;
 }
 
-function buildQueryPlan(
+export function buildQueryPlan(
   source: DataSourceConfig,
   fields: readonly SourceField[],
   keys: readonly string[],
@@ -423,16 +423,21 @@ function buildQueryPlan(
   // `` `db`.`table` ``, not `` `db.table` `` which MySQL reads as one table with a dot in its name.
   const quotedTable = table.split('.').map((part) => `\`${part}\``).join('.');
 
+  // The same date handling the process-grain plan uses. With no declared format this is the bare column, exactly
+  // as before. With one (text dates, Excel serials) the column is parsed first: comparing the raw text to a
+  // YYYY-MM-DD bound compares STRINGS and returns a confident, wrong set of rows.
+  const dateExpr = dateExpression(dateColumn, (source as { date_format?: string | null }).date_format);
+
   // GROUP BY employee and day so an aggregate is per employee per day regardless of how many
   // source rows underlie it — the grain every KPI in this system is stored at.
   const sql = `
     SELECT \`${keyColumn}\` AS __employee_key,
-           DATE(\`${dateColumn}\`) AS __score_date,
+           DATE(${dateExpr}) AS __score_date,
            ${fieldSelect}
       FROM ${quotedTable}
-     WHERE \`${dateColumn}\` >= ? AND \`${dateColumn}\` < DATE_ADD(?, INTERVAL 1 DAY)
+     WHERE ${dateExpr} >= ? AND ${dateExpr} < DATE_ADD(?, INTERVAL 1 DAY)
        AND \`${keyColumn}\` IN (${keys.map(() => '?').join(',')})
-     GROUP BY \`${keyColumn}\`, DATE(\`${dateColumn}\`)
+     GROUP BY \`${keyColumn}\`, DATE(${dateExpr})
   `;
 
   return {
