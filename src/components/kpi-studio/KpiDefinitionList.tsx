@@ -1,5 +1,6 @@
 import { Fragment, useId, useMemo, useState } from "react";
-import { AlertCircle, Archive, CalendarClock, CheckCircle2, Copy, History, Loader2, Pencil, Search, Telescope, Users } from "lucide-react";
+import { AlertCircle, Archive, CalendarClock, CheckCircle2, Copy, History, Loader2, MoreHorizontal, Pencil, Search, Telescope, Users } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -75,12 +76,15 @@ interface KpiDefinitionListProps {
   onEdit?: (draft: DefinitionDraft) => void;
 }
 
+const PAGE_SIZE = 50;
+
 export function KpiDefinitionList({ canConfigure = false, onEdit }: KpiDefinitionListProps) {
   const searchId = useId();
   const processId = useId();
   const [search, setSearch] = useState("");
   const [processFilter, setProcessFilter] = useState("");
   const [showEnded, setShowEnded] = useState(false);
+  const [page, setPage] = useState(0);
   const [panel, setPanel] = useState<{ key: string; kind: PanelKind } | null>(null);
   const [explaining, setExplaining] = useState<DefinitionRow | null>(null);
 
@@ -107,6 +111,11 @@ export function KpiDefinitionList({ canConfigure = false, onEdit }: KpiDefinitio
     });
   }, [groups, search, showEnded]);
 
+  // 1,000+ rules in one table is slow to render and impossible to scan; show a page at a time.
+  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const paged = useMemo(() => visible.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE), [visible, safePage]);
+
   const endedCount = groups.filter((group) => group.status === "ended").length;
   const toggle = (key: string, kind: PanelKind) =>
     setPanel((open) => (open && open.key === key && open.kind === kind ? null : { key, kind }));
@@ -123,7 +132,7 @@ export function KpiDefinitionList({ canConfigure = false, onEdit }: KpiDefinitio
             <Input
               id={searchId}
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => { setSearch(event.target.value); setPage(0); }}
               placeholder="KPI name or code"
               className="pl-8"
             />
@@ -137,7 +146,7 @@ export function KpiDefinitionList({ canConfigure = false, onEdit }: KpiDefinitio
           <select
             id={processId}
             value={processFilter}
-            onChange={(event) => setProcessFilter(event.target.value)}
+            onChange={(event) => { setProcessFilter(event.target.value); setPage(0); }}
             className="h-10 w-full cursor-pointer rounded-lg border border-slate-300 bg-white px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
           >
             <option value="">All processes</option>
@@ -153,7 +162,7 @@ export function KpiDefinitionList({ canConfigure = false, onEdit }: KpiDefinitio
           <input
             type="checkbox"
             checked={showEnded}
-            onChange={(event) => setShowEnded(event.target.checked)}
+            onChange={(event) => { setShowEnded(event.target.checked); setPage(0); }}
             className="h-4 w-4 cursor-pointer rounded border-slate-300"
           />
           Show ended{endedCount > 0 ? ` (${endedCount})` : ""}
@@ -199,6 +208,7 @@ export function KpiDefinitionList({ canConfigure = false, onEdit }: KpiDefinitio
           </p>
         </div>
       ) : (
+        <>
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
           <table className="min-w-[56rem] w-full text-sm">
             <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -214,7 +224,7 @@ export function KpiDefinitionList({ canConfigure = false, onEdit }: KpiDefinitio
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {visible.map((group) => (
+              {paged.map((group) => (
                 <DefinitionRows
                   key={group.key}
                   group={group}
@@ -230,6 +240,17 @@ export function KpiDefinitionList({ canConfigure = false, onEdit }: KpiDefinitio
             </tbody>
           </table>
         </div>
+        {pageCount > 1 && (
+          <nav aria-label="Pages of KPI rules" className="flex flex-wrap items-center justify-between gap-2 px-1 py-2 text-sm text-slate-600">
+            <span>Showing {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, visible.length)} of {visible.length.toLocaleString("en-IN")}</span>
+            <span className="flex items-center gap-2">
+              <button type="button" onClick={() => setPage(safePage - 1)} disabled={safePage === 0} className={`${ACTION_CLASS} min-h-[36px] disabled:cursor-not-allowed disabled:opacity-50`}>Previous</button>
+              <span>Page {safePage + 1} of {pageCount}</span>
+              <button type="button" onClick={() => setPage(safePage + 1)} disabled={safePage >= pageCount - 1} className={`${ACTION_CLASS} min-h-[36px] disabled:cursor-not-allowed disabled:opacity-50`}>Next</button>
+            </span>
+          </nav>
+        )}
+        </>
       )}
 
       <p className="text-xs text-slate-500">
@@ -322,39 +343,31 @@ function DefinitionRows(props: {
         </td>
 
         <td className="px-4 py-3">
-          <div className="flex max-w-[15rem] flex-wrap gap-1">
-            <button type="button" onClick={() => onToggle("who")} aria-expanded={openPanel === "who"} className={ACTION_CLASS}>
-              <Users className="h-3.5 w-3.5" aria-hidden="true" /> Who
-            </button>
-            <button type="button" onClick={() => onToggle("history")} aria-expanded={openPanel === "history"} className={ACTION_CLASS}>
-              <History className="h-3.5 w-3.5" aria-hidden="true" /> History{older.length > 0 ? ` (${older.length})` : ""}
-            </button>
-            {definition.grain !== "process" && (
-              <button type="button" onClick={() => onExplain(definition)} className={ACTION_CLASS}>
-                <Telescope className="h-3.5 w-3.5" aria-hidden="true" /> Explain for an employee
+          {/* One compact menu instead of five stacked buttons, so a row stays one line tall. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" aria-label={`Actions for ${definition.metric_name}`} className={`${ACTION_CLASS} min-h-[36px]`}>
+                <MoreHorizontal className="h-4 w-4" aria-hidden="true" /> Actions
               </button>
-            )}
-            {canConfigure && onEdit && (
-              <>
-                <button type="button" onClick={() => onEdit(draftFrom(definition, "edit"))} className={ACTION_CLASS}>
-                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
-                </button>
-                <button type="button" onClick={() => onEdit(draftFrom(definition, "clone"))} className={ACTION_CLASS}>
-                  <Copy className="h-3.5 w-3.5" aria-hidden="true" /> Copy to another scope
-                </button>
-              </>
-            )}
-            {canConfigure && group.status !== "ended" && (
-              <button
-                type="button"
-                onClick={() => onToggle("end")}
-                aria-expanded={openPanel === "end"}
-                className={`${ACTION_CLASS} hover:bg-rose-50 hover:text-rose-700`}
-              >
-                <Archive className="h-3.5 w-3.5" aria-hidden="true" /> End
-              </button>
-            )}
-          </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => onToggle("who")}><Users className="mr-2 h-4 w-4" aria-hidden="true" />Who it applies to</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onToggle("history")}><History className="mr-2 h-4 w-4" aria-hidden="true" />History{older.length > 0 ? ` (${older.length})` : ""}</DropdownMenuItem>
+              {definition.grain !== "process" && (
+                <DropdownMenuItem onClick={() => onExplain(definition)}><Telescope className="mr-2 h-4 w-4" aria-hidden="true" />Explain for an employee</DropdownMenuItem>
+              )}
+              {canConfigure && onEdit && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => onEdit(draftFrom(definition, "edit"))}><Pencil className="mr-2 h-4 w-4" aria-hidden="true" />Edit (new version)</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onEdit(draftFrom(definition, "clone"))}><Copy className="mr-2 h-4 w-4" aria-hidden="true" />Copy to another scope</DropdownMenuItem>
+                </>
+              )}
+              {canConfigure && group.status !== "ended" && (
+                <DropdownMenuItem onClick={() => onToggle("end")} className="text-rose-600 focus:text-rose-600"><Archive className="mr-2 h-4 w-4" aria-hidden="true" />End on a date</DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </td>
       </tr>
 
