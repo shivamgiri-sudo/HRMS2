@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Activity, AlertTriangle } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -15,11 +15,14 @@ import { OpsInsights } from "@/components/operations/OpsInsights";
 import { OpsFilterBar } from "@/components/operations/OpsFilterBar";
 import { OpsHeatmap } from "@/components/operations/OpsHeatmap";
 import { OpsKpiStrip } from "@/components/operations/OpsKpiStrip";
+import { OpsRankChart } from "@/components/operations/OpsRankChart";
+import { OpsSavedViews } from "@/components/operations/OpsSavedViews";
+import { OpsScopeBar } from "@/components/operations/OpsScopeBar";
 import { OpsPerformanceTab } from "@/components/operations/OpsPerformanceTab";
 import { OpsRecordsSheet } from "@/components/operations/OpsRecordsSheet";
 import { SelfOperationsScorecard } from "@/components/operations/OpsSelfScorecard";
 import { OpsTrendChart } from "@/components/operations/OpsTrendChart";
-import { NEXT_DIM, OPS_TABS, type OpsTabId } from "@/components/operations/opsTabs";
+import { DIMENSIONS, NEXT_DIM, OPS_TABS, type OpsTabId } from "@/components/operations/opsTabs";
 import type { OpsDimension, OpsMetricDef, OpsQuery, OpsRecordDomain, OpsRow } from "@/components/operations/opsTypes";
 import {
   downloadOpsCsv, useOpsCohorts, useOpsDefinitions, useOpsFilters, useOpsForecast, useOpsFreshness, useOpsHeatmap, useOpsInsights,
@@ -53,7 +56,8 @@ function useOpsUrlState() {
   };
   const setQuery = (q: OpsQuery) =>
     patch({ from: q.from, to: q.to, branch: q.branchId, process: q.processId, lob: q.lobId, manager: q.managerId });
-  return { tab, groupBy, query, patch, setQuery };
+  const applySearch = (search: string) => setSp(new URLSearchParams(search), { replace: true });
+  return { tab, groupBy, query, patch, setQuery, search: sp.toString(), applySearch };
 }
 
 export default function OperationsDashboard() {
@@ -76,8 +80,19 @@ export default function OperationsDashboard() {
   );
 }
 
+/** True once `loading` has been continuously true for `ms` — used to explain a slow cold start instead of showing a bare spinner. */
+function useSlow(loading: boolean, ms: number): boolean {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!loading) { setSlow(false); return; }
+    const t = setTimeout(() => setSlow(true), ms);
+    return () => clearTimeout(t);
+  }, [loading, ms]);
+  return slow;
+}
+
 export function OperationsCommand() {
-  const { tab, groupBy, query, patch, setQuery } = useOpsUrlState();
+  const { tab, groupBy, query, patch, setQuery, search, applySearch } = useOpsUrlState();
   const [sort, setSort] = useState("hc_closing");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [records, setRecords] = useState<{ req: Omit<RecordsRequest, "offset">; label: string } | null>(null);
@@ -95,7 +110,7 @@ export function OperationsCommand() {
   const filters = useOpsFilters(query);
   const summary = useOpsSummary(query, groupBy, sort, dir);
   const previous = useOpsPrevious(query);
-  const trend = useOpsTrend(query, !!cfg.trend);
+  const trend = useOpsTrend(query, true);
   const source = perfSource ?? (groupBy === "all" || groupBy === "branch" || groupBy === "process" ? "process" : "agent");
   const perf = useOpsPerformance(query, groupBy, source, isPerf);
   const insights = useOpsInsights(query, tab === "overview");
@@ -104,6 +119,7 @@ export function OperationsCommand() {
   const freshness = useOpsFreshness();
   const heat = useOpsHeatmap(query, groupBy === "employee" ? "manager" : groupBy, heatMetric, tab === "attendance" || tab === "shrinkage");
 
+  const slowLoad = useSlow(summary.isLoading && !summary.data, 4000);
   const period = summary.data?.period ?? filters.data?.period;
   const nameOf = (list: { id: string; name: string }[] | undefined, id?: string) => (id ? list?.find((x) => x.id === id)?.name ?? "selected" : undefined);
   const scopeLabel = [nameOf(filters.data?.branches, query.branchId), nameOf(filters.data?.processes, query.processId), nameOf(filters.data?.lobs, query.lobId), nameOf(filters.data?.managers, query.managerId)].filter(Boolean).join(" › ") || "All in scope";
@@ -156,23 +172,32 @@ export function OperationsCommand() {
             <AlertTriangle className="h-4 w-4 text-amber-600" /> The external call-quality feed is not responding, so call-quality columns show "—" (not zero). Everything else is live.
           </div>
         )}
+        {slowLoad && (
+          <div role="status" className="flex items-center gap-3 rounded-lg border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-sm">
+            <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-sky-500 border-t-transparent motion-reduce:animate-none" aria-hidden />
+            First look of the session reads several large tables (attendance, roster, exits). It can take up to a minute once, then results are cached and refresh in the background.
+          </div>
+        )}
         {summary.isError && (
           <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
             Could not load Operations data{(summary.error as { message?: string })?.message ? `: ${(summary.error as { message?: string }).message}` : ""}.
           </div>
         )}
 
-        <Tabs value={tab} onValueChange={(v) => patch({ tab: v === "overview" ? undefined : v })}>
+        <Tabs value={tab} onValueChange={(v) => patch({ tab: v === "overview" ? undefined : v })} className="sticky top-0 z-30 -mx-1 bg-background/85 px-1 py-1.5 backdrop-blur supports-[backdrop-filter]:bg-background/70">
           <div className="overflow-x-auto">
-            <TabsList className="h-auto flex-wrap justify-start gap-1">
-              {OPS_TABS.map((t) => <TabsTrigger key={t.id} value={t.id}>{t.label}</TabsTrigger>)}
+            <TabsList className="h-auto w-max min-w-full flex-nowrap justify-start gap-1">
+              {OPS_TABS.map((t) => <TabsTrigger key={t.id} value={t.id} className="shrink-0">{t.label}</TabsTrigger>)}
             </TabsList>
           </div>
         </Tabs>
 
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <OpsScopeBar query={query} options={filters.data} onChange={setQuery} />
+            <OpsSavedViews currentSearch={search} onApply={applySearch} />
+          </div>
           <p className="text-sm text-muted-foreground">{cfg.blurb}</p>
-          <Badge variant="outline">{scopeLabel}</Badge>
         </div>
 
         {tab === "overview" && <OpsInsights insights={insights.data?.insights} loading={insights.isLoading} onOpen={openInsight} />}
@@ -180,7 +205,7 @@ export function OperationsCommand() {
         {!isPerf && (
           <OpsKpiStrip
             ids={cfg.kpis} defs={defs} current={summary.data?.totals.current} previous={isLive ? undefined : previous.data?.totals}
-            loading={summary.isLoading} onOpenRecords={(d) => openRecords(d)}
+            trend={isLive ? undefined : trend.data?.points} loading={summary.isLoading} onOpenRecords={(d) => openRecords(d)}
           />
         )}
 
@@ -204,6 +229,8 @@ export function OperationsCommand() {
             source={source} onSource={setPerfSource}
           />
         ) : (
+          <>
+          <OpsRankChart rows={summary.data?.rows ?? []} def={defs.get(sort)} orgValue={summary.data?.totals.current[sort]} noun={DIMENSIONS.find((d) => d.id === groupBy)?.label ?? "group"} onPick={(r) => drillInto(groupBy, r)} />
           <OpsDrillTable
             rows={summary.data?.rows ?? []} totals={summary.data?.totals.current} totalRows={summary.data?.totalRows ?? 0}
             columns={cfg.columns} defs={defs} groupBy={groupBy} sort={sort} dir={dir} loading={summary.isLoading}
@@ -212,6 +239,7 @@ export function OperationsCommand() {
             onCellClick={(domain, row) => openRecords(domain, row.id, groupBy, undefined, row.name)}
             onExport={exportCsv} exporting={exporting}
           />
+          </>
         )}
       </div>
 

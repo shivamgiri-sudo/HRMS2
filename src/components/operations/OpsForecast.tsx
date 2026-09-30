@@ -15,7 +15,7 @@ export function OpsForecast({ days, shrinkagePct, mandate }: Props) {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm">Next 14 days — roster vs mandate</CardTitle>
+        <CardTitle className="text-sm font-semibold text-foreground">Next 14 days — roster vs mandate</CardTitle>
         <p className="text-xs text-muted-foreground">
           Expected present = rostered × (1 − {shrinkagePct ?? "—"}% recent planned + absence shrinkage; missing punches are not treated as absence).
           {mandate ? ` Mandate: ${mandate.toLocaleString("en-IN")}.` : " No mandate configured for this scope."}

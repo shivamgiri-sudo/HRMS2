@@ -32,11 +32,11 @@ export function OpsPerformanceTab({ data, loading, groupBy, onGroupBy, onRowClic
       <div className="flex flex-wrap items-center justify-between gap-3 border-b p-3">
         <div className="flex items-center gap-2">
           <p className="text-sm font-semibold">View by</p>
-          <ToggleGroup type="single" value={groupBy} onValueChange={(v) => v && onGroupBy(v as OpsDimension)} variant="outline" size="sm">
+          <ToggleGroup type="single" value={groupBy} onValueChange={(v) => v && onGroupBy(v as OpsDimension)} variant="outline" size="sm" className="flex-wrap justify-start">
             {DIMENSIONS.map((d) => <ToggleGroupItem key={d.id} value={d.id}>{d.label}</ToggleGroupItem>)}
           </ToggleGroup>
         </div>
-        <ToggleGroup type="single" value={source} onValueChange={(v) => v && onSource(v as "process" | "agent")} variant="outline" size="sm">
+        <ToggleGroup type="single" value={source} onValueChange={(v) => v && onSource(v as "process" | "agent")} variant="outline" size="sm" className="flex-wrap justify-start">
           <ToggleGroupItem value="process">Client / process feed</ToggleGroupItem>
           <ToggleGroupItem value="agent">Agent KPIs</ToggleGroupItem>
         </ToggleGroup>

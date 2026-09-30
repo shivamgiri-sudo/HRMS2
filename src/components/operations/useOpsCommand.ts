@@ -104,6 +104,19 @@ export interface EmployeeDetail {
   kpis: Array<Record<string, string | number | null>>;
   breaks: Array<Record<string, string | number | null>>;
   window: { from: string; to: string };
+  risk: { score: number; level: "high" | "medium" | "low"; reasons: string[] } | null;
+  recentCalls: Array<{ at: string; score: number | null }> | null;
+  peers: {
+    agent: PeerBlock;
+    team: PeerBlock | null;
+    scope: PeerBlock;
+  };
+}
+
+export interface PeerBlock {
+  label: string;
+  size: number | null;
+  values: Record<string, number | null>;
 }
 
 export function useOpsEmployee(q: OpsQuery, employeeId: string | null) {

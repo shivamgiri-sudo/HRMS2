@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import request from "supertest";
-import { app } from "../src/app.js";
+import express from "express";
+import router from "../src/modules/operations/ops-command.routes.js";
 import { derive } from "../src/modules/operations/ops-command.service.js";
 import { exitedIn, groupKey, isActiveAt, type DimEmp } from "../src/modules/operations/ops-command.dim.js";
 import { memo, clearOpsCache } from "../src/modules/operations/ops-command.cache.js";
@@ -110,6 +111,9 @@ describe("Operations Command — periods and cache", () => {
     expect(await memo("s", fn, 0)).toBe(2); // …and the refresh landed
   });
 });
+
+// Mount only this module's router: the gate must hold without depending on the rest of the app.
+const app = express().use("/api/operations-command", router);
 
 describe("Operations Command — route gate", () => {
   it("rejects anonymous callers", async () => {

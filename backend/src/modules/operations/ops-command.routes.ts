@@ -22,6 +22,8 @@ import { OPS_METRICS, type OpsRecordDomain } from "./ops-command.definitions.js"
 import { computePerformance, type PerfSource } from "./ops-command.performance.js";
 import { computeCohorts, computeForecast, computeFreshness, computeInsights } from "./ops-command.insights.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
+import { scheduleOpsIndexes } from "./ops-command.indexes.js";
+import { computeEmployee360 } from "./ops-command.agent360.js";
 import { computeAgentDays } from "./ops-command.agent.js";
 import { getOperationsAnalyticsSummary } from "./operations-analytics.service.js";
 import { HEAT_METRICS, computeHeatmap, type HeatMetric } from "./ops-command.heatmap.js";
@@ -234,7 +236,7 @@ router.get("/employee/:employeeId/days", ...auth, guard(async (req, res, ctx) =>
 }));
 
 router.get("/employee/:employeeId", ...auth, guard(async (req, res, ctx) => {
-  const data = await computeEmployeeDetail(ctx, String(req.params.employeeId));
+  const data = await computeEmployee360(ctx, String(req.params.employeeId));
   if (!data) return res.status(404).json({ success: false, message: "Employee not found in your scope" });
   res.json({ success: true, data });
 }));
@@ -260,3 +262,6 @@ if (process.env.OPS_PREWARM !== "false" && process.env.NODE_ENV !== "test") {
   setTimeout(() => void prewarm(), 20_000).unref();
   setInterval(() => void prewarm(), 4 * 60 * 1000).unref();
 }
+
+// Performance indexes are created in the background, never by a startup migration (see ops-command.indexes.ts).
+scheduleOpsIndexes();

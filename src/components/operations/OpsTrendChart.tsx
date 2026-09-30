@@ -12,7 +12,7 @@ export function OpsTrendChart({ points, series }: Props) {
   const hasData = !!points?.some((p) => series.some((s) => p[s.key] !== null && p[s.key] !== 0));
   return (
     <Card>
-      <CardHeader className="pb-2"><CardTitle className="text-sm">Daily trend</CardTitle></CardHeader>
+      <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-foreground">Daily trend</CardTitle></CardHeader>
       <CardContent className="h-64">
         {!points ? (
           <div className="h-full animate-pulse rounded bg-muted" />

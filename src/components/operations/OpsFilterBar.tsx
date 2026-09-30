@@ -31,7 +31,7 @@ function presets(anchor: string, today: string) {
 function FilterSelect({ label, plural, value, items, onChange }: { label: string; plural: string; value: string | undefined; items: FilterOption[]; onChange: (v: string | undefined) => void }) {
   const known = !value || value === "__none__" || items.some((i) => i.id === value);
   return (
-    <div className="min-w-[160px] flex-1">
+    <div className="min-w-[calc(50%-0.375rem)] flex-1 sm:min-w-[160px]">
       <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
       <Select value={value ?? ALL} onValueChange={(v) => onChange(v === ALL ? undefined : v)}>
         <SelectTrigger aria-label={label}><SelectValue placeholder={`All ${plural}`} /></SelectTrigger>
@@ -67,7 +67,7 @@ export function OpsFilterBar({ query, options, period, onChange }: Props) {
         )}
       </div>
       <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[180px]">
+        <div className="w-full sm:w-auto sm:min-w-[180px]">
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Period</p>
           <Select value={active?.id ?? "custom"} onValueChange={(id) => { const p = list.find((x) => x.id === id); if (p) onChange({ ...query, from: p.from, to: p.to }); }}>
             <SelectTrigger aria-label="Period"><SelectValue /></SelectTrigger>
@@ -77,13 +77,13 @@ export function OpsFilterBar({ query, options, period, onChange }: Props) {
             </SelectContent>
           </Select>
         </div>
-        <div>
+        <div className="min-w-[calc(50%-0.375rem)] flex-1 sm:min-w-0 sm:flex-none">
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">From</p>
-          <Input type="date" value={query.from ?? period?.from ?? ""} max={query.to ?? period?.to} onChange={(e) => e.target.value && onChange({ ...query, from: e.target.value })} className="min-h-[44px] w-[150px]" />
+          <Input type="date" value={query.from ?? period?.from ?? ""} max={query.to ?? period?.to} onChange={(e) => e.target.value && onChange({ ...query, from: e.target.value })} className="min-h-[44px] w-full sm:w-[150px]" />
         </div>
-        <div>
+        <div className="min-w-[calc(50%-0.375rem)] flex-1 sm:min-w-0 sm:flex-none">
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">To</p>
-          <Input type="date" value={query.to ?? period?.to ?? ""} min={query.from ?? period?.from} onChange={(e) => e.target.value && onChange({ ...query, to: e.target.value })} className="min-h-[44px] w-[150px]" />
+          <Input type="date" value={query.to ?? period?.to ?? ""} min={query.from ?? period?.from} onChange={(e) => e.target.value && onChange({ ...query, to: e.target.value })} className="min-h-[44px] w-full sm:w-[150px]" />
         </div>
         {period && (
           <p className="pb-3 text-xs text-muted-foreground">

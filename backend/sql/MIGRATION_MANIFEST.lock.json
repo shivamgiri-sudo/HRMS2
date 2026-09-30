@@ -937,7 +937,6 @@
     "migrations/1910_bla_bli_blu_sales_dashboard.sql",
     "migrations/1916_onfido_utilization_static_values.sql",
     "migrations/1917_onfido_manpower_plan_total_queue.sql",
-    "migrations/1918_operations_command_indexes.sql",
     "migrations/1919_ats_dashboard_indexes.sql",
     "migrations/1920_satya_retail_process.sql"
   ],
@@ -1115,6 +1114,11 @@
       "filename": "1908_backfill_esi_docs_vault.sql",
       "reason": "Incorrect manifest entry without migrations/ prefix. Actual file is sql/migrations/1908_backfill_esi_docs_vault.sql. Re-registered as migrations/1908_backfill_esi_docs_vault.sql in the same manifest update. Never applied without the prefix — no schema_migrations row exists.",
       "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "migrations/1918_operations_command_indexes.sql",
+      "reason": "replaced by background lock-safe ops-command.indexes.ts; startup ALTER caused 2026-09-30 502",
+      "approvedBy": "shivam.giri@teammas.in"
     }
   ],
   "knownDangling": [
@@ -1165,7 +1169,6 @@
     "migrations/1910_bla_bli_blu_sales_dashboard.sql",
     "migrations/1916_onfido_utilization_static_values.sql",
     "migrations/1917_onfido_manpower_plan_total_queue.sql",
-    "migrations/1918_operations_command_indexes.sql",
     "migrations/1919_ats_dashboard_indexes.sql",
     "migrations/1920_satya_retail_process.sql"
   ],
