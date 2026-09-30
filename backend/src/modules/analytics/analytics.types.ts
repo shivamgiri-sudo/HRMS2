@@ -8,7 +8,7 @@ export const OPS = ["eq", "neq", "in", "not_in", "gt", "gte", "lt", "lte", "betw
 export const SCOPE_MODES = ["process_branch", "process", "branch", "employee", "constant", "org"] as const;
 export const DATE_PRESETS = ["today", "yesterday", "last_7", "last_30", "last_90", "this_week", "this_month", "last_month", "this_quarter", "this_year", "all", "custom"] as const;
 export const FORMATS = ["number", "integer", "percent", "currency", "duration", "text", "date"] as const;
-export const LOOKUPS = ["none", "process", "branch", "employee"] as const;
+export const LOOKUPS = ["none", "process", "branch", "employee", "metric", "metric_code"] as const;
 
 export type FieldRole = (typeof FIELD_ROLES)[number];
 export type DataType = (typeof DATA_TYPES)[number];

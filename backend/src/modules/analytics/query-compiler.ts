@@ -20,10 +20,13 @@ export const MAX_MEASURES = 8;
 const EXEC_MS = 20000;
 
 const col = (name: string) => `t.\`${assertSafeIdentifier(name, "column")}\``;
-const LOOKUP_JOIN: Record<string, { table: string; name: string }> = {
-  process: { table: "process_master", name: "process_name" },
-  branch: { table: "branch_master", name: "branch_name" },
-  employee: { table: "employees", name: "full_name" },
+/** Dimensions holding an id (or a metric code) are shown by name. Fixed map: never built from user input. */
+const LOOKUP_JOIN: Record<string, { table: string; name: string; key: string }> = {
+  process: { table: "process_master", name: "process_name", key: "id" },
+  branch: { table: "branch_master", name: "branch_name", key: "id" },
+  employee: { table: "employees", name: "full_name", key: "id" },
+  metric: { table: "kpi_metric_master", name: "metric_name", key: "id" },
+  metric_code: { table: "kpi_metric_master", name: "metric_name", key: "metric_code" },
 };
 
 function field(ds: Dataset, key: string): DatasetField {
@@ -76,7 +79,7 @@ export function compileQuery(ds: Dataset, spec: QuerySpec, scope: ScopeClause, r
     let expr = grainExpr(col(fd.columnName), grain, fd.dataType);
     if (fd.lookup !== "none" && LOOKUP_JOIN[fd.lookup] && ds.connection === "hrms") {
       const lk = LOOKUP_JOIN[fd.lookup];
-      joins.push(`LEFT JOIN ${lk.table} lk${i} ON lk${i}.id = ${col(fd.columnName)}`);
+      joins.push(`LEFT JOIN ${lk.table} lk${i} ON lk${i}.${lk.key} = ${col(fd.columnName)}`);
       expr = `COALESCE(lk${i}.${lk.name}, ${col(fd.columnName)})`;
     }
     select.push(`${expr} AS \`d${i}\``);
