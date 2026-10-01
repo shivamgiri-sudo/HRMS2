@@ -214,7 +214,12 @@ export interface ExitRow {
   reason: string | null; exitType: string | null;
 }
 
-export async function loadExits(viewer: Viewer, sinceDays = 400): Promise<{ exits: ExitRow[]; headcountEvents: { join: string; exit: string | null; source: string | null }[] }> {
+const exitsCache = new Map<string, { at: number; p: Promise<ExitsData> }>();
+const EXITS_TTL = 10 * 60_000;
+export interface ExitsData { exits: ExitRow[]; headcountEvents: { join: string; exit: string | null; source: string | null }[] }
+
+/** Cached per scope (not per person): everyone who sees the same people shares one load. */
+export async function loadExits(viewer: Viewer, sinceDays = 400): Promise<ExitsData> {
   const scope = await resolveUserBusinessScope(viewer);
   const cond = buildEmployeeScopeCondition(scope, {
     employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
@@ -224,27 +229,47 @@ export async function loadExits(viewer: Viewer, sinceDays = 400): Promise<{ exit
   const span = me?.id ? spanClauseFor(String(me.id), "e") : null;
   const sql = cond.sql === "1=1" ? "1=1" : span ? `((${cond.sql}) OR ${span.sql})` : `(${cond.sql})`;
   const params = cond.sql === "1=1" ? [] : span ? [...cond.params, ...span.params] : cond.params;
+  const key = JSON.stringify([sql, params, sinceDays, today()]);
+  const hit = exitsCache.get(key);
+  if (hit && Date.now() - hit.at < EXITS_TTL) return hit.p;
+  const p = queryExits(sql, params, sinceDays);
+  exitsCache.set(key, { at: Date.now(), p });
+  p.catch(() => exitsCache.delete(key));
+  if (exitsCache.size > 200) for (const k of exitsCache.keys()) { if (Date.now() - exitsCache.get(k)!.at >= EXITS_TTL) exitsCache.delete(k); }
+  return p;
+}
+
+async function queryExits(sql: string, params: unknown[], sinceDays: number): Promise<ExitsData> {
+  const t0 = Date.now();
   const since = addDays(today(), -sinceDays);
+  // Latest exit_request per employee in ONE pass (a correlated subquery per row was the slow part).
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, DATE_FORMAT(COALESCE(e.salary_start_date, e.date_of_joining), '%Y-%m-%d') AS join_date,
             DATE_FORMAT(e.date_of_exit, '%Y-%m-%d') AS exit_date, e.source,
             e.branch_id, b.branch_name, e.process_id, p.process_name,
             e.reporting_manager_id, COALESCE(NULLIF(TRIM(m.full_name),''), TRIM(CONCAT(m.first_name,' ',COALESCE(m.last_name,'')))) AS manager_name,
-            e.designation_id, d.designation_name,
-            (SELECT COALESCE(NULLIF(TRIM(er.exit_reason_category),''), NULLIF(TRIM(er.resignation_reason),''))
-               FROM exit_request er WHERE er.employee_id = e.id ORDER BY er.created_at DESC LIMIT 1) AS reason,
-            (SELECT er.exit_type FROM exit_request er WHERE er.employee_id = e.id ORDER BY er.created_at DESC LIMIT 1) AS exit_type
+            e.designation_id, d.designation_name, x.reason, x.exit_type
        FROM employees e
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
        LEFT JOIN designation_master d ON d.id = e.designation_id
        LEFT JOIN employees m ON m.id = e.reporting_manager_id
+       LEFT JOIN (
+         SELECT er.employee_id,
+                MAX(COALESCE(NULLIF(TRIM(er.exit_reason_category),''), NULLIF(TRIM(er.resignation_reason),''))) AS reason,
+                MAX(er.exit_type) AS exit_type
+           FROM exit_request er
+           JOIN (SELECT employee_id, MAX(created_at) AS mc FROM exit_request GROUP BY employee_id) l
+             ON l.employee_id = er.employee_id AND l.mc = er.created_at
+          GROUP BY er.employee_id
+       ) x ON x.employee_id = e.id
       WHERE ${sql}
         AND e.date_of_joining IS NOT NULL
         AND ((e.date_of_exit IS NOT NULL AND e.date_of_exit >= e.date_of_joining AND e.date_of_exit >= ?)
              OR (e.date_of_exit IS NULL AND e.employment_status = 'Active' AND e.active_status = 1))`,
     [...params, since] as never[],
   );
+  console.log(`[attrition-hub] exits loaded: ${rows.length} rows in ${Date.now() - t0} ms`);
   const exits: ExitRow[] = [];
   const headcountEvents: { join: string; exit: string | null; source: string | null }[] = [];
   for (const r of rows) {
