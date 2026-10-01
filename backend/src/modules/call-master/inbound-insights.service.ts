@@ -165,10 +165,21 @@ function maskPhone(phone: string): string {
 async function loadCalls(projectKey: string, f: InsightFilters): Promise<{ rows: CallRow[]; truncated: boolean; campaigns: string[]; slSec: number }> {
   const p = await getProject(projectKey);
   assertRange(f);
-  if (f.campaign && !p.campaigns.includes(f.campaign)) throw new Error("Unknown campaign for this project");
 
   const slSec = p.slSeconds ?? (p.pattern === "A" ? SL_SEC_A : SL_SEC_B);
-  const campaigns = f.campaign ? [f.campaign] : p.campaigns;
+  // Bellavita's filter is a LOB name (Bellavita/Bevzilla/Kenaz/Guzz/Embrouge), not a literal
+  // campaign code -- resolve it back to every campaign under that LOB. Every other project's
+  // filter value is still a literal campaign name, unchanged.
+  let campaigns: string[];
+  if (!f.campaign) {
+    campaigns = p.campaigns;
+  } else if (projectKey === "bellavita" && Object.values(BELLAVITA_LOB_MAP).includes(f.campaign)) {
+    campaigns = p.campaigns.filter((c) => BELLAVITA_LOB_MAP[c] === f.campaign);
+  } else if (p.campaigns.includes(f.campaign)) {
+    campaigns = [f.campaign];
+  } else {
+    throw new Error("Unknown campaign for this project");
+  }
   const ph = campaigns.map(() => "?").join(",");
   const pool = await getDialerPool();
   const [raw] = await pool.execute(
@@ -420,13 +431,51 @@ function detectSharedNumber(rows: CallRow[]): { phone: string; calls: number } |
   return top && top.calls >= 50 && top.calls / rows.length >= 0.3 ? top : null;
 }
 
+/**
+ * Explicit campaign -> LOB (brand) map, given by the user 2026-09-30 -- NOT derivable from the
+ * campaign name's own "middle word": Ken/Guz/Emb are the literal tokens dialer_db uses, but the
+ * real LOB names are Kenaz/Guzz/Embrouge, and the two Kenaz-family campaigns don't even share a
+ * middle word with each other (Ken_Existing_Order vs Kenaz_New_Order). RotoresN is deliberately
+ * left unmapped -- it has no assigned LOB and must not appear in the roll-up.
+ */
+const BELLAVITA_LOB_MAP: Record<string, string> = {
+  E_Bellavita_Luxury: "Bellavita", H_Bellavita_Luxury: "Bellavita",
+  E_Bellavita_Organic: "Bellavita", H_Bellavita_Organic: "Bellavita",
+  E_Bevzilla_Complaint: "Bevzilla", H_Bevzilla_Complaint: "Bevzilla",
+  E_Bevzilla_Order: "Bevzilla", H_Bevzilla_Order: "Bevzilla",
+  E_Bevzilla_CC_Agent: "Bevzilla", H_Bevzilla_CC_Agent: "Bevzilla",
+  E_Bevzilla_Product: "Bevzilla", H_Bevzilla_Product: "Bevzilla",
+  E_Ken_Existing_Order: "Kenaz", H_Ken_Existing_Order: "Kenaz",
+  E_Kenaz_New_Order: "Kenaz", H_Kenaz_New_Order: "Kenaz",
+  E_Guz_Existing_Order: "Guzz", H_Guz_Existing_Order: "Guzz",
+  E_Guzz_New_Order: "Guzz", H_Guzz_New_Order: "Guzz",
+  E_Emb_Existing_Order: "Embrouge", H_Emb_Existing_Order: "Embrouge",
+  E_Emb_New_Order: "Embrouge", H_Emb_New_Order: "Embrouge",
+};
+
+/**
+ * Options for the "LOB / campaign" filter dropdown. Bellavita's 24 dialer campaign codes are
+ * meaningless to a non-technical viewer -- they roll up into 5 named LOBs (Bellavita, Bevzilla,
+ * Kenaz, Guzz, Embrouge), so the dropdown shows those 5 instead of every individual code
+ * (loadCalls resolves a selected LOB name back to its campaigns). Every other project's
+ * campaigns already ARE its LOBs one-to-one, so they pass through unchanged.
+ */
+function projectFilterOptions(projectKey: string, campaigns: string[]): string[] {
+  if (projectKey !== "bellavita") return campaigns;
+  return [...new Set(campaigns.map((c) => BELLAVITA_LOB_MAP[c]).filter((x): x is string => Boolean(x)))];
+}
+
 function buildBellavitaGroups(rows: CallRow[]) {
   const parse = (campaign: string) => {
-    const m = /^([HE])_([A-Za-z]+)_/.exec(campaign);
-    return m ? { language: m[1] === "H" ? "Hindi" : "English", brand: m[2] } : null;
+    const m = /^([HE])_/.exec(campaign);
+    if (!m) return null;
+    const brand = BELLAVITA_LOB_MAP[campaign];
+    if (!brand) return null; // unmapped campaign (e.g. RotoresN) -- excluded from the LOB roll-up
+    return { language: m[1] === "H" ? "Hindi" : "English", brand };
   };
   const roll = (keyFn: (c: { language: string; brand: string }) => string) => {
     const acc = new Map<string, Acc>();
+    const agentsByKey = new Map<string, Set<string>>();
     for (const r of rows) {
       const c = parse(r.campaign);
       if (!c) continue;
@@ -434,9 +483,14 @@ function buildBellavitaGroups(rows: CallRow[]) {
       let a = acc.get(k);
       if (!a) { a = newAcc(); acc.set(k, a); }
       add(a, r);
+      if (r.handled) {
+        let agents = agentsByKey.get(k);
+        if (!agents) { agents = new Set(); agentsByKey.set(k, agents); }
+        agents.add(r.agentId);
+      }
     }
     return [...acc.entries()]
-      .map(([label, a]) => ({ label, ...metrics(a), sharePct: pct(a.offered, rows.length) }))
+      .map(([label, a]) => ({ label, ...metrics(a), sharePct: pct(a.offered, rows.length), agents: agentsByKey.get(label)?.size ?? 0 }))
       .sort((x, y) => y.offered - x.offered);
   };
   return { byBrand: roll((c) => c.brand), byLanguage: roll((c) => c.language) };
@@ -642,6 +696,23 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
     lobDaily.push({ campaign, date, offered });
   }
 
+  // Same daily volume, rolled up to LOB (5 brands) instead of 24 individual campaign codes --
+  // the LOB-wise tab's chart shows this instead of lobDaily when it's available (Bellavita only).
+  let lobGroupsDaily: { label: string; date: string; offered: number }[] | null = null;
+  if (projectKey === "bellavita") {
+    lobGroupsDaily = [];
+    const gd = new Map<string, number>();
+    for (const r of rows) {
+      const brand = BELLAVITA_LOB_MAP[r.campaign];
+      if (!brand) continue;
+      gd.set(`${brand}|${r.date}`, (gd.get(`${brand}|${r.date}`) ?? 0) + 1);
+    }
+    for (const [k, offered] of gd) {
+      const [label, date] = k.split("|");
+      lobGroupsDaily.push({ label, date, offered });
+    }
+  }
+
   // ── wait / abandon ──
   const waitBuckets = WAIT_BUCKETS.map((b) => ({ label: b.label, answered: 0, abandoned: 0 }));
   for (const r of rows) {
@@ -747,7 +818,7 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
   }
 
   return {
-    project: { key: p.key, name: p.name, campaigns },
+    project: { key: p.key, name: p.name, campaigns, filterOptions: projectFilterOptions(projectKey, campaigns) },
     filters: { startDate: f.startDate, endDate: f.endDate, campaign: f.campaign ?? null },
     definitions: {
       offered: "Every inbound call routed to the queue",
@@ -776,6 +847,7 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
     lobs,
     lobGroups,
     lobDaily,
+    lobGroupsDaily,
     waitBuckets,
     talkBuckets,
     dispositions,

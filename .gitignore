@@ -175,3 +175,15 @@ nginx.conf.bak.*
 /uploader/google_service_account.json
 /uploader/sale_sheet_checkpoint.json
 /uploader/__pycache__/
+# uploader/<company>/ subfolders (tausif-mis 7d02a4ee4): same protection, one level down.
+# uploader/ -- ad hoc data-load scripts, one self-contained subfolder per company
+# (housing_premium/, housing_owner/). Downloaded CDR exports carry real customer/call
+# data and the *.env files hold live third-party logins -- neither belongs in this
+# public repo's history.
+/uploader/*/downloads/
+/uploader/*/*.env
+/uploader/*/logs/
+/uploader/*/google_service_account.json
+/uploader/*/*checkpoint*.json
+/uploader/*/__pycache__/
+/uploader/*/chrome_profile/

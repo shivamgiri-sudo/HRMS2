@@ -266,6 +266,13 @@ async function writeMasmisRaw(
   if (src.extraWhere) where.push(`(${src.extraWhere})`);
   const whereSql = where.length ? ` AND ${where.join(" AND ")}` : "";
   const table = `db_masmis.\`${src.table}\``;
+  // When set, keeps only the highest-id (most recently uploaded) row per distinct value of
+  // this column -- applied inside the WHERE-filtered set, so a duplicate outside the date
+  // range never wins the "latest" slot for one still inside it. The derived table already
+  // carries every selected column (including id, needed for keyset pagination below).
+  const fromClause = src.dedupeBy
+    ? `(SELECT ${select}, ROW_NUMBER() OVER (PARTITION BY \`${src.dedupeBy}\` ORDER BY id DESC) AS __rn FROM ${table} WHERE 1=1${whereSql}) dedup WHERE __rn = 1`
+    : `${table} WHERE 1=1${whereSql}`;
 
   // Keyset pagination on the primary key: each chunk resumes where the last one
   // stopped, so cost stays linear in table size (OFFSET would rescan every time).
@@ -276,12 +283,12 @@ async function writeMasmisRaw(
     if (!hasId) {
       exhausted = true;
       const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT ${select} FROM ${table} WHERE 1=1${whereSql} LIMIT ${want}`, params,
+        `SELECT ${select} FROM ${fromClause} LIMIT ${want}`, params,
       );
       return rows;
     }
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT ${select} FROM ${table} WHERE id > ?${whereSql} ORDER BY id ASC LIMIT ${want}`, [lastId, ...params],
+      `SELECT ${select} FROM ${fromClause} AND id > ? ORDER BY id ASC LIMIT ${want}`, [...params, lastId],
     );
     if (rows.length < want) exhausted = true;
     if (rows.length) lastId = Number(rows[rows.length - 1].id);
@@ -350,6 +357,64 @@ async function writeDialerRaw(
   ) as [RowDataPacket[], Array<{ name: string }>];
 
   const cols = fields.map((f) => f.name);
+  const data = rows.map((r) => cols.map((c) => r[c]));
+  const ws = startRawSheet(wb, { name: sheetName, columns: cols, firstRows: data });
+  const capped = data.slice(0, DIALER_ROW_CAP);
+  let written = 0;
+  for (const r of capped) {
+    if (written % 2_000 === 0 && Date.now() > deadline) { result.timeLimited = true; break; }
+    ws.addRow(r.map(cellValue)).commit();
+    written += 1;
+  }
+  if (written === 0 && !result.timeLimited) ws.addRow(["No rows matched the selected filters."]).commit();
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: Math.max(1, cols.length) } };
+  ws.commit();
+
+  result.rowsExported = written;
+  result.truncated = result.timeLimited === true || data.length > DIALER_ROW_CAP;
+  result.rowsMatching = result.truncated ? null : written;
+  return result;
+}
+
+/** Satya Retail's dial-attempt rows to a "Client 499" filter of dialer_db.data_master_in --
+ * same field mapping (and "attempt" formula) as satya-retail-report.service.ts's
+ * dialerCdrBase(), so this sheet's rows match what the on-screen Calls tab shows. Column names
+ * match the old db_masmis.satya_cdr export this replaces, so a spreadsheet built against the
+ * old export still lines up. */
+const SATYA_CLIENT_ID = 499;
+async function writeSatyaDialerRaw(
+  wb: ExcelJS.stream.xlsx.WorkbookWriter, req: DashboardExcelRequest, sheetName: string, deadline: number,
+): Promise<RawSheetResult> {
+  const result: RawSheetResult = {
+    sheet: sheetName, source: "dialer_db.data_master_in (live)",
+    filter: `${req.from && req.to ? `date ${req.from} to ${req.to}` : "no date range supplied -- all rows"}${req.lob ? `; warehouse = ${req.lob}` : ""}`,
+    rowsExported: 0, rowsMatching: null, truncated: false,
+    note: "Live call records from the dialer (read-only source) -- replaces the old staged satya_cdr export; satya_cdr itself is untouched.",
+  };
+
+  const pool = await getDialerPool();
+  const where = [`ClientId = ?`];
+  const params: (string | number)[] = [SATYA_CLIENT_ID];
+  if (req.from && req.to) { where.push(`CallDate >= ?`, `CallDate < DATE_ADD(?, INTERVAL 1 DAY)`); params.push(req.from, req.to); }
+  if (req.lob) { where.push(`(CASE WHEN Field4 IS NULL OR Field4 = '' THEN 'Unmapped' ELSE Field4 END) = ?`); params.push(req.lob); }
+
+  const cols = ["scenario", "sub_scenario_1", "warehouse", "beat_name", "shop_name", "number_val", "call_date", "agent_name", "attempt", "amount", "remarks"];
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT
+        Category1 AS scenario, Category2 AS sub_scenario_1,
+        (CASE WHEN Field4 IS NULL OR Field4 = '' THEN 'Unmapped' ELSE Field4 END) AS warehouse,
+        (CASE WHEN Field2 IS NULL OR Field2 = '' THEN 'Unmapped' ELSE Field2 END) AS beat_name,
+        Field3 AS shop_name, MSISDN AS number_val,
+        DATE_FORMAT(CallDate, '%Y-%m-%d %H:%i:%s') AS call_date,
+        REGEXP_SUBSTR(callcreated, 'MAS[0-9]+') AS agent_name,
+        COUNT(*) OVER (PARTITION BY MSISDN) AS attempt,
+        Field1 AS amount, Field5 AS remarks
+       FROM dialer_db.data_master_in
+      WHERE ${where.join(" AND ")}
+      ORDER BY CallDate ASC LIMIT ${DIALER_ROW_CAP + 1}`,
+    params,
+  );
+
   const data = rows.map((r) => cols.map((c) => r[c]));
   const ws = startRawSheet(wb, { name: sheetName, columns: cols, firstRows: data });
   const capped = data.slice(0, DIALER_ROW_CAP);
@@ -474,7 +539,9 @@ export async function appendDashboardToWorkbook(
     try {
       raw.push(src.kind === "masmis"
         ? await writeMasmisRaw(wb, src, req, sheetName, deadline)
-        : await writeDialerRaw(wb, src as DialerRawSource, req, sheetName, deadline));
+        : src.kind === "satya_dialer"
+          ? await writeSatyaDialerRaw(wb, req, sheetName, deadline)
+          : await writeDialerRaw(wb, src as DialerRawSource, req, sheetName, deadline));
     } catch (err) {
       // One unreachable/failed source must not lose the whole report: record it in the notes sheet.
       // A sheet that already started writing is committed by wb.commit() below, so the file stays valid.

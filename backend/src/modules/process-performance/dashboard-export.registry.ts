@@ -29,6 +29,10 @@ export interface MasmisRawSource {
   extraWhere?: string;
   /** Extra columns to leave out of this sheet (e.g. a free-text chat transcript full of customer details). */
   excludeColumns?: string[];
+  /** When set, the raw sheet keeps only the highest-`id` (most recently uploaded) row per
+   * distinct value of this column -- e.g. bb_sale has re-uploaded duplicate rows per
+   * bella_vita_order_id, so this collapses them to one row per real order. */
+  dedupeBy?: string;
   /** Shown in the Raw Data Notes sheet. */
   note?: string;
 }
@@ -40,7 +44,19 @@ export interface DialerRawSource {
   projectKey: string;
 }
 
-export type RawSource = MasmisRawSource | DialerRawSource;
+/** Satya Retail's Calls raw sheet -- the one export source that isn't a plain masmis table or
+ * a call-master PROJECTS-shaped dialer export. Read live from dialer_db.data_master_in
+ * (ClientId 499), same field mapping as satya-retail-report.service.ts's dialerCdrBase(), so
+ * the exported rows match what the dashboard itself shows. db_masmis.satya_cdr (the old
+ * staged table this replaces) is untouched -- still exists, still fed by the manual upload,
+ * just no longer read by this export. Sheet name is kept as "satya_cdr" for continuity with
+ * anyone's existing Excel workflow built around that sheet name. */
+export interface SatyaDialerRawSource {
+  kind: "satya_dialer";
+  sheet: string;
+}
+
+export type RawSource = MasmisRawSource | DialerRawSource | SatyaDialerRawSource;
 
 /** Columns that are upload bookkeeping, not business data. */
 export const EXCLUDED_RAW_COLUMNS = new Set(["upload_batch_id", "uploaded_by"]);
@@ -89,17 +105,17 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
   inbound_clovia: [{ kind: "dialer", sheet: "Clovia inbound calls", projectKey: "clovia" }],
 
   bellavita_sale: [
-    { kind: "masmis", sheet: "bb_sale", table: "bb_sale", dateExpr: "`Date`" },
+    { kind: "masmis", sheet: "bb_sale", table: "bb_sale", dateExpr: "`Date`", dedupeBy: "bella_vita_order_id" },
     { kind: "masmis", sheet: "bb_apr", table: "bb_apr", dateExpr: "report_date" },
   ],
   bellavita_agent_performance: [
     { kind: "masmis", sheet: "bb_apr", table: "bb_apr", dateExpr: "report_date" },
-    { kind: "masmis", sheet: "bb_sale", table: "bb_sale", dateExpr: "`Date`" },
+    { kind: "masmis", sheet: "bb_sale", table: "bb_sale", dateExpr: "`Date`", dedupeBy: "bella_vita_order_id" },
   ],
   bellavita_chat: [
     { kind: "masmis", sheet: "bb_chat", table: "bb_chat", dateExpr: "chat_date", lobColumn: "lob" },
     {
-      kind: "masmis", sheet: "bb_sale (Chat)", table: "bb_sale", dateExpr: "`Date`", extraWhere: "campaign = 'Chat'",
+      kind: "masmis", sheet: "bb_sale (Chat)", table: "bb_sale", dateExpr: "`Date`", extraWhere: "campaign = 'Chat'", dedupeBy: "bella_vita_order_id",
       note: "Sale rows the Revenue/AOV figures come from (campaign = 'Chat'). Not narrowed by the LOB filter: bb_sale has no Bevzilla/Kenaz split.",
     },
   ],
@@ -111,14 +127,14 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
     },
     {
       kind: "masmis", sheet: "bb_sale (Sale Made)", table: "bb_sale", dateExpr: "`Date`",
-      extraWhere: "campaign = 'Chat' AND calling_status = 'Sale Made'",
+      extraWhere: "campaign = 'Chat' AND calling_status = 'Sale Made'", dedupeBy: "bella_vita_order_id",
       note: "Every sale row, one per order line item. Sale Made and Revenue count each bella_vita_order_id once, so this sheet holds more rows than the snapshot's Sale Made. bb_sale has no Kenaz/Bevzilla split.",
     },
   ],
   bellavita_cart: [
     { kind: "masmis", sheet: "bb_cart", table: "bb_cart", dateExpr: D_MON_YY("call_date") },
     {
-      kind: "masmis", sheet: "bb_sale (Abandon Cart)", table: "bb_sale", dateExpr: "`Date`", extraWhere: "campaign = 'Abandon Cart'",
+      kind: "masmis", sheet: "bb_sale (Abandon Cart)", table: "bb_sale", dateExpr: "`Date`", extraWhere: "campaign = 'Abandon Cart'", dedupeBy: "bella_vita_order_id",
       note: "Sale rows the Abandon Cart Revenue / Sale Count figures come from (campaign = 'Abandon Cart').",
     },
   ],
@@ -162,14 +178,14 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
 
   satya_retail: [
     { kind: "masmis", sheet: "satya_allocation", table: "satya_allocation", note: NO_RANGE_NOTE },
-    { kind: "masmis", sheet: "satya_cdr", table: "satya_cdr", note: NO_RANGE_NOTE },
+    { kind: "satya_dialer", sheet: "satya_cdr" },
   ],
   // The "Calling & Order Tracking" report filters both tables by report_date and
   // by warehouse, so its raw sheets do too (an 'Unmapped' warehouse has no real
   // column value to bind, so the client omits the lob filter for it).
   satya_retail_report: [
     { kind: "masmis", sheet: "satya_allocation", table: "satya_allocation", dateExpr: D_MON_YY("report_date"), lobColumn: "warehouse", note: "Rows exactly as uploaded -- includes older duplicate allocation rows that the report skips (see its Data checks page)." },
-    { kind: "masmis", sheet: "satya_cdr", table: "satya_cdr", dateExpr: D_MON_YY("report_date"), lobColumn: "warehouse" },
+    { kind: "satya_dialer", sheet: "satya_cdr" },
   ],
 
   // Appreciate Wealth: call_date is mixed text ("5-Sep-26") / Excel serial ("46270"); the expression handles both.
