@@ -1261,6 +1261,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1990_kpi_catalogue.sql", // Registered 2026-10-01. KPI Catalogue (kpi_catalogue, _role, _conflict, rating scale) + nullable kpi_studio_definition.catalogue_id. Additive, idempotent.
   "migrations/1991_attrition_followup_and_model_snapshot.sql", // Registered 2026-10-01. attrition_followup + attrition_model_snapshot. CREATE TABLE IF NOT EXISTS, no FKs, additive.
   "migrations/1992_kpi_performance_page.sql", // Registered 2026-10-01. Page code KPI_PERFORMANCE for /kpi/performance (page_catalog + role_page_access). INSERT IGNORE, additive.
+  "migrations/1993_kpi_upload_feed_metrics.sql", // Registered 2026-10-02. Metric codes for the SBI collections, Bellavita chat and Clovia email feeds into kpi_daily_actual. INSERT IGNORE, additive.
 ];
 
 export type MigrationHealth = {

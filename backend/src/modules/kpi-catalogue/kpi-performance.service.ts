@@ -75,6 +75,10 @@ export async function getProcessPerformance(processKey: string, o: PerformanceOp
     processIds = (pm as Row[]).map((r) => String(r.id));
   }
   const processSql = processKey === "_global" ? "1=1" : processIds.length ? `e.process_id IN (${inList(processIds.length)})` : "1=0";
+  // Facts written by the upload feeds carry the process they belong to (process_id_at_event); some of those processes
+  // have no employees assigned in employees.process_id, so a fact counts for the process by either route.
+  const factProcessSql = processKey === "_global" ? "1=1"
+    : processIds.length ? `(e.process_id IN (${inList(processIds.length)}) OR a.process_id_at_event IN (${inList(processIds.length)}))` : "1=0";
   const empFilterSql = o.employeeId ? "AND e.id = ?" : "";
   const baseParams = [...scopeSql.params, ...processIds, ...(o.employeeId ? [o.employeeId] : [])];
 
@@ -109,10 +113,10 @@ export async function getProcessPerformance(processKey: string, o: PerformanceOp
          LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
          LEFT JOIN branch_master b ON b.id = e.branch_id
         WHERE m.metric_code IN (${inList(codesNeeded.length)}) AND a.score_date BETWEEN ? AND ?
-          AND (${scopeSql.sql}) AND (${processSql}) ${empFilterSql}
+          AND (${scopeSql.sql}) AND (${factProcessSql}) ${empFilterSql}
         ORDER BY a.score_date
         LIMIT 400000`,
-      [...codesNeeded, window.from, window.to, ...baseParams] as never[],
+      [...codesNeeded, window.from, window.to, ...scopeSql.params, ...(processKey === "_global" ? [] : [...processIds, ...processIds]), ...(o.employeeId ? [o.employeeId] : [])] as never[],
     );
     for (const r of rows as Row[]) {
       actuals.push({
@@ -189,8 +193,8 @@ export async function getProcessPerformance(processKey: string, o: PerformanceOp
     const [lrows] = await db.execute<Row[]>(
       `SELECT m.metric_code, DATE_FORMAT(MAX(a.score_date), '%Y-%m-%d') AS d FROM kpi_daily_actual a
          JOIN kpi_metric_master m ON m.id = a.metric_id JOIN employees e ON e.id = a.employee_id
-        WHERE m.metric_code IN (${inList(emptyCodes.length)}) AND (${scopeSql.sql}) AND (${processSql}) ${empFilterSql} GROUP BY m.metric_code`,
-      [...emptyCodes, ...baseParams] as never[],
+        WHERE m.metric_code IN (${inList(emptyCodes.length)}) AND (${scopeSql.sql}) AND (${factProcessSql}) ${empFilterSql} GROUP BY m.metric_code`,
+      [...emptyCodes, ...scopeSql.params, ...(processKey === "_global" ? [] : [...processIds, ...processIds]), ...(o.employeeId ? [o.employeeId] : [])] as never[],
     );
     for (const r of lrows as Row[]) if (r.d) lastSeen.set(String(r.metric_code), String(r.d));
   }

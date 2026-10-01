@@ -48,11 +48,12 @@ export const SEED_PROCESSES_B: CatalogueProcessDef[] = [
   {
     processKey: "sbi_card", processName: "SBI Card Collections", processCodes: ["SBI_CARD"],
     kpis: [
-      k("sbi_agent_calls", "Agent calls", "collections", "volume", "count", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(calls)", "upload", ["date", "agent", "team", "campaign"], A_ALL, { metricCode: "DIALS" }),
-      k("sbi_agent_contacts", "Agent contacts", "collections", "volume", "count", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(contacts)", "upload", ["date", "agent", "team"], A_ALL),
-      k("sbi_agent_ptp", "Promise-to-pay (PTP)", "collections", "volume", "count", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(ptp)", "upload", ["date", "agent", "team"], A_ALL),
-      k("sbi_agent_pad", "Payment after dial (PAD)", "collections", "volume", "count", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(pad)", "upload", ["date", "agent", "team"], A_ALL),
-      k("sbi_agent_amount", "Amount collected", "collections", "volume", "currency", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(amt_collected)", "upload", ["date", "agent", "team", "bucket"], A_ALL, { metricCode: "REVENUE" }),
+      k("sbi_agent_calls", "Agent calls", "collections", "volume", "count", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(calls)", "upload", ["date", "agent", "team", "campaign"], A_ALL, { metricCode: "COLLECTION_CALLS" }),
+      k("sbi_agent_contacts", "Agent contacts", "collections", "volume", "count", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(contacts)", "upload", ["date", "agent", "team"], A_ALL, { metricCode: "COLLECTION_CONTACTS" }),
+      k("sbi_agent_contact_rate", "Contact rate %", "collections", "rate", "percent", H, "both", "derived", "db_masmis.sbi_card_agent_mis", "contacts / calls", "upload", ["date", "agent", "team"], A_ALL, { metricCode: "COLLECTION_CONTACT_RATE" }),
+      k("sbi_agent_ptp", "Promise-to-pay (PTP)", "collections", "volume", "count", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(ptp)", "upload", ["date", "agent", "team"], A_ALL, { metricCode: "COLLECTION_PTP" }),
+      k("sbi_agent_pad", "Payment after dial (PAD)", "collections", "volume", "count", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(pad)", "upload", ["date", "agent", "team"], A_ALL, { metricCode: "COLLECTION_PAD" }),
+      k("sbi_agent_amount", "Amount collected", "collections", "volume", "currency", H, "both", "upload", "db_masmis.sbi_card_agent_mis", "SUM(amt_collected)", "upload", ["date", "agent", "team", "bucket"], A_ALL, { metricCode: "COLLECTION_AMOUNT" }),
       k("sbi_downtime_min", "Dialer downtime", "workforce", "duration", "minutes", L, "process", "upload", "db_masmis.sbi_card_downtime", "SUM(downtime minutes)", "upload", ["date"], A_MGMT),
       ...std(),
     ],

@@ -1,6 +1,6 @@
 # KPI Catalogue Map
 
-Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 processes, 594 KPIs. Do not edit by hand: edit the seed and re-run `npm run kpi:catalogue-map` (in `backend/`).
+Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 processes, 597 KPIs. Do not edit by hand: edit the seed and re-run `npm run kpi:catalogue-map` (in `backend/`).
 
 ## Audiences
 
@@ -20,19 +20,19 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 
 | Process | Codes | KPIs | With data | Employee-level | Realtime |
 |---|---|---|---|---|---|
-| Bellavita (`bellavita`) | BELLA_VITA | 50 | 48 | 37 | 13 |
+| Bellavita (`bellavita`) | BELLA_VITA | 51 | 49 | 38 | 13 |
 | GNC (`gnc`) | GNC | 45 | 43 | 35 | 13 |
 | Neemans (`neemans`) | NEEMANS | 41 | 37 | 32 | 14 |
 | Appreciate Wealth (`appreciate_health`) | APPRICIATE_WEALTH, BSS_OB_NOIDA_923 | 28 | 26 | 24 | 0 |
-| Housing Owner (`housing_owner`) | HOUSING_OWNER | 27 | 25 | 23 | 0 |
-| Housing Premium (`housing_premium`) | HOUSING_PREMIUM | 27 | 25 | 23 | 0 |
-| Clovia (`clovia`) | CLOVIA | 35 | 33 | 25 | 13 |
+| Housing Owner (`housing_owner`) | HOUSING_OWNER, HOUSING_COM | 27 | 25 | 23 | 0 |
+| Housing Premium (`housing_premium`) | HOUSING_PREMIUM, HOUSING_COM | 27 | 25 | 23 | 0 |
+| Clovia (`clovia`) | CLOVIA | 36 | 34 | 26 | 13 |
 | Birlanu (`birlanu`) | BIRLANU | 23 | 20 | 16 | 0 |
 | Satya Retail (`satya_retail`) | SATYA_RETAIL, BSS_OB_NOIDA_1045 | 21 | 19 | 17 | 0 |
 | Lawyer Panel - Feedback (`lp_feedback`) | ERESOLUTION, BSS_OB_NOIDA_1005 | 24 | 22 | 20 | 0 |
 | Lawyer Panel - Onboarding (`lp_onboarding`) | ERESOLUTION, BSS_OB_NOIDA_1005 | 25 | 23 | 21 | 0 |
 | Dalmia Cement (`dalmia`) | DALMIA_CEMENT | 33 | 31 | 20 | 13 |
-| SBI Card Collections (`sbi_card`) | SBI_CARD | 27 | 19 | 17 | 0 |
+| SBI Card Collections (`sbi_card`) | SBI_CARD | 28 | 20 | 18 | 0 |
 | DU Bangladesh (`du_bangladesh`) | DU_DIGITAL, BSS_IB_NOIDA_654 | 28 | 26 | 20 | 13 |
 | Viega (`viega`) | VIEGA | 28 | 26 | 20 | 13 |
 | Exicom (`exicom`) | EXICOM | 28 | 26 | 20 | 13 |
@@ -67,6 +67,7 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 | Chat conversion (unique) | chat | percent | higher | both | db_masmis.new_bb_chat + bb_sale (campaign Chat) | orders / unique chats | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Chat tickets | chat | count | higher | both | db_masmis.bb_chat (bellavita-chat-dashboard.service) | COUNT(tickets) | upload | date, agent, team, lob | agent, team_leader, process_manager, branch, head_office, admin |
 | Resolved % | chat | percent | higher | both | db_masmis.bb_chat (bellavita-chat-dashboard.service) | resolved tickets / tickets | upload | date, agent, team, lob | agent, team_leader, process_manager, branch, head_office, admin |
+| Average first response time | chat | minutes | lower | both | db_masmis.bb_chat (bellavita-chat-dashboard.service) | AVG(frt_1) in minutes | upload | date, agent, team, lob | agent, team_leader, process_manager, branch, head_office, admin |
 | First response within 60s % | chat | percent | higher | both | db_masmis.bb_chat (bellavita-chat-dashboard.service) | tickets with first response <= 60s / tickets | upload | date, agent, team, lob | agent, team_leader, process_manager, branch, head_office, admin |
 | Resolution time | chat | seconds | lower | both | db_masmis.bb_chat (bellavita-chat-dashboard.service) | AVG(resolution time) | upload | date, agent, team, lob | agent, team_leader, process_manager, branch, head_office, admin |
 | Repeat chat % | chat | percent | lower | process | db_masmis.bb_chat (bellavita-chat-dashboard.service) | repeat contacts (by phone) / unique | upload | date, lob | process_manager, branch, head_office, admin |
@@ -312,6 +313,7 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 | CSAT (IVR feedback) | inbound | percent | higher | process | db_masmis.cl_feedback | positive responses / responses; response rate | upload | date, lob | process_manager, branch, head_office, admin |
 | Rechurn calls % | inbound | percent | lower | process | db_masmis.cl_rechurn_call | rechurn / calls | upload | date | process_manager, branch, head_office, admin |
 | Email closure % | email | percent | higher | both | db_masmis.cl_email_raw | closed / assigned | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
+| Emails assigned | email | count | higher | both | db_masmis.cl_email_raw | SUM(total_mail_assigned) | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Email touch % | email | percent | higher | both | db_masmis.cl_email_raw | touched / assigned | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Chat accepted within 60s % | chat | percent | higher | both | db_masmis.cl_chat | accepted <= 60s / chats | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Chat customer rating | chat | ratio | higher | both | db_masmis.cl_chat | AVG(rating) | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
@@ -489,6 +491,7 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 |---|---|---|---|---|---|---|---|---|---|
 | Agent calls | collections | count | higher | both | db_masmis.sbi_card_agent_mis | SUM(calls) | upload | date, agent, team, campaign | agent, team_leader, process_manager, branch, head_office, admin |
 | Agent contacts | collections | count | higher | both | db_masmis.sbi_card_agent_mis | SUM(contacts) | upload | date, agent, team | agent, team_leader, process_manager, branch, head_office, admin |
+| Contact rate % | collections | percent | higher | both | db_masmis.sbi_card_agent_mis | contacts / calls | upload | date, agent, team | agent, team_leader, process_manager, branch, head_office, admin |
 | Promise-to-pay (PTP) | collections | count | higher | both | db_masmis.sbi_card_agent_mis | SUM(ptp) | upload | date, agent, team | agent, team_leader, process_manager, branch, head_office, admin |
 | Payment after dial (PAD) | collections | count | higher | both | db_masmis.sbi_card_agent_mis | SUM(pad) | upload | date, agent, team | agent, team_leader, process_manager, branch, head_office, admin |
 | Amount collected | collections | currency | higher | both | db_masmis.sbi_card_agent_mis | SUM(amt_collected) | upload | date, agent, team, bucket | agent, team_leader, process_manager, branch, head_office, admin |
@@ -747,19 +750,19 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 
 | Process | agent | team_leader | process_manager | quality | wfm | branch | head_office | trainer | admin |
 |---|---|---|---|---|---|---|---|---|---|
-| bellavita | 36 | 36 | 50 | 7 | 7 | 49 | 50 | 0 | 50 |
+| bellavita | 37 | 37 | 51 | 7 | 7 | 50 | 51 | 0 | 51 |
 | gnc | 34 | 34 | 45 | 7 | 7 | 44 | 45 | 0 | 45 |
 | neemans | 31 | 31 | 41 | 7 | 7 | 40 | 41 | 0 | 41 |
 | appreciate_health | 23 | 23 | 28 | 7 | 7 | 27 | 28 | 0 | 28 |
 | housing_owner | 22 | 22 | 27 | 7 | 7 | 26 | 27 | 0 | 27 |
 | housing_premium | 22 | 22 | 27 | 7 | 7 | 26 | 27 | 0 | 27 |
-| clovia | 24 | 24 | 35 | 7 | 7 | 34 | 35 | 0 | 35 |
+| clovia | 25 | 25 | 36 | 7 | 7 | 35 | 36 | 0 | 36 |
 | birlanu | 15 | 15 | 23 | 7 | 7 | 22 | 23 | 0 | 23 |
 | satya_retail | 16 | 16 | 21 | 7 | 7 | 20 | 21 | 0 | 21 |
 | lp_feedback | 19 | 19 | 24 | 7 | 7 | 23 | 24 | 0 | 24 |
 | lp_onboarding | 20 | 20 | 25 | 7 | 7 | 24 | 25 | 0 | 25 |
 | dalmia | 19 | 19 | 33 | 7 | 7 | 32 | 33 | 0 | 33 |
-| sbi_card | 16 | 16 | 27 | 7 | 7 | 26 | 27 | 0 | 27 |
+| sbi_card | 17 | 17 | 28 | 7 | 7 | 27 | 28 | 0 | 28 |
 | du_bangladesh | 19 | 19 | 28 | 7 | 7 | 27 | 28 | 0 | 28 |
 | viega | 19 | 19 | 28 | 7 | 7 | 27 | 28 | 0 | 28 |
 | exicom | 19 | 19 | 28 | 7 | 7 | 27 | 28 | 0 | 28 |

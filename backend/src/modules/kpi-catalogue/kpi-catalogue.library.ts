@@ -123,12 +123,13 @@ export function prepaidRtoKpis(ref: string, fresh: CatalogueKpiDef["freshness"] 
   ];
 }
 
-/** Chat support block. */
-export function chatKpis(ref: string, frtSec = 60): CatalogueKpiDef[] {
+/** Chat support block. `feed` maps the KPIs to metric codes once an upload feed writes per-agent rows for that process. */
+export function chatKpis(ref: string, frtSec = 60, feed = false): CatalogueKpiDef[] {
   const d = ["date", "agent", "team", "lob"];
   return [
-    k("ch_tickets", "Chat tickets", "chat", "volume", "count", H, "both", "upload", ref, "COUNT(tickets)", "upload", d, A_ALL),
-    k("ch_resolved_pct", "Resolved %", "chat", "rate", "percent", H, "both", "upload", ref, "resolved tickets / tickets", "upload", d, A_ALL),
+    k("ch_tickets", "Chat tickets", "chat", "volume", "count", H, "both", "upload", ref, "COUNT(tickets)", "upload", d, A_ALL, feed ? { metricCode: "CHAT_TICKETS" } : {}),
+    k("ch_resolved_pct", "Resolved %", "chat", "rate", "percent", H, "both", "upload", ref, "resolved tickets / tickets", "upload", d, A_ALL, feed ? { metricCode: "CHAT_RESOLVED_PCT" } : {}),
+    ...(feed ? [k("ch_frt_min", "Average first response time", "chat", "duration", "minutes", L, "both", "upload", ref, "AVG(frt_1) in minutes", "upload", d, A_ALL, { metricCode: "CHAT_FRT_MIN" })] : []),
     k("ch_frt_in_tat_pct", `First response within ${frtSec}s %`, "chat", "rate", "percent", H, "both", "upload", ref, `tickets with first response <= ${frtSec}s / tickets`, "upload", d, A_ALL),
     k("ch_resolution_time_sec", "Resolution time", "chat", "duration", "seconds", L, "both", "upload", ref, "AVG(resolution time)", "upload", d, A_ALL),
     k("ch_repeat_pct", "Repeat chat %", "chat", "rate", "percent", L, "process", "upload", ref, "repeat contacts (by phone) / unique", "upload", ["date", "lob"], A_MGMT),

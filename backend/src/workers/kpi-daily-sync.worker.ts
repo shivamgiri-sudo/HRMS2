@@ -1,3 +1,4 @@
+import { syncUploadFeeds } from '../modules/kpi/kpi-upload-feeds.service.js';
 import { syncAprMetrics, syncAttendanceMetrics, syncConversionMetrics, syncSalesBrandMisMetrics, syncSalesOrderMetrics, syncQualityMetrics, syncQualityMetricsForDate } from '../modules/kpi/kpi-data-connector.service.js';
 import { runWeeklyCoachingEvaluation } from '../modules/quality-dashboard/weekly-coaching.service.js';
 
@@ -70,6 +71,16 @@ async function runDailySync(): Promise<void> {
     console.log(`[KpiDailySyncWorker] Sales order sync: ${salesOrderResult.synced} synced, ${salesOrderResult.skipped} skipped, ${salesOrderResult.errors.length} errors`);
   } catch (err: any) {
     console.error(`[KpiDailySyncWorker] Sales order sync failed:`, err.message);
+  }
+
+  // Per-agent upload tables (SBI collections, Bellavita chat, Clovia email) -> kpi_daily_actual. Each feed is isolated.
+  try {
+    const feeds = await syncUploadFeeds(date);
+    for (const f of feeds) {
+      console.log(`[KpiDailySyncWorker] Upload feed ${f.feed} (${date}): ${f.written} written, ${f.unmapped} unmapped agents${f.error ? `, ERROR ${f.error}` : ''}`);
+    }
+  } catch (err: any) {
+    console.error(`[KpiDailySyncWorker] Upload feeds failed:`, err.message);
   }
 
   // Quality daily, alongside every other source. It previously ran only on the
