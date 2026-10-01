@@ -21,14 +21,14 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 | Process | Codes | KPIs | With data | Employee-level | Realtime |
 |---|---|---|---|---|---|
 | Bellavita (`bellavita`) | BELLA_VITA | 51 | 49 | 38 | 13 |
-| GNC (`gnc`) | GNC | 45 | 43 | 35 | 13 |
+| GNC (`gnc`) | GNC, GUARDIAN_HC | 45 | 43 | 35 | 13 |
 | Neemans (`neemans`) | NEEMANS | 41 | 37 | 32 | 14 |
 | Appreciate Wealth (`appreciate_health`) | APPRICIATE_WEALTH, BSS_OB_NOIDA_923 | 28 | 26 | 24 | 0 |
 | Housing Owner (`housing_owner`) | HOUSING_OWNER, HOUSING_COM | 27 | 25 | 23 | 0 |
 | Housing Premium (`housing_premium`) | HOUSING_PREMIUM, HOUSING_COM | 27 | 25 | 23 | 0 |
 | Clovia (`clovia`) | CLOVIA | 36 | 34 | 26 | 13 |
 | Birlanu (`birlanu`) | BIRLANU | 23 | 20 | 16 | 0 |
-| Satya Retail (`satya_retail`) | SATYA_RETAIL, BSS_OB_NOIDA_1045 | 21 | 19 | 17 | 0 |
+| Satya Retail (`satya_retail`) | SATYA_RETAIL, BSS_OB_NOIDA_1045, IDAM, VST | 21 | 19 | 17 | 0 |
 | Lawyer Panel - Feedback (`lp_feedback`) | ERESOLUTION, BSS_OB_NOIDA_1005 | 24 | 22 | 20 | 0 |
 | Lawyer Panel - Onboarding (`lp_onboarding`) | ERESOLUTION, BSS_OB_NOIDA_1005 | 25 | 23 | 21 | 0 |
 | Dalmia Cement (`dalmia`) | DALMIA_CEMENT | 33 | 31 | 20 | 13 |

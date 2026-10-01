@@ -17,6 +17,11 @@ describe("TPZ company -> process_master mapping", () => {
     expect(tpzCompany("dubangladesh")?.processCodes).toContain("DU_DIGITAL");
   });
 
+  it("maps GNC to GUARDIAN_HC and Satya to IDAM / VST, where their agents actually sit (traced in production)", () => {
+    expect(tpzCompany("gnc")?.processCodes).toContain("GUARDIAN_HC");
+    expect(tpzCompany("satya_retail")?.processCodes).toEqual(expect.arrayContaining(["IDAM", "VST"]));
+  });
+
   it("maps Housing Owner and Premium to HOUSING_COM, the process row that actually holds the Housing staff", () => {
     expect(tpzCompany("housing_owner")?.processCodes).toContain("HOUSING_COM");
     expect(tpzCompany("housing_premium")?.processCodes).toContain("HOUSING_COM");

@@ -58,7 +58,7 @@ const PRIMARY: CatalogueProcessDef[] = [
     ],
   },
   {
-    processKey: "gnc", processName: "GNC", processCodes: ["GNC"],
+    processKey: "gnc", processName: "GNC", processCodes: ["GNC", "GUARDIAN_HC"], // GNC sale agents sit on GUARDIAN_HC (15 of 15 active, traced in prod 2026-10-02)
     kpis: [
       ...salesKpis("db_masmis.gnc_sale + gnc_allocation + gnc_apr (gnc-sale-dashboard.service)", "upload", ["date", "campaign", "team", "agent"]),
       k("gnc_alloc_connected", "Allocation connected", "allocation", "volume", "count", H, "both", "upload", "db_masmis.gnc_allocation", "COUNT(connected allocations)", "upload", ["date", "agent", "campaign"], A_ALL),
@@ -152,7 +152,7 @@ const PRIMARY: CatalogueProcessDef[] = [
     ],
   },
   {
-    processKey: "satya_retail", processName: "Satya Retail", processCodes: ["SATYA_RETAIL", "BSS_OB_NOIDA_1045"],
+    processKey: "satya_retail", processName: "Satya Retail", processCodes: ["SATYA_RETAIL", "BSS_OB_NOIDA_1045", "IDAM", "VST"], // Satya allocation agents sit on IDAM (4) and VST (2) (traced in prod 2026-10-02)
     kpis: [
       k("sr_allocated", "Shops allocated", "allocation", "volume", "count", H, "both", "upload", "db_masmis.satya_allocation", "COUNT(allocation rows) (Morning vs Absentee)", "upload", ["date", "agent", "beat", "warehouse"], A_ALL),
       k("sr_calls_made", "Calls made", "outbound", "volume", "count", H, "both", "upload", "db_masmis.satya_cdr", "COUNT(unique_flag 1 or 2)", "upload", ["date", "agent", "beat"], A_ALL, { metricCode: "DIALS" }),
