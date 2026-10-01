@@ -426,6 +426,9 @@ export default function NativeJoiningControlRoom() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const esignRecheckFiredFor = React.useRef<string | null>(null);
+  const detailSeq = React.useRef(0);
+  const selectedIdRef = React.useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
 
   const selected = useMemo(() => queue.find((row) => row.candidate_id === selectedId) || null, [queue, selectedId]);
 
@@ -445,8 +448,11 @@ export default function NativeJoiningControlRoom() {
 
   const loadDetail = async (candidateId: string) => {
     setError("");
+    const seq = ++detailSeq.current;
     try {
       const res = await hrmsApi.get<{ success: boolean; data: Detail }>(`/api/ats/joining-control-room/candidates/${candidateId}`);
+      // Drop out-of-order responses: a slow earlier click must not overwrite a newer selection.
+      if (seq !== detailSeq.current) return;
       setDetail(res.data);
       setDateForm({
         ...blankDates,
@@ -460,6 +466,7 @@ export default function NativeJoiningControlRoom() {
       setJclrForm({ ...blankJclr, ...(res.data.jclr || {}) });
       setStatutoryForm(seedStatutoryForm(res.data.statutory, res.data.onboarding?.profile));
     } catch (err: any) {
+      if (seq !== detailSeq.current) return;
       setError(err.message || "Unable to load candidate");
     }
   };
@@ -468,6 +475,7 @@ export default function NativeJoiningControlRoom() {
   useEffect(() => {
     if (selectedId) {
       esignRecheckFiredFor.current = null; // reset so the new candidate gets a fresh check
+      setDetail(null); // never show the previous candidate's data under the new selection
       loadDetail(selectedId);
     }
   }, [selectedId]);
@@ -519,6 +527,7 @@ export default function NativeJoiningControlRoom() {
     try {
       await hrmsApi.post(`/api/ats/joining-control-room/candidates/${candidateId}/esign/recheck`, {});
       const res = await hrmsApi.get<{ success: boolean; data: Detail }>(`/api/ats/joining-control-room/candidates/${candidateId}`);
+      if (candidateId !== selectedIdRef.current) return;
       setDetail(res.data);
     } catch {
       // Silently swallow — the manual "Check e-sign status now" button is still there
@@ -631,7 +640,7 @@ export default function NativeJoiningControlRoom() {
 
           <div className="min-w-0 rounded-2xl border border-blue-200 bg-white shadow-sm">
             {!selected || !detail ? (
-              <div className="grid min-h-[520px] place-items-center text-sm text-slate-500">Select a candidate to continue.</div>
+              <div className="grid min-h-[520px] place-items-center text-sm text-slate-500">{selectedId && !error ? "Loading candidate…" : "Select a candidate to continue."}</div>
             ) : (
               <>
                 <div className="border-b border-blue-100 p-4">
