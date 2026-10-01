@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1214,
-  "columnCount": 17674,
+  "tableCount": 1215,
+  "columnCount": 17685,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -14086,6 +14086,19 @@
       "actor_role",
       "reason",
       "snapshot_json",
+      "created_at"
+    ],
+    "pendency_reminder_log": [
+      "id",
+      "employee_id",
+      "reminder_kind",
+      "status",
+      "recipient",
+      "missing_items",
+      "link_url",
+      "trigger_source",
+      "sent_by",
+      "error_message",
       "created_at"
     ],
     "people_experience_action": [

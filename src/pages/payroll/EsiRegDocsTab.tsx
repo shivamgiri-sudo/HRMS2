@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   CheckCircle2, XCircle, Download, FileText, Users,
-  AlertTriangle, Search, FileDown, Loader2, Upload, Camera, Eye,
+  AlertTriangle, Search, FileDown, Loader2, Upload, Camera, Eye, Mail,
 } from "lucide-react";
 
 interface EsiEmployee {
@@ -125,6 +125,20 @@ async function viewEsiDoc(employeeId: string, kind: string): Promise<void> {
     throw err;
   }
 }
+
+interface ReminderResponse {
+  success: boolean;
+  summary: { sent: number; skipped: number; failed: number };
+  results: Array<{ employee_code: string | null; status: string; reason?: string }>;
+}
+
+const REMINDER_SKIP_TEXT: Record<string, string> = {
+  not_pending: "nothing pending",
+  no_email: "no email address on file",
+  recently_reminded: "reminded in the last 3 days",
+  max_reminders_reached: "5 reminders already sent",
+  no_valid_link: "no valid link",
+};
 
 function KpiStrip({ employees, total }: { employees: EsiEmployee[]; total: number }) {
   const onPage = employees.length;
@@ -577,6 +591,7 @@ export default function EsiRegDocsTab() {
   const [drawerEmp, setDrawerEmp] = useState<EsiEmployee | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [bulkDownloading, setBulkDownloading] = useState(false);
+  const [reminding, setReminding] = useState(false);
 
   const { data, isLoading } = useEsiList({ search, branchId: "", page });
   const employees = data?.employees ?? [];
@@ -650,6 +665,37 @@ export default function EsiRegDocsTab() {
     }
   }
 
+  async function sendReminders() {
+    if (selected.size === 0) return;
+    setReminding(true);
+    try {
+      const res = await hrmsApi.post<ReminderResponse>("/api/payroll/pendency-reminders", {
+        kind: "esi_docs",
+        employee_ids: Array.from(selected),
+      });
+      const { sent, skipped, failed } = res.summary;
+      const skippedWhy = res.results
+        .filter((r) => r.status === "skipped")
+        .slice(0, 3)
+        .map((r) => `${r.employee_code ?? "?"}: ${REMINDER_SKIP_TEXT[r.reason ?? ""] ?? r.reason}`)
+        .join("; ");
+      toast({
+        title: `Reminders: ${sent} sent${skipped ? `, ${skipped} skipped` : ""}${failed ? `, ${failed} failed` : ""}`,
+        description: skipped ? `${skippedWhy}${skipped > 3 ? "…" : ""}` : "Each email links to their profile Documents page.",
+        variant: failed ? "destructive" : "default",
+      });
+      if (sent > 0) setSelected(new Set());
+    } catch (err) {
+      toast({
+        title: "Could not send reminders",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setReminding(false);
+    }
+  }
+
   async function exportCsv() {
     try {
       const blob = await hrmsApi.getBlob("/api/payroll/esi-reg-docs/export-csv");
@@ -720,6 +766,16 @@ export default function EsiRegDocsTab() {
         >
           {bulkDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
           Bulk ZIP {selected.size > 0 && `(${selected.size})`}
+        </Button>
+        <Button
+          variant="outline"
+          className="gap-2 rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+          disabled={selected.size === 0 || reminding}
+          onClick={sendReminders}
+          title="Email the selected employees a link to upload what is missing"
+        >
+          {reminding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+          Send reminder {selected.size > 0 && `(${selected.size})`}
         </Button>
       </div>
 

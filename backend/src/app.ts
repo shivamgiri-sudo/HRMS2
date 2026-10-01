@@ -39,6 +39,7 @@ import { payrollLinesCompatRouter } from "./modules/payroll/payroll-lines.compat
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
 import { payrollMoreRouter } from "./modules/payroll/payroll-more.routes.js";
 import { esiRegDocsRouter } from "./modules/payroll/esi-reg-docs.routes.js";
+import { pendencyRemindersRouter } from "./modules/payroll/pendency/pendency-reminders.routes.js";
 import { esicAutomationRouter } from "./modules/payroll/esic-automation.routes.js";
 import { payrollBranchReadinessRouter } from "./modules/payroll/payroll-branch-readiness.routes.js";
 import { payrollCcAttendanceRouter } from "./modules/payroll/payroll-cc-attendance.routes.js";
@@ -531,6 +532,7 @@ app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollMoreRouter);
 app.use("/api/payroll", listEndpointLimiter, esiRegDocsRouter);
+app.use("/api/payroll", pendencyRemindersRouter);
 app.use("/api/payroll", listEndpointLimiter, esicAutomationRouter);
 app.use(
   "/api/payroll/branch-readiness",
