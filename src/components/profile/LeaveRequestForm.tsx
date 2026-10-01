@@ -89,7 +89,12 @@ export function LeaveRequestForm({ employeeId, onSubmitted }: LeaveRequestFormPr
 
   // Fetch actual leave balances from ledger (includes db_bill synced used_days)
   const { data: ledgerBalances } = useQuery({
-    queryKey: ["leave-balances", employeeId, currentYear],
+    // NOT the same key as useLeaveBalances: that hook caches MAPPED balances under
+    // ["leave-balances", employeeId, year] while this query stores the raw API rows. Sharing
+    // the key let whichever refetch landed last overwrite the other's shape, and the balance
+    // cards then crashed on a missing leave_type (seen live right after submitting a request).
+    // Still matched by the ["leave-balances"] / ["leave-balances", employeeId] invalidations.
+    queryKey: ["leave-balances", employeeId, currentYear, "ledger"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
         `/api/leave/balance/${employeeId}?year=${currentYear}`

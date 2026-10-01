@@ -20,7 +20,7 @@ export function LeaveBalanceStrip({ employeeId }: { employeeId?: string }) {
   if (isError) {
     return <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">Could not load your leave balances. Refresh to try again.</p>;
   }
-  const rows = (balances ?? []).filter((b) => b.allocated_days + b.adjusted_days > 0 || b.used_days > 0);
+  const rows = (balances ?? []).filter((b) => Number(b.allocated_days ?? 0) + Number(b.adjusted_days ?? 0) > 0 || Number(b.used_days ?? 0) > 0);
   if (rows.length === 0) {
     return <p className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">No leave balance has been opened for you this year yet. Contact HR if this looks wrong.</p>;
   }
@@ -32,18 +32,21 @@ export function LeaveBalanceStrip({ employeeId }: { employeeId?: string }) {
         {rows.map((b) => {
           const total = b.allocated_days + b.adjusted_days;
           const pct = total > 0 ? Math.min(100, Math.round((b.used_days / total) * 100)) : 0;
-          const color = leaveTypeChartVar(b.leave_code || b.leave_type.name);
+          // leave_type is always set by useLeaveBalances; the fallbacks keep a malformed cache entry
+          // from taking the whole page down.
+          const name = b.leave_type?.name ?? b.leave_code ?? "Leave";
+          const color = leaveTypeChartVar(b.leave_code || name);
           return (
             <div key={b.id} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <div className="flex items-center justify-between gap-2">
-                <p className="truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground">{b.leave_type.name}</p>
+                <p className="truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground">{name}</p>
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" />
               </div>
               <p className="mt-2 text-3xl font-bold tracking-tight text-foreground">
                 {fmt(b.available_days)}
                 <span className="ml-1 text-sm font-medium text-muted-foreground">left</span>
               </p>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={`${b.leave_type.name} used`}>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={`${name} used`}>
                 <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
               </div>
               <p className="mt-2 text-xs text-muted-foreground">{fmt(b.used_days)} used of {fmt(total)}</p>
