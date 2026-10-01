@@ -134,7 +134,31 @@ export async function getUserAssignmentScopes(
  * - Admin can bypass scope only when allowAdminBypass=true.
  * - CEO can be allowed read-only by passing ceo in allowedRoles and assigning scope_type=all.
  */
+/**
+ * Own-branch clamp (owner ruling 2026-10-01): beyond the org-wide roles, a user only ever sees data of
+ * the branch on their own employees record. Assignment rows (branch / process / team / lob ...) can
+ * narrow further but never reach into another branch. Org-wide exempt roles (and super_admin) are
+ * untouched. A user with no branch on their employee record (e.g. an account not linked to an employee)
+ * has nothing to clamp to, so their explicit assignment rows decide, as before.
+ */
+async function isBranchClamped(userId: string): Promise<boolean> {
+  if (await hasAnyRole(userId, "super_admin")) return false;
+  return !(await holdsOrgWideExemptRole(userId));
+}
+
 export async function hasScopedAccess(
+  userId: string,
+  allowedRoles: string[],
+  target: ScopeTarget,
+  options: { allowAdminBypass?: boolean; requireScopeForNonAdmin?: boolean } = {}
+): Promise<boolean> {
+  if (!(await hasScopedAccessUnclamped(userId, allowedRoles, target, options))) return false;
+  if (!target.branchId || !(await isBranchClamped(userId))) return true;
+  const own = await ownBranchId(userId);
+  return !own || own === target.branchId;
+}
+
+async function hasScopedAccessUnclamped(
   userId: string,
   allowedRoles: string[],
   target: ScopeTarget,
@@ -280,6 +304,31 @@ export async function hasOrgWideScope(userId: string, allowedRoles: string[]): P
  * params.push(...scoped.params);
  */
 export async function buildScopeWhereClause(
+  userId: string,
+  allowedRoles: string[],
+  aliases: ScopeAliases,
+  options: {
+    allowAdminBypass?: boolean;
+    allowCeoAllRead?: boolean;
+    /**
+     * Role keys for which scope_type='all' is NOT honoured — the user is forced to their
+     * explicitly assigned branch(es) instead.  If no branch assignment exists either, falls
+     * back to the user's own employees.branch_id so the scope never silently becomes 1=0.
+     * super_admin / admin (with allowAdminBypass) / ceo (with allowCeoAllRead) bypass before
+     * reaching this logic and are unaffected.
+     */
+    blockOrgWideForRoles?: string[];
+  } = {}
+): Promise<{ sql: string; params: unknown[] }> {
+  const base = await buildScopeWhereClauseUnclamped(userId, allowedRoles, aliases, options);
+  if (!aliases.branchId || base.sql === "1=0" || !(await isBranchClamped(userId))) return base;
+  const own = await ownBranchId(userId);
+  if (!own) return base;
+  const inner = base.sql === "1=1" ? "" : `(${base.sql}) AND `;
+  return { sql: `${inner}${aliases.branchId} = ?`, params: [...base.params, own] };
+}
+
+async function buildScopeWhereClauseUnclamped(
   userId: string,
   allowedRoles: string[],
   aliases: ScopeAliases,

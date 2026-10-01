@@ -82,6 +82,11 @@ beforeEach(() => {
       return [[{ branch_id: OWN_BRANCH, process_id: null, department_id: null }], []];
     }
 
+    // The actor's own employee row: the own-branch clamp in scopeAccess.ts reads employees.branch_id.
+    if (/FROM employees WHERE user_id = \?/i.test(text)) {
+      return [[{ branch_id: OWN_BRANCH }], []];
+    }
+
     // shared/scopeAccess.ts's OWN unaliased role lookup — the literal role_key a real
     // payroll_hr user's user_roles row carries. This is deliberately the ONLY branch matching
     // "user_roles": an earlier draft of this mock had a second, broader pattern ahead of this

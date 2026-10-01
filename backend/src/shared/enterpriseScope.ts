@@ -92,6 +92,8 @@ function canBypassPayrollScope(scope: UserBusinessScope): boolean {
 
 /** Does any of the user's assignments cover this employee? `all` only counts for org-wide roles. */
 function assignmentsCoverEmployee(scope: UserBusinessScope, employee: EmployeeLike): boolean {
+  // Own-branch clamp (owner ruling 2026-10-01): outside the org-wide roles no assignment reaches another branch.
+  if (!holdsOrgWideRole(scope) && scope.branchId && scope.branchId !== employee.branch_id) return false;
   return scope.assignments.some((assignment) => {
     if (assignment.scopeType === "all") {
       // Not honoured for branch-scoped roles: they fall back to their own branch.
@@ -162,7 +164,7 @@ function addAssignmentPredicates(
   }
 
   if (ors.length === 0) return { sql: "1=0", params: [] };
-  return { sql: ors.join(" OR "), params };
+  return clampToOwnBranch(scope, { sql: ors.join(" OR "), params }, alias.branchId);
 }
 
 async function getEmployeeRow(employeeId: string): Promise<EmployeeLike | null> {
@@ -239,6 +241,13 @@ export async function resolveUserBusinessScope(user: EnterpriseUser): Promise<Us
   };
 }
 
+/** AND the user's own branch onto a scope condition (non-org-wide users only); no own branch -> assignments decide. */
+function clampToOwnBranch(scope: UserBusinessScope, cond: ScopeCondition, branchCol?: string): ScopeCondition {
+  if (!branchCol || cond.sql === "1=0" || holdsOrgWideRole(scope)) return cond;
+  if (!scope.branchId) return cond;
+  return { sql: `(${cond.sql}) AND ${branchCol} = ?`, params: [...cond.params, scope.branchId] };
+}
+
 export function buildEmployeeScopeCondition(
   scope: UserBusinessScope,
   alias: { employeeId?: string; branchId?: string; processId?: string; lobId?: string; departmentId?: string; managerEmployeeId?: string },
@@ -279,7 +288,7 @@ export function buildProcessScopeCondition(
   alias: { processId?: string; branchId?: string; lobId?: string; departmentId?: string },
 ): ScopeCondition {
   if (holdsOrgWideRole(scope)) return { sql: "1=1", params: [] };
-  return addAssignmentPredicates(scope, alias, new Set(["all", "process", "branch_process", "branch", "lob", "department"]));
+  return clampToOwnBranch(scope, addAssignmentPredicates(scope, alias, new Set(["all", "process", "branch_process", "branch", "lob", "department"])), alias.branchId);
 }
 
 export async function canViewEmployee(user: EnterpriseUser, employeeId: string): Promise<boolean> {
