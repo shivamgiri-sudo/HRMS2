@@ -16,8 +16,16 @@ export interface LeaveRequest {
   endDate: string;
   days: number;
   reason: string;
-  status: "pending" | "pending_branch_head" | "approved" | "rejected" | "cancelled" | "discarded";
+  status:
+    | "pending" | "pending_branch_head" | "approved" | "branch_head_approved"
+    | "rejected" | "branch_head_rejected" | "cancelled" | "lapsed" | "discarded";
   submittedAt: string;
+  /**
+   * Whether THIS caller may approve/reject this request, decided by the server with the same
+   * rules the review endpoint enforces. The page shows Approve/Reject from this flag alone —
+   * guessing from role names gave team leaders no buttons and HR/WFM buttons that answered 403.
+   */
+  canReview: boolean;
   reviewedBy?: {
     name: string;
   };
@@ -165,6 +173,7 @@ function mapRawToLeaveRequest(req: any): LeaveRequest {
     days,
     reason: req.reason || "",
     status: req.status as LeaveRequest["status"],
+    canReview: Boolean(req.can_review),
     submittedAt: submittedRaw ?? "",
     reviewedBy: reviewerName ? { name: reviewerName } : undefined,
     reviewedAt: reviewedAtRaw ?? undefined,
@@ -212,12 +221,13 @@ export function useLeaveStats() {
   return useQuery({
     queryKey: ["leave-stats"],
     queryFn: async () => {
-      const [pending, approved, rejected] = await Promise.all([
+      const [pending, approved, rejected, cancelled] = await Promise.all([
         fetchCount(PENDING_STATUSES.join(",")),
         fetchCount("approved"),
         fetchCount("rejected"),
+        fetchCount("cancelled"),
       ]);
-      return { pending, approved, rejected };
+      return { pending, approved, rejected, cancelled };
     },
     staleTime: 30_000,
     gcTime: 2 * 60_000,
@@ -233,6 +243,44 @@ export function useUpdateLeaveStatus() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leave-requests"] });
       queryClient.invalidateQueries({ queryKey: ["leave-stats"] });
+    },
+  });
+}
+
+/**
+ * The caller's own requests, newest first, whatever their role (`mine=1` pins the server scope
+ * to their own employee row — a manager's team scope does not necessarily include the manager).
+ */
+export function useMyLeaveRequests() {
+  return useQuery({
+    queryKey: ["leave-mine"],
+    queryFn: async () => {
+      const { rows } = await fetchScoped({ mine: "1" }, 400);
+      return rows.map(mapRawToLeaveRequest);
+    },
+    staleTime: 30_000,
+    gcTime: 2 * 60_000,
+  });
+}
+
+/** Every cache that shows leave counts or lists, so a change shows up everywhere at once. */
+export const LEAVE_QUERY_KEYS = [
+  ["leave-requests"],
+  ["leave-stats"],
+  ["leave-balances"],
+  ["leave-mine"],
+  ["my-leave-requests"],
+] as const;
+
+/** Cancel one's own pending or (not yet started) approved leave; the server restores the balance. */
+export function useCancelLeave() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      await hrmsApi.patch(`/api/leave/requests/${id}/cancel`, { reason: reason.trim() || null });
+    },
+    onSuccess: () => {
+      for (const queryKey of LEAVE_QUERY_KEYS) queryClient.invalidateQueries({ queryKey: [...queryKey] });
     },
   });
 }

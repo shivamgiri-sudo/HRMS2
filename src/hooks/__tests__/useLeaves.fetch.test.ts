@@ -78,3 +78,29 @@ describe('leave list fetching', () => {
     expect(mocks.get.mock.calls.length).toBeLessThan(5); // did not spin to page 25
   });
 });
+
+describe('leave row mapping and the new hooks', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('carries the server decided can_review flag onto each mapped request', async () => {
+    const { fetchLeaveRowsForExport } = await import('../useLeaves');
+    mocks.get.mockResolvedValue({
+      success: true, total: 2, data: [
+        { id: 'a', status: 'pending', from_date: '2026-10-01', to_date: '2026-10-01', total_days: 1, can_review: true },
+        { id: 'b', status: 'branch_head_approved', from_date: '2026-10-02', to_date: '2026-10-02', total_days: 1 },
+      ],
+    });
+    const out = await fetchLeaveRowsForExport();
+    expect(out.map((r) => [r.id, r.canReview, r.status])).toEqual([
+      ['a', true, 'pending'],
+      ['b', false, 'branch_head_approved'],
+    ]);
+  });
+
+  it('exposes the cache keys a leave change must refresh', async () => {
+    const { LEAVE_QUERY_KEYS } = await import('../useLeaves');
+    expect(LEAVE_QUERY_KEYS.map((k) => k[0])).toEqual(
+      expect.arrayContaining(['leave-requests', 'leave-stats', 'leave-balances', 'leave-mine', 'my-leave-requests']),
+    );
+  });
+});
