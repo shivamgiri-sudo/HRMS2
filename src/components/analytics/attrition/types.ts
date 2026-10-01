@@ -10,12 +10,12 @@ export const TIERS: Tier[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 /** The six signal groups the risk score is built from. Order is display order. */
 export type FactorGroup = "lifecycle" | "attendance" | "performance" | "compensation" | "conduct" | "team";
 export const FACTOR_GROUPS: { key: FactorGroup; label: string; max: number }[] = [
-  { key: "lifecycle", label: "Tenure & lifecycle", max: 30 },
-  { key: "attendance", label: "Attendance behaviour", max: 28 },
+  { key: "lifecycle", label: "Tenure & lifecycle", max: 24 },
+  { key: "attendance", label: "Attendance behaviour", max: 16 },
   { key: "performance", label: "Performance", max: 20 },
-  { key: "compensation", label: "Pay & growth", max: 12 },
+  { key: "compensation", label: "Pay & growth", max: 14 },
   { key: "conduct", label: "Conduct & hygiene", max: 10 },
-  { key: "team", label: "Manager & team", max: 10 },
+  { key: "team", label: "Manager & team", max: 30 },
 ];
 export type FactorPoints = Record<FactorGroup, number>;
 

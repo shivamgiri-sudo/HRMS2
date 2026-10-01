@@ -35,6 +35,17 @@ describe("scoreFeatures", () => {
     expect(worst.score).toBeLessThanOrEqual(100);
     expect(worst.tier).toBe("CRITICAL");
   });
+  it("manager team losses are the strongest single signal (re-weighted from the 16-week lab on real data)", () => {
+    expect(scoreFeatures({ aonDays: 400, teamExitRate90: 0.45 }).factors.team).toBe(30);
+    expect(scoreFeatures({ aonDays: 400, teamExitRate90: 0.3 }).factors.team).toBe(22);
+    expect(scoreFeatures({ aonDays: 400, teamExitRate90: 0.1 }).factors.team).toBe(7);
+    expect(scoreFeatures({ aonDays: 400, peerCtcRatio: 0.8 }).factors.compensation).toBe(10);
+  });
+  it("late marks, leave churn and entry-level pay are not scored (they pointed the wrong way on real data)", () => {
+    const s = scoreFeatures({ aonDays: 400, late30: 25, leaveCount60: 9, ctc: 9000 });
+    expect(s.score).toBe(0);
+    expect(s.reasons).toEqual([]);
+  });
   it("tier cut-offs", () => {
     expect([tierOf(0), tierOf(24.9), tierOf(25), tierOf(40), tierOf(55)]).toEqual(["LOW", "LOW", "MEDIUM", "HIGH", "CRITICAL"]);
   });
