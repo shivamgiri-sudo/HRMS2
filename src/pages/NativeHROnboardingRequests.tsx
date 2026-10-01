@@ -1037,28 +1037,26 @@ export default function NativeHROnboardingRequests() {
       .catch(() => setAllCostCentres([]));
   }, []);
 
-  // ── Salary packages — refiltered whenever the picked band/cost-centre changes,
-  // so the dropdown only offers packages actually assigned under that band
-  // (salary_package_master is keyed by branch + cost centre + band). The endpoint
-  // returns active packages only, one per distinct package. Same lookup as the
-  // Payroll Head review page: this cost centre's packages plus branch-wide ones,
-  // falling back to the whole branch only when that comes back empty. No branch,
+  // ── Salary packages — refiltered whenever the picked band/cost-centre changes.
+  // The endpoint returns active packages only, one per distinct package. No branch,
   // no list -- an unfiltered call offered every branch's packages.
   useEffect(() => {
     const branch = selected?.branch_name;
     if (!branch) { setPackages([]); return; }
-    const cc = costCentres.find((c: any) => c.id === offer.cost_centre)?.cost_centre_code;
-    const url = (withCc: boolean) => {
-      const params = new URLSearchParams({ branch });
-      if (offer.salary_band) params.set('band', offer.salary_band);
-      if (withCc && cc) params.set('costCentre', cc);
-      return `/api/payroll-masters/packages?${params.toString()}`;
-    };
+    const cc = String(costCentres.find((c: any) => c.id === offer.cost_centre)?.cost_centre_code ?? '').trim().toUpperCase();
+    // Every active package of this branch (and band, once one is picked). A cost-centre filter
+    // here hid most packages, because a package's cost_centre_code does not always match the
+    // cost centre master's code; this cost centre's packages are listed first instead.
+    const params = new URLSearchParams({ branch });
+    if (offer.salary_band) params.set('band', offer.salary_band);
     let cancelled = false;
     (async () => {
-      let rows: any[] = [];
-      if (cc) rows = ((await hrmsApi.get<unknown>(url(true))) as any)?.data ?? [];
-      if (!rows.length) rows = ((await hrmsApi.get<unknown>(url(false))) as any)?.data ?? [];
+      const fetched: any[] = ((await hrmsApi.get<unknown>(`/api/payroll-masters/packages?${params.toString()}`)) as any)?.data ?? [];
+      const rank = (p: any) => {
+        const pcc = String(p.cost_centre_code ?? '').trim().toUpperCase();
+        return cc && pcc === cc ? 0 : pcc ? 2 : 1;
+      };
+      const rows = [...fetched].sort((x, y) => rank(x) - rank(y));
       if (cancelled) return;
       setPackages(rows);
       // A package chosen under the previous band/cost centre must not stay selected.
