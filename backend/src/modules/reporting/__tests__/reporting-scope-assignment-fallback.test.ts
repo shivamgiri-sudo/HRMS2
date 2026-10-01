@@ -67,14 +67,15 @@ describe("resolveFullScope: an assignment grant on one dimension does not narrow
     expect(scope.processScope).toEqual({ mode: "all", ids: [] });
   });
 
-  it("a process-only grant does not narrow branchScope to the caller's own branch", async () => {
+  it("a process-only grant is still held to the caller's own branch (own-branch clamp)", async () => {
     mockScope({
       roleKey: "process_manager",
       assignmentRows: [{ scope_type: "process", branch_id: null, process_id: PROCESS_ID }],
     });
     const scope = await resolveFullScope(USER_ID);
     expect(scope.processScope).toEqual({ mode: "restricted", ids: [PROCESS_ID] });
-    expect(scope.branchScope).toEqual({ mode: "all", ids: [] });
+    // Own-branch clamp (owner ruling 2026-10-01): a process grant never reaches past the caller's own branch.
+    expect(scope.branchScope).toEqual({ mode: "restricted", ids: [BRANCH_ID] });
   });
 
   it("an explicit grant on both dimensions still restricts both (unchanged behaviour)", async () => {

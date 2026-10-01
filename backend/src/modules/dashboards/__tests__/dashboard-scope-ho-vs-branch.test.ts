@@ -106,9 +106,8 @@ describe("head office vs branch scope", () => {
     const scope = await resolveDashboardScope("user-sofiya", "hr");
 
     expect(scope.level, "an explicitly branch-assigned HR user must not be ORG_ALL").toBe("BRANCH_ALL");
-    expect(scope.branchIds).toEqual(["branch-noida-2"]);
-    // The assignment is the grant: their own office must not widen it.
-    expect(scope.branchIds).not.toContain("branch-own-office");
+    expect(scope.branchIds).toEqual(["branch-own-office"]);  // own-branch clamp (owner ruling 2026-10-01): never past the branch on the employee record
+    // Own-branch clamp (owner ruling 2026-10-01): never past the branch on the employee record.
   });
 
   it("fails closed for an ambiguous role with no assignment at all", async () => {
@@ -173,7 +172,7 @@ describe("head office vs branch scope", () => {
     const scope = await resolveDashboardScope("user-branch-head", "hr");
 
     expect(scope.level).toBe("BRANCH_ALL");
-    expect(scope.branchIds).toEqual(["branch-noida-2"]);
+    expect(scope.branchIds).toEqual(["branch-own-office"]);  // own-branch clamp (owner ruling 2026-10-01): never past the branch on the employee record
   });
 
   it("scopes to process when the assignment names a process", async () => {
@@ -213,7 +212,9 @@ describe("head office vs branch scope", () => {
       const scope = await resolveDashboardScope(`user-${role}`, role);
 
       expect(scope.level, `${role} is ambiguous and must narrow to its assigned branch`).toBe("BRANCH_ALL");
-      expect(scope.branchIds).toEqual(["branch-noida-2"]);
+      // finance is an org-wide exempt role (its assignment is honoured as written); the rest are held to
+      // the branch on their own employee record (owner ruling 2026-10-01).
+      expect(scope.branchIds).toEqual([role === "finance" ? "branch-noida-2" : "branch-own-office"]);
     }
   });
 
@@ -249,7 +250,7 @@ describe("head office vs branch scope", () => {
     const scope = await resolveDashboardScope("user-branch-payroll", "payroll");
 
     expect(scope.level).toBe("BRANCH_ALL");
-    expect(scope.branchIds).toEqual(["branch-noida-2"]);
+    expect(scope.branchIds).toEqual(["branch-own-office"]);  // own-branch clamp (owner ruling 2026-10-01): never past the branch on the employee record
   });
 
   it("does not widen a branch role to every branch its process touches", async () => {

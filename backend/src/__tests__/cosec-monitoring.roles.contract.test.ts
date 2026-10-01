@@ -166,13 +166,13 @@ describe("2b — each endpoint issues only the query(ies) its own response uses"
     // within this file (a prior /latest-punches call already warmed the cache) — that
     // probe is exercised in isolation below. What must hold regardless of cache state is
     // that this endpoint never touches integration_sync_run.
-    const res = await request(appFor("admin")).get("/api/integrations/cosec/latest-punches");
+    const res = await request(appFor("super_admin")).get("/api/integrations/cosec/latest-punches");
     expect(res.status).toBe(200);
 
     const calls = execute.mock.calls.map(([sql]) => String(sql));
     expect(calls.some((sql) => /FROM biometric_attendance_log/.test(sql))).toBe(true);
     expect(calls.some((sql) => /FROM integration_sync_run/.test(sql))).toBe(false);
-    // admin is ORG_ALL, so the punch join must stay unfiltered by branch.
+    // super_admin is ORG_ALL (admin is branch-scoped, owner ruling 2026-10-01), so the punch join must stay unfiltered by branch.
     const punchSql = calls.find((sql) => /FROM biometric_attendance_log/.test(sql))!;
     expect(punchSql).not.toMatch(/e\.branch_id IN/);
   });

@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import type { ExecScope, DimensionScope } from './executors/types.js';
 import { demoRoleForUserId } from '../../shared/demoAuth.js';
+import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
 
 const NO_BRANCH_SCOPE_SENTINEL = '__NO_BRANCH_SCOPE__';
 
@@ -10,7 +11,10 @@ export interface BranchScope {
   branchIds: string[];  // empty = all only for super admin or explicit all-scope users
 }
 
-const SUPER_ADMIN_ROLES = ['super_admin', 'admin', 'ceo'];
+// Owner ruling 2026-10-01: admin is branch-scoped; outside ORG_WIDE_EXEMPT_ROLES a user only ever
+// sees the branch on their own employee record (assignment rows can narrow, never widen).
+const SUPER_ADMIN_ROLES = ['super_admin', 'ceo'];
+const isOrgWide = (roles: string[]) => roles.some(r => ORG_WIDE_EXEMPT_ROLES.includes(r));
 
 export async function resolveBranchScope(userId: string): Promise<BranchScope> {
   const [roleRows] = await db.execute<RowDataPacket[]>(
@@ -39,13 +43,22 @@ export async function resolveBranchScope(userId: string): Promise<BranchScope> {
   );
   const scopes = scopeRows as { scope_type: string; branch_id: string | null }[];
 
-  if (scopes.some(s => s.scope_type === 'all')) {
+  const orgWide = isOrgWide(roles);
+  if (orgWide && scopes.some(s => s.scope_type === 'all')) {
     return { isSuperAdmin: false, branchIds: [] };
   }
 
-  const branchIds = scopes
+  let branchIds = scopes
     .map(s => s.branch_id)
     .filter((id): id is string => !!id);
+  if (!orgWide) {
+    const [ownRows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+      [userId]
+    );
+    const own = (ownRows as { branch_id: string | null }[])[0]?.branch_id;
+    if (own) branchIds = [own];
+  }
 
   if (branchIds.length === 0) {
     const [empRows] = await db.execute<RowDataPacket[]>(
@@ -152,7 +165,8 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
     cost_centre_id: string | null;
   }[];
 
-  const hasAllScope = isSuperAdmin || scopes.some(s => s.scope_type === 'all');
+  const orgWide = isOrgWide(roles);
+  const hasAllScope = isSuperAdmin || (orgWide && scopes.some(s => s.scope_type === 'all'));
 
   // 4. Build dimension scopes
   function buildDim(
@@ -160,6 +174,9 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
     fallback?: string | null
   ): DimensionScope {
     if (hasAllScope) return dimAll();
+
+    // Own-branch clamp: a non-org-wide user is held to the branch on their own employee record.
+    if (field === 'branch_id' && !orgWide && fallback) return dimRestricted([fallback]);
 
     const ids = scopes
       .map(s => s[field])
