@@ -16,6 +16,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
+import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
 
 export const loansRouter = Router();
 
@@ -54,6 +55,11 @@ loansRouter.get(
 
     const conditions: string[] = [];
     const params: unknown[] = [];
+
+    // Branch scoping (owner ruling 2026-10-01): hr / payroll are limited to their own branch.
+    const loanScope = await employeeScopeFor(req, "e");
+    conditions.push(`(${loanScope.sql})`);
+    params.push(...loanScope.params);
 
     if (employee_id) {
       conditions.push("el.employee_id = ?");
@@ -127,6 +133,8 @@ loansRouter.get(
       if (!(empRows as RowDataPacket[])[0]) {
         return res.status(403).json({ success: false, message: "Access denied" });
       }
+    } else if (!(await guardEmployee(req, res, employeeId))) {
+      return;
     }
 
     const [loans] = await db.execute<RowDataPacket[]>(
@@ -785,6 +793,7 @@ loansRouter.get(
     if (!isPayrollRole && String(loan.emp_user_id) !== userId) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
+    if (isPayrollRole && !(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     const installments = Number(loan.installments);
     const emi = Number(loan.deduction_per_month);

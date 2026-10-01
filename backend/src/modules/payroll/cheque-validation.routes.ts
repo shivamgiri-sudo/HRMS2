@@ -5,6 +5,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
+import { branchInScopeSql } from './payroll-branch-scope.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 
 const router = Router();
@@ -17,7 +18,8 @@ router.use(requireAuth);
 // admin/hr/payroll_head added 2026-08-25: HO Queues' Cheque Validation tab grants these roles
 // page access but this read-only list excluded them. The PATCH approve action stays restricted
 // to payroll/super_admin — gated client-side instead (NativePayrollHOQueues.tsx).
-router.get('/queue', requireRole('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get('/queue', requireRole('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const cvScope = await branchInScopeSql(req, 'ac.applied_for_branch');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT cnv.*,
             ac.full_name AS candidate_full_name, ac.candidate_code, ac.mobile,
@@ -28,8 +30,9 @@ router.get('/queue', requireRole('payroll', 'super_admin', 'finance', 'admin', '
      LEFT JOIN candidate_onboarding_bank_detail cob ON cob.id = cnv.bank_detail_id
      LEFT JOIN candidate_onboarding_document doc ON doc.id = cnv.cheque_document_id
        AND doc.deleted_at IS NULL
-     WHERE cnv.match_status = 'mismatch'
-     ORDER BY cnv.created_at ASC`
+     WHERE cnv.match_status = 'mismatch' AND (${cvScope.sql})
+     ORDER BY cnv.created_at ASC`,
+    cvScope.params
   );
   return res.json({ success: true, data: rows });
 }));
@@ -37,6 +40,7 @@ router.get('/queue', requireRole('payroll', 'super_admin', 'finance', 'admin', '
 // ── GET /api/payroll/cheque-validation/:id ───────────────────────────────────
 // Single case detail — includes cheque image URL and all candidate/bank details.
 router.get('/:id', requireRole('payroll', 'super_admin', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const detailScope = await branchInScopeSql(req, 'ac.applied_for_branch');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT cnv.*,
             ac.full_name AS candidate_full_name, ac.candidate_code, ac.mobile, ac.email,
@@ -48,9 +52,9 @@ router.get('/:id', requireRole('payroll', 'super_admin', 'finance'), h(async (re
      LEFT JOIN candidate_onboarding_bank_detail cob ON cob.id = cnv.bank_detail_id
      LEFT JOIN candidate_onboarding_document doc ON doc.id = cnv.cheque_document_id
        AND doc.deleted_at IS NULL
-     WHERE cnv.id = ?
+     WHERE cnv.id = ? AND (${detailScope.sql})
      LIMIT 1`,
-    [req.params.id]
+    [req.params.id, ...detailScope.params]
   );
   const rec = (rows[0] as any);
   if (!rec) return res.status(404).json({ success: false, message: 'Validation case not found' });
@@ -70,9 +74,12 @@ router.patch('/:id', requireRole('payroll', 'super_admin'), h(async (req: Authen
     return res.status(400).json({ success: false, message: 'decision must be manual_validated or rejected' });
   }
 
+  const patchScope = await branchInScopeSql(req, 'ac.applied_for_branch');
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, candidate_id, bank_detail_id, match_status FROM cheque_name_validation WHERE id = ? LIMIT 1`,
-    [req.params.id]
+    `SELECT cnv.id, cnv.candidate_id, cnv.bank_detail_id, cnv.match_status
+       FROM cheque_name_validation cnv JOIN ats_candidate ac ON ac.id = cnv.candidate_id
+      WHERE cnv.id = ? AND (${patchScope.sql}) LIMIT 1`,
+    [req.params.id, ...patchScope.params]
   );
   const rec = (rows[0] as any);
   if (!rec) return res.status(404).json({ success: false, message: 'Case not found' });

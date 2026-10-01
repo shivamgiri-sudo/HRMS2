@@ -11,6 +11,7 @@ import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { registerUpload, issueDownloadToken } from "../document-vault/documentVault.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { guardEmployee, canSeeEmployee } from "./payroll-branch-scope.js";
 import {
   getPartAAvailability,
   recordPartA,
@@ -100,6 +101,7 @@ tdsCertificatePartARouter.post(
       return res.status(400).json({ success: false, message: "financialYear must be a four-digit year, e.g. 2026 for FY 2026-27" });
     }
 
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const file = (req as unknown as { file?: Express.Multer.File }).file;
     if (!file) return res.status(400).json({ success: false, message: "A PDF file is required" });
 
@@ -168,6 +170,7 @@ tdsCertificatePartARouter.post(
       return res.status(400).json({ success: false, message: "financialYear must be a four-digit year" });
     }
 
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const ok = await verifyPartA(employeeId, financialYear, req.authUser!.id);
     if (!ok) {
       return res.status(404).json({ success: false, message: "No Part A on file for this employee and year" });
@@ -194,7 +197,10 @@ tdsCertificatePartARouter.post(
  * their own employee record rather than from a URL they control.
  */
 async function resolveAccess(req: AuthenticatedRequest, targetEmployeeId: string) {
-  if (await hasAnyRole(req.authUser!.id, ...PAYROLL_ROLES)) return { allowed: true, privileged: true };
+  if (await hasAnyRole(req.authUser!.id, ...PAYROLL_ROLES)) {
+    // Branch scoping (owner ruling 2026-10-01): payroll roles act only inside their own scope.
+    return { allowed: await canSeeEmployee(req, targetEmployeeId), privileged: true };
+  }
   const own = await getEmployeeForUser(req.authUser!.id);
   return { allowed: Boolean(own && own.id === targetEmployeeId), privileged: false };
 }

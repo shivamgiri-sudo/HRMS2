@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import { esiRegDocsRouter } from "../esi-reg-docs.routes.js";
 
+vi.mock("../payroll-branch-scope.js", async () => (await import("./helpers/orgWideScopeMock.js")).orgWideScopeMock);
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute: vi.fn() },
 }));

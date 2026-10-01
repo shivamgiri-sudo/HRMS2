@@ -13,7 +13,7 @@ import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculat
 import { payslipService } from "./payslip.service.js";
 import { computeForm16Data } from "./form16-data.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import { scopeFor, visibleBranchIdsFor } from "./payroll-branch-scope.js";
+import { employeeScopeFor, scopeFor, filterVisibleEmployeeIds, visibleBranchIdsFor, canSeeEmployee, guardEmployee, isOrgWideCaller, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 
 const QUEUE_REASON_LIST_MAX = 500;
 
@@ -124,6 +124,19 @@ payrollMoreRouter.get("/config-flags", requireRole("admin", "super_admin", "fina
   const { branch_id, process_id } = req.query as { branch_id?: string; process_id?: string };
   const conds: string[] = [];
   const params: unknown[] = [];
+  // Branch scoping: a browser branch_id only NARROWS what the caller may see. Non-org-wide callers
+  // see their own branch's flags plus the company-wide defaults (both ids NULL), never another branch's.
+  const visible = await visibleBranchIdsFor(req);
+  if (visible) {
+    if (branch_id && !visible.has(String(branch_id))) {
+      return res.status(403).json({ success: false, message: "Forbidden: this branch is outside your assigned scope" });
+    }
+    const ids = Array.from(visible);
+    conds.push(ids.length
+      ? `(branch_id IN (${ids.map(() => "?").join(",")}) OR (branch_id IS NULL AND process_id IS NULL))`
+      : "1 = 0");
+    params.push(...ids);
+  }
   if (branch_id)  { conds.push("branch_id = ?");  params.push(branch_id); }
   if (process_id) { conds.push("process_id = ?"); params.push(process_id); }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
@@ -141,6 +154,14 @@ payrollMoreRouter.put("/config-flags", requireRole("admin", "super_admin", "fina
   };
   if (!config_key || config_value === undefined) {
     return res.status(400).json({ success: false, message: "config_key and config_value are required" });
+  }
+  {
+    // Non-org-wide callers may only write flags for a branch inside their own scope; company-wide
+    // (branch_id NULL) and other-branch flags need an org-wide role.
+    const visible = await visibleBranchIdsFor(req);
+    if (visible && (!branch_id || !visible.has(String(branch_id)))) {
+      return res.status(403).json({ success: false, message: "Forbidden: you may only change flags for a branch inside your assigned scope" });
+    }
   }
   const { randomUUID } = await import("crypto");
   const id = randomUUID();
@@ -171,7 +192,11 @@ payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin"
   const params: unknown[] = [];
   if (status)        { conds.push("rq.status = ?");               params.push(status); }
   if (payrollMonth)  { pushMonthRange(conds, params, payrollMonth); }
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  // Branch scoping: only the queue rows of employees inside the caller's scope.
+  const qScope = await employeeScopeFor(req, "e");
+  const scopeConds = [`(${qScope.sql})`];
+  const where = `WHERE ${[...conds, ...scopeConds].join(" AND ")}`;
+  params.push(...qScope.params);
   const [rows] = await db.execute<RowDataPacket[]>(
     // Explicit columns, `reason` capped: it can be many KB and the grid shows it truncated
     // anyway. Was `rq.*`, which dragged every full reason over the wire on each page load.
@@ -188,7 +213,7 @@ payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin"
     params
   );
   const [countRow] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM payroll_recalculation_queue rq ${where}`,
+    `SELECT COUNT(*) AS total FROM payroll_recalculation_queue rq LEFT JOIN employees e ON e.id = rq.employee_id ${where}`,
     params
   );
 
@@ -198,9 +223,11 @@ payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin"
   const statusConds: string[] = [];
   const statusParams: unknown[] = [];
   if (payrollMonth) { pushMonthRange(statusConds, statusParams, payrollMonth); }
-  const statusWhere = statusConds.length ? `WHERE ${statusConds.join(" AND ")}` : "";
+  statusConds.push(`(${qScope.sql})`);
+  statusParams.push(...qScope.params);
+  const statusWhere = `WHERE ${statusConds.join(" AND ")}`;
   const [statusRows] = await db.execute<RowDataPacket[]>(
-    `SELECT rq.status, COUNT(*) AS c FROM payroll_recalculation_queue rq ${statusWhere} GROUP BY rq.status`,
+    `SELECT rq.status, COUNT(*) AS c FROM payroll_recalculation_queue rq LEFT JOIN employees e ON e.id = rq.employee_id ${statusWhere} GROUP BY rq.status`,
     statusParams
   );
   const statusCounts: Record<string, number> = {};
@@ -294,6 +321,7 @@ payrollMoreRouter.get(
   requireRole("payroll_head", "payroll_branch", "admin", "super_admin", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params as { runId: string };
+    const driftScope = await employeeScopeFor(req, "e");
     const [runRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, run_month, attendance_snapshot_locked FROM salary_prep_run WHERE id = ? LIMIT 1`,
       [runId],
@@ -342,9 +370,10 @@ payrollMoreRouter.get(
          ) adr ON adr.employee_id = spl.employee_id
         WHERE spl.run_id = ?
           AND ABS(ROUND(adr.live_paid_base, 1) - ROUND(spl.paid_working_days, 1)) > 0.4
+          AND (${driftScope.sql})
         ORDER BY ABS(adr.live_paid_base - spl.paid_working_days) DESC
         LIMIT 500`,
-      [monthStart, monthEnd, runId],
+      [monthStart, monthEnd, runId, ...driftScope.params],
     );
 
     const rows = driftRows as any[];
@@ -935,6 +964,9 @@ payrollMoreRouter.post("/deductions/bulk-upload",
     const [empRows] = await db.execute<RowDataPacket[]>("SELECT id, employee_code FROM employees WHERE employment_status IN ('active','on_leave')");
     const empMap = new Map((empRows as any[]).map((e: any) => [e.employee_code?.toLowerCase(), e.id]));
 
+    // Branch scoping: rows for employees outside the caller's scope are rejected, not written.
+    const visibleEmpIds = await filterVisibleEmployeeIds(req, Array.from(empMap.values()).map(String));
+
     let inserted = 0;
     const errors: string[] = [];
 
@@ -946,6 +978,7 @@ payrollMoreRouter.post("/deductions/bulk-upload",
       const empCode = row["employee_code"]?.toLowerCase();
       const empId = empMap.get(empCode);
       if (!empId) { errors.push(`Row ${i + 1}: employee_code "${row["employee_code"]}" not found`); continue; }
+      if (!visibleEmpIds.has(String(empId))) { errors.push(`Row ${i + 1}: employee_code "${row["employee_code"]}" is outside your branch / assigned scope`); continue; }
 
       const runMonth = row["month"] || null;
       const branchId = branchMap.get(row["branch"]?.toLowerCase()) ?? null;
@@ -978,6 +1011,7 @@ payrollMoreRouter.post("/deductions/bulk-upload",
 
 // GET /deductions/employee/:employeeId — list deduction entries for one employee
 payrollMoreRouter.get("/deductions/employee/:employeeId", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
   const { runMonth } = req.query as any;
   const params: unknown[] = [req.params.employeeId];
   let extra = "";
@@ -996,6 +1030,12 @@ payrollMoreRouter.get("/deductions/employee/:employeeId", requireRole("admin", "
 payrollMoreRouter.patch("/deductions/entry/:id", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { status } = req.body as { status: "active" | "inactive" };
   if (!["active", "inactive"].includes(status)) return res.status(400).json({ success: false, message: 'status must be "active" or "inactive"' });
+  {
+    const [own] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM employee_deduction_entries WHERE id = ? LIMIT 1", [req.params.id]);
+    const ownerId = (own as any[])[0]?.employee_id;
+    if (ownerId && !(await guardEmployee(req, res, String(ownerId)))) return;
+    if (!ownerId && !(await isOrgWideCaller(req))) return res.status(403).json(OUT_OF_SCOPE_BODY);
+  }
   await db.execute("UPDATE employee_deduction_entries SET status=? WHERE id=?", [status, req.params.id]);
   return res.json({ success: true });
 }));

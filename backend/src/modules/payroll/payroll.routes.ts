@@ -55,6 +55,7 @@ import { payrollAttendanceControlService } from "./payroll-attendance-control.se
 import { cosecSyncService } from "../wfm/cosec-sync.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
+import { employeeScopeFor, guardEmployee, canSeeEmployee, scopeFor, narrowBranch, filterVisibleEmployeeIds, requireRunInScope, visibleBranchIdsForUser, guardOwnedRow, controlTowerScope, guardGapKeys, isOrgWideCaller, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
@@ -507,6 +508,7 @@ router.get(
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await payrollAttendanceControlService.getControlTower({
+      ...(await controlTowerScope(req)),
       runMonth:
         typeof req.query.runMonth === "string" ? req.query.runMonth : undefined,
       runId: typeof req.query.runId === "string" ? req.query.runId : undefined,
@@ -551,6 +553,7 @@ router.get(
     "branch_head",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await guardGapKeys(req, res, [String(req.params.key ?? "")]))) return;
     const data = await payrollAttendanceControlService.getGapDetail(
       String(req.params.key ?? ""),
     );
@@ -577,7 +580,9 @@ router.post(
     "branch_head",
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    if (Array.isArray(req.body.conflictKeys) && !(await guardGapKeys(req, res, req.body.conflictKeys.map(String)))) return;
     const data = await payrollAttendanceControlService.notifyReportingManagers({
+      ...(await controlTowerScope(req)),
       runMonth:
         typeof req.body.runMonth === "string" ? req.body.runMonth : undefined,
       runId: typeof req.body.runId === "string" ? req.body.runId : undefined,
@@ -630,6 +635,7 @@ router.post(
         .status(400)
         .json({ success: false, message: "Select at least one conflict row" });
     }
+    if (!(await guardGapKeys(req, res, conflictKeys))) return;
     const data = await payrollAttendanceControlService.updateReviewStatus({
       runMonth:
         typeof req.body.runMonth === "string" ? req.body.runMonth : undefined,
@@ -675,6 +681,7 @@ router.post(
           "Only APR-backed or COSEC-backed ADR missing rows can be repaired from this action",
       });
     }
+    if (!(await guardGapKeys(req, res, conflictKeys))) return;
     const data = await payrollAttendanceControlService.repairMissingAdr({
       conflictKeys,
       actorUserId: req.authUser?.id ?? null,
@@ -718,6 +725,7 @@ router.post(
           "Only approved_regularization_not_locked_in_adr rows can be locked from this action",
       });
     }
+    if (!(await guardGapKeys(req, res, conflictKeys))) return;
     const data =
       await payrollAttendanceControlService.lockUnlockedRegularizations({
         conflictKeys,
@@ -925,6 +933,26 @@ router.post(
       return res
         .status(400)
         .json({ success: false, message: "Date range must be 1–31 days" });
+    }
+    // A COSEC re-sync rewrites attendance for every employee in the range: a branch-scoped caller may
+    // only run it for one employee inside their own scope.
+    if (!(await isOrgWideCaller(req))) {
+      const code = employeeCode;
+      let allowed = false;
+      if (code) {
+        const [empRows] = await db.execute<RowDataPacket[]>(
+          "SELECT id FROM employees WHERE employee_code = ? LIMIT 1",
+          [code],
+        );
+        const empId = (empRows as any[])[0]?.id;
+        allowed = !!empId && (await canSeeEmployee(req, String(empId)));
+      }
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: a COSEC re-sync outside organisation-wide scope must name one employee inside your branch / assigned scope",
+        });
+      }
     }
     if (cosecSyncService.isRunning()) {
       return res.status(409).json({
@@ -1193,22 +1221,9 @@ router.post(
 async function resolveVisibleBranchIdsForCoverage(
   userId: string,
 ): Promise<Set<string> | null> {
-  if (
-    await hasAnyRoleAsync(
-      userId,
-      "super_admin",
-      "admin",
-      "payroll_head",
-      "finance_head",
-    )
-  )
-    return null;
-  const scopes = await getUserAssignmentScopes(userId);
-  if (scopes.length === 0) return null;
-  if (scopes.some((s) => s.scope_type === "all")) return null;
-  return new Set(
-    scopes.map((s) => s.branch_id).filter((b): b is string => !!b),
-  );
+  // Owner ruling 2026-10-01: org-wide roles only; everyone else gets their own branch(es), and a
+  // user with no resolvable branch gets an empty set (sees nothing) instead of everything.
+  return visibleBranchIdsForUser(userId);
 }
 
 router.get(
@@ -1249,11 +1264,13 @@ router.get(
 router.get(
   "/runs/:id",
   requireRole("admin", "hr", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   h(c.getRun),
 );
 router.get(
   "/runs/:id/readiness",
   requireRole("admin", "hr", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   h(async (req, res) => {
     const data = await payrollGovernanceService.readiness(req.params.id);
     return res.json({ success: true, data });
@@ -1318,11 +1335,13 @@ router.patch(
     "finance_head",
     "payroll_head",
   ),
+  requireRunInScope(),
   h(c.updateRunStatus),
 );
 router.get(
   "/runs/:id/lines",
   requireRole("admin", "hr", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   h(c.listLines),
 );
 
@@ -1361,6 +1380,7 @@ router.get(
   requireRole("admin", "hr", "super_admin", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const runId = req.params.id;
+    const scopedBd = await employeeScopeFor(req, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
        COALESCE(bm.branch_name, 'Unassigned') AS branch_name,
@@ -1370,10 +1390,10 @@ router.get(
      FROM salary_prep_line spl
      LEFT JOIN employees e ON e.id = spl.employee_id
      LEFT JOIN branch_master bm ON bm.id = e.branch_id
-     WHERE spl.run_id = ?
+     WHERE spl.run_id = ? AND (${scopedBd.sql})
      GROUP BY e.branch_id, bm.branch_name
      ORDER BY bm.branch_name ASC`,
-      [runId],
+      [runId, ...scopedBd.params],
     );
     return res.json({ success: true, data: rows ?? [] });
   }),
@@ -1383,6 +1403,7 @@ router.post(
   "/runs/:id/calculate",
   payrollRunLimiter,
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRunInScope(),
   async (req: any, res: any, next: any) => {
     try {
       await assertRunEditable(req.params.id);
@@ -1488,6 +1509,7 @@ router.post(
   "/runs/:id/correct-weekoffs",
   payrollRunLimiter,
   requireRole("admin", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   async (req: any, res: any, next: any) => {
     try {
       await assertRunEditable(req.params.id);
@@ -1579,6 +1601,7 @@ router.patch(
   "/lines/:id",
   requireRole("admin", "super_admin", "finance", "payroll"),
   h(async (req: any, res: any) => {
+    if (!(await guardOwnedRow(req, res, "salary_prep_line", req.params.id))) return;
     // Resolve run_id from line, then check window guard
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT run_id FROM salary_prep_line WHERE id = ? LIMIT 1`,
@@ -1597,6 +1620,7 @@ router.patch(
   requireAuth,
   requireWFMAccess,
   h(async (req: any, res: any) => {
+    if (!(await guardOwnedRow(req, res, "salary_prep_line", req.params.lineId))) return;
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT run_id FROM salary_prep_line WHERE id = ? LIMIT 1`,
       [req.params.lineId],
@@ -1645,6 +1669,8 @@ router.get(
           message: "Forbidden: you may only view your own advances",
         });
       }
+    } else if (!(await guardEmployee(req, res, req.params.employeeId))) {
+      return;
     }
     return c.listAdvances(req as any, res);
   }),
@@ -1744,6 +1770,7 @@ router.patch(
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
+    if (!(await guardOwnedRow(req, res, "salary_advance_log", id))) return;
     await db.execute(
       // approved_by / approved_at do not exist on this table, so this UPDATE threw and no advance
       // could ever be approved. Who approved it and when is recorded by logSensitiveAction below,
@@ -1768,6 +1795,7 @@ router.patch(
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
+    if (!(await guardOwnedRow(req, res, "salary_advance_log", id))) return;
     const { reason } = req.body;
     await db.execute(
       // Same three missing columns as the approve route. The reason is not dropped - it is passed
@@ -2343,6 +2371,7 @@ router.post(
         .status(400)
         .json({ success: false, message: "employeeId is required" });
     }
+    if (!(await guardEmployee(req, res, employeeId))) return;
 
     const data = await payslipService.generatePayslip(
       req.params.runId,
@@ -2409,6 +2438,8 @@ router.get(
           message: "Forbidden: you may only view your own tax declaration",
         });
       }
+    } else if (!(await guardEmployee(req, res, employeeId))) {
+      return;
     }
 
     const [data, history] = await Promise.all([
@@ -2464,6 +2495,7 @@ router.post(
       });
     }
 
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const data = await taxDeclarationService.upsert(
       employeeId,
       year,
@@ -2545,6 +2577,7 @@ router.post(
       }
       employeeId = callerEmp.id;
     }
+    if (!(await guardEmployee(req, res, employeeId))) return;
 
     const documentType = `tax_declaration_${year}`;
     const documentName =
@@ -2599,6 +2632,7 @@ router.get(
       }
       employeeId = callerEmp.id;
     }
+    if (!(await guardEmployee(req, res, employeeId))) return;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_id, 'tax_declaration' AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at
@@ -2618,6 +2652,7 @@ router.patch(
   requireRole("admin", "hr", "super_admin", "payroll", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId, year } = req.params;
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const { status, review_note } = req.body as {
       status?: "verified" | "rejected";
       review_note?: string;
@@ -2667,6 +2702,7 @@ router.delete(
   requireRole("admin", "hr", "super_admin", "payroll", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId, docId } = req.params;
+    if (!(await guardEmployee(req, res, employeeId))) return;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, file_url FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1`,
@@ -2713,6 +2749,8 @@ router.get(
       if (!callerEmp || callerEmp.id !== employeeId) {
         return res.status(403).json({ success: false, message: "Forbidden" });
       }
+    } else if (!(await guardEmployee(req, res, employeeId))) {
+      return;
     }
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM employee_uan WHERE employee_id = ? LIMIT 1",
@@ -2731,6 +2769,7 @@ router.post(
   requireRole("admin", "hr", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId } = req.params;
+    if (!(await guardEmployee(req, res, employeeId))) return;
     const { uan, member_id, epf_join_date } = req.body as {
       uan: string;
       member_id?: string;
@@ -3415,6 +3454,7 @@ router.get(
 router.get(
   "/runs/:id/neft-summary",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRunInScope(),
   h(async (req: AuthenticatedRequest, res: Response) => {
     // This is the figure Finance reads BEFORE exporting, so it must use the same definition of
     // "payable" the export itself uses, or the preview and the file disagree.
@@ -3935,6 +3975,7 @@ const neftExportHandler = h(
 router.get(
   "/runs/:id/neft-export",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRunInScope(),
   neftExportHandler,
 );
 router.get(
@@ -3949,6 +3990,7 @@ router.get(
 router.get(
   "/runs/:id/line-coverage",
   requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRunInScope(),
   h(async (req: AuthenticatedRequest, res: Response) => {
     return res.json({
       success: true,
@@ -4101,6 +4143,7 @@ const ecrHandler = h(async (req: AuthenticatedRequest, res: Response) => {
     runId: req.params.id,
     month: req.params.month,
   });
+  const ecrScope = await employeeScopeFor(req, "e");
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -4114,8 +4157,9 @@ const ecrHandler = h(async (req: AuthenticatedRequest, res: Response) => {
      JOIN employees e        ON e.id  = spl.employee_id
      LEFT JOIN employee_uan eu ON eu.employee_id = spl.employee_id
      WHERE spl.run_id IN (${runIdPlaceholders(runIds)}) AND spl.status != 'cancelled'
+       AND (${ecrScope.sql})
      ORDER BY e.employee_code`,
-    runIds,
+    [...runIds, ...ecrScope.params],
   );
 
   return res.json({
@@ -4131,6 +4175,7 @@ const ecrHandler = h(async (req: AuthenticatedRequest, res: Response) => {
 router.get(
   "/runs/:id/ecr",
   requireRole("admin", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   ecrHandler,
 );
 router.get(
@@ -4159,6 +4204,7 @@ const esicChallanHandler = h(
     });
     const runId = runIds[0];
     const run = { run_month: month };
+    const esicScope = await employeeScopeFor(req, "e");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -4170,8 +4216,9 @@ const esicChallanHandler = h(
      FROM salary_prep_line spl
      JOIN employees e ON e.id = spl.employee_id
      WHERE spl.run_id IN (${runIdPlaceholders(runIds)}) AND spl.status != 'cancelled'
+       AND (${esicScope.sql})
      ORDER BY e.employee_code`,
-      runIds,
+      [...runIds, ...esicScope.params],
     );
 
     const lines = rows as Array<{
@@ -4207,6 +4254,7 @@ const esicChallanHandler = h(
 router.get(
   "/runs/:id/esic-challan",
   requireRole("admin", "super_admin", "finance", "payroll"),
+  requireRunInScope(),
   esicChallanHandler,
 );
 router.get(

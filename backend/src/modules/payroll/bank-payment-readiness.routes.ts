@@ -33,7 +33,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import { hasOrgWideScope, getUserAssignmentScopes, hasAnyRole } from "../../shared/scopeAccess.js";
+import { hasOrgWideScope, getUserAssignmentScopes, hasAnyRole, getUserRoleKeys, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 import {
   buildBankReadinessReport,
@@ -161,16 +161,39 @@ bankPaymentReadinessRouter.use(requireAuth);
  * hasOrgWideScope directly instead of relying on this.
  */
 async function resolveVisibleBranchIds(userId: string): Promise<Set<string> | null> {
-  if (await hasAnyRole(userId, "super_admin", "admin")) return null;
+  // Owner ruling 2026-10-01: only ORG_WIDE_EXEMPT_ROLES see every branch. Everyone else is limited
+  // to the branches they are assigned, plus their own employee branch. A user with NO resolvable
+  // branch gets an EMPTY set (sees nothing) - this used to fail OPEN (null = no restriction).
+  const roles = await getUserRoleKeys(userId);
+  if (roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r))) return null;
   const scopes = await getUserAssignmentScopes(userId);
-  if (scopes.length === 0) return null;
-  if (scopes.some((s) => s.scope_type === "all")) return null;
-  const ids = scopes.map((s) => s.branch_id).filter((b): b is string => !!b);
-  // Scoped, but by something other than branch (process/department). Falling through to "see
-  // everything" would silently widen access, so an empty set is returned and the caller sees
-  // nothing rather than everything.
-  return new Set(ids);
+  const ids = new Set<string>(scopes.map((s) => s.branch_id).filter((b): b is string => !!b));
+  // An 'all' row on a non-exempt role means "my branch"; so does having no branch-typed row.
+  if (ids.size === 0 || scopes.some((s) => s.scope_type === "all")) {
+    const [own] = await db.execute<RowDataPacket[]>(
+      "SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [userId],
+    );
+    const b = (own as RowDataPacket[])?.[0]?.branch_id;
+    if (b) ids.add(String(b));
+  }
+  return ids;
 }
+
+/** Subset of employeeIds whose branch the caller may see (all of them for an org-wide caller). */
+async function employeeIdsInScope(ids: string[], visible: Set<string> | null): Promise<Set<string>> {
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  if (!visible) return new Set(unique);
+  if (unique.length === 0 || visible.size === 0) return new Set();
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM employees WHERE id IN (${unique.map(() => "?").join(",")})
+        AND branch_id IN (${Array.from(visible).map(() => "?").join(",")})`,
+    [...unique, ...Array.from(visible)],
+  );
+  return new Set((rows as RowDataPacket[]).map((r) => String(r.id)));
+}
+
+const OUT_OF_BRANCH = { success: false, message: "Forbidden: this employee is outside your branch / assigned scope" };
 
 // ─── Exception workflow overlay ──────────────────────────────────────────────
 
@@ -459,6 +482,9 @@ bankPaymentReadinessRouter.patch(
     );
     if (!(empRows as unknown[])[0]) {
       return res.status(404).json({ success: false, message: "Employee not found" });
+    }
+    if (!(await employeeIdsInScope([employeeId], await resolveVisibleBranchIds(req.authUser!.id))).has(employeeId)) {
+      return res.status(403).json(OUT_OF_BRANCH);
     }
 
     if (owner_user_id) {
@@ -1058,6 +1084,12 @@ bankPaymentReadinessRouter.get(
   h(async (req, res) => {
     const runId = String(req.query.run_id ?? "").trim();
     if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
+    const visibleBranches = await resolveVisibleBranchIds(req.authUser!.id);
+    const branchSql = visibleBranches
+      ? visibleBranches.size > 0
+        ? ` AND e.branch_id IN (${Array.from(visibleBranches).map(() => "?").join(",")})`
+        : " AND 1=0"
+      : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT i.id, i.batch_id, i.employee_id, i.employee_code, i.amount, i.pay_mod, i.account_masked,
               i.status, i.rejection_reason, i.rejection_note, i.rejected_at,
@@ -1067,9 +1099,9 @@ bankPaymentReadinessRouter.get(
          FROM salary_transfer_batch_item i
          JOIN salary_transfer_batch b ON b.id = i.batch_id
          LEFT JOIN employees e ON e.id = i.employee_id
-        WHERE i.run_id = ?
+        WHERE i.run_id = ?${branchSql}
         ORDER BY i.created_at DESC`,
-      [runId],
+      [runId, ...(visibleBranches ? Array.from(visibleBranches) : [])],
     );
     // bucket: the plain-language grouping payroll actually thinks in ('Ready for Disbursal' /
     // 'Disbursed' / 'Rejected'), derived server-side from the real status enum so the frontend
@@ -1102,6 +1134,19 @@ bankPaymentReadinessRouter.patch(
     }
     if (!REJECTION_REASONS.includes(reason as any)) {
       return res.status(400).json({ success: false, message: `reason must be one of ${REJECTION_REASONS.join(", ")}` });
+    }
+    {
+      const visibleBranches = await resolveVisibleBranchIds(req.authUser!.id);
+      if (visibleBranches) {
+        const itemIds = Array.from(new Set(item_ids.map(String)));
+        const [own] = visibleBranches.size === 0 ? [[]] : await db.execute<RowDataPacket[]>(
+          `SELECT i.id FROM salary_transfer_batch_item i JOIN employees e ON e.id = i.employee_id
+            WHERE i.id IN (${itemIds.map(() => "?").join(",")})
+              AND e.branch_id IN (${Array.from(visibleBranches).map(() => "?").join(",")})`,
+          [...itemIds, ...Array.from(visibleBranches)],
+        );
+        if ((own as unknown[]).length !== itemIds.length) return res.status(403).json(OUT_OF_BRANCH);
+      }
     }
     let result;
     try {
@@ -1139,6 +1184,17 @@ bankPaymentReadinessRouter.patch(
   "/salary-transfer/items/:itemId/mark-corrected-ready",
   requireRole(...MANAGE_ROLES),
   h(async (req, res) => {
+    {
+      const visibleBranches = await resolveVisibleBranchIds(req.authUser!.id);
+      if (visibleBranches) {
+        const [itemRows] = await db.execute<RowDataPacket[]>(
+          "SELECT employee_id FROM salary_transfer_batch_item WHERE id = ? LIMIT 1", [req.params.itemId]);
+        const empId = (itemRows as RowDataPacket[])[0]?.employee_id;
+        if (empId && !(await employeeIdsInScope([String(empId)], visibleBranches)).has(String(empId))) {
+          return res.status(403).json(OUT_OF_BRANCH);
+        }
+      }
+    }
     await markItemCorrectedReady(req.params.itemId);
     void logSensitiveAction({
       actor_user_id: req.authUser!.id,
@@ -1165,6 +1221,9 @@ bankPaymentReadinessRouter.post(
   requireRole(...MANAGE_ROLES),
   csvUpload.single("file"),
   h(async (req: any, res) => {
+    if ((await resolveVisibleBranchIds(req.authUser!.id)) !== null) {
+      return res.status(403).json({ success: false, message: "Forbidden: the transfer-number import spans every branch and needs organisation-wide payroll scope" });
+    }
     const file = req.file as { buffer: Buffer; originalname: string } | undefined;
     if (!file) return res.status(400).json({ success: false, message: "file is required" });
     const runId = String(req.body?.run_id ?? "").trim();
@@ -1197,6 +1256,9 @@ bankPaymentReadinessRouter.post(
   "/salary-transfer/import/commit",
   requireRole(...MANAGE_ROLES),
   h(async (req, res) => {
+    if ((await resolveVisibleBranchIds(req.authUser!.id)) !== null) {
+      return res.status(403).json({ success: false, message: "Forbidden: the transfer-number import spans every branch and needs organisation-wide payroll scope" });
+    }
     const { file_name, file_sha256, preview } = req.body as {
       file_name?: string;
       file_sha256?: string;
@@ -1244,8 +1306,11 @@ bankPaymentReadinessRouter.post(
 bankPaymentReadinessRouter.get(
   "/manual-review-queue",
   requireRole(...READ_ROLES),
-  h(async (_req, res) => {
-    const rows = await getManualReviewBankGaps();
+  h(async (req, res) => {
+    const all = await getManualReviewBankGaps();
+    const visibleBranches = await resolveVisibleBranchIds(req.authUser!.id);
+    const allowedIds = await employeeIdsInScope(all.map((r) => r.employee_id), visibleBranches);
+    const rows = all.filter((r) => allowedIds.has(r.employee_id));
     return res.json({ success: true, count: rows.length, data: rows });
   }),
 );
@@ -1261,6 +1326,9 @@ bankPaymentReadinessRouter.patch(
   requireRole(...MANAGE_ROLES),
   h(async (req, res) => {
     const { employeeId } = req.params;
+    if (!(await employeeIdsInScope([employeeId], await resolveVisibleBranchIds(req.authUser!.id))).has(employeeId)) {
+      return res.status(403).json(OUT_OF_BRANCH);
+    }
     const result = await approveManualReviewBankDetail({ employeeId });
 
     if (result.status === "no_manual_review_row") {

@@ -15,6 +15,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
+import { employeeCodeScopeSql } from "./payroll-branch-scope.js";
 
 export const deductionSnapshotRouter = Router();
 
@@ -78,6 +79,9 @@ deductionSnapshotRouter.get(
     if (salary_month)  { conds.push("salary_month = ?");   params.push(salary_month); }
     if (branch_name)   { conds.push("branch_name = ?");    params.push(branch_name); }
     if (employee_code) { conds.push("employee_code = ?");  params.push(employee_code); }
+    // Branch scoping (owner ruling 2026-10-01): the client branch_name only narrows the caller's scope.
+    const snapScope = await employeeCodeScopeSql(req, "employee_code");
+    conds.push(`(${snapScope.sql})`); params.push(...snapScope.params);
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
@@ -121,6 +125,7 @@ deductionSnapshotRouter.get(
       return res.status(400).json({ success: false, message: "salary_month is required (YYYY-MM)" });
     }
 
+    const sumScope = await employeeCodeScopeSql(req, "employee_code");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          branch_name,
@@ -135,10 +140,10 @@ deductionSnapshotRouter.get(
          SUM(mobile_deduction + short_collection + asset_recovery +
              insurance + professional_tax + leave_deduction + others_deduction) AS total_deduction
        FROM upload_deduction_snapshot
-       WHERE salary_month = ?
+       WHERE salary_month = ? AND (${sumScope.sql})
        GROUP BY branch_name
        ORDER BY branch_name`,
-      [salary_month]
+      [salary_month, ...sumScope.params]
     );
 
     const [[totalsRow]] = await db.execute<RowDataPacket[]>(
@@ -154,8 +159,8 @@ deductionSnapshotRouter.get(
          SUM(mobile_deduction + short_collection + asset_recovery +
              insurance + professional_tax + leave_deduction + others_deduction) AS total_deduction
        FROM upload_deduction_snapshot
-       WHERE salary_month = ?`,
-      [salary_month]
+       WHERE salary_month = ? AND (${sumScope.sql})`,
+      [salary_month, ...sumScope.params]
     );
 
     return res.json({ success: true, data: rows, totals: totalsRow, salary_month });
@@ -215,6 +220,8 @@ deductionSnapshotRouter.get(
     if (sal_year)      { conds.push("sal_year = ?");      params.push(sal_year); }
     if (sal_month)     { conds.push("sal_month = ?");     params.push(sal_month); }
     if (employee_code) { conds.push("employee_code = ?"); params.push(employee_code); }
+    const qualScope = await employeeCodeScopeSql(req, "employee_code");
+    conds.push(`(${qualScope.sql})`); params.push(...qualScope.params);
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
@@ -262,6 +269,7 @@ deductionSnapshotRouter.get(
       return res.status(400).json({ success: false, message: "sal_year and sal_month are required" });
     }
 
+    const qSumScope = await employeeCodeScopeSql(req, "q.employee_code");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COALESCE(b.branch_name, 'Unknown') AS branch_name,
@@ -270,17 +278,17 @@ deductionSnapshotRouter.get(
        FROM qual_incentive_snapshot q
        LEFT JOIN employees e ON e.employee_code = q.employee_code
        LEFT JOIN branch_master b ON b.id = e.branch_id
-       WHERE q.sal_year = ? AND q.sal_month = ?
+       WHERE q.sal_year = ? AND q.sal_month = ? AND (${qSumScope.sql})
        GROUP BY b.branch_name
        ORDER BY b.branch_name`,
-      [sal_year, sal_month]
+      [sal_year, sal_month, ...qSumScope.params]
     );
 
     const [[totalsRow]] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS employee_count, SUM(amount) AS total_amount
-         FROM qual_incentive_snapshot
-        WHERE sal_year = ? AND sal_month = ?`,
-      [sal_year, sal_month]
+      `SELECT COUNT(*) AS employee_count, SUM(q.amount) AS total_amount
+         FROM qual_incentive_snapshot q
+        WHERE q.sal_year = ? AND q.sal_month = ? AND (${qSumScope.sql})`,
+      [sal_year, sal_month, ...qSumScope.params]
     );
 
     return res.json({ success: true, data: rows, totals: totalsRow, sal_year, sal_month });

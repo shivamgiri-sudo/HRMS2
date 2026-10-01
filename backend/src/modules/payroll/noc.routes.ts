@@ -13,6 +13,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import * as nocService from "./noc.service.js";
+import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
 import type { Response } from "express";
 
 export const nocRouter = Router();
@@ -42,7 +43,7 @@ nocRouter.get("/", requireAuth, async (req: AuthenticatedRequest, res: Response)
     return res.status(403).json({ success: false, message: "Access denied" });
   }
   const { employeeId, uploadStatus, nocType, runMonth } = req.query as Record<string, string>;
-  const nocs = await nocService.listNocs({ employeeId, uploadStatus, nocType, runMonth });
+  const nocs = await nocService.listNocs({ employeeId, uploadStatus, nocType, runMonth, scope: await employeeScopeFor(req, "e") });
   return res.json({ success: true, data: nocs });
 });
 
@@ -52,6 +53,7 @@ nocRouter.get("/required/:employeeId", requireAuth, async (req: AuthenticatedReq
   if (!(await hasAnyRole(userId, "payroll_head", "payroll_branch", "payroll", "super_admin", "admin", "hr"))) {
     return res.status(403).json({ success: false, message: "Access denied" });
   }
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
   const result = await nocService.nocRequired(req.params.employeeId);
   return res.json({ success: true, data: result });
 });
@@ -67,6 +69,7 @@ nocRouter.get("/:id/document", requireAuth, async (req: AuthenticatedRequest, re
   }
   const noc = await nocService.getNoc(req.params.id);
   if (!noc || !noc.doc_path) return res.status(404).json({ success: false, message: "NOC document not found" });
+  if (!(await guardEmployee(req, res, (noc as any).employee_id))) return;
 
   // doc_path is req.file.path from multer, always under NOC_UPLOAD_DIR — resolve and
   // confirm it stays there before serving, rather than trusting the stored value blindly.
@@ -96,6 +99,7 @@ nocRouter.post("/", requireAuth, upload.single("noc_document"), async (req: Auth
     return res.status(400).json({ success: false, message: "employee_id and noc_type are required" });
   }
 
+  if (!(await guardEmployee(req, res, employee_id))) return;
   const { required, reason } = await nocService.nocRequired(employee_id);
   if (!required) {
     return res.status(400).json({ success: false, message: "NOC is not required for this employee — no pending salary or FNF" });

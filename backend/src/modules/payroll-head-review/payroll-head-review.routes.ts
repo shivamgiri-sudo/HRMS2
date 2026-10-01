@@ -3,6 +3,7 @@ import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../.
 import { requireRole } from "../../middleware/requireRole.js";
 import { listSalaryStartDateMismatches } from "../payroll/salary-start-date.service.js";
 import * as svc from "./payroll-head-review.service.js";
+import { guardEmployee } from "../payroll/payroll-branch-scope.js";
 
 const router = Router();
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -56,6 +57,7 @@ router.get("/reasons", requireAuth, requireRole(...VIEWER_ROLES), h(async (_req,
 }));
 
 router.get("/:employeeId", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
   const data = await svc.getEmployeeJourney(req.params.employeeId);
   res.json({ success: true, data });
 }));
@@ -123,6 +125,7 @@ router.post("/:employeeId/reject", requireAuth, requireWriteAccess, requireRole(
 }));
 
 router.post("/:employeeId/resubmit", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h(async (req, res) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
   const data = await svc.resubmit(req.params.employeeId, req.authUser!.id);
   res.json({ success: true, data });
 }));

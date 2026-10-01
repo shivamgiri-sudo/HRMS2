@@ -20,6 +20,7 @@ import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { canSeeRun, requireRunInScope } from "./payroll-branch-scope.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import {
@@ -118,6 +119,11 @@ payrollReadinessCategoriesRouter.get(
       if (!runId) {
         return res.json({ success: true, month, status: "not_created", data: null });
       }
+      // Branch scoping: readiness is evaluated over the whole run, so a caller outside the run's
+      // branch / process scope gets nothing instead of run-wide counts.
+      if (!(await canSeeRun(req, runId))) {
+        return res.status(403).json({ success: false, message: "Forbidden: this payroll run is outside your branch / assigned scope" });
+      }
       const result = await evaluateReadinessCategories(runId);
       const allow = DRILLDOWN_ROLES.includes(String(req.authUser?.role ?? ""));
       return res.json({ success: true, month, status: "checked", data: shape(result, allow) });
@@ -139,6 +145,7 @@ payrollReadinessCategoriesRouter.get(
   "/:runId",
   requireAuth,
   requireRole("super_admin", "payroll_head", "finance_head", "admin", "payroll", "branch_head", "process_manager"),
+  requireRunInScope("runId"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const result = await evaluateReadinessCategories(String(req.params.runId));

@@ -139,7 +139,7 @@ describe("payroll sign-off — pending-run queue predicate", () => {
   it("parameterises the synthetic-creator list rather than interpolating values", () => {
     // Only the placeholder count is interpolated; the values are bound.
     expect(queueQuery).toMatch(/\$\{placeholders\}/);
-    expect(queueQuery).toMatch(/SYNTHETIC_RUN_CREATORS,\s*\)/);
+    expect(queueQuery).toMatch(/\.\.\.SYNTHETIC_RUN_CREATORS,\s*\.\.\.runScope\.params/);
   });
 
   it("derives headcount from salary_prep_line instead of the stale run header", () => {

@@ -4,6 +4,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { complianceService } from "./compliance.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { filterVisibleEmployeeIds, guardEmployee, visibleBranchIdsFor, OUT_OF_SCOPE_BODY } from "../payroll/payroll-branch-scope.js";
+import { db } from "../../db/mysql.js";
 import { maternityService } from './maternity.service.js';
 import { createMaternitySchema, updateMaternitySchema, maternityListFiltersSchema } from './maternity.validation.js';
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -24,7 +26,10 @@ complianceRouter.get(
   requireRole("admin", "hr", "finance"),
   h(async (req, res) => {
     const { financial_year } = req.query as { financial_year?: string };
-    const data = await complianceService.listBonus(financial_year);
+    const all = await complianceService.listBonus(financial_year);
+    // Branch scoping: only bonus rows of employees inside the caller's scope.
+    const visible = await filterVisibleEmployeeIds(req, all.map((r: any) => String(r.employee_id)));
+    const data = all.filter((r: any) => visible.has(String(r.employee_id)));
     return res.json({ success: true, data });
   })
 );
@@ -63,8 +68,9 @@ complianceRouter.patch(
 complianceRouter.get(
   "/posh/complaints",
   requireRole("admin", "hr"),
-  h(async (_req, res) => {
-    const data = await complianceService.listPoshComplaints();
+  h(async (req, res) => {
+    const visibleBranches = await visibleBranchIdsFor(req);
+    const data = await complianceService.listPoshComplaints(visibleBranches ? Array.from(visibleBranches) : null);
     return res.json({ success: true, data });
   })
 );
@@ -97,6 +103,12 @@ complianceRouter.post(
       return res.status(400).json({ success: false, error: "date_of_complaint is required" });
     }
 
+    {
+      const visibleBranches = await visibleBranchIdsFor(req);
+      if (visibleBranches && (!branch_id || !visibleBranches.has(String(branch_id).trim()))) {
+        return res.status(403).json({ success: false, error: "Forbidden: you may only log complaints for a branch inside your assigned scope" });
+      }
+    }
     const data = await complianceService.createPoshComplaint({
       complainant_anon_id: complainant_anon_id.trim(),
       respondent_anon_id: respondent_anon_id?.trim(),
@@ -130,6 +142,16 @@ complianceRouter.patch(
       return res.status(400).json({ success: false, error: `outcome must be one of: ${validOutcomes.join(", ")}` });
     }
 
+    {
+      const visibleBranches = await visibleBranchIdsFor(req);
+      if (visibleBranches) {
+        const [rows] = await db.execute<any[]>("SELECT branch_id FROM posh_complaint WHERE id = ? LIMIT 1", [req.params.id]);
+        const b = rows[0]?.branch_id;
+        if (!b || !visibleBranches.has(String(b))) {
+          return res.status(403).json({ success: false, error: "Forbidden: this complaint is outside your branch / assigned scope" });
+        }
+      }
+    }
     const data = await complianceService.updatePoshComplaint(req.params.id, { status, outcome, closure_date });
     return res.json({ success: true, data });
   })
@@ -144,7 +166,8 @@ complianceRouter.get(
     if (isNaN(year) || year < 2000 || year > 2100) {
       return res.status(400).json({ success: false, error: "Valid 4-digit year is required" });
     }
-    const data = await complianceService.poshAnnualReport(year);
+    const visibleBranches = await visibleBranchIdsFor(req);
+    const data = await complianceService.poshAnnualReport(year, visibleBranches ? Array.from(visibleBranches) : null);
     return res.json({ success: true, data });
   })
 );
@@ -160,7 +183,9 @@ complianceRouter.get(
     const filters = maternityListFiltersSchema.parse(req.query);
 
     if (privileged) {
-      const data = await maternityService.list(undefined, filters);
+      const all = await maternityService.list(undefined, filters);
+      const visible = await filterVisibleEmployeeIds(req, all.map((r: any) => String(r.employee_id)));
+      const data = all.filter((r: any) => visible.has(String(r.employee_id)));
       return res.json({ success: true, data });
     }
 
@@ -187,6 +212,7 @@ complianceRouter.post(
       }
     }
 
+    if (privileged && !(await guardEmployee(req, res, body.employee_id))) return;
     const data = await maternityService.create(body);
     return res.status(201).json({ success: true, data });
   })
@@ -197,6 +223,10 @@ complianceRouter.post(
   '/maternity/:id/approve',
   requireRole('admin', 'hr'),
   h(async (req, res) => {
+    {
+      const rec = await maternityService.getById(req.params.id);
+      if (rec && !(await guardEmployee(req, res, rec.employee_id))) return;
+    }
     const data = await maternityService.approve(req.params.id, req.authUser!.id);
     return res.json({ success: true, data });
   })
@@ -208,6 +238,10 @@ complianceRouter.patch(
   requireRole('admin', 'hr'),
   h(async (req, res) => {
     const body = updateMaternitySchema.parse(req.body);
+    {
+      const rec = await maternityService.getById(req.params.id);
+      if (rec && !(await guardEmployee(req, res, rec.employee_id))) return;
+    }
     const data = await maternityService.update(req.params.id, body);
     return res.json({ success: true, data });
   })
@@ -226,6 +260,8 @@ complianceRouter.get(
       if (!emp || emp.id !== record.employee_id) {
         return res.status(403).json({ success: false, error: 'Forbidden' });
       }
+    } else if (!(await guardEmployee(req, res, record.employee_id))) {
+      return;
     }
     return res.json({ success: true, data: record });
   })

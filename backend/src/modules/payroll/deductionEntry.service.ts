@@ -196,10 +196,16 @@ export async function toggleDeductionType(id: string, active: boolean): Promise<
 
 export async function listDeductionEntries(
   filters: DeductionEntryFilters,
-  scopedBranchId?: string | null
+  scopedBranchId?: string | null,
+  scope?: { sql: string; params: unknown[] }
 ): Promise<{ entries: DeductionEntry[]; total: number }> {
   const conditions: string[] = [];
   const params: unknown[] = [];
+
+  if (scope && scope.sql !== "1=1") {
+    conditions.push(`(${scope.sql})`);
+    params.push(...scope.params);
+  }
 
   if (scopedBranchId) {
     conditions.push("e.branch_id = ?");

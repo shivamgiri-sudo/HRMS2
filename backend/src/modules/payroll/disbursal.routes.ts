@@ -6,6 +6,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { employeeScopeFor, filterVisibleEmployeeIds, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -19,13 +20,14 @@ router.get(
   requireRole("payroll", "super_admin", "finance"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
+    const scoped = await employeeScopeFor(req, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT srd.*, e.first_name, e.last_name
          FROM salary_run_disbursal srd
          LEFT JOIN employees e ON e.id = srd.employee_id
-        WHERE srd.run_id = ?
+        WHERE srd.run_id = ? AND (${scoped.sql})
         ORDER BY srd.employee_code`,
-      [runId]
+      [runId, ...scoped.params]
     );
     return res.json({ success: true, data: rows });
   })
@@ -96,6 +98,20 @@ router.post(
 
     if (inputRows.length === 0) {
       return res.status(400).json({ success: false, message: "No rows to process" });
+    }
+
+    // Branch scoping: a non-org-wide caller may only record disbursal for employees in their scope.
+    {
+      const codes = Array.from(new Set(inputRows.map((r) => (r.employee_code ?? "").trim()).filter(Boolean)));
+      if (codes.length > 0) {
+        const [idRows] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM employees WHERE employee_code IN (${codes.map(() => "?").join(",")})`,
+          codes,
+        );
+        const found = (idRows as any[]).map((r) => String(r.id));
+        const visible = await filterVisibleEmployeeIds(req, found);
+        if (visible.size !== found.length) return res.status(403).json(OUT_OF_SCOPE_BODY);
+      }
     }
 
     // Validate payment_mode values

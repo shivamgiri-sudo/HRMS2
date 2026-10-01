@@ -5,6 +5,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
+import { employeeScopeFor, guardEmployee } from './payroll-branch-scope.js';
 import { hasRole } from '../../shared/accessGuard.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { notificationGateway } from '../communication/notification.gateway.js';
@@ -150,7 +151,8 @@ router.get('/my', requireRole('employee', 'hr', 'super_admin'), h(async (req: Au
 
 // ── GET /api/payroll/statutory-overrides/pending ─────────────────────────────
 // Payroll HO sees all pending opt-out requests.
-router.get('/pending', requireRole('payroll', 'super_admin', 'finance'), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get('/pending', requireRole('payroll', 'super_admin', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const pScope = await employeeScopeFor(req, 'e');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT eso.*,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
@@ -159,8 +161,9 @@ router.get('/pending', requireRole('payroll', 'super_admin', 'finance'), h(async
      FROM employee_statutory_override eso
      JOIN employees e ON e.id = eso.employee_id
      LEFT JOIN branch_master bm ON bm.id = e.branch_id
-     WHERE eso.status = 'pending'
-     ORDER BY eso.requested_at ASC`
+     WHERE eso.status = 'pending' AND (${pScope.sql})
+     ORDER BY eso.requested_at ASC`,
+    pScope.params
   );
   return res.json({ success: true, data: rows });
 }));
@@ -175,6 +178,8 @@ router.get('/all', requireRole('payroll', 'super_admin', 'finance', 'admin', 'hr
 
   const conditions: string[] = [];
   const params: unknown[] = [];
+  const aScope = await employeeScopeFor(req, 'e');
+  conditions.push(`(${aScope.sql})`); params.push(...aScope.params);
   if (status) { conditions.push('eso.status = ?'); params.push(status); }
   if (empId)  { conditions.push('eso.employee_id = ?'); params.push(empId); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -214,6 +219,7 @@ router.patch('/:id/approve', requireRole('payroll', 'super_admin'), h(async (req
   );
   const rec = (rows[0] as any);
   if (!rec) return res.status(404).json({ success: false, message: 'Override request not found' });
+  if (!(await guardEmployee(req, res, rec.employee_id))) return;
   if (rec.status !== 'pending') {
     return res.status(409).json({ success: false, message: `Request is already ${rec.status}` });
   }
@@ -351,6 +357,7 @@ router.patch('/:id/revoke', requireRole('payroll', 'super_admin'), h(async (req:
   );
   const rec = (rows[0] as any);
   if (!rec) return res.status(404).json({ success: false, message: 'Override not found' });
+  if (!(await guardEmployee(req, res, rec.employee_id))) return;
   if (rec.status !== 'approved') {
     return res.status(409).json({ success: false, message: 'Can only revoke an approved override' });
   }

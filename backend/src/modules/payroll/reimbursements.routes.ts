@@ -17,6 +17,24 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import { reimbursementService } from "./reimbursement.service.js";
+import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
+
+/** 403s unless the employee owning claim `claimId` is inside the caller's branch / assigned scope. */
+async function guardClaimEmployee(req: any, res: any, claimId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT employee_id FROM employee_reimbursement_claim WHERE id = ? LIMIT 1",
+    [claimId],
+  );
+  const employeeId = (rows as RowDataPacket[])[0]?.employee_id;
+  // An unknown claim falls through to the handler's own 404 only for org-wide callers.
+  if (!employeeId) {
+    const cond = await employeeScopeFor(req, "e");
+    if (cond.sql === "1=1") return true;
+    res.status(403).json({ success: false, message: "Forbidden: this claim is outside your branch / assigned scope" });
+    return false;
+  }
+  return guardEmployee(req, res, String(employeeId));
+}
 
 export const reimbursementsRouter = Router();
 
@@ -149,6 +167,10 @@ reimbursementsRouter.get(
       conditions.push("erc.employee_id = ?");
       params.push(employee_id);
     }
+    // Branch scoping (owner ruling 2026-10-01): only claims of employees inside the caller's scope.
+    const claimScope = await employeeScopeFor(req, "e");
+    conditions.push(`(${claimScope.sql})`);
+    params.push(...claimScope.params);
 
     const where =
       conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -156,6 +178,7 @@ reimbursementsRouter.get(
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total
          FROM employee_reimbursement_claim erc
+         LEFT JOIN employees e ON e.id = erc.employee_id
          ${where}`,
       params,
     );
@@ -357,6 +380,7 @@ reimbursementsRouter.patch(
   h(async (req, res) => {
     const userId = req.authUser!.id;
     const { id } = req.params;
+    if (!(await guardClaimEmployee(req, res, id))) return;
     const body = req.body as { amount_approved?: unknown; remarks?: string };
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -423,6 +447,7 @@ reimbursementsRouter.patch(
   h(async (req, res) => {
     const userId = req.authUser!.id;
     const { id } = req.params;
+    if (!(await guardClaimEmployee(req, res, id))) return;
     const body = req.body as { reason?: string };
 
     if (!body.reason?.trim()) {
@@ -688,6 +713,7 @@ reimbursementsRouter.patch(
   requireAuth,
   requireRole("branch_head", "super_admin"),
   h(async (req, res) => {
+    if (!(await guardClaimEmployee(req, res, req.params.id))) return;
     const body = req.body as { note?: string; amount_approved?: number };
     await reimbursementService.branchHeadApprove(
       req.params.id,
@@ -708,6 +734,7 @@ reimbursementsRouter.patch(
   requireAuth,
   requireRole("branch_head", "super_admin"),
   h(async (req, res) => {
+    if (!(await guardClaimEmployee(req, res, req.params.id))) return;
     const body = req.body as { reason?: string };
     if (!body.reason?.trim())
       return res
@@ -734,6 +761,7 @@ reimbursementsRouter.post(
     "super_admin",
   ),
   h(async (req, res) => {
+    if (!(await guardClaimEmployee(req, res, req.params.id))) return;
     const result = await reimbursementService.convertToImprestGrn(
       req.params.id,
       req.authUser!.id,

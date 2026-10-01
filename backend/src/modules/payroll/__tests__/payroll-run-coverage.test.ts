@@ -260,6 +260,8 @@ describe("the route resolves scope itself", () => {
     // would break the view this picker exists for.
     const idx = routes.indexOf("async function resolveVisibleBranchIdsForCoverage");
     const fn = routes.slice(idx, idx + 700);
-    expect(fn).toMatch(/"super_admin",\s*"admin",\s*"payroll_head",\s*"finance_head"/);
+    // Now delegates to the shared ORG_WIDE_EXEMPT_ROLES resolution (owner ruling 2026-10-01), which
+    // keeps super_admin/admin/payroll_head/finance_head (and the other org-wide roles) unrestricted.
+    expect(fn).toMatch(/visibleBranchIdsForUser/);
   });
 });

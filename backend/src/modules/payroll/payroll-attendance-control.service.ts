@@ -47,6 +47,12 @@ type ControlParams = {
   processId?: string;
   page?: number;
   limit?: number;
+  /**
+   * SERVER-resolved branch scope for the caller (an `e.`-aliased predicate), never from the
+   * browser. Absent / "1=1" for org-wide roles. branchId/processId above may only narrow it.
+   */
+  scopeSql?: string;
+  scopeParams?: unknown[];
 };
 
 const PAYROLL_ROLES = ["super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm", "branch_head"];
@@ -333,6 +339,10 @@ function employeeScope(alias = "e", params: ControlParams, dateExpr?: string) {
       ${alias}.active_status = 1
       OR (${alias}.date_of_leaving IS NOT NULL AND ${alias}.date_of_leaving >= ${dateExpr})
     )`);
+  }
+  if (params.scopeSql && params.scopeSql !== "1=1") {
+    clauses.push(`(${params.scopeSql})`);
+    values.push(...(params.scopeParams ?? []));
   }
   if (params.branchId) {
     clauses.push(`${alias}.branch_id = ?`);
@@ -1263,6 +1273,10 @@ export const payrollAttendanceControlService = {
       run: run
         ? {
             ...run,
+            // Run-wide money / headcount totals span every branch: org-wide callers only.
+            ...(params.scopeSql && params.scopeSql !== "1=1"
+              ? { total_employees: null, total_gross: null, total_deductions: null, total_net: null }
+              : {}),
             attendance_snapshot_locked: Number(run.attendance_snapshot_locked ?? 0),
           }
         : null,

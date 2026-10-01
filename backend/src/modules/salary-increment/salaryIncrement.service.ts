@@ -32,9 +32,10 @@ async function writeAudit(
 }
 
 export const salaryIncrementService = {
-  async list(filters: { employee_id?: string; status?: string }) {
+  async list(filters: { employee_id?: string; status?: string; scope?: { sql: string; params: unknown[] } }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
+    if (filters.scope && filters.scope.sql !== "1=1") { conds.push(`(${filters.scope.sql})`); params.push(...filters.scope.params); }
     if (filters.employee_id) { conds.push("sir.employee_id = ?"); params.push(filters.employee_id); }
     if (filters.status)      { conds.push("sir.status = ?");      params.push(filters.status); }
 

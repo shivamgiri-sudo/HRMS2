@@ -15,6 +15,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
+import { employeeScopeFor, guardEmployee } from "./payroll-branch-scope.js";
 
 export const payrollCertificatesRouter = Router();
 
@@ -405,8 +406,13 @@ payrollCertificatesRouter.get(
     const limit = 50;
     const offset = (page - 1) * limit;
 
+    // Branch scoping (owner ruling 2026-10-01): only certificates of employees in the caller's scope.
+    const listScope = await employeeScopeFor(req, "e");
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM salary_certificate_request`,
+      `SELECT COUNT(*) AS total FROM salary_certificate_request scr
+         LEFT JOIN employees e ON e.id = scr.employee_id
+        WHERE (${listScope.sql})`,
+      listScope.params,
     );
     const total = Number((countRows as RowDataPacket[])[0]?.total ?? 0);
 
@@ -416,9 +422,10 @@ payrollCertificatesRouter.get(
               e.employee_code
          FROM salary_certificate_request scr
          LEFT JOIN employees e ON e.id = scr.employee_id
+        WHERE (${listScope.sql})
          ORDER BY scr.generated_at DESC
          ${sqlLimitOffset(limit, offset)}`,
-      [],
+      listScope.params,
     );
 
     return res.json({ success: true, data: rows, total });
@@ -455,6 +462,8 @@ payrollCertificatesRouter.get(
           .status(403)
           .json({ success: false, message: "Access denied" });
       }
+    } else if (!(await guardEmployee(req, res, employeeId))) {
+      return;
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -516,6 +525,7 @@ payrollCertificatesRouter.get(
     if (!isPayrollRole && String(row.emp_user_id) !== userId) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
+    if (isPayrollRole && String(row.emp_user_id) !== userId && !(await guardEmployee(req, res, String((row as any).employee_id)))) return;
 
     const certificate_data = row.certificate_data_json
       ? JSON.parse(row.certificate_data_json)
@@ -577,6 +587,8 @@ payrollCertificatesRouter.post(
             message: "You can only generate a certificate for yourself",
           });
       }
+    } else if (!(await guardEmployee(req, res, body.employee_id))) {
+      return;
     }
 
     const emp = await getEmployeeRecord(body.employee_id);

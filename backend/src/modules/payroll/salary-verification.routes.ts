@@ -15,6 +15,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { employeeScopeFor, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 import { computeRunningSalary } from "./running-salary.service.js";
 import { createWorkItemIfNotExists } from "../work-inbox/work-inbox.service.js";
 
@@ -52,6 +53,41 @@ async function resolveActorOwnScope(
   const row = (rows as any[])[0];
   if (!row) return null;
   return { branchId: row.branch_id ?? null, processId: row.process_id ?? null };
+}
+
+
+// ---------------------------------------------------------------------------
+// Branch scoping (owner ruling 2026-10-01). The caller's scope always applies; processId / branchId
+// from the browser can only NARROW it. Besides the shared assignment-based scope, the roles this
+// page is built for keep their own-record scope (branch_head: own branch; wfm / process_manager:
+// own process inside own branch), so they are not locked out when no assignment row exists.
+// ---------------------------------------------------------------------------
+async function verificationScope(req: AuthenticatedRequest, alias = "e"): Promise<{ sql: string; params: unknown[] }> {
+  const base = await employeeScopeFor(req, alias);
+  if (base.sql === "1=1") return base;
+  const own = await resolveActorOwnScope(req.authUser!.id);
+  const roleKeys: string[] = (req.authUser as any)?.roleKeys ?? [];
+  const ors = [`(${base.sql})`];
+  const params: unknown[] = [...base.params];
+  if (own?.branchId && roleKeys.includes("branch_head")) {
+    ors.push(`${alias}.branch_id = ?`);
+    params.push(own.branchId);
+  }
+  if (own?.branchId && own?.processId && (roleKeys.includes("wfm") || roleKeys.includes("process_manager"))) {
+    ors.push(`(${alias}.process_id = ? AND ${alias}.branch_id = ?)`);
+    params.push(own.processId, own.branchId);
+  }
+  return { sql: ors.join(" OR "), params };
+}
+
+async function canVerifyEmployee(req: AuthenticatedRequest, employeeId: string): Promise<boolean> {
+  const sc = await verificationScope(req, "e");
+  if (sc.sql === "1=1") return true;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id FROM employees e WHERE e.id = ? AND (${sc.sql}) LIMIT 1`,
+    [employeeId, ...sc.params],
+  );
+  return (rows as unknown[]).length > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +175,10 @@ salaryVerificationRouter.get(
 
       const whereClauses: string[] = ["e.active_status = 1"];
       const whereParams: unknown[] = [];
+      {
+        const vs = await verificationScope(req, "e");
+        whereClauses.push(`(${vs.sql})`); whereParams.push(...vs.params);
+      }
       if (processId) { whereClauses.push("e.process_id = ?"); whereParams.push(processId); }
       if (branchId)  { whereClauses.push("e.branch_id = ?");  whereParams.push(branchId); }
       if (search)    { whereClauses.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)"); whereParams.push(`%${search}%`, `%${search}%`); }
@@ -329,6 +369,7 @@ salaryVerificationRouter.get(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { employeeId } = req.params;
+      if (!(await canVerifyEmployee(req, employeeId))) return res.status(403).json(OUT_OF_SCOPE_BODY);
       const month = resolveMonth(req.query.month);
       const runIdParam = req.query.runId as string | undefined;
 
@@ -512,8 +553,10 @@ salaryVerificationRouter.get(
       const month = resolveMonth(req.query.month);
       const processId = req.query.processId as string | undefined;
 
-      const empWhere = processId ? "e.process_id = ?" : "1=1";
-      const empParams = processId ? [processId] : [];
+      const sumScope = await verificationScope(req, "e");
+      const flagScope = await verificationScope(req, "fe");
+      const empWhere = `(${sumScope.sql})${processId ? " AND e.process_id = ?" : ""}`;
+      const empParams = [...sumScope.params, ...(processId ? [processId] : [])];
 
       const [[{ total }]] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS total FROM employees e WHERE ${empWhere} AND e.active_status = 1`,
@@ -525,8 +568,9 @@ salaryVerificationRouter.get(
            FROM salary_employee_verification sev
            JOIN employees e ON e.id = sev.employee_id
           WHERE sev.run_month = ?
+            AND (${sumScope.sql})
             AND ${processId ? "sev.process_id = ?" : "1=1"}`,
-        processId ? [month, processId] : [month]
+        processId ? [month, ...sumScope.params, processId] : [month, ...sumScope.params]
       ) as any;
 
       const [[{ open_flags }]] = await db.execute<RowDataPacket[]>(
@@ -534,8 +578,9 @@ salaryVerificationRouter.get(
            FROM salary_verification_flag svf
           WHERE svf.run_month = ?
             AND svf.status = 'open'
+            AND svf.employee_id IN (SELECT fe.id FROM employees fe WHERE ${flagScope.sql})
             AND ${processId ? "svf.process_id = ?" : "1=1"}`,
-        processId ? [month, processId] : [month]
+        processId ? [month, ...flagScope.params, processId] : [month, ...flagScope.params]
       ) as any;
 
       const [[{ flagged }]] = await db.execute<RowDataPacket[]>(
@@ -543,8 +588,9 @@ salaryVerificationRouter.get(
            FROM salary_verification_flag svf
           WHERE svf.run_month = ?
             AND svf.status = 'open'
+            AND svf.employee_id IN (SELECT fe.id FROM employees fe WHERE ${flagScope.sql})
             AND ${processId ? "svf.process_id = ?" : "1=1"}`,
-        processId ? [month, processId] : [month]
+        processId ? [month, ...flagScope.params, processId] : [month, ...flagScope.params]
       ) as any;
 
       const totalN = Number(total);
@@ -598,6 +644,8 @@ salaryVerificationRouter.post(
       if (!runMonth || !employeeId || !category || !description?.trim()) {
         return res.status(400).json({ success: false, message: "runMonth, employeeId, category, and description are required" });
       }
+
+      if (!(await canVerifyEmployee(req, employeeId))) return res.status(403).json(OUT_OF_SCOPE_BODY);
 
       const id = randomUUID();
       await db.execute(
@@ -656,10 +704,13 @@ salaryVerificationRouter.patch(
 
       // Read the flag's run_month, process_id, branch_id before updating (needed for readiness check).
       const [flagRows] = await db.execute<RowDataPacket[]>(
-        "SELECT run_month, process_id, branch_id FROM salary_verification_flag WHERE id = ? LIMIT 1",
+        "SELECT run_month, process_id, branch_id, employee_id FROM salary_verification_flag WHERE id = ? LIMIT 1",
         [flagId]
       );
       const flagMeta = (flagRows as any[])[0];
+      if (!flagMeta || !(await canVerifyEmployee(req, String(flagMeta.employee_id)))) {
+        return res.status(flagMeta ? 403 : 404).json(flagMeta ? OUT_OF_SCOPE_BODY : { success: false, message: "Flag not found" });
+      }
 
       await db.execute(
         `UPDATE salary_verification_flag
@@ -704,6 +755,7 @@ salaryVerificationRouter.post(
       if (!runMonth || !employeeId) {
         return res.status(400).json({ success: false, message: "runMonth and employeeId required" });
       }
+      if (!(await canVerifyEmployee(req, employeeId))) return res.status(403).json(OUT_OF_SCOPE_BODY);
 
       await db.execute(
         `INSERT INTO salary_employee_verification (id, run_month, run_id, employee_id, process_id, verified_by)
@@ -817,7 +869,9 @@ salaryVerificationRouter.post(
 
       const whereProcess = processId ? "AND e.process_id = ?" : "";
       const whereBranch  = branchId  ? "AND e.branch_id = ?"  : "";
-      const params: unknown[] = [runMonth];
+      const bulkScope = await verificationScope(req, "e");
+      // Placeholder order in the query below: scope, process, branch, then runMonth twice.
+      const params: unknown[] = [...bulkScope.params];
       if (processId) params.push(processId);
       if (branchId)  params.push(branchId);
 
@@ -825,6 +879,7 @@ salaryVerificationRouter.post(
         `SELECT e.id
            FROM employees e
           WHERE e.active_status = 1
+            AND (${bulkScope.sql})
             ${whereProcess} ${whereBranch}
             AND e.id NOT IN (
               SELECT svf.employee_id
@@ -881,6 +936,11 @@ salaryVerificationRouter.get(
 
       const where = ["svf.status = 'open'", "svf.run_month = ?"];
       const params: unknown[] = [month];
+      {
+        const ofScope = await verificationScope(req, "fe");
+        where.push(`svf.employee_id IN (SELECT fe.id FROM employees fe WHERE ${ofScope.sql})`);
+        params.push(...ofScope.params);
+      }
       if (processId) { where.push("svf.process_id = ?"); params.push(processId); }
       if (branchId)  { where.push("svf.branch_id = ?");  params.push(branchId); }
 
@@ -956,6 +1016,10 @@ salaryVerificationRouter.get(
 
       const whereClauses: string[] = ["e.active_status = 1"];
       const whereParams: unknown[] = [];
+      {
+        const exScope = await verificationScope(req, "e");
+        whereClauses.push(`(${exScope.sql})`); whereParams.push(...exScope.params);
+      }
       if (processId) { whereClauses.push("e.process_id = ?"); whereParams.push(processId); }
       if (branchId)  { whereClauses.push("e.branch_id = ?");  whereParams.push(branchId); }
 

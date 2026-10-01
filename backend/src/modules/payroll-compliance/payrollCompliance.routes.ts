@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "../../db/mysql.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { guardEmployee, requireRunInScope } from "../payroll/payroll-branch-scope.js";
 import { payrollComplianceService } from "./payrollCompliance.service.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 
@@ -13,12 +14,12 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 router.use(requireAuth);
 
-router.post("/runs/:runId/compliance-check", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/runs/:runId/compliance-check", requireRole("admin", "hr", "finance", "payroll"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const data = await payrollComplianceService.validateRun(req.params.runId);
   return res.json({ success: true, data });
 }));
 
-router.get("/runs/:runId/compliance-issues", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/runs/:runId/compliance-issues", requireRole("admin", "hr", "finance", "payroll"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pci.*, e.employee_code, e.full_name
        FROM payroll_compliance_issue pci
@@ -31,6 +32,7 @@ router.get("/runs/:runId/compliance-issues", requireRole("admin", "hr", "finance
 }));
 
 router.put("/employees/:employeeId/component-snapshot", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
   const schema = z.object({
     effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     components: z.array(z.object({
@@ -63,6 +65,7 @@ router.put("/employees/:employeeId/component-snapshot", requireRole("admin", "hr
 }));
 
 router.get("/employees/:employeeId/component-snapshot", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM payroll_employee_component_snapshot
       WHERE employee_id = ?
@@ -161,7 +164,7 @@ export const manualAdjustmentHandlerForPhase2 = h(async (req: AuthenticatedReque
   });
 });
 
-router.get("/runs/:runId/components", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/runs/:runId/components", requireRole("admin", "hr", "finance", "payroll"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT splc.*, e.employee_code, e.full_name
        FROM salary_prep_line_component splc
@@ -173,7 +176,7 @@ router.get("/runs/:runId/components", requireRole("admin", "hr", "finance", "pay
   return res.json({ success: true, data: rows });
 }));
 
-router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "finance", "payroll", "ceo"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "finance", "payroll", "ceo"), requireRunInScope("runId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const registerType = req.params.registerType;
   const allowed = new Set(["salary", "pf", "esic", "pt", "tds", "bank", "variance"]);
   if (!allowed.has(registerType)) return res.status(400).json({ success: false, message: "Invalid register type" });

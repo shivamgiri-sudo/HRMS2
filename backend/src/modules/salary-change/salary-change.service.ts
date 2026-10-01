@@ -318,11 +318,17 @@ export async function getSalaryTrend(params: {
   fy: string;
   costCentreId?: string;
   employeeCode?: string;
+  /** Server-resolved caller scope over alias `e` (omitted / "1=1" = org-wide). Browser filters only narrow it. */
+  scope?: { sql: string; params: unknown[] };
 }) {
   const months = fyMonths(params.fy);
 
   const where: string[] = ["e.active_status = 1"];
   const args: unknown[] = [];
+  if (params.scope && params.scope.sql !== "1=1") {
+    where.push(`(${params.scope.sql})`);
+    args.push(...params.scope.params);
+  }
   if (params.branchId) {
     where.push("e.branch_id = ?");
     args.push(params.branchId);

@@ -3,6 +3,7 @@ import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireRunInScope, scopeFor } from "./payroll-branch-scope.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
@@ -79,6 +80,7 @@ async function buildStatus(
 router.get(
   "/runs/:runId/status",
   requireRole("finance", "super_admin", "payroll_head", "payroll", "ceo", "admin"),
+  requireRunInScope("runId"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 
@@ -153,7 +155,8 @@ const SYNTHETIC_RUN_CREATORS = ["test-auto-gen", "codex-e2e", "smoke-test", "dem
 router.get(
   "/runs",
   requireRole("finance", "super_admin", "payroll_head", "payroll", "ceo", "admin"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const runScope = await scopeFor(req, { branchId: "r.branch_id", processId: "r.process_id" });
     const placeholders = SYNTHETIC_RUN_CREATORS.map(() => "?").join(", ");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT r.id, r.run_month, r.status, r.created_by,
@@ -167,12 +170,13 @@ router.get(
         WHERE LOWER(COALESCE(r.status, '')) = 'processing'
           AND r.finance_approved_at IS NULL
           AND LOWER(COALESCE(r.created_by, '')) NOT IN (${placeholders})
+          AND (${runScope.sql})
         GROUP BY r.id, r.run_month, r.status, r.created_by, r.total_employees,
                  r.finance_approved_by, r.finance_approved_at, r.finance_remarks,
                  r.ceo_acknowledged_by, r.ceo_acknowledged_at, r.ceo_remarks
         ORDER BY r.run_month DESC
         LIMIT 20`,
-      SYNTHETIC_RUN_CREATORS,
+      [...SYNTHETIC_RUN_CREATORS, ...runScope.params],
     );
 
     return res.json({ success: true, data: rows });
@@ -408,6 +412,7 @@ router.post(
 router.get(
   "/runs/:runId/tds-summary",
   requireRole("finance", "super_admin", "payroll_head", "payroll", "ceo", "admin"),
+  requireRunInScope("runId"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 

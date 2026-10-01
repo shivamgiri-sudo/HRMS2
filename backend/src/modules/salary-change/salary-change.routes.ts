@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./salary-change.service.js";
+import { employeeScopeFor, guardEmployee } from "../payroll/payroll-branch-scope.js";
 
 const router = Router();
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -22,11 +23,13 @@ router.get("/trend", requireAuth, requireRole(...REVIEWER_ROLES, "payroll_hr", "
     branchId:      branch_id      || undefined,
     costCentreId:  cost_centre_id || undefined,
     employeeCode:  employee_code  || undefined,
+    scope:         await employeeScopeFor(req, "e"),
   });
   res.json({ success: true, data });
 }));
 
 router.get("/employee/:employeeId", requireAuth, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
   const data = await svc.getEmployeeSalaryProfile(req.params.employeeId);
   res.json({ success: true, data });
 }));
@@ -37,6 +40,7 @@ router.post("/:employeeId", requireAuth, requireWriteAccess, requireRole(...REVI
   if (!package_id || !effective_date || !reason) {
     return res.status(400).json({ success: false, message: "package_id, effective_date, and reason are required." });
   }
+  if (!(await guardEmployee(req, res, req.params.employeeId))) return;
   const data = await svc.changeSalary({
     employeeId: req.params.employeeId,
     packageId: String(package_id),

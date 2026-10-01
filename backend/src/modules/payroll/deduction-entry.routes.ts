@@ -12,6 +12,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
+import { employeeScopeFor, guardEmployee, filterVisibleEmployeeIds, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 import {
   listDeductionTypes,
   createDeductionType,
@@ -123,6 +124,9 @@ deductionEntryRouter.get(
     }
 
     const q = req.query as Record<string, string | undefined>;
+    // Branch scoping (owner ruling 2026-10-01): hr/payroll/finance-type roles only see entries for
+    // employees inside their branch / assigned scope; org-wide roles resolve to 1=1.
+    const entryScope = await employeeScopeFor(req, "e");
     const { entries, total } = await listDeductionEntries(
       {
         search: q.search,
@@ -134,7 +138,8 @@ deductionEntryRouter.get(
         limit: q.limit ? parseInt(q.limit, 10) : undefined,
         offset: q.offset ? parseInt(q.offset, 10) : undefined,
       },
-      scopedBranchId
+      scopedBranchId,
+      entryScope
     );
 
     return res.json({ success: true, entries, total });
@@ -152,6 +157,7 @@ deductionEntryRouter.post(
     if (!(await hasAnyRole(userId, ...WRITE_ROLES))) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
+    if (!(await guardEmployee(req, res, req.body?.employee_id))) return;
     const data = await createDeductionEntry(req.body, userId);
     return res.status(201).json({ success: true, data });
   })
@@ -171,6 +177,11 @@ deductionEntryRouter.patch(
     const { reason } = req.body as { reason?: string };
     if (!reason || String(reason).trim().length < 5) {
       return res.status(400).json({ success: false, message: "reason must be at least 5 characters" });
+    }
+    {
+      const [own] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM employee_deduction_entries WHERE id = ? LIMIT 1", [req.params.id]);
+      const ownerId = (own as RowDataPacket[])[0]?.employee_id;
+      if (ownerId && !(await guardEmployee(req, res, String(ownerId)))) return;
     }
     await deactivateDeductionEntry(req.params.id, String(reason), userId);
     return res.json({ success: true, message: "Deduction entry deactivated" });
@@ -194,6 +205,16 @@ deductionEntryRouter.post(
     }
     if (rows.length > 500) {
       return res.status(400).json({ success: false, message: "Maximum 500 rows per bulk request" });
+    }
+    {
+      const codes = [...new Set((rows as Array<{ employee_code?: unknown }>).map((r) => String(r?.employee_code ?? "").trim()).filter(Boolean))];
+      if (codes.length) {
+        const [idRows] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM employees WHERE employee_code IN (${codes.map(() => "?").join(",")})`, codes);
+        const ids = (idRows as RowDataPacket[]).map((r) => String(r.id));
+        const visible = await filterVisibleEmployeeIds(req, ids);
+        if (visible.size !== ids.length) return res.status(403).json(OUT_OF_SCOPE_BODY);
+      }
     }
     const result = await bulkCreateDeductionEntries(rows as Parameters<typeof bulkCreateDeductionEntries>[0], userId);
     return res.status(201).json({ success: true, ...result });
@@ -224,14 +245,16 @@ deductionEntryRouter.get(
     );
     const typeCodes = (types as RowDataPacket[]).map((t) => String(t.deduction_code));
 
+    const tplScope = await employeeScopeFor(req, "e");
     const [employees] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code, b.branch_name, cc.cost_centre_code
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-        WHERE e.employment_status IN ('active','on_leave')
+        WHERE e.employment_status IN ('active','on_leave') AND (${tplScope.sql})
         ORDER BY e.employee_code
-        LIMIT 5000`
+        LIMIT 5000`,
+      tplScope.params
     );
 
     const headers = ["employee_code", "month", "branch", "cost_centre", ...typeCodes, "description"];
@@ -272,6 +295,8 @@ deductionEntryRouter.get(
       if (!(empRows as RowDataPacket[])[0]) {
         return res.status(403).json({ success: false, message: "Access denied" });
       }
+    } else if (!(await guardEmployee(req, res, employeeId))) {
+      return;
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(

@@ -186,13 +186,19 @@ export const complianceService = {
 
   // ── POSH ──────────────────────────────────────────────────────────────────
 
-  async listPoshComplaints(): Promise<PoshComplaint[]> {
+  async listPoshComplaints(branchIds?: string[] | null): Promise<PoshComplaint[]> {
+    // branchIds: server-resolved branch scope (null/undefined = org-wide caller).
+    const scopeSql = branchIds
+      ? branchIds.length ? `WHERE pc.branch_id IN (${branchIds.map(() => "?").join(",")})` : "WHERE 1=0"
+      : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT pc.*,
               b.branch_name
          FROM posh_complaint pc
          LEFT JOIN branch_master b ON b.id = pc.branch_id
-         ORDER BY pc.date_of_complaint DESC`
+         ${scopeSql}
+         ORDER BY pc.date_of_complaint DESC`,
+      branchIds ?? []
     );
     return (rows as PoshComplaint[]).map((r) => ({
       ...r,
@@ -296,7 +302,10 @@ export const complianceService = {
     };
   },
 
-  async poshAnnualReport(year: number): Promise<PoshAnnualReport> {
+  async poshAnnualReport(year: number, branchIds?: string[] | null): Promise<PoshAnnualReport> {
+    const scopeSql = branchIds
+      ? branchIds.length ? ` AND branch_id IN (${branchIds.map(() => "?").join(",")})` : " AND 1=0"
+      : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS complaints_received,
@@ -304,8 +313,8 @@ export const complianceService = {
          SUM(CASE WHEN status IN ('received','under_inquiry') THEN 1 ELSE 0 END) AS complaints_pending,
          SUM(CASE WHEN outcome = 'malicious_complaint' THEN 1 ELSE 0 END) AS complaints_malicious
        FROM posh_complaint
-       WHERE annual_report_year = ?`,
-      [year]
+       WHERE annual_report_year = ?${scopeSql}`,
+      [year, ...(branchIds ?? [])]
     );
     const row = (rows as Record<string, number>[])[0] ?? {};
     return {

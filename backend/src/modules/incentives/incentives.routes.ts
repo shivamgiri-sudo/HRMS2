@@ -10,6 +10,10 @@ import multer from 'multer';
 
 import * as svc from './incentives.service.js';
 import {
+  employeeScopeFor, filterVisibleEmployeeIds, guardEmployee, visibleBranchIdsFor, canSeeRun,
+  OUT_OF_SCOPE_BODY,
+} from '../payroll/payroll-branch-scope.js';
+import {
   CreateIncentiveMasterSchema, UpdateIncentiveMasterSchema,
   CreateBatchSchema, ImportLinesSchema, ApproveRejectSchema, ApplyToRunSchema,
 } from './incentives.validation.js';
@@ -18,6 +22,26 @@ import {
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// Branch scoping (owner ruling 2026-10-01). A batch is visible to org-wide roles, to callers whose scope
+// covers the batch branch, and to the user who uploaded it. Lines are further limited to employees in scope.
+async function visibleBatchIds(req: AuthenticatedRequest): Promise<Set<string> | null> {
+  const visible = await visibleBranchIdsFor(req);
+  if (visible === null) return null;
+  const ids = Array.from(visible);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM incentive_upload_batch
+      WHERE uploaded_by = ?${ids.length ? ` OR branch_id IN (${ids.map(() => '?').join(',')})` : ''}`,
+    [req.authUser!.id, ...ids],
+  );
+  return new Set((rows as RowDataPacket[]).map((r) => String(r.id)));
+}
+async function guardBatch(req: AuthenticatedRequest, res: any, batchId: string): Promise<boolean> {
+  const ids = await visibleBatchIds(req);
+  if (ids === null || ids.has(String(batchId))) return true;
+  res.status(403).json({ success: false, error: 'Forbidden: this incentive batch is outside your branch / assigned scope', message: 'Forbidden: this incentive batch is outside your branch / assigned scope' });
+  return false;
+}
 
 export const incentivesRouter = Router();
 incentivesRouter.use(requireAuth);
@@ -62,15 +86,17 @@ incentivesRouter.get('/upload-template', requireRole('admin', 'hr', 'finance', '
   );
   const typeCodes = (types as any[]).map((t: any) => t.incentive_code as string);
 
-  // Fetch employees with branch + cost_centre
+  // Fetch employees with branch + cost_centre (only those inside the caller's scope)
+  const tplScope = await employeeScopeFor(req, 'e');
   const [employees] = await db.execute<RowDataPacket[]>(
     `SELECT e.employee_code, b.branch_name, cc.cost_centre_code
      FROM employees e
      LEFT JOIN branch_master b ON b.id = e.branch_id
      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-     WHERE e.employment_status IN ('active','on_leave')
+     WHERE e.employment_status IN ('active','on_leave') AND (${tplScope.sql})
      ORDER BY e.employee_code
-     LIMIT 5000`
+     LIMIT 5000`,
+    tplScope.params
   );
 
   const headers = ['employee_code', 'month', 'branch', 'cost_centre', ...typeCodes, 'total_incentive'];
@@ -124,6 +150,7 @@ incentivesRouter.post('/bulk-upload',
 
     const [empRows] = await db.execute<RowDataPacket[]>('SELECT id, employee_code FROM employees WHERE employment_status IN ("active","on_leave")');
     const empMap = new Map((empRows as any[]).map((e: any) => [e.employee_code?.toLowerCase(), e.id]));
+    const visibleEmpIds = await filterVisibleEmployeeIds(req, Array.from(empMap.values()).map(String));
 
     // One batch per incentive type (to preserve approval-per-type semantics)
     const batchByType = new Map<string, string>(); // incentiveCode → batchId
@@ -141,6 +168,7 @@ incentivesRouter.post('/bulk-upload',
       const empCode = row['employee_code']?.toLowerCase();
       const empId = empMap.get(empCode);
       if (!empId) { errors.push(`Row ${i + 1}: employee_code "${row['employee_code']}" not found`); continue; }
+      if (!visibleEmpIds.has(String(empId))) { errors.push(`Row ${i + 1}: employee_code "${row['employee_code']}" is outside your branch / assigned scope`); continue; }
 
       pay_month = row['month'] || pay_month;
       const branchId = branchMap.get(row['branch']?.toLowerCase()) ?? null;
@@ -210,7 +238,9 @@ incentivesRouter.post('/bulk-upload',
 // ── BATCHES ───────────────────────────────────────────────────────────────────
 incentivesRouter.get('/batches', h(async (req, res) => {
   const { month } = req.query as Record<string, string>;
-  res.json({ success: true, data: await svc.listBatches(month) });
+  const all = (await svc.listBatches(month)) as any[];
+  const ids = await visibleBatchIds(req);
+  res.json({ success: true, data: ids ? all.filter((b) => ids.has(String(b.id))) : all });
 }));
 
 incentivesRouter.post('/batches', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
@@ -228,6 +258,7 @@ incentivesRouter.post('/batches/single-entry', requireRole('admin', 'hr', 'finan
   if (String(remarks).trim().length < 5) {
     return res.status(400).json({ error: 'remarks must be at least 5 characters' });
   }
+  if (!(await guardEmployee(req, res, String(employee_id)))) return;
   // Resolve employee_code from employee_id
   const [empRows] = await db.execute<RowDataPacket[]>(
     'SELECT employee_code FROM employees WHERE id = ? AND active_status = 1',
@@ -239,7 +270,9 @@ incentivesRouter.post('/batches/single-entry', requireRole('admin', 'hr', 'finan
   const employee_code = (empRows as RowDataPacket[])[0].employee_code;
   // Find or create a draft batch for this pay_month
   const existingBatches = await svc.listBatches(pay_month);
-  const batches = Array.isArray(existingBatches) ? existingBatches : (existingBatches as any)?.data ?? [];
+  const allBatches = Array.isArray(existingBatches) ? existingBatches : (existingBatches as any)?.data ?? [];
+  const visibleIds = await visibleBatchIds(req);
+  const batches = visibleIds ? allBatches.filter((b: any) => visibleIds.has(String(b.id))) : allBatches;
   let batch = batches.find((b: any) => b.status === 'draft');
   if (!batch) {
     batch = await svc.createBatch({ incentive_id: incentive_code, pay_month, remarks: 'Single entry batch' }, req.authUser?.id ?? '');
@@ -251,22 +284,38 @@ incentivesRouter.post('/batches/single-entry', requireRole('admin', 'hr', 'finan
 }));
 
 incentivesRouter.get('/batches/:id', h(async (req, res) => {
+  if (!(await guardBatch(req, res, req.params.id))) return;
   const data = await svc.getBatchById(req.params.id);
   if (!data) return res.status(404).json({ error: 'Batch not found' });
   res.json({ success: true, data });
 }));
 
 incentivesRouter.get('/batches/:id/lines', h(async (req, res) => {
-  res.json({ success: true, data: await svc.getBatchLines(req.params.id) });
+  if (!(await guardBatch(req, res, req.params.id))) return;
+  const lines = (await svc.getBatchLines(req.params.id)) as any[];
+  const visibleEmp = await filterVisibleEmployeeIds(req, lines.map((l) => String(l.employee_id)));
+  res.json({ success: true, data: lines.filter((l) => visibleEmp.has(String(l.employee_id))) });
 }));
 
 incentivesRouter.post('/batches/:id/lines/import', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
   const parsed = ImportLinesSchema.parse(req.body);
+  if (!(await guardBatch(req, res, req.params.id))) return;
+  {
+    const codes = Array.from(new Set(parsed.map((r: any) => String(r.employee_code ?? '').trim()).filter(Boolean)));
+    if (codes.length) {
+      const [idRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')})`, codes);
+      const ids = (idRows as RowDataPacket[]).map((r) => String(r.id));
+      const vis = await filterVisibleEmployeeIds(req, ids);
+      if (vis.size !== ids.length) return res.status(403).json(OUT_OF_SCOPE_BODY);
+    }
+  }
   const data = await svc.importLines(req.params.id, parsed);
   res.json({ success: true, data });
 }));
 
 incentivesRouter.post('/batches/:id/submit', requireRole('admin', 'hr', 'finance', 'wfm_spoc', 'wfm', 'payroll_hr'), h(async (req, res) => {
+  if (!(await guardBatch(req, res, req.params.id))) return;
   const data = await svc.submitBatch(req.params.id, req.authUser?.id ?? '');
   res.json({ success: true, data });
 }));
@@ -286,6 +335,7 @@ incentivesRouter.post('/batches/:id/reject', requireRole('admin', 'finance'), h(
 // ── APPLY TO RUN ──────────────────────────────────────────────────────────────
 incentivesRouter.post('/apply-to-run', requireRole('admin', 'finance', 'payroll'), h(async (req, res) => {
   const parsed = ApplyToRunSchema.parse(req.body);
+  if (!(await canSeeRun(req, parsed.run_id))) return res.status(403).json({ success: false, message: 'Forbidden: this payroll run is outside your branch / assigned scope' });
   const data = await svc.applyToRun(parsed.run_id, parsed.pay_month, req.authUser?.id ?? '');
   res.json({ success: true, data });
 }));
@@ -368,6 +418,7 @@ incentivesRouter.post('/batches/:batchId/approval-chain/init',
   h(async (req: AuthenticatedRequest, res) => {
     const { batchId } = req.params;
     const userId = req.authUser!.id;
+    if (!(await guardBatch(req, res, batchId))) return;
     const batch = await svc.getBatchById(batchId);
     if (!batch) return res.status(404).json({ success: false, message: 'Batch not found' });
 
@@ -409,6 +460,7 @@ incentivesRouter.post('/batches/:batchId/step-approve',
     const { batchId } = req.params;
     const userId = req.authUser!.id;
     const { remarks } = req.body as { remarks?: string };
+    if (!(await guardBatch(req, res, batchId))) return;
 
     // Find the current pending step
     const [pendingRows] = await db.execute<RowDataPacket[]>(
@@ -495,6 +547,7 @@ incentivesRouter.post('/batches/:batchId/step-reject',
     const { batchId } = req.params;
     const userId = req.authUser!.id;
     const { reason } = req.body as { reason?: string };
+    if (!(await guardBatch(req, res, batchId))) return;
 
     if (!reason?.trim()) {
       return res.status(400).json({ success: false, message: 'reason is required for rejection' });
@@ -559,6 +612,7 @@ incentivesRouter.post('/batches/:batchId/step-reject',
 // GET /batches/:batchId/approval-steps — get all approval steps for a batch
 incentivesRouter.get('/batches/:batchId/approval-steps',
   h(async (req: AuthenticatedRequest, res) => {
+    if (!(await guardBatch(req, res, req.params.batchId))) return;
     const [steps] = await db.execute<RowDataPacket[]>(
       `SELECT ias.*,
               COALESCE(
@@ -597,7 +651,8 @@ incentivesRouter.get('/approvals/pending',
        ORDER BY iub.pay_month DESC`,
       [userRole]
     );
-    return res.json({ success: true, data: rows });
+    const pendingVisible = await visibleBatchIds(req);
+    return res.json({ success: true, data: pendingVisible ? (rows as any[]).filter((r) => pendingVisible.has(String(r.id))) : rows });
   })
 );
 
@@ -669,6 +724,7 @@ incentivesRouter.get('/register',
        ORDER BY ipr.finalized_at DESC`,
       params
     );
-    return res.json({ success: true, data: rows });
+    const regVisible = await visibleBatchIds(req);
+    return res.json({ success: true, data: regVisible ? (rows as any[]).filter((r) => regVisible.has(String(r.batch_id))) : rows });
   })
 );

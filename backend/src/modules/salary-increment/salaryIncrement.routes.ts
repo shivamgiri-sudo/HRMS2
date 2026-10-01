@@ -3,6 +3,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { salaryIncrementService } from "./salaryIncrement.service.js";
+import { employeeScopeFor, guardEmployee } from "../payroll/payroll-branch-scope.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) =>
@@ -16,7 +17,7 @@ router.get("/", h(async (req: any, res: any) => {
   const { status } = req.query as Record<string, string>;
 
   if (await hasRole(userId, "admin", "hr", "finance")) {
-    const data = await salaryIncrementService.list({ status });
+    const data = await salaryIncrementService.list({ status, scope: await employeeScopeFor(req, "e") });
     return res.json({ success: true, data, total: data.length });
   }
 
@@ -30,11 +31,16 @@ router.get("/", h(async (req: any, res: any) => {
 router.get("/:id", requireRole("admin", "hr", "finance"), h(async (req: any, res: any) => {
   const data = await salaryIncrementService.getById(req.params.id);
   if (!data) return res.status(404).json({ success: false, error: "Not found" });
+  if (!(await guardEmployee(req, res, (data as any).employee_id))) return;
   return res.json({ success: true, data });
 }));
 
 // GET /api/salary-increment/:id/audit — audit trail
 router.get("/:id/audit", requireRole("admin", "hr", "finance"), h(async (req: any, res: any) => {
+  {
+    const owner = await salaryIncrementService.getById(req.params.id);
+    if (owner && !(await guardEmployee(req, res, (owner as any).employee_id))) return;
+  }
   const data = await salaryIncrementService.getAuditLog(req.params.id);
   return res.json({ success: true, data });
 }));
@@ -48,6 +54,7 @@ router.post("/", requireRole("admin", "hr"), h(async (req: any, res: any) => {
   if (Number(proposed_ctc) <= 0) {
     return res.status(400).json({ success: false, error: "proposed_ctc must be positive" });
   }
+  if (!(await guardEmployee(req, res, String(employee_id)))) return;
   const data = await salaryIncrementService.create({
     employee_id,
     proposed_ctc: Number(proposed_ctc),
@@ -82,6 +89,10 @@ router.post("/:id/action", h(async (req: any, res: any) => {
     return res.status(403).json({ success: false, error: "Insufficient role for this action" });
   }
 
+  {
+    const owner = await salaryIncrementService.getById(req.params.id);
+    if (owner && !(await guardEmployee(req, res, (owner as any).employee_id))) return;
+  }
   const data = await salaryIncrementService.transition(
     req.params.id,
     action as any,

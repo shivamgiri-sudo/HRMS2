@@ -129,9 +129,12 @@ export async function listNocs(filters: {
   uploadStatus?: string;
   nocType?: string;
   runMonth?: string;
+  /** Caller's server-resolved branch scope over `e` (employees). Omitted = unrestricted. */
+  scope?: { sql: string; params: unknown[] };
 }): Promise<NocRecord[]> {
   const conds: string[] = [];
   const params: unknown[] = [];
+  if (filters.scope && filters.scope.sql !== "1=1") { conds.push(`(${filters.scope.sql})`); params.push(...filters.scope.params); }
   if (filters.employeeId) { conds.push("n.employee_id = ?"); params.push(filters.employeeId); }
   if (filters.uploadStatus) { conds.push("n.upload_status = ?"); params.push(filters.uploadStatus); }
   if (filters.nocType) { conds.push("n.noc_type = ?"); params.push(filters.nocType); }
