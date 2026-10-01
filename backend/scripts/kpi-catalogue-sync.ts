@@ -16,6 +16,14 @@ try {
   console.log("studio link:", JSON.stringify(studio));
   const drift = await recordDrift();
   console.log("reconciliation:", JSON.stringify(drift));
+  // Row-level detail for the conflicts worth acting on (legacy_only_metric is a long informational list).
+  const [rows] = await db.execute(
+    `SELECT conflict_type, process_key, metric_key, detail FROM kpi_catalogue_conflict
+      WHERE resolved = 0 AND conflict_type <> 'legacy_only_metric' ORDER BY conflict_type, process_key, metric_key LIMIT 120`,
+  );
+  for (const r of rows as Array<Record<string, unknown>>) {
+    console.log(`conflict | ${r.conflict_type} | ${r.process_key ?? "-"} | ${r.metric_key ?? "-"} | ${typeof r.detail === "string" ? r.detail : JSON.stringify(r.detail)}`);
+  }
 } finally {
   await (db as unknown as { end?: () => Promise<void> }).end?.();
   process.exit(0);
