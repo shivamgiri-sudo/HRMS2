@@ -27,6 +27,7 @@ import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { providerConfigService } from '../communication/provider-config.service.js';
+import { PinbotWhatsAppProvider } from '../communication/providers/whatsapp/pinbot.provider.js';
 import { emailService } from '../communication/email.service.js';
 import { triggerVoiceCall, isVoicebotConfigured } from './voicebot.provider.js';
 import { triggerVapiCallWithInlineScript, isVapiConfigured } from './vapi-voicebot.provider.js';
@@ -44,6 +45,10 @@ export interface OutreachOutcome {
   skipped: Array<{ channel: string; reason: string }>;
   failed: Array<{ channel: string; error: string }>;
 }
+
+// Pinbot (WABA) is the sole WhatsApp channel for candidate outreach when configured: a candidate we have
+// never messaged can only be reached with an approved template, so no free-text fallback is attempted.
+const pinbotInvite = new PinbotWhatsAppProvider();
 
 interface LeadContext {
   id: string;
@@ -306,6 +311,22 @@ export async function notifyQualifiedLead(
   // ── WhatsApp ──
   if (!ctx.phone) {
     outcome.skipped.push({ channel: 'whatsapp', reason: 'Lead has no phone number' });
+  } else if (pinbotInvite.isConfigured()) {
+    if (!slot || !ctx.branchAddress || !ctx.bmiUrl) {
+      outcome.skipped.push({
+        channel: 'whatsapp',
+        reason: 'Approved invite template needs interview slot, branch address and BookMyInterview link',
+      });
+    } else {
+      outcome.attempted.push('whatsapp');
+      const res = await pinbotInvite.sendTemplate(
+        ctx.phone,
+        process.env.PINBOT_INTERVIEW_TEMPLATE || 'interview_invitation',
+        [ctx.name, slot.dateLabel, slot.timeLabel, ctx.branchAddress, ctx.bmiUrl],
+      );
+      if (res.success) outcome.succeeded.push('whatsapp');
+      else outcome.failed.push({ channel: 'whatsapp', error: res.error ?? 'unknown error' });
+    }
   } else {
     try {
       // DB config first, env second — same resolution order as dispatch.service.ts, so a provider
@@ -351,6 +372,7 @@ export async function notifyQualifiedLead(
   // and it supports inbound message webhooks for walk-in confirmation replies.
   if (
     ctx.phone &&
+    !pinbotInvite.isConfigured() &&
     !outcome.succeeded.includes('whatsapp') &&
     isWassengerConfigured()
   ) {
@@ -393,6 +415,7 @@ export async function notifyQualifiedLead(
   // If neither primary nor Wassenger worked, try the self-hosted whatsapp-web.js session.
   if (
     ctx.phone &&
+    !pinbotInvite.isConfigured() &&
     !outcome.succeeded.includes('whatsapp') &&
     !outcome.succeeded.includes('whatsapp_wassenger') &&
     isWhatsAppWebConfigured()

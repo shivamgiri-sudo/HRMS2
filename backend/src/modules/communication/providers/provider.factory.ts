@@ -13,6 +13,7 @@ import { SmartPingProvider } from './sms/smartping.provider.js';
 import { TwilioWhatsAppProvider } from './whatsapp/twilio-whatsapp.provider.js';
 import { LocalWhatsAppProvider } from './whatsapp/local-whatsapp.provider.js';
 import { MetaWhatsAppProvider } from './whatsapp/meta.provider.js';
+import { PinbotWhatsAppProvider } from './whatsapp/pinbot.provider.js';
 
 type DbConfig = { provider_type: string; config: Record<string, unknown>; secrets: Record<string, string> };
 
@@ -124,6 +125,7 @@ class ProviderFactory {
     }
 
     if (channel === 'whatsapp') {
+      if (provider_type === 'pinbot') return new PinbotWhatsAppProvider();
       if (provider_type === 'meta')
         return new MetaWhatsAppProvider(
           secrets.meta_access_token ?? '',
@@ -177,6 +179,7 @@ class ProviderFactory {
 
     if (channel === 'whatsapp') {
       const type = process.env.WHATSAPP_PROVIDER ?? 'twilio';
+      if (type === 'pinbot') return new PinbotWhatsAppProvider();
       if (type === 'meta')
         return new MetaWhatsAppProvider(
           process.env.META_WA_ACCESS_TOKEN ?? '',
