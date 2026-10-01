@@ -164,7 +164,7 @@ export const SUBMISSION_STATUS_FILTERS = ["pending_manager", "pending_wfm", "app
 export const AUDIT_ACTION_LABEL: Record<string, string> = {
   submitted: "Submitted", manager_approved: "Manager approved", manager_rejected: "Manager rejected", wfm_approved: "WFM approved",
   wfm_rejected: "WFM rejected", applied: "Applied to roster", partially_applied: "Partly applied to roster", cancelled: "Cancelled",
-  copied_to_draft: "Copied back to a draft",
+  copied_to_draft: "Copied back to a draft", line_edited: "Approver edited a cell",
 };
 
 // ── errors ──────────────────────────────────────────────────────────────────

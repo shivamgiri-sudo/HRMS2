@@ -17,6 +17,7 @@ import { getSubmissionDetail, listApprovals, listMySubmissions } from "./team-ro
 import { getTeamAttendance, getTeamAttendanceDetail } from "./team-roster-attendance.js";
 import { getGrid, getMe, listTemplates } from "./team-roster.service.js";
 import { getAutofillSuggestions } from "./team-roster-autofill.js";
+import { editSubmissionLine } from "./team-roster-approver-edit.js";
 import { managerDecide, wfmDecide } from "./team-roster-workflow.js";
 import { MAX_REMARKS_LENGTH, NEW_ASSIGNMENT_TYPES, TeamRosterError, type Actor } from "./team-roster-types.js";
 
@@ -42,6 +43,12 @@ const schemas = {
   autofill: z.object({ from: ymd, to: ymd, mode: z.enum(["usual", "copy_last_week"]), employeeIds: z.array(z.string().trim().min(1).max(36)).min(1).max(200) }),
   note: z.object({ note: z.string().trim().max(500).nullable() }),
   submit: z.object({ note: z.string().trim().max(500).nullish() }),
+  editLine: cellRef.extend({
+    type: z.enum(NEW_ASSIGNMENT_TYPES),
+    shiftStart: z.string().trim().regex(/^\d{1,2}:\d{2}$/, "expected HH:MM").nullish(),
+    shiftEnd: z.string().trim().regex(/^\d{1,2}:\d{2}$/, "expected HH:MM").nullish(),
+    reason: z.string().trim().max(500).nullish(),
+  }),
   decision: z.object({ remarks: z.string().trim().max(MAX_REMARKS_LENGTH).nullish() }),
   mine: z.object({ status: z.string().trim().max(30).optional(), offset: int, limit: int }),
   approvals: z.object({ step: z.enum(["manager", "wfm"]), offset: int, limit: int }),
@@ -123,6 +130,7 @@ teamRosterRouter.get("/approvals", run("query", schemas.approvals, (a, q) => lis
 teamRosterRouter.get("/submissions/:id", run("none", null, (a, _i, req) => getSubmissionDetail(a, idOf(req))));
 teamRosterRouter.post("/submissions/:id/cancel", run("none", null, (a, _i, req) => cancelSubmission(a, idOf(req))));
 teamRosterRouter.post("/submissions/:id/copy-to-draft", run("none", null, (a, _i, req) => copySubmissionToDraft(a, idOf(req))));
+teamRosterRouter.post("/submissions/:id/edit-line", run("body", schemas.editLine, (a, b, req) => editSubmissionLine(a, idOf(req), b)));
 teamRosterRouter.post("/submissions/:id/manager-approve", run("body", schemas.decision, (a, b, req) => managerDecide(a, idOf(req), "approve", b.remarks)));
 teamRosterRouter.post("/submissions/:id/manager-reject", run("body", schemas.decision, (a, b, req) => managerDecide(a, idOf(req), "reject", b.remarks)));
 teamRosterRouter.post("/submissions/:id/wfm-approve", run("body", schemas.decision, (a, b, req) => wfmDecide(a, idOf(req), "approve", b.remarks)));

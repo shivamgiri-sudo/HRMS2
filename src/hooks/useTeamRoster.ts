@@ -66,6 +66,28 @@ export interface SubmissionListItem {
 }
 export interface SubmissionList { items: SubmissionListItem[]; total: number; offset: number; limit: number }
 
+export type CoverageKind = "SHIFT" | "WEEK_OFF" | "LEAVE" | "TRAINING" | "UNSCHEDULED" | "UNASSIGNED";
+export type CoverageCounts = Record<CoverageKind, number>;
+export interface CoverageDay {
+  date: string; headcount: number; before: CoverageCounts; after: CoverageCounts; shrinkageBeforePct: number; shrinkageAfterPct: number;
+  onFloorBefore: number; onFloorAfter: number; shifts: Record<string, { before: number; after: number }>;
+}
+export interface CoverageRow {
+  employeeId: string; employeeName: string; employeeCode: string | null; processId: string | null; processName: string | null;
+  cells: Array<{ date: string; kind: CoverageKind; label: string; changed: boolean; was: string | null }>;
+  changedCount: number; weekOffs: number; weekOffsBefore: number; maxStreak: number; streakBreach: boolean;
+}
+export interface Coverage {
+  teamSize: number; teamTruncated: boolean; dates: string[]; perDate: CoverageDay[]; rows: CoverageRow[];
+  byProcess: Array<{ processId: string | null; processName: string; headcount: number; avgShrinkageBeforePct: number; avgShrinkageAfterPct: number; peakShrinkageAfterPct: number; minOnFloorAfter: number }>;
+  shiftOptions: Record<string, Array<{ key: string; start: string; end: string; label: string; night: boolean }>>;
+  shiftTotals: Array<{ key: string; before: number; after: number }>;
+  leave: { employees: Array<{ employeeId: string; employeeName: string; employeeCode: string | null; processName: string | null; dates: string[]; halfDays: number }>; totalLeaveDays: number };
+  composition: { before: CoverageCounts; after: CoverageCounts };
+  changeMix: { toShift: number; toWeekOff: number; toTraining: number; toUnscheduled: number };
+  summary: { avgShrinkageBeforePct: number; avgShrinkageAfterPct: number; peakDate: string | null; peakShrinkagePct: number; minOnFloorAfter: number; employeesAffected: number; streakBreaches: number; maxStreakAllowed: number };
+}
+
 export interface SubmissionDetail {
   submission: {
     id: number; submissionNo: string | null; status: string; from: string | null; to: string | null; note: string | null;
@@ -80,6 +102,7 @@ export interface SubmissionDetail {
     old: { type: string | null; label: string | null } | null; new: { type: string; label: string | null };
     reason: string | null; warnings: string[]; status: string; skipReason: string | null; appliedAssignmentId: string | null;
   }>;
+  coverage: Coverage | null;
   summary: { total: number; applied: number; skipped: number; failed: number; pending: number; withWarnings: number };
   timeline: Array<{ action: string; actorName: string | null; actorRole: string | null; remarks: string | null; at: string; meta: unknown }>;
   permissions: { canCancel: boolean; canManagerDecide: boolean; canWfmDecide: boolean; canCopyToDraft: boolean };
@@ -200,6 +223,17 @@ export function useSubmissionAction() {
   return useMutation({
     mutationFn: async (v: { id: number; action: SubmissionAction; remarks?: string }) =>
       unwrap<Record<string, unknown>>(await hrmsApi.post(`${BASE}/submissions/${v.id}/${v.action}`, v.remarks ? { remarks: v.remarks } : {})),
+    onSuccess: () => qc.invalidateQueries({ queryKey: TEAM_ROSTER_KEY }),
+  });
+}
+
+export function useEditSubmissionLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { id: number; employeeId: string; date: string; type: CellType; shiftStart?: string | null; shiftEnd?: string | null; reason?: string }) => {
+      const { id, ...body } = v;
+      return unwrap<{ edited: boolean; removed: boolean }>(await hrmsApi.post(`${BASE}/submissions/${id}/edit-line`, body));
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: TEAM_ROSTER_KEY }),
   });
 }
