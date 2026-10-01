@@ -12,8 +12,8 @@ describe("decision paths notify affected employees", () => {
   });
   it("week-off realign, force-approve and reject-request notify", () => {
     const s = read("../../wfm/wfm.routes.ts");
-    expect(s).toContain("import { notifyRosterRequest }");
-    expect((s.match(/notifyRosterRequest\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(s).toContain("import { notifyWeekoffDecision }");
+    expect((s.match(/notifyWeekoffDecision\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
   });
   it("dispute resolution notifies the assignment's employee", () => {
     const s = read("../../roster/roster.governance.routes.ts");

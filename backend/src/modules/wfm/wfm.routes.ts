@@ -22,7 +22,7 @@ import {
   statusList,
 } from "../../shared/attendanceStatus.js";
 import { planningRuleService } from "./planningRule.service.js";
-import { notifyRosterRequest } from "../roster-requests/roster-requests.notify.js";
+import { notifyWeekoffDecision } from "../roster-requests/roster-requests.notify.js";
 import { slotRequirementService } from "./slotRequirement.service.js";
 import { restPolicyConfigService } from "./rest-policy-config.service.js";
 import { weekoffDayRuleService } from "./weekoffDayRule.service.js";
@@ -1029,19 +1029,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
   // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
   // this: 'escalated_to_hr' is still awaiting a human.
   await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  {
-    const [noticeRows] = await dbConn.execute<RowDataPacket[]>("SELECT employee_id, DATE_FORMAT(roster_date, '%Y-%m-%d') AS roster_date FROM wfm_roster_assignment WHERE id = ? LIMIT 1", [assignmentId]);
-    const notice = (noticeRows as RowDataPacket[])[0];
-    if (notice) {
-      await notifyRosterRequest({
-        employeeIds: [notice.employee_id],
-        kind: "weekoff_rejection",
-        sourceId: String(assignmentId),
-        title: "Week-off request adjusted",
-        description: `Your week-off request for ${notice.roster_date} was adjusted by your manager${new_roster_date ? ` (new date: ${String(new_roster_date).slice(0, 10)})` : ""}.`,
-      });
-    }
-  }
+  await notifyWeekoffDecision(dbConn, assignmentId, "Week-off request adjusted", (date) => `Your week-off request for ${date} was adjusted by your manager${new_roster_date ? ` (new date: ${String(new_roster_date).slice(0, 10)})` : ""}.`);
   return res.json({ success: true, message: "Assignment realigned" });
 }));
 
@@ -1111,19 +1099,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAut
   // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
   // this: 'escalated_to_hr' is still awaiting a human.
   await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  {
-    const [noticeRows] = await dbConn.execute<RowDataPacket[]>("SELECT employee_id, DATE_FORMAT(roster_date, '%Y-%m-%d') AS roster_date FROM wfm_roster_assignment WHERE id = ? LIMIT 1", [assignmentId]);
-    const notice = (noticeRows as RowDataPacket[])[0];
-    if (notice) {
-      await notifyRosterRequest({
-        employeeIds: [notice.employee_id],
-        kind: "weekoff_rejection",
-        sourceId: String(assignmentId),
-        title: "Week-off request approved",
-        description: `Your week-off request for ${notice.roster_date} was approved.`,
-      });
-    }
-  }
+  await notifyWeekoffDecision(dbConn, assignmentId, "Week-off request approved", (date) => `Your week-off request for ${date} was approved.`);
   return res.json({ success: true, message: "Assignment force-approved" });
 }));
 
@@ -1256,19 +1232,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
   // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
   // this: 'escalated_to_hr' is still awaiting a human.
   await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  {
-    const [noticeRows] = await dbConn.execute<RowDataPacket[]>("SELECT employee_id, DATE_FORMAT(roster_date, '%Y-%m-%d') AS roster_date FROM wfm_roster_assignment WHERE id = ? LIMIT 1", [assignmentId]);
-    const notice = (noticeRows as RowDataPacket[])[0];
-    if (notice) {
-      await notifyRosterRequest({
-        employeeIds: [notice.employee_id],
-        kind: "weekoff_rejection",
-        sourceId: String(assignmentId),
-        title: "Week-off request declined",
-        description: `Your week-off request for ${notice.roster_date} was declined; your original assignment is retained.`,
-      });
-    }
-  }
+  await notifyWeekoffDecision(dbConn, assignmentId, "Week-off request declined", (date) => `Your week-off request for ${date} was declined; your original assignment is retained.`);
   return res.json({ success: true, message: "Employee request rejected — original assignment retained" });
 }));
 

@@ -47,3 +47,36 @@ export async function notifyRosterRequest(notice: RosterRequestNotice, exec: Exe
     console.error("[roster-requests] notification failed (decision already applied):", (err as Error)?.message);
   }
 }
+
+/**
+ * Notifies the employee of a week-off assignment about a manager decision. The lookup and the
+ * notify both sit inside the try/catch: the decision is already committed, so nothing here may
+ * turn a success response into a 500.
+ */
+export async function notifyWeekoffDecision(
+  dbConn: Exec,
+  assignmentId: string,
+  title: string,
+  describe: (date: string) => string,
+): Promise<void> {
+  try {
+    const [rows] = await dbConn.execute(
+      "SELECT employee_id, DATE_FORMAT(roster_date, '%Y-%m-%d') AS roster_date FROM wfm_roster_assignment WHERE id = ? LIMIT 1",
+      [assignmentId],
+    );
+    const row = (rows as RowDataPacket[])[0];
+    if (!row) return;
+    await notifyRosterRequest(
+      {
+        employeeIds: [row.employee_id],
+        kind: "weekoff_rejection",
+        sourceId: String(assignmentId),
+        title,
+        description: describe(String(row.roster_date)),
+      },
+      dbConn,
+    );
+  } catch (err) {
+    console.error("[roster-requests] week-off notification failed (decision already applied):", (err as Error)?.message);
+  }
+}
