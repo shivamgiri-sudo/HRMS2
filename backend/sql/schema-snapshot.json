@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1220,
-  "columnCount": 17739,
+  "tableCount": 1222,
+  "columnCount": 17756,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -2475,6 +2475,27 @@
       "rule_id",
       "dimension",
       "value_id"
+    ],
+    "attrition_followup": [
+      "id",
+      "employee_id",
+      "kind",
+      "outcome",
+      "note",
+      "tier_at_action",
+      "score_at_action",
+      "created_by",
+      "created_by_name",
+      "created_at"
+    ],
+    "attrition_model_snapshot": [
+      "snapshot_date",
+      "auc",
+      "base_rate_pct",
+      "population",
+      "leavers",
+      "calibration_json",
+      "created_at"
     ],
     "attrition_record": [
       "id",
