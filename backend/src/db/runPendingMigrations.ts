@@ -1253,6 +1253,8 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1971_process_sales_outbound_source_config.sql", // Registered 2026-09-30. process_sales_source_config + process_outbound_source_config (order/CDR source mapping for the data-driven Sales and Outbound dashboard tabs). Additive: two new tables only, no foreign key to process_master (avoids the metadata-lock wait that broke 1952/1970 at startup). Renumbered from 1961, which was already taken.
   "migrations/1614_two_factor_challenge_pre_auth_binding.sql", // Registered 2026-10-01. Was never scheduled, so SEC-07 (bind each 2FA OTP challenge to the exact login attempt) ran on its ER_BAD_FIELD_ERROR fallback in production. One nullable column + index on auth_two_factor_challenge (small, not hot) behind an information_schema guard; no-op where it exists.
   "migrations/1985_sbi_merge_duplicate_process.sql", // Registered 2026-10-01, at the owner's request. Retires the duplicate "SBI Card Collections" process (never deleted) and gives the real "SBI Credit Cards" process (cost centre + staff) the code SBI_CARD, so the dashboard, uploaders and KPI metrics follow it. Guarded, idempotent, reversible, tiny tables only.
+  "migrations/1986_branch_wfm_rm_change_approvals_page_access.sql", // Registered 2026-10-01. Grants branch_wfm WFM_ROSTER (RM Change Approvals, branch-scoped by the API). INSERT IGNORE, additive.
+  "migrations/1987_branch_wfm_head_wfm_alignment_page_access.sql", // Registered 2026-10-01. Grants branch_wfm and branch_head PROVISIONING_WFM_ALIGNMENT (branch-scoped by the API). INSERT IGNORE, additive.
 ];
 
 export type MigrationHealth = {
