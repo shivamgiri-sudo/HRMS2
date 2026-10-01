@@ -35,7 +35,8 @@ export function describeSkip(reason: string | undefined): string {
 export interface PendencyResult {
   employee_id: string;
   employee_code: string | null;
-  status: 'sent' | 'skipped' | 'failed';
+  /** 'would_send' only in dry-run: the reminder passed every check but nothing was sent or logged. */
+  status: 'sent' | 'skipped' | 'failed' | 'would_send';
   reason?: SkipReason | string;
 }
 
@@ -235,6 +236,8 @@ export async function sendPendencyReminders(args: {
   sentBy: string | null;
   trigger: 'manual' | 'scheduler';
   now?: Date;
+  /** Evaluate every rule but send nothing and write no log row. */
+  dryRun?: boolean;
 }): Promise<PendencyResult[]> {
   const ids = Array.from(new Set(args.employeeIds.map(String).filter(Boolean)));
   const now = args.now ?? new Date();
@@ -261,6 +264,8 @@ export async function sendPendencyReminders(args: {
     if (!item.link) { results.push(skip('no_valid_link')); continue; }
     const to = pickRecipient(contact as any);
     if (!to) { results.push(skip('no_email')); continue; }
+
+    if (args.dryRun) { results.push({ employee_id: id, employee_code: code, status: 'would_send' }); continue; }
 
     const { html, text } = buildPendencyEmail({
       name: contact.first_name?.trim() || 'there',
@@ -293,4 +298,41 @@ export async function sendPendencyReminders(args: {
       : { employee_id: id, employee_code: code, status: 'failed', reason: error ?? 'send_failed' });
   }
   return results;
+}
+
+/**
+ * Employees currently pending for a kind, for the scheduler. Population rules match the
+ * per-kind loaders above; `limit` keeps one run from becoming a mail burst.
+ */
+export async function listPendingEmployeeIds(kind: PendencyKind, limit: number): Promise<string[]> {
+  const cap = Math.max(1, Math.min(Math.floor(limit), 500));
+  let sql: string;
+  switch (kind) {
+    case 'esi_docs':
+      sql = `SELECT e.id FROM employees e
+               JOIN employee_statutory_info esi ON esi.employee_id = e.id
+              WHERE e.active_status = 1 AND esi.esi_eligible = 1
+                AND COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL
+                AND e.employment_status != 'terminated'
+              ORDER BY e.employee_code LIMIT ${cap}`;
+      break;
+    case 'bank_account':
+      sql = `SELECT e.id FROM employees e
+              WHERE e.active_status = 1 AND e.employment_status != 'terminated'
+                AND NOT EXISTS (SELECT 1 FROM employee_bank_detail b
+                                 WHERE b.employee_id = e.id AND b.is_primary = 1
+                                   AND b.ifsc_code IS NOT NULL AND b.ifsc_code != '')
+              ORDER BY e.employee_code LIMIT ${cap}`;
+      break;
+    case 'digilocker':
+      sql = `SELECT e.id FROM ats_onboarding_bridge b
+               JOIN employees e ON e.id = b.employee_id
+              WHERE e.active_status = 1 AND e.employment_status != 'terminated'
+                AND COALESCE(b.digilocker_status, 'not_started') != 'documents_received'
+                AND b.onboarding_token IS NOT NULL AND b.onboarding_token_expires_at > NOW()
+              ORDER BY e.employee_code LIMIT ${cap}`;
+      break;
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(sql);
+  return (rows as RowDataPacket[]).map((r) => String(r.id));
 }

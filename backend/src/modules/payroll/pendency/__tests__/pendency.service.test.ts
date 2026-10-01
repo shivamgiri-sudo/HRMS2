@@ -113,6 +113,15 @@ describe('sendPendencyReminders', () => {
     expect(insert[1]).toEqual(expect.arrayContaining(['e1', 'esi_docs', 'sent', 'asha@x.com', 'manual', 'u1']));
   });
 
+  it('dry-run reports would_send without sending or writing a log row', async () => {
+    mockDb({ contacts: [{ id: 'e1', employee_code: 'MAS1', first_name: 'A', personal_email: 'a@x.com' }] });
+    vi.mocked(fetchEsiPendingRows).mockResolvedValue([{ employee_id: 'e1', pan_ready: 0, aadhaar_ready: 1, photo_ready: 1, bank_passbook_url: '/x' }] as any);
+    const res = await sendPendencyReminders({ kind: 'esi_docs', employeeIds: ['e1'], sentBy: null, trigger: 'scheduler', dryRun: true });
+    expect(res[0]).toMatchObject({ status: 'would_send' });
+    expect(emailService.send).not.toHaveBeenCalled();
+    expect(exec.mock.calls.some((c) => String(c[0]).includes('INSERT INTO pendency_reminder_log'))).toBe(false);
+  });
+
   it('skips employees who are not pending, without sending', async () => {
     mockDb({ contacts: [{ id: 'e1', employee_code: 'MAS1', first_name: 'A', personal_email: 'a@x.com' }] });
     vi.mocked(fetchEsiPendingRows).mockResolvedValue([

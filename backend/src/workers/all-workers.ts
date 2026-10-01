@@ -11,6 +11,7 @@ import { startLeaveMonthlyWorker, stopLeaveMonthlyWorker } from "./leave-monthly
 import { startOfficialEmailComplianceScheduler, stopOfficialEmailComplianceScheduler } from "./official-email-compliance.worker.js";
 import { startSLABreachWorker, stopSLABreachWorker } from "./sla-breach-worker.js";
 import { startInterviewDelayAlertWorker, stopInterviewDelayAlertWorker } from "./interview-delay-alert.worker.js";
+import { startPendencyReminderWorker, stopPendencyReminderWorker } from "./pendency-reminder.worker.js";
 import { startLmsSyncWorker, stopLmsSyncWorker } from "./lms-sync.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./payroll-nightly-recalc.worker.js";
 import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./payroll-recalc-drainer.worker.js";
@@ -246,6 +247,11 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "interview-delay-alert",
     start: () => { startInterviewDelayAlertWorker(); return Promise.resolve(); },
+  },
+  {
+    // OFF unless PENDENCY_REMINDER_MODE=dry-run|live — see the worker header.
+    name: "pendency-reminder",
+    start: () => { startPendencyReminderWorker(); return Promise.resolve(); },
   },
   // ── Previously server.ts-only (see the import block above) ──
   {
@@ -619,6 +625,7 @@ function shutdown(): void {
   stopOfficialEmailComplianceScheduler();
   stopSLABreachWorker();
   stopInterviewDelayAlertWorker();
+  stopPendencyReminderWorker();
   stopLmsSyncWorker();
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
