@@ -412,7 +412,7 @@ export async function getEmployeeJourney(employeeId: string) {
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT e.*, b.branch_name, b.state AS branch_state, dm.designation_name,
-              cc.cost_centre_name, pm.process_name
+              cc.cost_centre_name, cc.cost_centre_code, pm.process_name
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN designation_master dm ON dm.id = e.designation_id

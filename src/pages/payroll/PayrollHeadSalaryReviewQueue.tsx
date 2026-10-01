@@ -461,6 +461,9 @@ export function FinalSalarySection({
                         : filtered.map((p) => (
                           <SelectItem key={p.id} value={p.id} className="text-xs">
                             {p.name ?? p.band_name ?? `Band ${p.band_code}`} · {inr(p.package_amount)}/mo
+                            {/* Two packages can share band and amount but pay differently. */}
+                            {` · Gross ${inr(p.gross)} · Net ${inr(p.net_in_hand)}`}
+                            {p.cost_centre_code ? ` · ${p.cost_centre_code}` : ''}
                             {p.slab_from != null ? ` · ₹${Number(p.slab_from).toLocaleString('en-IN')}–₹${Number(p.slab_to).toLocaleString('en-IN')}` : ''}
                           </SelectItem>
                         ))}
@@ -870,10 +873,20 @@ function SectionPopup({
 
   useEffect(() => {
     const branch = journey?.employee?.branch_name;
+    const costCentre = journey?.employee?.cost_centre_code;
     if (!branch) { setPackages([]); return; }
-    hrmsApi.get<{ data: any[] }>(`/api/payroll-masters/packages?branch=${encodeURIComponent(branch)}`)
-      .then((r: any) => setPackages(r?.data ?? [])).catch(() => {});
-  }, [journey?.employee?.branch_name]);
+    // Packages are keyed by branch + cost centre + band. Listing the whole branch showed every
+    // cost centre's packages under identical labels; ask for this employee's cost centre (plus
+    // branch-wide ones) and fall back to the whole branch only when that comes back empty.
+    const url = (cc?: string) =>
+      `/api/payroll-masters/packages?branch=${encodeURIComponent(branch)}${cc ? `&costCentre=${encodeURIComponent(cc)}` : ''}`;
+    (async () => {
+      let rows: any[] = [];
+      if (costCentre) rows = ((await hrmsApi.get<{ data: any[] }>(url(costCentre))) as any)?.data ?? [];
+      if (!rows.length) rows = ((await hrmsApi.get<{ data: any[] }>(url())) as any)?.data ?? [];
+      setPackages(rows);
+    })().catch(() => {});
+  }, [journey?.employee?.branch_name, journey?.employee?.cost_centre_code]);
 
   async function run(fn: () => Promise<unknown>, ok?: string) {
     setBusy(true); setError(null); setNotice(null);
@@ -1260,10 +1273,20 @@ function ReviewDrawer({
 
   useEffect(() => {
     const branch = journey?.employee?.branch_name;
+    const costCentre = journey?.employee?.cost_centre_code;
     if (!branch) { setPackages([]); return; }
-    hrmsApi.get<{ data: any[] }>(`/api/payroll-masters/packages?branch=${encodeURIComponent(branch)}`)
-      .then((r: any) => setPackages(r?.data ?? [])).catch(() => {});
-  }, [journey?.employee?.branch_name]);
+    // Packages are keyed by branch + cost centre + band. Listing the whole branch showed every
+    // cost centre's packages under identical labels; ask for this employee's cost centre (plus
+    // branch-wide ones) and fall back to the whole branch only when that comes back empty.
+    const url = (cc?: string) =>
+      `/api/payroll-masters/packages?branch=${encodeURIComponent(branch)}${cc ? `&costCentre=${encodeURIComponent(cc)}` : ''}`;
+    (async () => {
+      let rows: any[] = [];
+      if (costCentre) rows = ((await hrmsApi.get<{ data: any[] }>(url(costCentre))) as any)?.data ?? [];
+      if (!rows.length) rows = ((await hrmsApi.get<{ data: any[] }>(url())) as any)?.data ?? [];
+      setPackages(rows);
+    })().catch(() => {});
+  }, [journey?.employee?.branch_name, journey?.employee?.cost_centre_code]);
 
   async function run(fn: () => Promise<unknown>, ok?: string) {
     setBusy(true); setError(null); setNotice(null);
