@@ -3,8 +3,17 @@ import { timingSafeEqual } from "crypto";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { env } from "../../config/env.js";
-import { hasScopedAccess } from "../../shared/scopeAccess.js";
-import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { hasScopedAccess, getUserRoleKeys } from "../../shared/scopeAccess.js";
+import { resolveAtsBranchScope, branchInScope } from "../ats/ats-branch-scope.js";
+
+/**
+ * Org-wide callers (ORG_WIDE_EXEMPT_ROLES) bypass the candidate row scope; hr and every other role are
+ * limited to their own branch / assigned scope (owner policy 2026-10-01). Was: super_admin || hr || ceo.
+ */
+async function orgWideCaller(userId: string | undefined): Promise<boolean> {
+  if (!userId) return false;
+  return (await resolveAtsBranchScope(userId)).orgWide;
+}
 import { atsFullParityService as svc } from "./atsFullParity.service.js";
 import { sharedInFlight } from "../dashboards/metrics-in-flight.js";
 import {
@@ -104,8 +113,7 @@ atsFullParityRouter.post("/recruiter-devices", requireFormApiKey, h(async (req, 
 atsFullParityRouter.use(requireAuth);
 
 atsFullParityRouter.get("/web-data", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
-  const bypassScope = isSuperAdmin || role === "hr" || role === "ceo";
+  const bypassScope = await orgWideCaller(req.authUser?.id);
   const data = await svc.webData({ ...(req.query as Record<string, unknown>), actorId: req.authUser?.id, bypassScope });
   res.json(data);
 }));
@@ -119,8 +127,7 @@ atsFullParityRouter.get("/web-data", requireRole("admin", "hr", "recruiter", "ma
  * render. See commandCenterData() for the measurements.
  */
 atsFullParityRouter.get("/command-center", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
-  const bypassScope = isSuperAdmin || role === "hr" || role === "ceo";
+  const bypassScope = await orgWideCaller(req.authUser?.id);
   const query = req.query as Record<string, unknown>;
   const actorId = req.authUser?.id;
   // Keyed by actor + scope + filters, so one user's scoped result is never served to another.
@@ -137,8 +144,7 @@ atsFullParityRouter.get("/command-center", requireRole("admin", "hr", "recruiter
 }));
 
 atsFullParityRouter.get("/queue", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
-  const bypassScope = isSuperAdmin || role === "hr" || role === "ceo";
+  const bypassScope = await orgWideCaller(req.authUser?.id);
   const data = await svc.webData({ period: "ALL", actorId: req.authUser?.id, bypassScope });
   res.json({ success: true, data: data.queueRows });
 }));
@@ -161,8 +167,7 @@ atsFullParityRouter.get("/queue", requireRole("admin", "hr", "recruiter", "manag
  * period is pinned to "ALL" so the in-memory filter cannot narrow the SQL range further.
  */
 atsFullParityRouter.get("/submissions", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
-  const bypassScope = isSuperAdmin || role === "hr" || role === "ceo";
+  const bypassScope = await orgWideCaller(req.authUser?.id);
   const data = await svc.webData({
     fromDate: req.query.from ? String(req.query.from) : undefined,
     toDate: req.query.to ? String(req.query.to) : undefined,
@@ -179,9 +184,8 @@ atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "man
   const data = await svc.candidateJourney(query);
   if (!data) return res.status(404).json({ success: false, message: "Candidate not found" });
   // Scope check: admin/hr/ceo may view any candidate; all other roles require branch/process match
-  const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
-  const isPrivileged = isSuperAdmin || role === "hr" || role === "ceo";
-  if (!isPrivileged) {
+  const atsScope = await resolveAtsBranchScope(req.authUser!.id);
+  if (!atsScope.orgWide) {
     const candidate = data.candidate as Record<string, unknown>;
     const recruiterProfile = await resolveRecruiterForActor(req.authUser!.id);
     const assignedRecruiterIds = [
@@ -198,7 +202,7 @@ atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "man
     if (assignedByRecruiterId || assignedByRecruiterName) {
       return res.json({ success: true, data });
     }
-    const allowed = await hasScopedAccess(
+    const allowed = branchInScope(atsScope, candidate.applied_for_branch) || branchInScope(atsScope, candidate.branch_text) || await hasScopedAccess(
       req.authUser!.id,
       ["recruiter", "manager", "branch_head", "process_manager"],
       {
@@ -213,8 +217,8 @@ atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "man
 }));
 
 atsFullParityRouter.post("/recruiter-submission", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: AuthenticatedRequest, res) => {
-  const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
-  const isPrivileged = isSuperAdmin || role === "hr";
+  const submitScope = await resolveAtsBranchScope(req.authUser!.id);
+  const isPrivileged = submitScope.orgWide || (await getUserRoleKeys(req.authUser!.id)).includes("hr");
   const bodyCode = String(req.body?.recruiterCode ?? "").trim();
 
   let recruiterProfile: import("./recruiterInterview.service.js").RecruiterProfile;
@@ -227,6 +231,10 @@ atsFullParityRouter.post("/recruiter-submission", requireRole("admin", "hr", "re
       [bodyCode]
     );
     if (!recRows[0]) return res.status(403).json({ success: false, message: "Recruiter not found or inactive" });
+    // hr acts on behalf of recruiters of ITS OWN branch only.
+    if (!submitScope.orgWide && !branchInScope(submitScope, recRows[0].branch)) {
+      return res.status(403).json({ success: false, message: "Forbidden: recruiter is outside your branch / assigned scope" });
+    }
     recruiterProfile = {
       id: recRows[0].id,
       name: recRows[0].name,
@@ -270,15 +278,14 @@ atsFullParityRouter.post("/jobs/repair", requireRole("admin", "hr"), h(async (re
 
 atsFullParityRouter.get("/daily-report/snapshot", requireRole("admin", "hr", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
   const mode = req.query.mode === "send" ? "send" : "preview";
-  const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
-  const actorId = (isSuperAdmin || role === "hr" || role === "ceo") ? undefined : req.authUser?.id;
+  const actorId = (await orgWideCaller(req.authUser?.id)) ? undefined : req.authUser?.id;
   const data = await svc.dailyReportSnapshot(mode, actorId);
   res.json({ success: true, data });
 }));
 
-atsFullParityRouter.post("/daily-report/send", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res) => {
-  // admin/hr always bypass scope — full cross-branch report
-  const data = await svc.dailyReportSnapshot("send");
+atsFullParityRouter.post("/daily-report/send", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  // Org-wide roles send the full cross-branch report; hr is limited to its own branch's report.
+  const data = await svc.dailyReportSnapshot("send", (await orgWideCaller(req.authUser?.id)) ? undefined : req.authUser?.id);
   res.json({ success: true, data });
 }));
 

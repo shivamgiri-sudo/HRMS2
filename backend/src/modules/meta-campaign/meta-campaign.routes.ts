@@ -24,7 +24,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { metaCampaignService } from './meta-campaign.service.js';
-import { ALL_BRANCH_ROLES, resolveBranchScope, canAccessLead, canMessageLead } from './meta-access.js';
+import { resolveBranchScope, canAccessLead, canAccessCampaign, canAccessRequisition, effectiveBranchFilter, canMessageLead } from './meta-access.js';
 import type { BranchScope } from './meta-access.js';
 import {
   getEvaluations,
@@ -99,27 +99,24 @@ async function requireLeadInScope(
 }
 
 /**
- * Resolve the effective branchName filter for a request.
- * - ALL_BRANCH_ROLES: return whatever branchName the caller passed (may be undefined = show all)
- * - branch-scoped roles: look up the user's branch from their employee record and force it.
+ * Resolve the effective branchName filter for a request. The browser's ?branchName= may only NARROW
+ * what the server allows. Returns `deny: true` (caller must answer with nothing) for a branch-scoped
+ * user with no resolvable branch or one asking for a branch that is not theirs.
  */
 async function resolvebranchScope(
-  userId: string,
-  role: string,
+  req: AuthenticatedRequest,
   callerBranch?: string
-): Promise<string | undefined> {
-  if (ALL_BRANCH_ROLES.includes(role)) return callerBranch;
-  // Branch-scoped role: derive branch_name from employee → branch_master
-  const { db } = await import('../../db/mysql.js');
-  const [rows] = await db.execute<import('mysql2').RowDataPacket[]>(
-    `SELECT bm.branch_name
-       FROM employees e
-       JOIN branch_master bm ON bm.id = e.branch_id
-      WHERE e.user_id = ? AND e.active_status = 1
-      LIMIT 1`,
-    [userId]
-  );
-  return (rows[0]?.branch_name as string | null) ?? callerBranch;
+): Promise<{ deny: boolean; branchName?: string; scope: BranchScope }> {
+  const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
+  return { ...effectiveBranchFilter(scope, callerBranch), scope };
+}
+
+/** 403 unless the campaign's requisition is inside the caller's branch. */
+async function requireCampaignInScope(req: AuthenticatedRequest, res: Response, campaignId: string): Promise<boolean> {
+  const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
+  if (await canAccessCampaign(campaignId, scope)) return true;
+  res.status(403).json({ success: false, message: 'Forbidden: this campaign belongs to another branch' });
+  return false;
 }
 
 /** Writes are narrower: linking a form ID wrongly misroutes candidates, so keep it with HR. */
@@ -417,8 +414,10 @@ metaCampaignRouter.get(
   '/overview',
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
-  h(async (_req, res) => {
-    const data = await metaCampaignService.getOverview();
+  h(async (req, res) => {
+    const f = await resolvebranchScope(req, req.query.branchName as string | undefined);
+    if (f.deny) return res.status(403).json({ success: false, message: 'Forbidden: outside your branch / assigned scope' });
+    const data = await metaCampaignService.getOverview(f.branchName);
     return res.json({ success: true, data });
   })
 );
@@ -448,8 +447,10 @@ metaCampaignRouter.get(
   '/filter-options',
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
-  h(async (_req, res) => {
-    const data = await metaCampaignService.getFilterOptions();
+  h(async (req, res) => {
+    const f = await resolvebranchScope(req);
+    if (f.deny) return res.json({ success: true, data: { branches: [], processes: [], requisitions: [] } });
+    const data = await metaCampaignService.getFilterOptions(f.branchName);
     return res.json({ success: true, data });
   })
 );
@@ -459,12 +460,9 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
-    const ar = req as AuthenticatedRequest;
-    const branchName = await resolvebranchScope(
-      ar.authUser.id,
-      ar.authUser.role ?? '',
-      req.query.branchName as string | undefined
-    );
+    const f = await resolvebranchScope(req as AuthenticatedRequest, req.query.branchName as string | undefined);
+    if (f.deny) return res.json({ success: true, data: [] });
+    const branchName = f.branchName;
     const data = await metaCampaignService.listCampaigns({
       requisitionId: req.query.requisitionId as string | undefined,
       status: req.query.status as MetaCampaignStatus | undefined,
@@ -483,6 +481,7 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
+    if (!(await requireCampaignInScope(req as AuthenticatedRequest, res, req.params.id!))) return;
     const data = await metaCampaignService.getCampaign(req.params.id!);
     if (!data) return res.status(404).json({ success: false, message: 'Campaign not found' });
     return res.json({ success: true, data });
@@ -494,6 +493,7 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
+    if (!(await requireCampaignInScope(req as AuthenticatedRequest, res, req.params.id!))) return;
     const data = await metaCampaignService.getCampaignFunnel(req.params.id!);
     if (!data) return res.status(404).json({ success: false, message: 'Campaign not found' });
     return res.json({ success: true, data });
@@ -505,7 +505,10 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
+    const f = await resolvebranchScope(req as AuthenticatedRequest);
+    if (f.deny) return res.json({ success: true, data: [] });
     const data = await metaCampaignService.listLeads({
+      branchName: f.branchName,
       campaignId: req.query.campaignId as string | undefined,
       requisitionId: req.query.requisitionId as string | undefined,
       screening: req.query.screening as string | undefined,
@@ -526,12 +529,9 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
-    const ar = req as AuthenticatedRequest;
-    const branchName = await resolvebranchScope(
-      ar.authUser.id,
-      ar.authUser.role ?? '',
-      req.query.branchName as string | undefined
-    );
+    const f = await resolvebranchScope(req as AuthenticatedRequest, req.query.branchName as string | undefined);
+    if (f.deny) return res.json({ success: true, data: [], total: 0 });
+    const branchName = f.branchName;
     const limit = req.query.limit ? Number(req.query.limit) : 50;
     const offset = req.query.offset ? Number(req.query.offset) : 0;
     const data = await metaCampaignService.listAllLeads({
@@ -665,6 +665,10 @@ metaCampaignRouter.post(
     if (!requisitionId || !campaignName) {
       return res.status(400).json({ success: false, message: 'requisitionId and campaignName are required' });
     }
+    const createScope = await resolveBranchScope(req.authUser!.id, callerRoles(req as AuthenticatedRequest));
+    if (!(await canAccessRequisition(String(requisitionId), createScope))) {
+      return res.status(403).json({ success: false, message: 'Forbidden: requisition is outside your branch / assigned scope' });
+    }
     const data = await metaCampaignService.createCampaign(req.body, req.authUser?.id ?? null);
     return res.status(201).json({ success: true, data });
   })
@@ -675,6 +679,7 @@ metaCampaignRouter.patch(
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
+    if (!(await requireCampaignInScope(req as AuthenticatedRequest, res, req.params.id!))) return;
     const data = await metaCampaignService.updateCampaign(req.params.id!, req.body ?? {});
     return res.json({ success: true, data });
   })
@@ -704,6 +709,7 @@ metaCampaignRouter.post(
     if (!isMetaConfigured()) {
       return res.status(503).json({ success: false, message: 'META Graph API token is not configured' });
     }
+    if (!(await requireCampaignInScope(req as AuthenticatedRequest, res, req.params.id!))) return;
     const campaign = await metaCampaignService.getCampaign(req.params.id!);
     if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found' });
     if (!campaign.metaFormId) {
@@ -733,6 +739,7 @@ metaCampaignRouter.post(
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const data = await metaCampaignService.rescreenLead(req.params.id!);
     if (!data) return res.status(404).json({ success: false, message: 'Lead not found' });
     return res.json({ success: true, data });
@@ -745,6 +752,7 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES, ...INBOX_ROLES),
   h(async (req, res) => {
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const preview = await buildNotifyPreview(req.params.id!);
     if (!preview) return res.status(404).json({ success: false, message: 'Lead not found' });
     return res.json({ success: true, data: preview });
@@ -756,6 +764,7 @@ metaCampaignRouter.post(
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const data = await notifyQualifiedLead(req.params.id!, { force: req.body?.force === true });
     return res.json({ success: true, data });
   })
@@ -766,6 +775,7 @@ metaCampaignRouter.post(
   requireAuth,
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (req, res) => {
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const candidateId = await metaCampaignService.createCandidateFromLead(req.params.id!);
     if (!candidateId) {
       return res
@@ -1014,8 +1024,8 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole('super_admin', 'admin', 'hr', 'management', 'manager'),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const role = req.authUser!.role ?? '';
-    const scope = await resolveBranchScope(req.authUser!.id, role ? [role] : []);
+    const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
+    if (!scope.all && !scope.branchName) return res.json({ success: true, data: [] }); // fail closed
     const { db: dbConn } = await import('../../db/mysql.js');
     const params: unknown[] = [];
     let branchFilter = '';

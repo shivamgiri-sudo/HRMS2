@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import { z } from 'zod';
 import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
+import { canAccessCandidate, candidateParamGuard, resolveCandidateScope } from './candidate-access.js';
 import {
   getPendingCandidates,
   getValidatedCandidates,
@@ -58,19 +59,30 @@ const optionalPositiveNumber = z.preprocess(
 payrollHRRouter.use(requireAuth);
 payrollHRRouter.use(requireRole('admin', 'hr', 'payroll_hr'));
 
+// Branch scoping (owner ruling 2026-10-01): payroll_hr / hr act only on candidates inside their own branch /
+// assigned scope (org-wide roles unaffected). Lists get the scope predicate; every candidate-id route and the
+// body-id writes are guarded (404 so an out-of-branch id looks like a missing one).
+payrollHRRouter.param('candidateId', candidateParamGuard());
+const candidateScope = (req: AuthenticatedRequest) => resolveCandidateScope(req.authUser!.id, 'c');
+const bodyCandidateInScope = async (req: AuthenticatedRequest, res: Response, candidateId: unknown) => {
+  if (typeof candidateId === 'string' && await canAccessCandidate(req.authUser!.id, candidateId)) return true;
+  res.status(404).json({ success: false, message: 'Candidate not found' });
+  return false;
+};
+
 // ── 1. Get pending candidates (BGV verified, onboarding submitted) ────────────
-payrollHRRouter.get('/pending-candidates', h(async (_req: AuthenticatedRequest, res: Response) => {
+payrollHRRouter.get('/pending-candidates', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const candidates = await getPendingCandidates();
+    const candidates = await getPendingCandidates(await candidateScope(req));
     return res.json({ success: true, data: candidates });
   } catch (error: unknown) {
     return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
 }));
 
-payrollHRRouter.get('/validated-candidates', h(async (_req: AuthenticatedRequest, res: Response) => {
+payrollHRRouter.get('/validated-candidates', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const candidates = await getValidatedCandidates();
+    const candidates = await getValidatedCandidates(await candidateScope(req));
     return res.json({ success: true, data: candidates });
   } catch (error: unknown) {
     return res.status(500).json({ success: false, message: getErrorMessage(error) });
@@ -136,6 +148,7 @@ const salaryValidationSchema = z.object({
 payrollHRRouter.post('/validate', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
+    if (!(await bodyCandidateInScope(req, res, input.candidate_id))) return;
 
     // Salary start date cannot precede the joining date — that would mean paying an
     // employee before they joined. Validated here (backend) because Payroll HR can
@@ -190,6 +203,7 @@ payrollHRRouter.post('/salary-proposal', h(async (req: AuthenticatedRequest, res
   if (!candidate_id || !salary_slab_id || !proposed_gross_salary || !String(proposal_reason ?? '').trim()) {
     return res.status(400).json({ success: false, message: 'candidate_id, salary_slab_id, proposed_gross_salary, and proposal_reason are required' });
   }
+  if (!(await bodyCandidateInScope(req, res, candidate_id))) return;
   await db.execute(
     `INSERT INTO salary_exception_proposal
        (id, candidate_id, salary_slab_id, proposed_gross_salary, proposal_reason, proposed_by, status)
@@ -209,6 +223,7 @@ payrollHRRouter.post('/salary-proposal', h(async (req: AuthenticatedRequest, res
 payrollHRRouter.post('/submit-offer', h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
+    if (!(await bodyCandidateInScope(req, res, input.candidate_id))) return;
     const payrollHrId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
     const result = await validateAndAssignSalary({ ...input, payroll_hr_id: payrollHrId, actor_roles: req.authUser!.roles });
     return res.json(result);
@@ -246,6 +261,7 @@ const notifyBranchHeadSchema = z.object({
 payrollHRRouter.post('/notify-branch-head', h(async (req: Request, res: Response) => {
   try {
     const { candidate_id, branch_head_id } = notifyBranchHeadSchema.parse(req.body);
+    if (!(await bodyCandidateInScope(req as AuthenticatedRequest, res, candidate_id))) return;
 
     const result = await notifyBranchHeadForApproval(candidate_id, branch_head_id);
 

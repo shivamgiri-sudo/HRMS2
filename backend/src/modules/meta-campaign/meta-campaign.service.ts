@@ -330,9 +330,13 @@ export const metaCampaignService = {
     return updated;
   },
 
-  async listLeads(filters: { campaignId?: string; requisitionId?: string; screening?: string } = {}): Promise<MetaLead[]> {
+  async listLeads(filters: { campaignId?: string; requisitionId?: string; screening?: string; branchName?: string } = {}): Promise<MetaLead[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
+    if (filters.branchName) {
+      conds.push('requisition_id IN (SELECT id FROM job_requisition WHERE branch_name = ?)');
+      params.push(filters.branchName);
+    }
     if (filters.campaignId) {
       conds.push('campaign_id = ?');
       params.push(filters.campaignId);
@@ -1138,7 +1142,7 @@ export const metaCampaignService = {
   },
 
   /** Roll-up across every campaign, for the dashboard header. */
-  async getOverview(): Promise<{
+  async getOverview(branchName?: string): Promise<{
     campaigns: number;
     activeCampaigns: number;
     impressions: number;
@@ -1163,7 +1167,9 @@ export const metaCampaignService = {
               COALESCE(SUM(impressions),0) AS impressions,
               COALESCE(SUM(clicks),0)      AS clicks,
               COALESCE(SUM(spend_inr),0)   AS spend_inr
-         FROM meta_campaign`
+         FROM meta_campaign
+        ${branchName ? 'WHERE requisition_id IN (SELECT id FROM job_requisition WHERE branch_name = ?)' : ''}`,
+      branchName ? [branchName] : []
     );
     const [l] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS form_fills,
@@ -1171,7 +1177,9 @@ export const metaCampaignService = {
               SUM(CASE WHEN screening_result = 'disqualified' THEN 1 ELSE 0 END) AS disqualified,
               SUM(CASE WHEN screening_result = 'pending' THEN 1 ELSE 0 END)      AS pending,
               SUM(CASE WHEN ats_candidate_id IS NOT NULL THEN 1 ELSE 0 END)      AS candidates
-         FROM meta_lead_raw`
+         FROM meta_lead_raw
+        ${branchName ? 'WHERE requisition_id IN (SELECT id FROM job_requisition WHERE branch_name = ?)' : ''}`,
+      branchName ? [branchName] : []
     );
 
     // ATS funnel stages for candidates from META campaigns — uses the canonical stage mapping
@@ -1183,7 +1191,9 @@ export const metaCampaignService = {
          SUM(CASE WHEN LOWER(c.current_stage) IN ('onboarded', 'converted', 'payroll_validated') THEN 1 ELSE 0 END) AS onboarded
        FROM meta_lead_raw ml
        JOIN ats_candidate c ON c.id = ml.ats_candidate_id
-       WHERE ml.ats_candidate_id IS NOT NULL`
+       WHERE ml.ats_candidate_id IS NOT NULL
+        ${branchName ? 'AND ml.requisition_id IN (SELECT id FROM job_requisition WHERE branch_name = ?)' : ''}`,
+      branchName ? [branchName] : []
     );
 
     const spend = Number(c[0]?.spend_inr ?? 0);
@@ -1259,7 +1269,7 @@ export const metaCampaignService = {
   },
 
   /** Distinct branches, processes, and requisitions for the dashboard filter dropdowns. */
-  async getFilterOptions(): Promise<{
+  async getFilterOptions(branchName?: string): Promise<{
     branches: string[];
     processes: string[];
     requisitions: Array<{ id: string; code: string; designation: string }>;
@@ -1268,7 +1278,9 @@ export const metaCampaignService = {
       `SELECT DISTINCT jr.branch_name, jr.process_name
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
-        WHERE jr.branch_name IS NOT NULL OR jr.process_name IS NOT NULL`
+        WHERE (jr.branch_name IS NOT NULL OR jr.process_name IS NOT NULL)
+          ${branchName ? 'AND jr.branch_name = ?' : ''}`,
+      branchName ? [branchName] : []
     );
     const branches = [...new Set(
       dimRows.map((r) => r.branch_name as string | null).filter((v): v is string => Boolean(v))
@@ -1283,7 +1295,9 @@ export const metaCampaignService = {
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
         WHERE mc.requisition_id IS NOT NULL
-        ORDER BY jr.requisition_code`
+          ${branchName ? 'AND jr.branch_name = ?' : ''}
+        ORDER BY jr.requisition_code`,
+      branchName ? [branchName] : []
     );
     const requisitions = reqRows
       .filter((r) => r.id)

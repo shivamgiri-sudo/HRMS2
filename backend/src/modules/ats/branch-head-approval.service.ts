@@ -1,6 +1,7 @@
 import { db } from "../../db/mysql.js";
 import {
   resolveBranchHeadScope,
+  assertBranchHeadCanSeeCandidate,
   buildCandidateBranchPredicate,
 } from "./branch-head-scope.js";
 import { getUserAssignmentScopes } from "../../shared/scopeAccess.js";
@@ -226,6 +227,10 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
   }
 
   const approval = approvals[0];
+
+  // Branch scoping (owner ruling 2026-10-01): decide BEFORE any row is written. Throws 403 when the
+  // candidate is outside the caller's branch / assigned scope.
+  await assertBranchHeadCanSeeCandidate(actorUserId, String(approval.candidate_id));
 
   // Start transaction
   const connection = await db.getConnection();

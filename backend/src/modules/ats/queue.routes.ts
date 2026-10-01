@@ -20,6 +20,8 @@ import {
 } from './queue.enhanced.service.js';
 import { sendRejectedEmailProfessional } from './ats.email.service.js';
 import { inboxService } from '../inbox/inbox.service.js';
+import { canAccessCandidate, resolveCandidateScope } from './candidate-access.js';
+import { branchInScope, resolveAtsBranchScope, OUT_OF_BRANCH_MESSAGE } from './ats-branch-scope.js';
 
 export const queueRouter = Router();
 export const queuePublicRouter = Router();
@@ -196,6 +198,26 @@ queueRouter.get(
 
 queueRouter.use(requireRole('admin', 'hr', 'recruiter', 'manager'));
 
+// Branch scoping (owner ruling 2026-10-01): a ?branch= from the browser may only NARROW the caller's own
+// branch scope. Every queue_id mutation is checked against the owning candidate's branch first.
+async function queueIdInScope(req: Request, res: Response, queueId: unknown): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT candidate_id FROM ats_queue_token WHERE id = ? LIMIT 1`, [String(queueId)]);
+  const candidateId = (rows as RowDataPacket[])[0]?.candidate_id;
+  if (!candidateId) { res.status(404).json({ success: false, message: 'Queue entry not found' }); return false; }
+  if (!(await canAccessCandidate((req as AuthenticatedRequest).authUser!.id, String(candidateId)))) {
+    res.status(403).json({ success: false, message: OUT_OF_BRANCH_MESSAGE });
+    return false;
+  }
+  return true;
+}
+async function branchFilterAllowed(req: Request, res: Response, branch: unknown): Promise<boolean> {
+  if (!branch) return true;
+  const scope = await resolveAtsBranchScope((req as AuthenticatedRequest).authUser!.id);
+  if (branchInScope(scope, branch)) return true;
+  res.status(403).json({ success: false, message: OUT_OF_BRANCH_MESSAGE });
+  return false;
+}
+
 // ── 1. Get live queue with filters ────────────────────────────────────────────
 queueRouter.get('/live', h(async (req: Request, res: Response) => {
   try {
@@ -205,7 +227,9 @@ queueRouter.get('/live', h(async (req: Request, res: Response) => {
       status: req.query.status as string,
       recruiter_id: req.query.recruiter_id as string,
       search: req.query.search as string,
+      scope: await resolveCandidateScope((req as AuthenticatedRequest).authUser!.id, 'c'),
     };
+    if (!(await branchFilterAllowed(req, res, filters.branch))) return;
 
     const queue = await getLiveQueue(filters);
     return res.json({ success: true, data: queue });
@@ -219,8 +243,9 @@ queueRouter.get('/metrics', h(async (req: Request, res: Response) => {
   try {
     const branch = req.query.branch as string | undefined;
     const date = req.query.date as string | undefined;
+    if (!(await branchFilterAllowed(req, res, branch))) return;
 
-    const metrics = await getQueueMetrics(branch, date);
+    const metrics = await getQueueMetrics(branch, date, await resolveCandidateScope((req as AuthenticatedRequest).authUser!.id, 'c'));
     return res.json({ success: true, data: metrics });
   } catch (error: unknown) {
     return res.status(500).json({ success: false, message: getErrorMessage(error) });
@@ -240,7 +265,8 @@ queueRouter.get('/next-candidate', h(async (req: Request, res: Response) => {
       });
     }
 
-    const nextCandidate = await getNextCandidate(recruiterId, branch);
+    if (!(await branchFilterAllowed(req, res, branch))) return;
+    const nextCandidate = await getNextCandidate(recruiterId, branch, await resolveCandidateScope(recruiterId, 'c'));
 
     if (!nextCandidate) {
       return res.json({
@@ -276,6 +302,7 @@ queueRouter.post('/update-status', h(async (req: Request, res: Response) => {
       });
     }
 
+    if (!(await queueIdInScope(req, res, queue_id))) return;
     await updateQueueStatus(queue_id, status);
 
     return res.json({
@@ -310,6 +337,7 @@ queueRouter.post('/call-next', h(async (req: Request, res: Response) => {
       });
     }
 
+    if (!(await queueIdInScope(req, res, queue_id))) return;
     await callNextCandidate(queue_id);
 
     return res.json({
@@ -333,6 +361,7 @@ queueRouter.post('/mark-no-show', h(async (req: Request, res: Response) => {
       });
     }
 
+    if (!(await queueIdInScope(req, res, queue_id))) return;
     await markNoShow(queue_id);
 
     // Fire re-engagement email + recruiter inbox notification — non-blocking
@@ -408,6 +437,9 @@ queueRouter.post('/mark-no-show', h(async (req: Request, res: Response) => {
 queueRouter.get('/position/:candidateId', h(async (req: Request, res: Response) => {
   try {
     const { candidateId } = req.params;
+    if (!(await canAccessCandidate((req as AuthenticatedRequest).authUser!.id, candidateId))) {
+      return res.status(404).json({ success: false, message: 'Candidate not found' });
+    }
     const position = await getQueuePosition(candidateId);
 
     return res.json({

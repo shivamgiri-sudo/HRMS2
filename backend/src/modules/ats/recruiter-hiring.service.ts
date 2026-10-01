@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import * as XLSX from "xlsx";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { atsService } from "./ats.service.js";
 import { atsQueueService } from "./ats.queue.service.js";
 import { sendOnboardingToken } from "./ats.onboarding.service.js";
@@ -887,7 +888,7 @@ function buildFilterSql(filters: HiringFilters, scopedOnly: boolean, branch?: st
 }
 
 export async function listHiringActivity(userId: string, role: string | undefined, filters: HiringFilters) {
-  const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
+  const scopedOnly = !isOrgWideRole(role);
   const branch = scopedOnly ? await getActorBranch(userId) : null;
   const { sql, params } = buildFilterSql(filters, scopedOnly, branch);
   if (scopedOnly) {
@@ -1452,7 +1453,13 @@ export async function sendOnboardingFromActivity(activityId: string, actorUserId
   return { candidate, ...result };
 }
 
-async function getActorBranch(userId: string): Promise<string | null> {
+/**
+ * Owner ruling 2026-10-01: only the org-wide roles see every branch's hiring activity. hr (and every other
+ * role) is limited to its own branch plus the rows it created / is the recruiter on.
+ */
+export const isOrgWideRole = (role: string | undefined | null) => ORG_WIDE_EXEMPT_ROLES.includes(String(role ?? ""));
+
+export async function getActorBranch(userId: string): Promise<string | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     // employees has no branch_display_name column, so this COALESCE threw and getActorBranch
     // could never resolve a branch. branch_master already supplies both the name and the code.
@@ -1508,7 +1515,7 @@ async function aggregateBy(column: string, resolved: { sql: string; params: unkn
 }
 
 export async function getHiringDashboard(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringDashboard> {
-  const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
+  const scopedOnly = !isOrgWideRole(role);
   const { sql, params } = await applyActivityFilters(filters, scopedOnly, userId);
   // Same funnel definitions as the Analytics tab — see funnelPredicates().
   const F = funnelPredicates("");
@@ -1685,7 +1692,7 @@ export interface HiringActivityAnalytics {
 }
 
 export async function getHiringActivityAnalytics(userId: string, role: string | undefined, filters: HiringFilters): Promise<HiringActivityAnalytics> {
-  const scopedOnly = !["admin", "hr", "super_admin"].includes(role ?? "");
+  const scopedOnly = !isOrgWideRole(role);
 
   // ── Build WHERE for ats_recruiter_hiring_activity (arha) ─────────────────
   const clauses: string[] = ["COALESCE(arha.is_followup_attempt,0)=0"];
@@ -2326,7 +2333,7 @@ export async function buildFollowupScopeSql(
   role: string | undefined,
   scope: FollowupScope,
 ): Promise<{ sql: string; params: unknown[]; appliedScope: FollowupScope; branchResolved: boolean }> {
-  const orgWide = ["admin", "hr", "super_admin"].includes(role ?? "");
+  const orgWide = isOrgWideRole(role);
 
   // "mine" means mine for everybody, including an admin who asked for it.
   if (scope === "mine") {

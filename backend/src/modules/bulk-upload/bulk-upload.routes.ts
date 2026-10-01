@@ -14,6 +14,7 @@ import { tpzAllowsUploadType } from "../tpz-access/tpz-access.middleware.js";
 import { getUploadCoverage } from "./upload-coverage.service.js";
 import { dispatchImport, assertGatedUploader, assertDepartmentStructureUploader, assertEmployeeLobUploader } from "./bulk-dispatch.js";
 import { ONFIDO_REPORT_CONFIGS } from "./onfido-report-configs.js";
+import { requireBatchVisible } from "./bulk-batch-visibility.js";
 import { snapshotRouter } from "./snapshot.routes.js";
 import {
   HUB_ROLES, denyLobOnly, filterTemplatesForCaller, lobOnlyBatchFilter,
@@ -292,7 +293,7 @@ router.get("/batches/filter-options", requireRole(...HUB_ROLES), h(async (req: A
  * this, was the only thing shown â€” see loadRowsWithLiveStatus's own comment for why
  * that alone was not trustworthy.
  */
-router.get("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = await loadRowsWithLiveStatus(req.params.id);
   res.json({ success: true, data: rows });
 }));
@@ -345,7 +346,7 @@ router.post("/batches", requireRole(...HUB_ROLES), restrictLobOnlyBatchCreate, h
   res.status(201).json({ success: true, data: rows[0] ?? null });
 }));
 
-router.post("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = req.body as Array<{
     row_no: number;
     raw_data?: Record<string, unknown> | unknown[] | string | null;
@@ -618,7 +619,7 @@ const KNOWN_IMPORT_RPCS = new Set([
 ]);
 
 // POST /batches/:id/import â€” dispatch import by rpc_name
-router.post("/batches/:id/import", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess({ requireImportRpc: true }), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/batches/:id/import", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess({ requireImportRpc: true }), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { rpc_name } = req.body as { rpc_name?: string };
 
@@ -789,7 +790,7 @@ router.get("/batches/active", requireRole(...HUB_ROLES), h(async (req: Authentic
   res.json({ success: true, data: rows });
 }));
 
-router.get("/batches/:id/import-status", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/batches/:id/import-status", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const [batchRows] = await db.execute<RowDataPacket[]>(
     "SELECT id, batch_status, approval_status, imported_rows, error_rows, total_rows, error_summary FROM upload_batch WHERE id = ? LIMIT 1",
@@ -822,7 +823,7 @@ router.get("/batches/:id/import-status", requireRole(...HUB_ROLES), restrictLobO
 
 
 // DELETE /batches/:id — remove a batch log entry (does not undo already-imported rows)
-router.delete("/batches/:id", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
+router.delete("/batches/:id", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), requireBatchVisible(), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const [rows] = await db.query<RowDataPacket[]>(
     "SELECT id, batch_status FROM upload_batch WHERE id = ? LIMIT 1",

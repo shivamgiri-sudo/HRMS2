@@ -22,6 +22,8 @@ const BATCH_ID = "batch-1";
 let actor = "user-1";
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+// Per-batch branch visibility is covered by bulk-batch-visibility.test.ts; these tests exercise other behaviour.
+vi.mock("../bulk-batch-visibility.js", () => ({ requireBatchVisible: () => (_q: unknown, _s: unknown, next: () => void) => next() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
 vi.mock("../../../middleware/authMiddleware.js", () => ({

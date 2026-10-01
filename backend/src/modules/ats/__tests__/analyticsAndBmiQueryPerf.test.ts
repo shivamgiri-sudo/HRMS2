@@ -18,11 +18,18 @@ import request from "supertest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute, query: execute } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
+  requireAuth: (req: any, _res: express.Response, next: express.NextFunction) => { req.authUser = { id: "u-admin" }; next(); },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
   requireRole: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
+
+// Branch scoping (2026-10-01) is covered by branchScoping.ats.test.ts; here the caller is org-wide so this
+// file keeps pinning the query round-trips only.
+vi.mock("../ats-branch-scope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ats-branch-scope.js")>();
+  return { ...actual, resolveAtsBranchScope: async () => ({ orgWide: true, branchIds: [], branchSpellings: [], branchNames: [], processNames: [] }) };
+});
 
 function trackConcurrency(handler: (sql: string, params: unknown[]) => unknown) {
   let inFlight = 0;

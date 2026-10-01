@@ -43,6 +43,8 @@ export interface QueueFilters {
   status?: string;
   recruiter_id?: string;
   search?: string;
+  /** Caller's candidate row scope (alias `c` = ats_candidate). Omitted only by the public display screens. */
+  scope?: { sql: string; params: unknown[] };
 }
 
 export interface QueueMetrics {
@@ -74,6 +76,11 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
   const targetDate = filters.date || getIstDateString();
   conditions.push(`DATE(${queueTimeExpr('qt')}) = ?`);
   params.push(targetDate);
+
+  if (filters.scope && filters.scope.sql !== '1=1') {
+    conditions.push(`(${filters.scope.sql})`);
+    params.push(...filters.scope.params);
+  }
 
   // Branch filter
   if (filters.branch) {
@@ -184,10 +191,11 @@ export async function getLiveQueue(filters: QueueFilters = {}): Promise<QueueEnt
 /**
  * Get queue metrics for dashboard
  */
-export async function getQueueMetrics(branch?: string, date?: string): Promise<QueueMetrics> {
+export async function getQueueMetrics(branch?: string, date?: string, scope?: { sql: string; params: unknown[] }): Promise<QueueMetrics> {
   const targetDate = date || getIstDateString();
-  const branchCondition = branch ? `AND ${BRANCH_EXPR} = ?` : '';
+  const branchCondition = (branch ? `AND ${BRANCH_EXPR} = ?` : '') + (scope && scope.sql !== '1=1' ? ` AND (${scope.sql})` : '');
   const params: unknown[] = branch ? [targetDate, branch] : [targetDate];
+  if (scope && scope.sql !== '1=1') params.push(...scope.params);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -228,7 +236,8 @@ export async function getQueueMetrics(branch?: string, date?: string): Promise<Q
 /**
  * Get next candidate in queue for a recruiter
  */
-export async function getNextCandidate(recruiterId: string, branch: string): Promise<QueueEntry | null> {
+export async function getNextCandidate(recruiterId: string, branch: string, scope?: { sql: string; params: unknown[] }): Promise<QueueEntry | null> {
+  const scopeSql = scope && scope.sql !== '1=1' ? ` AND (${scope.sql})` : '';
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
       qt.id,
@@ -260,10 +269,10 @@ export async function getNextCandidate(recruiterId: string, branch: string): Pro
       OR qt.assigned_recruiter_id = ?)
       AND ${BRANCH_EXPR} = ?
       AND (qt.queue_status = 'waiting' OR (qt.queue_status IS NULL AND qt.status = 'active'))
-      AND DATE(${queueTimeExpr('qt')}) = CURDATE()
+      AND DATE(${queueTimeExpr('qt')}) = CURDATE()${scopeSql}
     ORDER BY ${queueTimeExpr('qt')} ASC
     LIMIT 1`,
-    [recruiterId, recruiterId, branch]
+    [recruiterId, recruiterId, branch, ...(scopeSql ? scope!.params : [])]
   );
 
   return rows.length > 0 ? (rows[0] as QueueEntry) : null;

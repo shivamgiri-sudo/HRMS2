@@ -15,6 +15,11 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
+
+// Branch scoping (owner ruling 2026-10-01): HR-facing address-verification actions are limited to candidates
+// inside the caller's own branch / assigned scope (org-wide roles unaffected).
+const OUT_OF_SCOPE = { success: false, message: "Forbidden: this candidate is outside your branch / assigned scope" };
 
 const router = Router();
 const h =
@@ -386,6 +391,7 @@ router.post(
       return res
         .status(400)
         .json({ success: false, message: "candidateId required" });
+    if (!(await canAccessCandidate(req.authUser!.id, candidateId))) return res.status(403).json(OUT_OF_SCOPE);
 
     let unblockerId: string | null = null;
     if (forceUnblock) {
@@ -428,14 +434,17 @@ router.post(
   "/backfill-offer-approved",
   requireAuth,
   requireRole("admin", "hr_admin", "ho_hr"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const scope = await resolveCandidateScope(req.authUser!.id, "c");
     const [candidates] = await db.execute<RowDataPacket[]>(
       `SELECT c.id
          FROM ats_candidate c
         WHERE c.current_stage = 'offer_approved'
+          AND (${scope.sql})
           AND NOT EXISTS (
             SELECT 1 FROM candidate_bgv_address_verification v WHERE v.candidate_id = c.id
           )`,
+      scope.params as any[],
     );
 
     let sent = 0;
@@ -656,6 +665,7 @@ router.get(
   ),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { candidateId } = req.params;
+    if (!(await canAccessCandidate(req.authUser!.id, candidateId))) return res.status(403).json(OUT_OF_SCOPE);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT v.*, e.full_name AS decided_by_name
          FROM candidate_bgv_address_verification v
@@ -716,6 +726,7 @@ router.patch(
     if (!verRows[0])
       return res.status(404).json({ success: false, message: "Not found" });
     const candidateId = verRows[0].candidate_id as string;
+    if (!(await canAccessCandidate(req.authUser!.id, candidateId))) return res.status(403).json(OUT_OF_SCOPE);
 
     const newStatus =
       decision === "pass"

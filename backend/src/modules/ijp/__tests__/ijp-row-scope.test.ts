@@ -44,14 +44,26 @@ function baseScope(overrides: Partial<Record<string, unknown>> = {}) {
 beforeEach(() => { dbExecute.mockClear(); resolveUserBusinessScope.mockReset(); });
 
 describe("listPostings — row scope, not just a role gate", () => {
-  it("HR gets an unscoped 1=1 condition (org-wide view preserved)", async () => {
-    resolveUserBusinessScope.mockResolvedValue(baseScope({ isHr: true }));
+  it("an org-wide role (admin) gets the unscoped 1=1 condition", async () => {
+    resolveUserBusinessScope.mockResolvedValue(baseScope({ roles: ["admin"], isAdmin: true }));
+    const { listPostings } = await import("../ijp.service.js");
+
+    await listPostings("u-admin", { limit: 50, offset: 0 });
+
+    const [sql] = dbExecute.mock.calls[0];
+    expect(sql).toContain("(1=1)");
+  });
+
+  it("HR is limited to its own branch (owner ruling 2026-10-01), no longer org-wide", async () => {
+    resolveUserBusinessScope.mockResolvedValue(baseScope({ roles: ["hr"], isHr: true, branchId: "branch-A" }));
     const { listPostings } = await import("../ijp.service.js");
 
     await listPostings("u-hr", { limit: 50, offset: 0 });
 
-    const [sql] = dbExecute.mock.calls[0];
-    expect(sql).toContain("(1=1)");
+    const [sql, params] = dbExecute.mock.calls[0];
+    expect(sql).not.toContain("(1=1)");
+    expect(sql).toContain("p.branch_id = ?");
+    expect(params).toContain("branch-A");
   });
 
   it("a branch_head with a real branch assignment is restricted to that branch in the SQL", async () => {

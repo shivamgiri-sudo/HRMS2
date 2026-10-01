@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Response } from 'express';
 import { requireAuth, type AuthenticatedRequest, requireWriteAccess } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
+import { resolveAtsBranchScope } from './ats-branch-scope.js';
 import { reconcileEmployeeCodeDrift } from './employee-code-reconciliation.service.js';
 
 const router = Router();
@@ -21,7 +22,12 @@ router.post(
   requireAuth,
   requireWriteAccess,
   requireRole('admin', 'hr', 'payroll_hr'),
-  h(async (_req, res) => {
+  h(async (req, res) => {
+    // Owner ruling 2026-10-01: this repair job sweeps EVERY candidate in every branch, so a branch-scoped
+    // caller (hr / payroll_hr) is refused; org-wide roles are unaffected.
+    if (!(await resolveAtsBranchScope(req.authUser!.id)).orgWide) {
+      return res.status(403).json({ success: false, message: 'Forbidden: company-wide reconciliation is limited to head-office roles' });
+    }
     const result = await reconcileEmployeeCodeDrift();
     return res.json({ success: true, ...result });
   }),

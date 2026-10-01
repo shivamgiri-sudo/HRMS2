@@ -19,6 +19,9 @@ import { RowDataPacket } from 'mysql2';
 import { atsService } from './ats.service.js';
 import { resolveRecruiterForActor } from '../ats-full-parity/recruiterInterview.service.js';
 import { z } from 'zod';
+import { canAccessCandidate } from './candidate-access.js';
+import { assertBranchHeadCanSeeCandidate } from './branch-head-scope.js';
+import { branchInScope, resolveAtsBranchScope, OUT_OF_BRANCH_MESSAGE } from './ats-branch-scope.js';
 
 const router = Router();
 
@@ -36,6 +39,36 @@ async function resolveBranchState(branchId: string): Promise<string | null> {
     [branchId],
   ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
   return (rows as RowDataPacket[])[0]?.state ?? null;
+}
+
+// ── Branch scoping guards (owner ruling 2026-10-01) ──────────────────────────────
+// hr / payroll_hr / recruiter / branch_head and every other non-org-wide role act only on candidates inside
+// their own branch / assigned scope. Org-wide roles (super_admin, admin, ceo, ...) are unaffected.
+// Each guard answers the request itself and returns false when it refuses.
+async function candidateInScopeOr403(req: AuthenticatedRequest, res: Response, candidateId: string): Promise<boolean> {
+  if (await canAccessCandidate(req.authUser!.id, candidateId)) return true;
+  res.status(403).json({ ok: false, success: false, error: OUT_OF_BRANCH_MESSAGE, message: OUT_OF_BRANCH_MESSAGE });
+  return false;
+}
+/** Offer id -> owning candidate, then the branch-head / hr scope rule used by the approval screens. */
+async function offerInScopeOr403(req: AuthenticatedRequest, res: Response, offerId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>('SELECT candidate_id FROM ats_employment_offer WHERE id = ? LIMIT 1', [offerId]);
+  const candidateId = (rows as RowDataPacket[])[0]?.candidate_id;
+  if (!candidateId) { res.status(404).json({ ok: false, error: 'Offer not found' }); return false; }
+  try {
+    await assertBranchHeadCanSeeCandidate(req.authUser!.id, String(candidateId));
+    return true;
+  } catch {
+    res.status(403).json({ ok: false, error: OUT_OF_BRANCH_MESSAGE });
+    return false;
+  }
+}
+/** Onboarding request id -> owning candidate. */
+async function requestInScopeOr403(req: AuthenticatedRequest, res: Response, requestId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>('SELECT candidate_id FROM ats_onboarding_request WHERE id = ? LIMIT 1', [requestId]);
+  const candidateId = (rows as RowDataPacket[])[0]?.candidate_id;
+  if (!candidateId) { res.status(404).json({ ok: false, error: 'Onboarding request not found' }); return false; }
+  return candidateInScopeOr403(req, res, String(candidateId));
 }
 
 // ── Public ────────────────────────────────────────────────────────────────────
@@ -79,17 +112,10 @@ router.post(
       res.status(404).json({ ok: false, error: 'Candidate not found' });
       return;
     }
-    // Every HR-department designation gets org-wide access to resend onboarding links,
-    // regardless of their own branch scope in user_assignment_scope — added 2026-08-24 after
-    // sofiya.sultan@teammas.co.in (role 'hr', correctly scoped to her own branch, NOIDA-2)
-    // could only resend for the ~15% of candidates in that one branch; the other ~85% span 6+
-    // other branches she (like any single-branch HR user) has no scope row for. HR resending a
-    // link is treated the same way this file already treats super_admin/admin — an
-    // unconditional bypass — not a branch-scoped decision the way most other row-scope checks
-    // in this codebase are, because onboarding is a company-wide HR function, not a branch one.
-    const isHrDepartment = await hasAnyRole(
-      userId, 'hr', 'hr_admin', 'hr_branch', 'hr_head', 'ho_hr', 'recruitment_hr',
-    );
+    // Owner ruling 2026-10-01 (replaces the 2026-08-24 "HR is company-wide" bypass): every HR-department
+    // designation is branch-scoped like any other non-org-wide role. canAccessCandidate applies the single
+    // candidate row-scope rule (own branch / assignments; org-wide roles see all).
+    const isHrDepartment = await canAccessCandidate(userId, candidateId);
 
     // hasScopedAccess does a raw role_key match (no legacy-alias normalization, unlike
     // requireRole above) — 'branch_hr' must be the literal string here, not 'hr_admin', or a
@@ -297,6 +323,7 @@ router.post(
       res.status(400).json({ ok: false, error: 'Cost Centre is required to submit an offer' });
       return;
     }
+    if (!(await requestInScopeOr403(req, res as Response, req.params!.id))) return;
     const result = await saveOffer(req.params!.id, offerData, req.authUser!.id, Boolean(submit), req.authUser!.roles);
     res.json({ ok: true, ...result });
   }),
@@ -307,6 +334,7 @@ router.patch(
   requireAuth,
   requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
+    if (!(await requestInScopeOr403(req, res as Response, req.params!.id))) return;
     const result = await saveOffer(req.params!.id, req.body, req.authUser!.id, false, req.authUser!.roles);
     res.json({ ok: true, ...result });
   }),
@@ -320,6 +348,7 @@ router.post(
   requireRole('recruiter', 'hr', 'admin', 'super_admin'),
   h(async (req: AuthenticatedRequest, res) => {
     const { id } = req.params!;
+    if (!(await candidateInScopeOr403(req, res as Response, id))) return;
     const { db: database } = await import('../../db/mysql.js');
     const [rows] = await database.execute<RowDataPacket[]>(
       'SELECT status FROM ats_candidate WHERE id = ? AND active_status = 1 LIMIT 1',
@@ -355,6 +384,7 @@ router.post(
   requireAuth,
   requireRole('recruiter', 'hr', 'admin', 'super_admin'),
   h(async (req: AuthenticatedRequest, res) => {
+    if (!(await candidateInScopeOr403(req, res as Response, req.params!.id))) return;
     const result = await sendOnboardingProgressReminder(req.params!.id, req.authUser!.id);
     res.json({ ok: true, ...result });
   }),
@@ -371,6 +401,7 @@ router.patch(
   requireAuth,
   requireRole('admin', 'super_admin', 'hr'),
   h(async (req: AuthenticatedRequest, res) => {
+    if (!(await candidateInScopeOr403(req, res as Response, req.params!.id))) return;
     const reason = String(req.body?.reason ?? '');
     const result = await markCandidateNotJoining(req.params!.id, req.authUser!.id, reason);
     res.json({ ok: true, ...result });
@@ -382,6 +413,7 @@ router.patch(
   requireAuth,
   requireRole('admin', 'super_admin', 'hr'),
   h(async (req: AuthenticatedRequest, res) => {
+    if (!(await candidateInScopeOr403(req, res as Response, req.params!.id))) return;
     const result = await clearCandidateNotJoining(req.params!.id, req.authUser!.id);
     res.json({ ok: true, ...result });
   }),
@@ -403,6 +435,12 @@ router.patch(
     const branchId = String(req.body?.branchId ?? '');
     const reason = String(req.body?.reason ?? '');
     if (!branchId) { res.status(400).json({ ok: false, message: 'branchId is required' }); return; }
+    if (!(await candidateInScopeOr403(req, res as Response, req.params!.id))) return;
+    // The destination branch may only be one the caller holds (org-wide roles: any branch).
+    if (!branchInScope(await resolveAtsBranchScope(req.authUser!.id), branchId)) {
+      res.status(403).json({ ok: false, message: OUT_OF_BRANCH_MESSAGE });
+      return;
+    }
     const result = await changeCandidateBranch(req.params!.id, branchId, req.authUser!.id, reason);
     res.json({ ok: true, ...result });
   }),
@@ -431,6 +469,7 @@ router.post(
   requireAuth,
   requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
+    if (!(await offerInScopeOr403(req, res as Response, req.params!.id))) return;
     const result = await approveOffer(req.params!.id, req.authUser!.id, req.body.remarks);
     res.json({ ok: true, ...result });
   }),
@@ -442,6 +481,7 @@ router.post(
   requireRole('branch_head', 'admin', 'super_admin', 'hr', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
     if (!req.body.remarks) { res.status(400).json({ error: 'remarks required for rejection' }); return; }
+    if (!(await offerInScopeOr403(req, res as Response, req.params!.id))) return;
     await rejectOffer(req.params!.id, req.authUser!.id, req.body.remarks);
     res.json({ ok: true });
   }),

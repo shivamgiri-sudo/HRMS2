@@ -3,7 +3,7 @@ import nodemailer from "nodemailer";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
-import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { resolveAtsBranchScope, buildCandidateScopeSql, buildBranchNameScopeSql } from "../ats/ats-branch-scope.js";
 import { excludeEmployeeShapedCandidatesSql, excludeOtherEntityCandidatesSql } from "../ats/ats-reporting-scope.js";
 import { canonicalBranch, branchRegion, canonicalRole, sourceLabel, recruiterKey, preferredRecruiterName, normalizeRecruiterName, suspectedDuplicateRecruiters } from "../ats/ats-vocabulary.js";
 
@@ -1103,14 +1103,15 @@ async function buildCandidateFilters(filters: CandidateFilters): Promise<{ where
     params.push(filters.recruiter, filters.recruiter);
   }
   if (filters.actorId && !filters.bypassScope) {
-    const scope = await buildScopeWhereClause(
-      filters.actorId,
-      ["branch_head", "process_manager", "recruiter", "manager", "hr"],
-      { branchId: "c.applied_for_branch", processId: "c.applied_for_process" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
-    );
-    conds.push(scope.sql);
-    params.push(...scope.params);
+    // Owner policy 2026-10-01: only org-wide roles see every branch; hr and everyone else are limited to their
+    // own branch / assigned scope (ATS resolver: fails closed, matches name/code/id spellings).
+    const atsScope = await resolveAtsBranchScope(filters.actorId);
+    if (!atsScope.orgWide) {
+      const byApplied = buildCandidateScopeSql(atsScope, "c");
+      const byText = buildBranchNameScopeSql(atsScope, "c.branch_text");
+      conds.push(`((${byApplied.sql}) OR (${byText.sql}))`);
+      params.push(...byApplied.params, ...byText.params);
+    }
   }
   // ats_candidate holds 29,926 legacy EMPLOYEE records (candidate_code matching a real
   // employees.employee_code) alongside 7,760 genuine candidates — measured 2026-08-11.

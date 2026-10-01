@@ -51,6 +51,7 @@ import {
   uploadOnboardingDocument,
   validateOnboardingToken,
 } from "./onboarding-full.service.js";
+import { canAccessCandidate } from "./candidate-access.js";
 import { syncDigilockerStatus } from "../integrations/luckpay/luckpay-status.service.js";
 
 const router = Router();
@@ -471,6 +472,10 @@ router.post("/autosave", h(async (req, res) => {
 }));
 
 router.get("/autosave/:candidateId", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+  // Branch scoping (owner ruling 2026-10-01): an HR reader only sees autosave drafts of candidates in their own branch.
+  if (!(await canAccessCandidate(req.authUser!.id, req.params.candidateId))) {
+    return res.status(404).json({ success: false, message: "Candidate not found" });
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT section, data_json, saved_at FROM candidate_onboarding_autosave WHERE candidate_id = ?`,
     [req.params.candidateId]

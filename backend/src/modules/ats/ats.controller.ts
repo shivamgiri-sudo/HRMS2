@@ -7,6 +7,7 @@ import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { TtlCache } from "../../shared/ttlCache.js";
 import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { branchNameVariants } from "./ats-vocabulary.js";
 import {
   createCandidateSchema,
   updateCandidateSchema,
@@ -193,11 +194,20 @@ export const atsController = {
       resolveProcessNames(processIds),
     ]);
 
+    // A browser-supplied ?branch= / ?process= may only NARROW the entitlement (owner ruling 2026-10-01):
+    // outside the caller's scope it is ignored and the entitled names are used (never widened). Only an
+    // ORG_ALL scope honours an arbitrary name.
+    const within = (asked: string | undefined, entitled: string[], expand: (n: string) => string[]) => {
+      if (!asked) return undefined;
+      if (scope.level === "ORG_ALL") return asked;
+      const ok = new Set(entitled.flatMap((n) => expand(n)).map((n) => n.toLowerCase()));
+      return ok.has(asked.trim().toLowerCase()) ? asked : undefined;
+    };
     const statsFilters = {
       fromDate,
       toDate,
-      branch: branch ?? branchNames,
-      process: process ?? processNames,
+      branch: within(branch, branchNames, branchNameVariants) ?? branchNames,
+      process: within(process, processNames, (n) => [n]) ?? processNames,
     };
     const asKey = (v: unknown) => JSON.stringify(v ?? null);
     const { value: data } = await atsStatsCache.getOrCompute(

@@ -12,6 +12,8 @@ import {
   getHiringActivityBootstrap,
   getCallingDashboard,
   getHiringDashboard,
+  isOrgWideRole,
+  getActorBranch,
   getHiringActivityAnalytics,
   type FollowupScope,
   type FollowupWindow,
@@ -85,7 +87,9 @@ function getRequester(req: AuthenticatedRequest) {
 
 async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
   const { role, id: userId } = getRequester(req);
-  const privileged = ["admin", "hr", "super_admin", "branch_head"].includes(role);
+  // Owner ruling 2026-10-01: hr / branch_head are branch-scoped, not "any row" - they fall through to the
+  // own-row / same-branch checks below. Only the org-wide roles are privileged.
+  const privileged = isOrgWideRole(role);
   const [rows] = await db.execute<RowDataPacket[]>(
     // candidate_name is not used for the access decision — set-followup and
     // log-followup-call read it off this row to title the inbox reminder. Without
@@ -109,6 +113,14 @@ async function ensureRowAccess(req: AuthenticatedRequest, id: string) {
   const actorBranch = branchRows[0]?.branch_name;
   if (actorBranch && row.branch_name === actorBranch) return { allowed: true, row };
   return { allowed: false, row };
+}
+
+// 404 when the activity row does not exist, 403 when it is outside the caller's branch (and not their own row).
+async function rowAccessOr403(req: AuthenticatedRequest, res: { status: (c: number) => { json: (b: unknown) => unknown } }, id: string): Promise<boolean> {
+  const access = await ensureRowAccess(req, id);
+  if (!access.row) { res.status(404).json({ success: false, message: "Hiring activity not found" }); return false; }
+  if (!access.allowed) { res.status(403).json({ success: false, message: "Forbidden: this record is outside your branch / assigned scope" }); return false; }
+  return true;
 }
 
 recruiterHiringRouter.get("/interviewers", async (req: AuthenticatedRequest, res) => {
@@ -425,9 +437,16 @@ recruiterHiringRouter.get("/recruiter/hiring-activity/report", async (req: Authe
 
     // Scope for non-admin
     const role = req.authUser?.role ?? "";
-    if (!["admin", "hr", "super_admin"].includes(role)) {
-      conditions.push("(recruiter_id = ? OR created_by = ?)");
-      params.push(req.authUser!.id, req.authUser!.id);
+    if (!isOrgWideRole(role)) {
+      // own rows, plus (hr / branch roles) every row of the caller's own branch
+      const actorBranch = await getActorBranch(req.authUser!.id);
+      if (actorBranch) {
+        conditions.push("(recruiter_id = ? OR created_by = ? OR branch_name = ?)");
+        params.push(req.authUser!.id, req.authUser!.id, actorBranch);
+      } else {
+        conditions.push("(recruiter_id = ? OR created_by = ?)");
+        params.push(req.authUser!.id, req.authUser!.id);
+      }
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -515,14 +534,19 @@ recruiterHiringRouter.put("/recruiter/hiring-activity/:id", async (req: Authenti
 recruiterHiringRouter.delete("/recruiter/hiring-activity/:id", async (req: AuthenticatedRequest, res) => {
   try {
     const { role, id: userId } = getRequester(req);
-    const isAdmin = ["admin", "hr", "super_admin", "ho_hr"].includes(role);
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, created_by, recruiter_id FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
+      `SELECT id, created_by, recruiter_id, branch_name FROM ats_recruiter_hiring_activity WHERE id = ? LIMIT 1`,
       [req.params.id]
     );
     const row = rows[0];
     if (!row) {
       return res.status(404).json({ success: false, message: "Hiring activity not found" });
+    }
+    // Owner ruling 2026-10-01: hr / ho_hr may delete only rows of their own branch (org-wide roles: any row).
+    let isAdmin = isOrgWideRole(role);
+    if (!isAdmin && ["hr", "ho_hr"].includes(role)) {
+      const actorBranch = await getActorBranch(userId);
+      isAdmin = !!actorBranch && row.branch_name === actorBranch;
     }
     const isOwner = row.created_by === userId || row.recruiter_id === userId;
     if (!isOwner && !isAdmin) {
@@ -656,6 +680,7 @@ recruiterHiringRouter.get("/recruiter/calling-dashboard", async (req: Authentica
 
 recruiterHiringRouter.post("/recruiter/hiring-activity/:id/create-candidate", async (req: AuthenticatedRequest, res) => {
   try {
+    if (!(await rowAccessOr403(req, res, req.params.id))) return;
     const data = await createCandidateFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
   } catch (error: unknown) {
@@ -665,6 +690,7 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/:id/create-candidate", as
 
 recruiterHiringRouter.post("/recruiter/hiring-activity/:id/generate-token", async (req: AuthenticatedRequest, res) => {
   try {
+    if (!(await rowAccessOr403(req, res, req.params.id))) return;
     const data = await createTokenFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
   } catch (error: unknown) {
@@ -674,6 +700,7 @@ recruiterHiringRouter.post("/recruiter/hiring-activity/:id/generate-token", asyn
 
 recruiterHiringRouter.post("/recruiter/hiring-activity/:id/send-onboarding", async (req: AuthenticatedRequest, res) => {
   try {
+    if (!(await rowAccessOr403(req, res, req.params.id))) return;
     const data = await sendOnboardingFromActivity(req.params.id, req.authUser!.id);
     return res.status(201).json({ success: true, data });
   } catch (error: unknown) {

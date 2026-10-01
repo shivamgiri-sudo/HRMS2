@@ -19,12 +19,17 @@ import {
   type EnterpriseUser,
   type ScopeCondition,
 } from "../../shared/enterpriseScope.js";
+import { resolveHrBranchScope, branchInScope, requisitionBranchCondition, type HrBranchScope } from "./job-requisition-hr-scope.js";
+
+function userIdOf(actor: EnterpriseUser): string {
+  return typeof actor === "string" ? actor : String((actor as { id: string }).id);
+}
 
 /**
  * Row scope for requisition reads.
  *
- * buildProcessScopeCondition returns "1=1" for super_admin / admin / hr / ceo, so HR keeps
- * the org-wide view recruitment needs.
+ * buildProcessScopeCondition returns "1=1" only for the org-wide exempt roles (owner policy
+ * 2026-10-01); hr is limited to its own branch like every other non-exempt role.
  *
  * `alias` is "jr" for listRequisitions and "" for getDashboardMetrics, which queries the
  * table without an alias. Both must be scoped or the KPI counts would contradict the rows
@@ -84,7 +89,15 @@ async function requisitionScope(
     processId: `${table}.process_id`,
   });
 
-  if (opts.includeOwnRequisitions === false || base.sql === "1=1") return base;
+  if (base.sql === "1=1") return base;
+  // A non-org-wide caller with no assignment rows at all still has a home branch: show that branch's
+  // requisitions rather than nothing. Callers WITH assignments keep exactly their assigned slice.
+  if (scope.assignments.length === 0 && scope.branchId) {
+    const homeCond = `${table}.branch_name IN (SELECT bm2.branch_name FROM branch_master bm2 WHERE bm2.id = ?)`;
+    base.sql = base.sql === "1=0" ? homeCond : `(${base.sql}) OR ${homeCond}`;
+    base.params = [...base.params, scope.branchId];
+  }
+  if (opts.includeOwnRequisitions === false) return base;
   return {
     sql: `(${base.sql}) OR ${table}.requested_by = ?`,
     params: [...base.params, scope.userId],
@@ -309,21 +322,16 @@ export const jobRequisitionService = {
    * something the user supplied, so there is no existence to conceal.
    */
   async canCreateForBranch(actor: EnterpriseUser, branchName: string): Promise<boolean> {
-    const scope = await resolveUserBusinessScope(actor);
-    if (scope.isSuperAdmin || scope.isAdmin || scope.isHr || scope.roles.includes("ceo")) return true;
-    if (scope.assignments.some((a) => a.scopeType === "all")) return true;
+    // Owner policy 2026-10-01: hr and every non-org-wide role may raise a requisition only for their
+    // own branch (assigned branches + home branch). No resolvable branch => refused (fail closed).
+    const hrScope = await resolveHrBranchScope(userIdOf(actor));
+    if (hrScope.orgWide) return true;
+    return branchInScope(hrScope, null, branchName);
+  },
 
-    const branchIds = scope.assignments.map((a) => a.branchId).filter((b): b is string => Boolean(b));
-    if (branchIds.length === 0) return true;
-
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT 1 FROM branch_master
-        WHERE branch_name = ?
-          AND id IN (${branchIds.map(() => "?").join(",")})
-        LIMIT 1`,
-      [branchName, ...branchIds],
-    );
-    return (rows as RowDataPacket[]).length > 0;
+  /** Caller's branch scope (org-wide flag + branch ids/names), shared by the :branch-param endpoints. */
+  async getBranchScope(actor: EnterpriseUser): Promise<HrBranchScope> {
+    return resolveHrBranchScope(userIdOf(actor));
   },
 
   async isRequisitionVisible(
@@ -1795,12 +1803,19 @@ ${bmiBlock}
   /**
    * Get available batches from external LMS for dropdown
    */
-  async getAvailableBatches(filters: { branch?: string; process?: string } = {}): Promise<LmsBatchOption[]> {
+  async getAvailableBatches(filters: { branch?: string; process?: string; branchIn?: string[] } = {}): Promise<LmsBatchOption[]> {
     try {
       const { lmsQuery } = await import("../lms/lms.service.js");
 
       const conditions: string[] = ["batch_status IN ('Planned', 'Active', 'In Progress')"];
       const params: unknown[] = [];
+
+      // Server-side branch scope (non-org-wide callers); the browser's `branch` only narrows within it.
+      if (filters.branchIn) {
+        if (filters.branchIn.length === 0) return [];
+        conditions.push(`branch IN (${filters.branchIn.map(() => "?").join(",")})`);
+        params.push(...filters.branchIn);
+      }
 
       if (filters.branch) {
         conditions.push("branch = ?");
@@ -2162,16 +2177,28 @@ ${bmiBlock}
   /**
    * Get list of users with a given role (for handover email recipient picker)
    */
-  async getHandoverRecipientOptions(roles: string[]): Promise<Array<{ user_id: string; email: string; role_key: string }>> {
+  async getHandoverRecipientOptions(roles: string[], scope?: HrBranchScope): Promise<Array<{ user_id: string; email: string; role_key: string }>> {
     if (roles.length === 0) return [];
     const placeholders = roles.map(() => "?").join(",");
+    // Non-org-wide callers only see recipients who work in their own branch(es).
+    let branchJoin = "";
+    let branchCond = "";
+    const branchParams: string[] = [];
+    if (scope && !scope.orgWide) {
+      if (scope.branchIds.length === 0) return [];
+      branchJoin = "JOIN employees emp ON emp.user_id = ur.user_id AND emp.active_status = 1";
+      branchCond = `AND emp.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`;
+      branchParams.push(...scope.branchIds);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT ur.user_id, ur.role_key, au.email
        FROM user_roles ur
        JOIN auth_user au ON au.id = ur.user_id
+       ${branchJoin}
        WHERE ur.role_key IN (${placeholders}) AND ur.active_status = 1 AND au.email IS NOT NULL
+       ${branchCond}
        ORDER BY ur.role_key, au.email`,
-      roles
+      [...roles, ...branchParams]
     );
     return (rows as RowDataPacket[]).map(r => ({
       user_id:  r.user_id as string,

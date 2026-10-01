@@ -6,6 +6,7 @@ import type { Request } from "express";
 import { getIstDateString } from '../../utils/dateUtils.js';
 import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
 import { buildCanonicalFunnel } from "../ats/ats-stage-model.js";
+import { buildCandidateScopeSql, type AtsBranchScope } from "./ats-ext-scope.js";
 
 const OFFER_TOKEN_SALT = "offer-salt";
 
@@ -79,9 +80,15 @@ type FunnelRow = RowDataPacket & { stage: string; count: number | string | null 
 
 // ── Manpower Requisition ──────────────────────────────────────────────────────
 export const requisitionService = {
-  async list(filters: { status?: string; process_id?: string; branch_id?: string }) {
+  async list(filters: { status?: string; process_id?: string; branch_id?: string }, scope?: AtsBranchScope) {
     const conds = ["1=1"];
     const params: unknown[] = [];
+    // Server-side scope; the browser's branch_id below can only narrow it.
+    if (scope && !scope.orgWide) {
+      if (scope.branchIds.length === 0) return [];
+      conds.push(`r.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
+      params.push(...scope.branchIds);
+    }
     const dbStatus = reqDbStatus(filters.status);
     if (dbStatus) { conds.push("r.status = ?"); params.push(dbStatus); }
     if (filters.process_id) { conds.push("r.process_id = ?"); params.push(filters.process_id); }
@@ -112,6 +119,12 @@ export const requisitionService = {
     await logSensitiveAction({ actor_user_id: raisedBy, action_type: "REQUISITION_CREATED", module_key: "ATS", entity_type: "manpower_requisition", entity_id: id, req });
     const list = await this.list({});
     return list.find((row: RequisitionRow) => row.id === id) ?? { id };
+  },
+
+  /** branch_id of a manpower requisition (undefined = requisition not found). */
+  async getBranchId(id: string): Promise<string | null | undefined> {
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT branch_id FROM manpower_requisition WHERE id = ? LIMIT 1", [id]);
+    return rows[0] ? ((rows[0].branch_id as string | null) ?? null) : undefined;
   },
 
   async approve(id: string, approvedBy: string, req?: Request, action: "approved" | "rejected" = "approved", remarks?: string) {
@@ -189,9 +202,14 @@ export const bgvService = {
 
 // ── Offer Management ──────────────────────────────────────────────────────────
 export const offerService = {
-  async list(candidateId?: string, status?: string) {
+  async list(candidateId?: string, status?: string, scope?: AtsBranchScope) {
     const conds: string[] = [];
     const params: unknown[] = [];
+    if (scope) {
+      const sc = buildCandidateScopeSql(scope, "c");
+      conds.push(`(${sc.sql})`);
+      params.push(...sc.params);
+    }
     if (candidateId) { conds.push("o.candidate_id = ?"); params.push(candidateId); }
     if (status && status !== "all") { conds.push("o.status = ?"); params.push(status === "expired" ? "lapsed" : status); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
@@ -256,6 +274,12 @@ export const offerService = {
     void candidateName;
   },
 
+  /** Candidate an offer belongs to (undefined = offer not found). */
+  async getCandidateId(offerId: string): Promise<string | undefined> {
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT candidate_id FROM ats_offer WHERE id = ? LIMIT 1", [offerId]);
+    return rows[0] ? String(rows[0].candidate_id) : undefined;
+  },
+
   async updateStatus(offerId: string, status: string, reason: string | undefined, actorId: string, req?: Request) {
     const dbStatus = status === "expired" ? "lapsed" : status;
     await db.execute("UPDATE ats_offer SET status = ?, rejection_reason = COALESCE(?, rejection_reason), updated_at = NOW() WHERE id = ?", [dbStatus, reason ?? null, offerId]);
@@ -281,7 +305,10 @@ export const duplicateService = {
     await db.execute("INSERT INTO ats_duplicate_log (id, candidate_id, matched_with_id, match_reason, match_score) VALUES (?, ?, ?, ?, ?)", [randomUUID(), candidateId, matchedWithId, reason, score ?? null]);
   },
 
-  async listUnresolved() {
+  async listUnresolved(scope?: AtsBranchScope) {
+    // Both sides of a pair are shown, so both candidates must be inside the caller's scope.
+    const s1 = scope ? buildCandidateScopeSql(scope, "c1") : { sql: "1=1", params: [] as unknown[] };
+    const s2 = scope ? buildCandidateScopeSql(scope, "c2") : { sql: "1=1", params: [] as unknown[] };
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT dl.id, dl.match_score, dl.match_reason, dl.resolved, dl.detected_at,
               c1.id AS candidate_id, c1.full_name AS candidate_name, c1.email AS candidate_email, CONCAT(LEFT(c1.mobile, 3), '****', RIGHT(c1.mobile, 2)) AS candidate_mobile_masked,
@@ -289,9 +316,10 @@ export const duplicateService = {
          FROM ats_duplicate_log dl
          JOIN ats_candidate c1 ON c1.id = dl.candidate_id
          JOIN ats_candidate c2 ON c2.id = dl.matched_with_id
-        WHERE dl.resolved = 0
+        WHERE dl.resolved = 0 AND (${s1.sql}) AND (${s2.sql})
         ORDER BY dl.detected_at DESC
         LIMIT 100`,
+      [...s1.params, ...s2.params],
     );
     return (rows as DuplicateRow[]).map((row) => ({
       id: row.id,
@@ -307,6 +335,12 @@ export const duplicateService = {
     }));
   },
 
+  /** candidate_id of a duplicate-log row (undefined = not found). */
+  async getCandidateId(id: string): Promise<string | undefined> {
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT candidate_id FROM ats_duplicate_log WHERE id = ? LIMIT 1", [id]);
+    return rows[0] ? String(rows[0].candidate_id) : undefined;
+  },
+
   async resolve(id: string, note: string, resolvedBy: string, req?: Request) {
     await db.execute("UPDATE ats_duplicate_log SET resolved = 1, resolution_note = ? WHERE id = ?", [note, id]);
     await logSensitiveAction({ actor_user_id: resolvedBy, action_type: "DUPLICATE_RESOLVED", module_key: "ATS", entity_type: "ats_duplicate_log", entity_id: id, change_summary: { note }, req });
@@ -315,13 +349,18 @@ export const duplicateService = {
 
 // ── Sourcing Funnel Analytics ─────────────────────────────────────────────────
 export const sourcingAnalyticsService = {
-  async getFunnel(filters: { from_date?: string; to_date?: string; start_date?: string; end_date?: string; process?: string; process_id?: string; branch?: string; branch_id?: string }) {
+  async getFunnel(filters: { from_date?: string; to_date?: string; start_date?: string; end_date?: string; process?: string; process_id?: string; branch?: string; branch_id?: string }, scope?: AtsBranchScope) {
     // Was ["1=1"]: no legacy exclusion AND no active_status, so this funnel counted every row
     // in ats_candidate — 37,686, of which 29,926 are legacy employee records. The default
     // bucket below (`COALESCE(NULLIF(current_stage,''),'Applied')`) is where most of them
     // landed, so this endpoint reported roughly 30,000 phantom "Applied" candidates.
     const conds = ["active_status = 1", excludeEmployeeShapedCandidatesSql("ats_candidate")];
     const params: unknown[] = [];
+    if (scope) {
+      const sc = buildCandidateScopeSql(scope);
+      conds.push(`(${sc.sql})`);
+      params.push(...sc.params);
+    }
     const from = filters.from_date ?? filters.start_date;
     const to = filters.to_date ?? filters.end_date;
     // created_at >= DATE(...) rather than DATE(created_at) >= ...: the latter is non-sargable
@@ -354,8 +393,8 @@ export const sourcingAnalyticsService = {
     return (rows as FunnelRow[]).map((row) => ({ stage: row.stage, count: Number(row.count ?? 0) }));
   },
 
-  async getStageWise(filters: { from_date?: string; to_date?: string; start_date?: string; end_date?: string; process_id?: string }) {
-    const funnel = await this.getFunnel(filters as Record<string, string | undefined>);
+  async getStageWise(filters: { from_date?: string; to_date?: string; start_date?: string; end_date?: string; process_id?: string }, scope?: AtsBranchScope) {
+    const funnel = await this.getFunnel(filters as Record<string, string | undefined>, scope);
 
     /**
      * This previously walked getFunnel()'s rows — which are ordered by COUNT(*) DESC, i.e. by

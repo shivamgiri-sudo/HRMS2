@@ -69,6 +69,20 @@ export async function getBranchActivityReportData(
   return buildReport({ facts, reportDate });
 }
 
+/**
+ * Branch-scoped variant of getBranchActivityReportData (owner ruling 2026-10-01): hr / manager / branch_head /
+ * recruiter see only the facts of their own branch(es), so the summary AND the per-branch blocks cover just
+ * those. `allowedBranches` is every spelling of the caller's branches; an empty list yields an empty report.
+ */
+export async function getBranchActivityReportDataForBranches(
+  reportDate: string,
+  allowedBranches: readonly string[],
+): Promise<ReportData> {
+  const ok = new Set(allowedBranches.flatMap((n) => [n, canonicalBranch(n)]).map((n) => n.toLowerCase()));
+  const facts = (await loadFacts(reportDate)).filter((f) => ok.has(f.branch.toLowerCase()));
+  return buildReport({ facts, reportDate });
+}
+
 const BY_BRANCH_TTL_MS = 5 * 60 * 1000;
 let byBranchCache: {
   date: string;
@@ -144,8 +158,12 @@ export interface ExportRow {
 export async function getBranchActivityExportData(
   reportDate: string = getCurrentDateIST(),
   branchFilter?: string,
+  allowedBranches?: readonly string[],
 ): Promise<{ rows: ExportRow[]; csv: string }> {
-  const facts = await loadFacts(reportDate);
+  const allowed = allowedBranches
+    ? new Set(allowedBranches.flatMap((n) => [n, canonicalBranch(n)]).map((n) => n.toLowerCase()))
+    : null;
+  const facts = (await loadFacts(reportDate)).filter((f) => !allowed || allowed.has(f.branch.toLowerCase()));
   const filtered = branchFilter
     ? facts.filter((f) => f.branch.toLowerCase() === branchFilter.toLowerCase())
     : facts;

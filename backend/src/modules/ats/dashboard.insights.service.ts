@@ -243,12 +243,13 @@ export function warmInsights() {
 }
 
 /* ───────────── Sourcing leads drill (recruiter call-log records) ───────────── */
-export interface LeadFilters { notSource?: string; source?: string; recruiter?: string; stage?: string; month?: string; reason?: string; page: number; limit: number }
+export interface LeadFilters { notSource?: string; source?: string; recruiter?: string; stage?: string; month?: string; reason?: string; page: number; limit: number; scope?: { sql: string; params: unknown[] } }
 const leadsCache = createSwrCache<Record<string, unknown>>({ freshMs: 60_000 });
 const leadSourceSql = canonicalSourceSql('hiring_source');
 
 async function computeLeads(f: LeadFilters) {
   const c = ['1=1'], p: unknown[] = [];
+  if (f.scope?.sql) { c.push(`(${f.scope.sql})`); p.push(...f.scope.params); }
   if (f.source) { if (f.source === 'Unspecified') c.push("(hiring_source IS NULL OR hiring_source = '')"); else { c.push(`${leadSourceSql} = ?`); p.push(sourceCode(f.source)); } }
   if (f.notSource) { c.push(`(hiring_source IS NULL OR ${leadSourceSql} <> ?)`); p.push(sourceCode(f.notSource)); }
   if (f.recruiter) { c.push('recruiter_name_snapshot = ?'); p.push(f.recruiter); }

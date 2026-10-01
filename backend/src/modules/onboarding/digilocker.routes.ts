@@ -29,9 +29,28 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { resolveAtsBranchScope, checkCandidateScope, OUT_OF_SCOPE_MESSAGE } from "../ats-extensions/ats-ext-scope.js";
 import { syncDigilockerStatus } from "../integrations/luckpay/luckpay-status.service.js";
 
 const router = Router();
+
+/** Staff roles that may open candidate onboarding admin views (further limited to their branch below). */
+const ADMIN_VIEW_ROLES = [
+  "super_admin", "admin", "ceo", "coo", "cfo", "hr", "hr_admin", "hr_head", "ho_hr", "recruitment_hr", "recruiter",
+  "payroll_hr", "payroll", "payroll_head", "finance", "finance_head", "accounts_head", "branch_head",
+] as const;
+
+/** 403/404 unless the candidate is inside the caller's branch / assigned scope (org-wide roles pass). */
+async function candidateInCallerScope(req: AuthenticatedRequest, res: Response, candidateId: string): Promise<boolean> {
+  const verdict = await checkCandidateScope(await resolveAtsBranchScope(req.authUser!.id), candidateId);
+  if (verdict === "ok") return true;
+  if (verdict === "not_found") res.status(404).json({ success: false, error: "Candidate not found" });
+  else res.status(403).json({ success: false, error: OUT_OF_SCOPE_MESSAGE });
+  return false;
+}
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
 /** The live endpoint, named in every response that turns a caller away. */
@@ -152,7 +171,7 @@ router.post("/callback", h(async (req: any, res: Response) => {
 /**
  * GET /api/onboarding/digilocker/:sessionId — admin view, live table.
  */
-router.get("/:sessionId", h(async (req: any, res: Response) => {
+router.get("/:sessionId", requireAuth, requireRole(...ADMIN_VIEW_ROLES), h(async (req: any, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id AS sessionId, candidate_id AS candidateId, session_status AS status,
             requested_documents_json AS requestedDocuments,
@@ -163,6 +182,7 @@ router.get("/:sessionId", h(async (req: any, res: Response) => {
   );
 
   if (!rows[0]) return res.status(404).json({ success: false, error: "Session not found" });
+  if (!(await candidateInCallerScope(req, res, String(rows[0].candidateId)))) return;
   return res.json({ success: true, data: rows[0] });
 }));
 

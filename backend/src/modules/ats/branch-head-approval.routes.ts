@@ -89,7 +89,7 @@ branchHeadApprovalRouter.post('/process', h(async (req, res) => {
 
     return res.json(result);
   } catch (error: unknown) {
-    return res.status(500).json({
+    return res.status((error as { statusCode?: number }).statusCode ?? 500).json({
       success: false,
       message: getErrorMessage(error),
     });
@@ -110,7 +110,7 @@ branchHeadApprovalRouter.get('/history/:candidateId', h(async (req: Request, res
       data: history,
     });
   } catch (error: unknown) {
-    return res.status(500).json({
+    return res.status((error as { statusCode?: number }).statusCode ?? 500).json({
       success: false,
       message: getErrorMessage(error),
     });

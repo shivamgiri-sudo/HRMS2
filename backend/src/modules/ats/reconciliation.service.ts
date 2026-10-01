@@ -14,6 +14,7 @@
 
 import { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
+import type { ScopeCondition } from '../../shared/enterpriseScope.js';
 
 // ── BGV Anomalies ──────────────────────────────────────────────────────────────
 
@@ -524,4 +525,29 @@ export async function getReconciliationSummary() {
      `
   );
   return result[0];
+}
+
+/** Provisioning counts of the summary, limited to employees inside the caller's branch (alias `e`). */
+export async function getScopedProvisioningCounts(emp: ScopeCondition) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       (SELECT COUNT(DISTINCT pr.employee_id) FROM it_provisioning_request pr
+          JOIN employees e ON e.id = pr.employee_id
+         WHERE pr.sla_due_at IS NOT NULL AND pr.sla_due_at < NOW()
+           AND pr.status NOT IN ('actioned','verified','waived','cancelled') AND (${emp.sql}))
+         AS sla_overdue_employees,
+       (SELECT COUNT(DISTINCT pr.employee_id) FROM it_provisioning_request pr
+          JOIN employees e ON e.id = pr.employee_id
+         WHERE pr.assignment_exception = 1
+           AND pr.status NOT IN ('confirmed', 'waived') AND (${emp.sql}))
+         AS employees_with_unassigned_tasks,
+       (SELECT COUNT(*) FROM it_provisioning_request pr
+          JOIN employees e ON e.id = pr.employee_id
+         WHERE pr.task_code = 'IT_EMAIL_DOMAIN_ASSET'
+           AND pr.official_email IS NOT NULL AND pr.official_email != ''
+           AND (e.official_email IS NULL OR e.official_email != pr.official_email) AND (${emp.sql}))
+         AS it_email_sync_gap`,
+    [...emp.params, ...emp.params, ...emp.params]
+  );
+  return rows[0] ?? { sla_overdue_employees: 0, employees_with_unassigned_tasks: 0, it_email_sync_gap: 0 };
 }
