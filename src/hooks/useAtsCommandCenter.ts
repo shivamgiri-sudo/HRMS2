@@ -28,3 +28,9 @@ export const useLeakage = (f: DrillFilters) =>
 /** Benchmark board (demand, sourcing by channel, offers, direct spend by month). Readable by more roles than the aggregates, so errors are handled by the caller. */
 export const useBmi = (months = 6) =>
   useQuery({ queryKey: ["ats-cc-bmi", months], ...opts, retry: 0, queryFn: async () => (await hrmsApi.get<{ ok: boolean; data: Bmi }>(`/api/ats/bmi-benchmark?months=${months}`)).data });
+
+export interface NameSuspects { generatedAt: string; names: number; suspects: { a: string; b: string; reason: string }[]; truncated: boolean }
+/** Cheap (distinct spellings only). Org-wide roles only: other roles get a 403 the caller shows as "not available". */
+export const useRecruiterNameSuspects = () =>
+  useQuery({ queryKey: ["ats-cc-name-suspects"], placeholderData: keepPreviousData, staleTime: 10 * 60_000, refetchOnWindowFocus: false, retry: 0,
+    queryFn: async () => (await hrmsApi.get<{ data: NameSuspects }>("/api/ats/dashboard/recruiter-name-suspects")).data });

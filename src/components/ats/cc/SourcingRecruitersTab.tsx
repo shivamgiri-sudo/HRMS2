@@ -12,8 +12,10 @@ import { BarRows, Empty, RateBar, V, fmt, tooltipStyle } from "@/components/ats/
 import { SourceTreemap } from "@/components/ats/overview/charts";
 import { Card, ExportButton, FilterBar, HeatTable, InsightList, KpiCard, RadarCompare, Section, Waterfall, downloadCsv, type InsightItem } from "./cc-kit";
 import { useCC } from "./cc-context";
+import { getHrmsApiErrorStatus } from "@/lib/hrmsApi";
 import { CostPerHireCard } from "./CostPerHireCard";
 import { DuplicateReview, cleanSuspects } from "./DuplicateReview";
+import { useRecruiterNameSuspects } from "@/hooks/useAtsCommandCenter";
 import { RADAR_AXES, bestSource, isRawId, isUnowned, momentum, peerMedian, pct, poolRows, radarValues, rankRecruiters, recruiterFindings, statsFromKpis, toStats } from "./sourcing-helpers";
 
 const tick = { fontSize: 11, fill: "hsl(var(--muted-foreground))" };
@@ -40,15 +42,16 @@ export function SourcingRecruitersTab() {
   const [picked, setPicked] = useState(cc.recruiter);
   useEffect(() => { if (cc.recruiter) setPicked(cc.recruiter); }, [cc.recruiter]);
   const slice = useDrill(picked ? cc.drill({ recruiter: picked }) : null);
+  const names = useRecruiterNameSuspects();
   const [poolOn, setPoolOn] = useState(false);
   const pool = useQuery({
     queryKey: ["ats-cc-reusable-pool", cc.period, cc.branch, cc.process, cc.recruiter], enabled: poolOn, staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 0,
     queryFn: async () => {
       const q = new URLSearchParams({ period: cc.period });
       (["branch", "process", "recruiter"] as const).forEach((k) => cc[k] && q.set(k, cc[k]));
-      const r = await hrmsApi.get<{ reusablePool?: unknown; reusableTotal?: number; recruiterDuplicateSuspects?: unknown }>(`/api/ats-full-parity/command-center?${q}`);
+      const r = await hrmsApi.get<{ reusablePool?: unknown; reusableTotal?: number; }>(`/api/ats-full-parity/command-center?${q}`);
       const rows = poolRows(r.reusablePool);
-      return { rows, total: r.reusableTotal ?? rows.length, suspects: cleanSuspects(r.recruiterDuplicateSuspects) };
+      return { rows, total: r.reusableTotal ?? rows.length };
     },
   });
 
@@ -271,7 +274,7 @@ export function SourcingRecruitersTab() {
         </Card>
       </div>
 
-      <DuplicateReview i={13} suspects={pool.data?.suspects} loading={poolOn && pool.isLoading} error={poolOn && pool.isError} onLoad={() => (poolOn ? void pool.refetch() : setPoolOn(true))} />
+      <DuplicateReview i={13} suspects={cleanSuspects(names.data?.suspects)} loading={names.isLoading} error={names.isError && getHrmsApiErrorStatus(names.error) !== 403} forbidden={names.isError && getHrmsApiErrorStatus(names.error) === 403} onRetry={() => void names.refetch()} />
 
       <Card i={14} title="Reusable pool" hint="Earlier candidates worth re-approaching before fresh sourcing" icon={<Database className="h-4 w-4" />}
         right={pool.data && <ExportButton onClick={() => downloadCsv("ats-reusable-pool.csv", ["Candidate ID", "Name", "Branch", "Quality", "Reason"], pool.data.rows.map((r) => [r.id, r.name, r.branch, r.quality, r.reason]))} />}>

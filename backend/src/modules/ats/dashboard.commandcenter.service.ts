@@ -1,7 +1,8 @@
 import { createSwrCache } from './dashboard.cache.js';
 import { JOINED, OFFERED, num, pct, q, safe } from './dashboard.overview.service.js';
 import { getJoinedInfo, joinedIdSql } from './dashboard.joined.js';
-import { rawValues } from './dashboard.scope.js';
+import { rawValues, recruiterNamer } from './dashboard.scope.js';
+import { suspectedDuplicateRecruiters } from './ats-vocabulary.js';
 import { OPEN_STATUSES, where, type PipelineFilters } from './dashboard.pipeline.service.js';
 
 /** Command-centre aggregates: stage dwell, registration cohorts, funnel leakage. All share the drill's row scope via where(). */
@@ -188,3 +189,18 @@ async function computeLeakage(f: PipelineFilters) {
 }
 export const getLeakage = (f: PipelineFilters) => cache.get(keyOf('leak', f), () => computeLeakage(f));
 
+
+
+/* ───────────── Recruiter name suspects ───────────── */
+/**
+ * Recruiter names that may be one person under two spellings. Built from the distinct stored spellings (one cached grouped scan in
+ * rawValues), so it is cheap, unlike the command-center payload this list used to ride on. Pure and exported for tests.
+ */
+export function buildNameSuspects(rawNames: readonly string[], limit = 200) {
+  const namer = recruiterNamer(rawNames);
+  const names = [...new Set(rawNames.map((n) => namer(n)))].filter((n) => n && n !== 'Unassigned');
+  const all = suspectedDuplicateRecruiters(names);
+  return { names: names.length, suspects: all.slice(0, limit), truncated: all.length > limit };
+}
+
+export const getRecruiterNameSuspects = async () => ({ generatedAt: new Date().toISOString(), ...buildNameSuspects((await rawValues()).recruiter) });

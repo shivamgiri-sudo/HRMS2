@@ -6,7 +6,7 @@ vi.mock("../dashboard.overview.service.js", async (orig) => ({ ...(await orig<ty
 vi.mock("../dashboard.joined.js", () => ({ getJoinedInfo: async () => ({ ids: [] }), joinedIdSql: () => ({ sql: "0", params: [] }) }));
 
 import { getDrill } from "../dashboard.pipeline.service.js";
-import { buildCohorts, buildLeakage, clampWeeks, computeDwell, isExpectedWait, weekStarts } from "../dashboard.commandcenter.service.js";
+import { buildCohorts, buildLeakage, buildNameSuspects, clampWeeks, computeDwell, isExpectedWait, weekStarts } from "../dashboard.commandcenter.service.js";
 
 const H = 3_600_000;
 
@@ -111,5 +111,23 @@ describe("bottleneck ignores stages where waiting is expected", () => {
     const out = computeDwell(rows, 1000 * H);
     expect(out.stages[0].stage).toBe("offer_approved");
     expect(out.bottleneck).toBe("Round 1");
+  });
+});
+
+describe("buildNameSuspects", () => {
+  it("flags names where one is contained in the other and ignores unassigned", () => {
+    const r = buildNameSuspects(["Amit Sharma", "AMIT KUMAR SHARMA", "Unassigned", "Neha Rao"]);
+    expect(r.suspects.some((s) => [s.a, s.b].includes("Amit Sharma"))).toBe(true);
+    expect(r.suspects.flatMap((s) => [s.a, s.b])).not.toContain("Unassigned");
+    expect(r.truncated).toBe(false);
+  });
+  it("collapses spellings the backend already treats as one person", () => {
+    expect(buildNameSuspects(["Neha Rao", "NEHA RAO"]).suspects).toEqual([]);
+  });
+  it("caps the list and says so", () => {
+    const names = Array.from({ length: 40 }, (_, i) => `Person${i} Kumar`).concat(Array.from({ length: 40 }, (_, i) => `Person${i} Raj Kumar`));
+    const r = buildNameSuspects(names, 10);
+    expect(r.suspects.length).toBe(10);
+    expect(r.truncated).toBe(true);
   });
 });

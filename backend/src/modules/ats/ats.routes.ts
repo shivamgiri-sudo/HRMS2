@@ -29,7 +29,7 @@ import { getAtsOverview, type OverviewPeriod } from "./dashboard.overview.servic
 import { getAtsInsights, getSourcingInsights, getSourcingLeads } from "./dashboard.insights.service.js";
 import { getOperations } from "./dashboard.operations.service.js";
 import { getCandidateJourney, getDrill, listPipeline } from "./dashboard.pipeline.service.js";
-import { getCohorts, getLeakage, getStageDwell } from "./dashboard.commandcenter.service.js";
+import { getCohorts, getLeakage, getRecruiterNameSuspects, getStageDwell } from "./dashboard.commandcenter.service.js";
 
 export const atsRouter = Router();
 export const atsPublicRouter = Router(); // Public routes (no auth)
@@ -321,6 +321,10 @@ atsRouter.get("/dashboard/stage-dwell", requireRole(...DASH_CANDIDATE_ROLES), h(
 }));
 atsRouter.get("/dashboard/cohorts", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
   return res.json({ success: true, data: await getCohorts(await dashFilters(req), req.query.weeks) });
+}));
+atsRouter.get("/dashboard/recruiter-name-suspects", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
+  if (!(await resolveAtsBranchScope(req.authUser!.id)).orgWide) return res.status(403).json({ success: false, message: ORG_WIDE_ONLY_MESSAGE });
+  return res.json({ success: true, data: await getRecruiterNameSuspects() });
 }));
 atsRouter.get("/dashboard/leakage", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
   return res.json({ success: true, data: await getLeakage(await dashFilters(req)) });
