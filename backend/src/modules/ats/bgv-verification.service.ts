@@ -496,6 +496,14 @@ export async function computeAndSaveScore(candidateId: string): Promise<{ score:
     [candidateId, scorePct, nextOverallStatus]
   );
 
+  // BGV just cleared: the joining-kit auto-trigger may already have run and been skipped on this
+  // very warning, so re-attempt issuance. Fire-and-forget; the eligibility gate still applies.
+  if (nextOverallStatus === "clear" && cur?.overall_status !== "clear") {
+    import("../letters/appointmentLetterIssue.service.js")
+      .then(({ autoIssueAppointmentLetterForCandidate }) => autoIssueAppointmentLetterForCandidate(candidateId))
+      .catch(() => undefined);
+  }
+
   return { score: scorePct, overallStatus: nextOverallStatus };
 }
 
