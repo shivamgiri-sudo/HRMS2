@@ -340,3 +340,21 @@ tbody td {
     scroll-behavior: auto !important;
   }
 }
+
+/*
+ * Wider pages (owner request 2026-10-01: "increase the page width - all pages").
+ *
+ * The app shell (CompactDashboardLayout) puts every page inside <main> with no width cap; the narrow
+ * look comes from each page's OWN centred wrapper (`mx-auto max-w-3xl … max-w-7xl`, 100+ pages), which
+ * stops at 768-1280px however wide the screen is. Rather than editing every page, the page-level
+ * wrappers - the direct child of <main>, or one level down - are allowed to use the available width,
+ * up to a ceiling so an ultra-wide monitor still gets a readable measure.
+ *
+ * Deliberately NOT widened: max-w-2xl and narrower (forms, text blocks, cards), anything deeper than
+ * the page wrapper, and dialogs/sheets (they render in a portal outside <main>).
+ * To go back to the old widths, delete this block.
+ */
+main > .mx-auto:is(.max-w-3xl, .max-w-4xl, .max-w-5xl, .max-w-6xl, .max-w-7xl, .max-w-screen-lg, .max-w-screen-xl, .max-w-screen-2xl, [class*="max-w-\[1"]),
+main > div > .mx-auto:is(.max-w-3xl, .max-w-4xl, .max-w-5xl, .max-w-6xl, .max-w-7xl, .max-w-screen-lg, .max-w-screen-xl, .max-w-screen-2xl, [class*="max-w-\[1"]) {
+  max-width: min(100%, 2400px);
+}
