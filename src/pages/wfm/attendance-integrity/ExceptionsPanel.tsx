@@ -569,6 +569,22 @@ export default function ExceptionsPanel() {
                             {row.resolved_at
                               ? <Badge className="bg-emerald-50 text-emerald-700 hover:bg-emerald-50">Resolved</Badge>
                               : <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100">Open</Badge>}
+                            {/* This tab is a read-only worklist; the Mismatches tab is where a day's
+                                attendance record is actually resolved or escalated. Deep-link there
+                                pre-filtered to this employee and date (issue_date is YYYY-MM-DD). */}
+                            {!row.resolved_at && row.employee_id && (
+                              <Link
+                                to={`/wfm/attendance-integrity?${new URLSearchParams({
+                                  tab: "mismatches",
+                                  employeeId: row.employee_id,
+                                  fromDate: row.issue_date.slice(0, 10),
+                                  toDate: row.issue_date.slice(0, 10),
+                                }).toString()}`}
+                                className="mt-1 block cursor-pointer text-xs font-semibold text-[#1B6AB5] hover:underline"
+                              >
+                                Review in Mismatches →
+                              </Link>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}
