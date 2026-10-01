@@ -110,27 +110,27 @@ export function normalizeStatus(status: string | null | undefined): string {
   return s === "exit_confirmed" ? "exited" : s;
 }
 
-/** Mirrors SELF_WITHDRAWABLE_STATUSES in backend/src/modules/exit/resignation-self.service.ts. */
-export const SELF_WITHDRAWABLE = new Set([
-  "draft",
-  "submitted",
-  "returned",
-  "manager_review",
-  "hr_review",
-  "admin_review",
-  "accepted",
-  "notice_serving",
-  "notice_active",
+/** Mirrors SELF_WITHDRAW_BLOCKED_STATUSES in backend/src/modules/exit/resignation-self.service.ts. */
+export const SELF_WITHDRAW_BLOCKED = new Set([
+  "clearance_pending",
+  "fnf_pending",
+  "exited",
+  "closed",
+  "terminated",
+  "absconding",
+  "withdrawn",
+  "revoked",
+  "rejected",
+  "cancelled",
 ]);
 
 /** The resignation was taken back — the employee has no open resignation. */
 export const REVERSAL_STATUSES = new Set(["withdrawn", "revoked", "rejected", "cancelled"]);
 
 export function canSelfWithdraw(request: ExitRequest): boolean {
-  if (!SELF_WITHDRAWABLE.has(normalizeStatus(request.status))) return false;
-  const within = request.within_lwd;
-  // null/undefined: no LWD recorded (or an older API) — the server still decides.
-  return within === null || within === undefined || within === true || Number(within) === 1;
+  // Shown for every open resignation; only once the exit is processed (clearance / exited) or
+  // already over is it HR's to undo. The server applies the same rule.
+  return !SELF_WITHDRAW_BLOCKED.has(normalizeStatus(request.status));
 }
 
 export const STATUS_LABELS: Record<string, string> = {

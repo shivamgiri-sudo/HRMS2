@@ -488,9 +488,9 @@ resignationRouter.post(
 // POST /:exitId/withdraw — the employee withdraws their own resignation; HR/admin/manager may
 // withdraw on someone else's behalf.
 //
-// Self-withdraw (including a manager/HR/admin withdrawing their OWN resignation): allowed in any
-// pre-exit status (see SELF_WITHDRAWABLE_STATUSES) and only while today is on or before the last
-// working day (confirmed, else proposed). Before 2026-10-01 the page only offered it in
+// Self-withdraw (including a manager/HR/admin withdrawing their OWN resignation): allowed in every
+// status except the processed / finished ones (see SELF_WITHDRAW_BLOCKED_STATUSES), for a
+// resignation on any employee record linked to the caller's login. Before 2026-10-01 the page only offered it in
 // 'submitted', and the FSM refused production's 'notice_active' outright.
 // On behalf of someone else: unchanged - the exit.secure.routes.ts FSM decides.
 // Both paths: row-level expected-status update, exit_approval_log + sensitive_action_log entries,
@@ -700,9 +700,13 @@ resignationRouter.get(
               (COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) IS NULL
                 OR CURDATE() <= COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed)) AS within_lwd
          FROM exit_request er
+        -- Every employee row linked to this login: a resignation filed against another record of
+        -- the same person (rehire, duplicate) was invisible here, so the page showed no request
+        -- and no Withdraw button.
         WHERE er.employee_id = ?
+           OR er.employee_id IN (SELECT e2.id FROM employees e2 WHERE e2.user_id = ?)
         ORDER BY er.created_at DESC`,
-      [emp.id]
+      [emp.id, req.authUser!.id]
     );
     return res.json({ success: true, data: rows });
   })

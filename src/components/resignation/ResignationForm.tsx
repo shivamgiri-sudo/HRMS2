@@ -93,7 +93,7 @@ export function ResignationForm({
         {reviewShort && <ShortNoticeNote />}
         <p className="mt-4 flex gap-2 rounded-2xl bg-emerald-50 px-4 py-3 text-base leading-relaxed text-emerald-900">
           <Info className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-          You can withdraw your resignation yourself until your last working day.
+          You can withdraw your resignation yourself until your exit is processed.
         </p>
         {serverError && (
           <p role="alert" className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-base text-rose-800">

@@ -20,28 +20,27 @@ import { inboxService } from "../inbox/inbox.service.js";
 import { assertValidExitTransition } from "./exit.secure.routes.js";
 
 /**
- * Statuses in which the employee has NOT yet left, across both status vocabularies in use:
- *   - exit.secure.routes.ts FSM: draft, submitted, manager_review, accepted, notice_serving
- *   - exit.service.ts transitionExitStatus FSM (production): submitted, returned, notice_active
- *   - legacy review stages still present on old rows: hr_review, admin_review
- *
- * Deliberately absent: clearance_pending / fnf_pending (the separation paperwork has started),
- * exited / exit_confirmed / closed / terminated (the employee has left), and the reversal
- * terminals withdrawn / revoked / rejected / cancelled (nothing left to withdraw).
+ * Statuses in which the employee has already left, or the separation paperwork has started, or
+ * the resignation is already over. Self-withdraw is refused only in these; every other status -
+ * including any status name this list does not know - is withdrawable, so an employee is never
+ * left without a Withdraw button because of a vocabulary gap (owner, 2026-10-01: the button must
+ * be there while the resignation is open).
  */
-export const SELF_WITHDRAWABLE_STATUSES = [
-  "draft",
-  "submitted",
-  "returned",
-  "manager_review",
-  "hr_review",
-  "admin_review",
-  "accepted",
-  "notice_serving",
-  "notice_active",
+export const SELF_WITHDRAW_BLOCKED_STATUSES = [
+  "clearance_pending",
+  "fnf_pending",
+  "exited",
+  "exit_confirmed",
+  "closed",
+  "terminated",
+  "absconding",
+  "withdrawn",
+  "revoked",
+  "rejected",
+  "cancelled",
 ] as const;
 
-const SELF_WITHDRAWABLE = new Set<string>(SELF_WITHDRAWABLE_STATUSES);
+const SELF_WITHDRAW_BLOCKED = new Set<string>(SELF_WITHDRAW_BLOCKED_STATUSES);
 
 export type HttpError = Error & { statusCode: number; code?: string };
 
@@ -61,19 +60,17 @@ export function decideSelfWithdraw(
   lastWorkingDay: string | null,
 ): { ok: true } | { ok: false; message: string } {
   const s = String(status ?? "").trim().toLowerCase();
-  if (!SELF_WITHDRAWABLE.has(s)) {
+  if (SELF_WITHDRAW_BLOCKED.has(s)) {
     const label = s.replace(/_/g, " ") || "unknown";
     return {
       ok: false,
       message: `Your resignation is already '${label}', so it can no longer be withdrawn from here. Please contact HR to withdraw it.`,
     };
   }
-  if (!withinLastWorkingDay) {
-    return {
-      ok: false,
-      message: `Your last working day${lastWorkingDay ? ` (${lastWorkingDay})` : ""} has passed, so the resignation can no longer be withdrawn from here. Please contact HR.`,
-    };
-  }
+  // The last working day itself is no longer a cut-off: until the exit is actually processed
+  // (status moves to clearance / exited), the employee can still change their mind.
+  void withinLastWorkingDay;
+  void lastWorkingDay;
   return { ok: true };
 }
 
@@ -185,7 +182,17 @@ export async function withdrawResignation(input: WithdrawInput): Promise<Withdra
   const current = Array.isArray(rows) ? rows[0] : undefined;
   if (!current) throw httpError(404, "Exit request not found");
 
-  const ownsIt = !!input.callerEmployeeId && String(current.employee_id) === input.callerEmployeeId;
+  // A login can be linked to more than one employee row (rehire, duplicate record). The
+  // resignation may sit on any of them, so ownership is "linked to the caller's login", not
+  // "equals the one row getEmployeeForUser happened to pick".
+  let ownsIt = !!input.callerEmployeeId && String(current.employee_id) === input.callerEmployeeId;
+  if (!ownsIt && input.actorUserId) {
+    const [linked] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM employees WHERE id = ? AND user_id = ? LIMIT 1`,
+      [current.employee_id, input.actorUserId],
+    );
+    ownsIt = Array.isArray(linked) && linked.length > 0;
+  }
   if (!input.isPrivileged && !ownsIt) {
     throw httpError(403, "You may only withdraw your own resignation");
   }

@@ -142,7 +142,7 @@ export function StatusTracker({
         {withdrawable ? (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-base leading-relaxed text-slate-700">
-              Changed your mind? You can withdraw until your last working day{lwd ? ` (${formatDate(lwd)})` : ""}.
+              Changed your mind? You can withdraw it yourself until your exit is processed.
             </p>
             <Button
               type="button"

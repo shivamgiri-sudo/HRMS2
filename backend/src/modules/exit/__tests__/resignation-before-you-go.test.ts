@@ -49,7 +49,7 @@ vi.mock("../../../shared/recipient-resolver.js", () => ({ resolveRoleHolderUserI
 vi.mock("../../policy-engine/policy-engine.cache.js", () => ({ getPolicyValue: vi.fn(async () => "30") }));
 
 const { resignationRouter } = await import("../resignation.routes.js");
-const { decideSelfWithdraw, SELF_WITHDRAWABLE_STATUSES } = await import("../resignation-self.service.js");
+const { decideSelfWithdraw } = await import("../resignation-self.service.js");
 
 function app() {
   const a = express();
@@ -95,8 +95,15 @@ const withdraw = () => request(app()).post(`/api/exit/resignation/${EXIT_ID}/wit
 const withdrewSql = () => sqls().some((s) => s.includes("SET status = 'withdrawn'"));
 
 describe("decideSelfWithdraw (the rule itself)", () => {
-  it.each(SELF_WITHDRAWABLE_STATUSES)("allows '%s' on or before the last working day", (status) => {
-    expect(decideSelfWithdraw(status, true, "2026-10-31")).toEqual({ ok: true });
+  it.each(["draft", "submitted", "returned", "manager_review", "hr_review", "admin_review", "accepted", "notice_serving", "notice_active"])(
+    "allows '%s'",
+    (status) => {
+      expect(decideSelfWithdraw(status, true, "2026-10-31")).toEqual({ ok: true });
+    },
+  );
+
+  it("allows a status name it does not know, so the button is never missing for an open resignation", () => {
+    expect(decideSelfWithdraw("pending_manager_approval", true, "2026-10-31")).toEqual({ ok: true });
   });
 
   it.each(["clearance_pending", "fnf_pending", "exited", "exit_confirmed", "closed", "terminated", "withdrawn", "revoked", "rejected"])(
@@ -108,10 +115,9 @@ describe("decideSelfWithdraw (the rule itself)", () => {
     },
   );
 
-  it("refuses a pre-exit status once the last working day has passed", () => {
-    const r = decideSelfWithdraw("notice_serving", false, "2026-09-30");
-    expect(r.ok).toBe(false);
-    expect(!r.ok && r.message).toContain("2026-09-30");
+  it("still allows a pre-exit status after the last working day, until the exit is processed", () => {
+    // Owner, 2026-10-01: the Withdraw button must be there while the resignation is open.
+    expect(decideSelfWithdraw("notice_serving", false, "2026-09-30")).toEqual({ ok: true });
   });
 });
 
@@ -138,13 +144,22 @@ describe("POST /:exitId/withdraw — employee self-withdraw", () => {
     },
   );
 
-  it("409 after the last working day — nothing is written", async () => {
+  it("200 after the last working day while the exit is not yet processed", async () => {
     on(/SELECT status, employee_id/, () => [exitRow("notice_serving", { lwd: "2026-09-15", withinLwd: 0 })]);
+    on(/SELECT active_status FROM employees/, () => [{ active_status: 1 }]);
     const res = await withdraw();
-    expect(res.status).toBe(409);
-    expect(res.body.message).toMatch(/last working day/i);
-    expect(withdrewSql()).toBe(false);
-    expect(createItem).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(withdrewSql()).toBe(true);
+  });
+
+  it("200 when the resignation sits on another employee record linked to the same login", async () => {
+    on(/SELECT status, employee_id/, () => [exitRow("manager_review", { employee: "emp-other-record" })]);
+    on(/SELECT 1 FROM employees WHERE id = \? AND user_id = \?/, (params) =>
+      params[0] === "emp-other-record" && params[1] === "user-self" ? [{ 1: 1 }] : []);
+    on(/SELECT active_status FROM employees/, () => [{ active_status: 1 }]);
+    const res = await withdraw();
+    expect(res.status).toBe(200);
+    expect(withdrewSql()).toBe(true);
   });
 
   it.each(["exited", "clearance_pending", "fnf_pending", "closed"])("409 in '%s' even before the LWD", async (status) => {
