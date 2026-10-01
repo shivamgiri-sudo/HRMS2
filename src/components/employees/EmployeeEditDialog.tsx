@@ -1126,6 +1126,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                       <SelectItem value="inactive">Inactive</SelectItem>
                       <SelectItem value="on notice">On Notice</SelectItem>
                       <SelectItem value="onboarding">Onboarding</SelectItem>
+                      <SelectItem value="preboarding">Preboarding</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
