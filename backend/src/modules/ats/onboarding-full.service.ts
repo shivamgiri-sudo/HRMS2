@@ -1239,7 +1239,7 @@ export async function validateOnboardingToken(token: string) {
             c.id, c.candidate_code, c.full_name, c.mobile, c.email,
             c.gender, c.date_of_birth, c.applied_for_branch, c.applied_for_process,
             c.sourcing_channel, c.source_details, c.resume_url, c.selfie_url,
-            c.profile_status, c.is_minor, br.branch_name, pm.process_name
+            c.profile_status, c.is_minor, br.branch_name, br.city AS branch_city, pm.process_name
        FROM ats_onboarding_bridge b
        JOIN ats_candidate c ON c.id = b.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
@@ -1274,6 +1274,8 @@ export async function validateOnboardingToken(token: string) {
     date_of_birth: row.date_of_birth,
     branch_id: row.applied_for_branch,
     branch_name: row.branch_name ?? row.applied_for_branch ?? null,
+    // Lets the address step warn when the current address is in a different city than the branch.
+    branch_city: row.branch_city ?? null,
     process_id: row.applied_for_process,
     process_name: row.process_name ?? row.applied_for_process ?? null,
     source_type: row.sourcing_channel ?? null,

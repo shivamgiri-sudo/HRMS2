@@ -14,6 +14,7 @@ import {
 } from "./OnboardingFormPrimitives";
 import type { EmployeeForm, BankForm, StatusData, BgvStatus } from "./useOnboardingFull";
 import { PennyDropButton } from "./PennyDropButton";
+import { BranchCityNotice } from "./BranchCityNotice";
 import { INDIA_STATES, citiesForState, OTHER_CITY } from "@/data/indiaStatesCities";
 import { findMissingMandatoryDocs, MANDATORY_DOCUMENT_RULES } from "./mandatoryDocuments";
 
@@ -478,7 +479,11 @@ export function Step2Personal({
 export function Step3AddressKyc({
   employee, setEmployee, saving, onSave, digilockerStatus, onDigilocker, digilockerRedirectUrl,
   consentAccepted = false, onConsent, onSyncDigilocker, digilockerSyncing = false, digilockerStale = false,
+  branchName, branchCity,
 }: {
+  /** Branch the candidate is joining; used only for the non-blocking "different city" heads-up. */
+  branchName?: string | null;
+  branchCity?: string | null;
   employee: EmployeeForm;
   setEmployee: React.Dispatch<React.SetStateAction<EmployeeForm>>;
   saving: boolean;
@@ -732,6 +737,7 @@ export function Step3AddressKyc({
         </div>
 
         <SectionHead sub="Where you are currently staying">Present / Current Address</SectionHead>
+        <BranchCityNotice branchName={branchName} branchCity={branchCity} presentCity={employee.presentCity} />
         <label className="flex items-center gap-3 cursor-pointer p-3 bg-slate-50 rounded-xl border-2 border-slate-200 hover:border-blue-300 transition-colors mb-3 select-none">
           <input
             type="checkbox"

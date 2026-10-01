@@ -278,6 +278,8 @@ export default function CandidateOnboardingFullPage() {
             onConsent={onb.grantConsent}
             onSyncDigilocker={onb.syncDigilocker}
             digilockerSyncing={onb.digilockerSyncing}
+            branchName={onb.status?.token?.branch_name}
+            branchCity={onb.status?.token?.branch_city}
           />
         )}
 
