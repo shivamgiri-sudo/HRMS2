@@ -1512,14 +1512,11 @@ publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", h(async (req, res) =
           if (candidateEmail.includes("@")) {
             try {
               const { emailService } = await import("../communication/email.service.js");
-              const frontendBase = process.env.FRONTEND_URL ?? process.env.APP_URL ?? "https://mcnhrms.teammas.in";
-              const downloadUrl = `${frontendBase}/api/letters/appointment/by-candidate/${alRow.candidate_id}/download`;
               await emailService.send({
                 to: candidateEmail,
                 subject: "Your Appointment Letter — MAS Callnet",
                 html: `<p>Dear ${String(alRow.full_name ?? "")},</p>
-                       <p>Your appointment letter is ready. Please download it using the link below:</p>
-                       <p><a href="${downloadUrl}" style="background:#2563eb;color:#fff;padding:8px 16px;border-radius:4px;text-decoration:none;">Download Appointment Letter</a></p>
+                       <p>Your appointment letter is ready. It is attached to this email as a PDF.</p>
                        <p>Regards,<br/>MAS Callnet HR Team</p>`,
                 attachments: pdfBytes ? [{ filename: "Appointment_Letter.pdf", content: pdfBytes }] : undefined,
               });

@@ -15,6 +15,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendTwoFactorChallenge, verifyTwoFactorChallenge, type TwoFactorChannel } from "./twoFactor.service.js";
 import { classifyLoginError } from "./auth-login-error.js";
 import { clearRefreshTokenCookie, getRefreshTokenFromRequest, setRefreshTokenCookie } from "./auth-cookie.js";
+import { buildAppLink } from "../../shared/appLink.js";
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -796,6 +797,7 @@ router.post("/admin-reset-password", requireAuth, h(async (req, res) => {
               <div style="padding:26px">
                 <p style="font-size:15px;line-height:1.6;margin:0 0 16px">Your HRMS password has been reset by an authorised administrator.</p>
                 <p style="font-size:14px;line-height:1.6;margin:16px 0;color:#dc2626;font-weight:600">Contact the administrator through the approved secure channel for your temporary password. You must change it immediately after login.</p>
+                <p style="margin:16px 0"><a href="${buildAppLink("/auth")}" style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600">Open HRMS sign-in</a></p>
                 <p style="font-size:13px;line-height:1.6;color:#64748b;margin:16px 0 0">All existing HRMS refresh sessions have been revoked for your security.</p>
               </div>
             </div>

@@ -511,6 +511,31 @@ export default function PaymentDisbursalCenter() {
     onError: (e: any) => toast.error(e?.message ?? "Bulk update failed"),
   });
 
+  /**
+   * Email the selected employees a link to add their bank details. The server applies branch
+   * scope, the 3-day gap and the 5-reminder cap, and reports per employee why anyone was skipped.
+   */
+  const reminderMutation = useMutation({
+    mutationFn: (employeeIds: string[]) =>
+      hrmsApi.post<{
+        summary: { sent: number; skipped: number; failed: number };
+        results: Array<{ employee_code: string | null; status: string; reason?: string }>;
+      }>("/api/payroll/pendency-reminders", { kind: "bank_account", employee_ids: employeeIds }),
+    onSuccess: (r) => {
+      const { sent, skipped, failed } = r.summary;
+      const why = r.results
+        .filter((x) => x.status === "skipped")
+        .slice(0, 3)
+        .map((x) => `${x.employee_code ?? "?"}: ${x.reason}`)
+        .join("; ");
+      const msg = `Reminders: ${sent} sent${skipped ? `, ${skipped} skipped (${why}${skipped > 3 ? "…" : ""})` : ""}${failed ? `, ${failed} failed` : ""}`;
+      if (failed || (sent === 0 && skipped > 0)) toast.warning(msg);
+      else toast.success(msg);
+      if (sent > 0) setSelectedIds(new Set());
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Could not send reminders"),
+  });
+
   // ── Salary Transfer queries ────────────────────────────────────────────────
   interface TransferItem {
     id: string;
@@ -1234,6 +1259,15 @@ export default function PaymentDisbursalCenter() {
                     </Button>
                     <Button size="sm" onClick={openBulkEditor}>
                       Bulk Assign
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={reminderMutation.isPending}
+                      onClick={() => reminderMutation.mutate(Array.from(selectedIds))}
+                      title="Email the selected employees a link to add their bank details"
+                    >
+                      {reminderMutation.isPending ? "Sending…" : "Send reminder"}
                     </Button>
                     <Button
                       size="sm"

@@ -28,6 +28,7 @@ import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 import { AUTO_ACTOR, isExitAutoEnabled } from "./exit-auto-config.js";
 import { upsertOpenWorkItem } from "../../shared/workItem.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { buildAppLink } from "../../shared/appLink.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -60,7 +61,9 @@ async function notifyManagerOfResignation(
       subject: `Resignation Notice — ${emp.first_name} ${emp.last_name}`,
       html: `<p>Dear ${emp.mgr_first ?? "Manager"},</p>
              <p><strong>${emp.first_name} ${emp.last_name}</strong> has submitted a resignation request.</p>
-             <p>Please log in to HRMS to review and action this request.</p>
+             <p>Please review and action this request in HRMS:</p>
+             <p><a href="${buildAppLink("/exit/command-center")}" style="display:inline-block;background:#073f78;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600">Review resignation</a></p>
+             <p style="font-size:12px;color:#6b7280">Or copy this link: ${buildAppLink("/exit/command-center")}</p>
              <p style="color:#888;font-size:12px">Exit Request ID: ${exitRequestId}</p>`,
     });
   } catch (err) {
