@@ -18,10 +18,8 @@ import {
   getInterventionOutcomes
 } from './intervention-recommendation.service.js';
 import { getInterventionDetail, listInterventionCases } from './intervention-cases.service.js';
-import { db } from '../../db/mysql.js';
 import { canAccessEmployeeRecord, employeeListScope } from '../dashboards/branch-scope-guards.js';
 import type { NextFunction, Request, Response } from 'express';
-import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
 

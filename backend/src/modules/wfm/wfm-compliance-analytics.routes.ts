@@ -8,7 +8,6 @@ import { lobWhere, readLobFilter, type LobFilter } from "../../shared/lobFilter.
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { consoleScopeGuard, branchParamGuard, employeeParamGuard } from "./console-scope.js";
 import { db } from "../../db/mysql.js";
-import { branchScopeGuard, employeeFieldGuard, employeeParamGuard, branchParamGuard } from "./branch-scope.js";
 import type { RowDataPacket } from "mysql2";
 import {
   getEmployeeWfmCompliance,
