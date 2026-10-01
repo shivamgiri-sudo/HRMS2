@@ -39,6 +39,7 @@ import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { asArray, asNumber, asRecord, metricDetail, metricUnavailableReason, metricValue } from "../reference-dashboard-model";
 import { deriveAtsStageSnapshot } from "../dashboard-data-contracts";
 import { ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+import { AttritionPulseCard } from "@/components/analytics/attrition/AttritionPulseCard";
 import { ExitAnalyticsPanel } from "@/components/dashboard/hr/ExitAnalyticsPanel";
 /*
  * Both panels were on this layout until 81075104 ("remove all dummy data") rewrote the HR
@@ -447,6 +448,8 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
           onClick={drill("bgv").onDrilldown}
         />
       </div>
+
+      <div className="mb-4 empty:hidden"><AttritionPulseCard /></div>
 
       {/* Quick Stats Row - REAL workforce data from API */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">

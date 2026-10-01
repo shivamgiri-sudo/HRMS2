@@ -86,6 +86,42 @@ function overallBadge(status: BranchHealthReport["overallStatus"]): string {
   return `<span style="display:inline-block;padding:4px 14px;border-radius:14px;background:${s.bg};color:#fff;${FONT}font-size:13px;font-weight:700;letter-spacing:0.5px;">${s.label}</span>`;
 }
 
+const TIER_COLOR: Record<string, string> = { CRITICAL: "#dc2626", HIGH: "#ea580c", MEDIUM: "#d97706", LOW: "#16a34a" };
+
+/** Section 10: attrition & retention risk. Empty string when the data was unavailable. */
+export function attritionBody(raw: { attrition?: BranchHealthReport["raw"]["attrition"] }): string {
+  const at = raw.attrition;
+  if (!at) return "";
+  const delta = at.exitsPrev30 > 0 ? Math.round(((at.exits30 - at.exitsPrev30) / at.exitsPrev30) * 100) : null;
+  const strip = kpiStrip([
+    { label: "Critical risk", value: String(at.critical), color: at.critical > 0 ? C.danger : C.muted, subtext: `${at.high} high` },
+    { label: "Absent 3+ days", value: String(at.absentStreak), color: at.absentStreak > 0 ? C.danger : C.muted, subtext: "possible absconding" },
+    { label: "New joiners at risk", value: String(at.newJoinerRisk), color: at.newJoinerRisk > 0 ? C.warn : C.muted, subtext: "first 90 days" },
+    { label: "Exits, 30 days", value: String(at.exits30), color: C.primary, subtext: delta == null ? undefined : `${delta > 0 ? "+" : ""}${delta}% vs previous 30` },
+    { label: "Early exits", value: at.earlyExitSharePct == null ? "—" : `${at.earlyExitSharePct}%`, color: (at.earlyExitSharePct ?? 0) >= 50 ? C.danger : C.primary, subtext: "left within 90 days" },
+    { label: "Expected exits", value: at.expectedExits30 == null ? "—" : `~${at.expectedExits30}`, color: C.primary, subtext: "next 30 days" },
+  ]);
+  const max = Math.max(1, ...at.monthlyExits.map((m) => m.exits));
+  const spark = at.monthlyExits.length
+    ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;"><tr valign="bottom">${at.monthlyExits.map((m) =>
+        `<td align="center" style="${FONT}font-size:10px;color:${C.muted};"><div style="font-weight:700;color:${C.primary};">${m.exits}</div><div style="margin:2px auto;width:60%;height:${Math.max(3, Math.round((m.exits / max) * 46))}px;background:${C.accent};border-radius:3px 3px 0 0;"></div>${esc(m.month.slice(5))}/${esc(m.month.slice(2, 4))}</td>`).join("")}</tr></table>` + note("Exits per month, last six months.")
+    : "";
+  const proc = at.byProcess.length
+    ? dataTable(["Process", "Active", "High + critical", "Absent 3+ days"], at.byProcess.map((p) => [p.process, String(p.headcount), { raw: `<strong style="color:${p.highRisk > 0 ? C.danger : C.muted};">${p.highRisk}</strong>` }, String(p.absentStreak)]), true)
+    : "";
+  const people = at.topRisk.length
+    ? dataTable(["Employee", "Process", "Days in", "Score", "Main reasons"], at.topRisk.map((p) => [
+        `${p.name} (${p.code})`, p.process ?? "—", String(p.aonDays),
+        { raw: `<strong style="color:${TIER_COLOR[p.tier] ?? C.muted};">${p.score} ${esc(p.tier.charAt(0) + p.tier.slice(1).toLowerCase())}</strong>` },
+        p.reasons.join(", ") + (p.absentStreak >= 2 ? ` · absent ${p.absentStreak}d` : ""),
+      ]), true)
+    : "";
+  return strip + spark +
+    `<p style="${FONT}font-size:10px;font-weight:700;color:${C.muted};margin:10px 0 3px 0;letter-spacing:1px;">HIGHEST RISK RIGHT NOW</p>${people}` +
+    (proc ? `<p style="${FONT}font-size:10px;font-weight:700;color:${C.muted};margin:10px 0 3px 0;letter-spacing:1px;">WHERE RISK SITS — BY PROCESS</p>${proc}` : "") +
+    note(`Risk score 0-100 from tenure, attendance behaviour, performance, pay, conduct and the manager's team. ${at.calibrationNote ?? ""} Full detail, drill-downs and follow-up logging: AON &amp; Attrition page.`);
+}
+
 function sectionHeader(title: string): string {
   return `<tr><td colspan="99" style="padding:10px 0 4px 0;">
     <p style="margin:0;${FONT}font-size:11px;font-weight:700;letter-spacing:1.2px;color:${C.muted};text-transform:uppercase;">${esc(title)}</p>
@@ -1207,7 +1243,10 @@ export function renderEmail(
     `<tr><td>${card(hiringBody + hiringNote)}</td></tr>`,
     sectionHeader("9. Running P&L — Month-to-Date"),
     `<tr><td>${card(pnlBody + pnlTieBody)}</td></tr>`,
-    sectionHeader("10. Critical Intervention Points & Positive Achievements"),
+    ...(attritionBody(raw)
+      ? [sectionHeader("10. Attrition & Retention Risk"), `<tr><td>${card(attritionBody(raw))}</td></tr>`]
+      : []),
+    sectionHeader(attritionBody(raw) ? "11. Critical Intervention Points & Positive Achievements" : "10. Critical Intervention Points & Positive Achievements"),
     `<tr><td>${signalsBody}</td></tr>`,
   ].join("\n");
 

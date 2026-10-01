@@ -75,6 +75,7 @@ export interface Model {
   calibration: { tier: Tier; n: number; leavers: number; observedRatePct: number | null }[];
   drivers: { group: FactorGroup; label: string; avgPointsLeavers: number; avgPointsStayers: number }[];
   limits: string[];
+  history: { date: string; auc: number | null; baseRatePct: number; criticalRatePct: number | null; highRatePct: number | null; population: number; leavers: number }[];
 }
 
 /**
@@ -130,6 +131,7 @@ export function buildModel(
       group: g, label: FACTOR_LABELS[g],
       avgPointsLeavers: avg(leavers.map((r) => r.factors[g])), avgPointsStayers: avg(stayers.map((r) => r.factors[g])),
     })),
+    history: [],
     limits: [
       "Tested on past snapshots, using only signals that have history: tenure, attendance, leave, regularisation, warnings, increments, pay and the manager's team losses.",
       "KPI score, call quality, PIP and profile gaps are scored for today's people but cannot be replayed into the past, so they are not part of this test.",
@@ -155,7 +157,34 @@ async function computeModel(): Promise<Model> {
       }),
     });
   }
-  return buildModel(cohorts);
+  const model = buildModel(cohorts);
+  await saveModelSnapshot(model);
+  model.history = await loadModelHistory();
+  return model;
+}
+
+/** One row a day, so quality can be charted over time. Quietly skipped until migration 1989 exists. */
+async function saveModelSnapshot(m: Model) {
+  try {
+    await db.execute(
+      `INSERT INTO attrition_model_snapshot (snapshot_date, auc, base_rate_pct, population, leavers, calibration_json)
+       VALUES (CURDATE(), ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE auc = VALUES(auc), base_rate_pct = VALUES(base_rate_pct), population = VALUES(population), leavers = VALUES(leavers), calibration_json = VALUES(calibration_json)`,
+      [m.auc == null ? null : Math.round(m.auc * 10000) / 10000, m.baseRatePct, m.population, m.leavers, JSON.stringify(m.calibration)] as never[]);
+  } catch (err) { console.error("[attrition-hub] model snapshot not saved:", err instanceof Error ? err.message : err); }
+}
+export async function loadModelHistory(): Promise<Model["history"]> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(snapshot_date, '%Y-%m-%d') AS d, auc, base_rate_pct, population, leavers, calibration_json
+         FROM attrition_model_snapshot ORDER BY snapshot_date DESC LIMIT 60`);
+    return rows.reverse().map((r) => {
+      let cal: { tier: string; observedRatePct: number | null }[] = [];
+      try { cal = JSON.parse(String(r.calibration_json ?? "[]")); } catch { /* keep empty */ }
+      const rate = (t: string) => cal.find((c) => c.tier === t)?.observedRatePct ?? null;
+      return { date: String(r.d), auc: r.auc == null ? null : Number(r.auc), baseRatePct: Number(r.base_rate_pct), criticalRatePct: rate("CRITICAL"), highRatePct: rate("HIGH"), population: Number(r.population), leavers: Number(r.leavers) };
+    });
+  } catch { return []; }
 }
 
 let modelRefreshing = false;
@@ -208,7 +237,7 @@ export async function scopedPopulation(viewer: Viewer) {
 
 /* ── exits dataset (scoped), shared by overview / insights / alerts ── */
 export interface ExitRow {
-  id: string; joinDate: string; exitDate: string; tenureDays: number; source: string | null;
+  id: string; code?: string; name?: string; joinDate: string; exitDate: string; tenureDays: number; source: string | null;
   branchId: string | null; branch: string | null; processId: string | null; process: string | null;
   managerId: string | null; manager: string | null; designationId: string | null; designation: string | null;
   reason: string | null; exitType: string | null;
@@ -216,7 +245,16 @@ export interface ExitRow {
 
 const exitsCache = new Map<string, { at: number; p: Promise<ExitsData> }>();
 const EXITS_TTL = 10 * 60_000;
-export interface ExitsData { exits: ExitRow[]; headcountEvents: { join: string; exit: string | null; source: string | null }[] }
+/** Everyone who is employed or left in the window - the base for headcount, batches, hiring quality and drill-downs. */
+export interface EmpEvent {
+  id: string; code: string; name: string; join: string; exit: string | null; source: string | null;
+  branchId: string | null; branch: string | null; processId: string | null; process: string | null;
+  managerId: string | null; manager: string | null; designationId: string | null; designation: string | null;
+  reason: string | null; exitType: string | null;
+}
+export interface NoticeExit { employeeId: string; branchId: string | null; branch: string | null; processId: string | null; process: string | null; lwd: string }
+export interface PlannedJoiner { branchId: string | null; branch: string | null; processId: string | null; process: string | null }
+export interface ExitsData { exits: ExitRow[]; headcountEvents: EmpEvent[]; notice: NoticeExit[]; planned: PlannedJoiner[] }
 
 /** Cached per scope (not per person): everyone who sees the same people shares one load. */
 export async function loadExits(viewer: Viewer, sinceDays = 400): Promise<ExitsData> {
@@ -241,10 +279,12 @@ export async function loadExits(viewer: Viewer, sinceDays = 400): Promise<ExitsD
 
 async function queryExits(sql: string, params: unknown[], sinceDays: number): Promise<ExitsData> {
   const t0 = Date.now();
-  const since = addDays(today(), -sinceDays);
+  const todayStr = today();
+  const since = addDays(todayStr, -sinceDays);
   // Latest exit_request per employee in ONE pass (a correlated subquery per row was the slow part).
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, DATE_FORMAT(COALESCE(e.salary_start_date, e.date_of_joining), '%Y-%m-%d') AS join_date,
+    `SELECT e.id, e.employee_code, COALESCE(NULLIF(TRIM(e.full_name),''), TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS emp_name,
+            DATE_FORMAT(COALESCE(e.salary_start_date, e.date_of_joining), '%Y-%m-%d') AS join_date,
             DATE_FORMAT(e.date_of_exit, '%Y-%m-%d') AS exit_date, e.source,
             e.branch_id, b.branch_name, e.process_id, p.process_name,
             e.reporting_manager_id, COALESCE(NULLIF(TRIM(m.full_name),''), TRIM(CONCAT(m.first_name,' ',COALESCE(m.last_name,'')))) AS manager_name,
@@ -271,19 +311,63 @@ async function queryExits(sql: string, params: unknown[], sinceDays: number): Pr
   );
   console.log(`[attrition-hub] exits loaded: ${rows.length} rows in ${Date.now() - t0} ms`);
   const exits: ExitRow[] = [];
-  const headcountEvents: { join: string; exit: string | null; source: string | null }[] = [];
+  const headcountEvents: EmpEvent[] = [];
   for (const r of rows) {
-    headcountEvents.push({ join: String(r.join_date), exit: r.exit_date ?? null, source: r.source ?? null });
-    if (!r.exit_date) continue;
-    const tenureDays = Math.round((new Date(`${r.exit_date}T00:00:00`).getTime() - new Date(`${r.join_date}T00:00:00`).getTime()) / 86_400_000);
-    exits.push({
-      id: String(r.id), joinDate: String(r.join_date), exitDate: String(r.exit_date), tenureDays, source: r.source ?? null,
+    const join = String(r.join_date);
+    if (join > todayStr) continue; // not employed yet: counted as a planned joiner below, not as headcount
+    const exit = r.exit_date ?? null;
+    const ev: EmpEvent = {
+      id: String(r.id), code: String(r.employee_code ?? ""), name: String(r.emp_name ?? "").trim() || String(r.employee_code ?? ""),
+      join, exit, source: r.source ?? null,
       branchId: r.branch_id ?? null, branch: r.branch_name ?? null, processId: r.process_id ?? null, process: r.process_name ?? null,
       managerId: r.reporting_manager_id ?? null, manager: r.manager_name ?? null, designationId: r.designation_id ?? null, designation: r.designation_name ?? null,
       reason: r.reason ?? null, exitType: r.exit_type ?? null,
+    };
+    headcountEvents.push(ev);
+    if (!exit) continue;
+    const tenureDays = Math.round((new Date(`${exit}T00:00:00`).getTime() - new Date(`${join}T00:00:00`).getTime()) / 86_400_000);
+    exits.push({
+      id: ev.id, code: ev.code, name: ev.name, joinDate: join, exitDate: exit, tenureDays, source: ev.source,
+      branchId: ev.branchId, branch: ev.branch, processId: ev.processId, process: ev.process,
+      managerId: ev.managerId, manager: ev.manager, designationId: ev.designationId, designation: ev.designation,
+      reason: ev.reason, exitType: ev.exitType,
     });
   }
-  return { exits, headcountEvents };
+
+  // Next-30-day inputs. Each is optional: the outlook just shows what it could find.
+  const horizon = addDays(todayStr, 30);
+  let notice: NoticeExit[] = [];
+  let planned: PlannedJoiner[] = [];
+  try {
+    const [nr] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employee_id, e.branch_id, b.branch_name, e.process_id, p.process_name,
+              DATE_FORMAT(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed), '%Y-%m-%d') AS lwd
+         FROM exit_request er
+         JOIN employees e ON e.id = er.employee_id
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+        WHERE ${sql}
+          AND er.status NOT IN ('rejected','revoked','exited','withdrawn','cancelled')
+          AND e.active_status = 1
+          AND COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) > ?
+          AND COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) <= ?`,
+      [...params, todayStr, horizon] as never[],
+    );
+    notice = nr.map((r) => ({ employeeId: String(r.employee_id), branchId: r.branch_id ?? null, branch: r.branch_name ?? null, processId: r.process_id ?? null, process: r.process_name ?? null, lwd: String(r.lwd) }));
+  } catch (err) { console.error("[attrition-hub] notice exits unavailable:", err instanceof Error ? err.message : err); }
+  try {
+    const [pr] = await db.execute<RowDataPacket[]>(
+      `SELECT e.branch_id, b.branch_name, e.process_id, p.process_name
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+        WHERE ${sql} AND e.active_status = 1 AND e.date_of_exit IS NULL
+          AND e.date_of_joining > ? AND e.date_of_joining <= ?`,
+      [...params, todayStr, horizon] as never[],
+    );
+    planned = pr.map((r) => ({ branchId: r.branch_id ?? null, branch: r.branch_name ?? null, processId: r.process_id ?? null, process: r.process_name ?? null }));
+  } catch (err) { console.error("[attrition-hub] planned joiners unavailable:", err instanceof Error ? err.message : err); }
+  return { exits, headcountEvents, notice, planned };
 }
 
 export const bucketOf = (days: number): "0-30" | "31-60" | "61-90" | "90+" =>

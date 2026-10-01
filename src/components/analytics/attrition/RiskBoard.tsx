@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { ChartCard, EmptyState, num, pct } from "@/components/analytics/analytics-kit";
 import { PAGE_SIZE, type PredictionFilters, useHubRisk } from "./api";
-import { ErrorCard, FactorLegend, FactorStack, MiniBar, TIER_COLOR, TierChip, ToggleChip, fmtAon } from "./charts";
+import { ErrorCard, FactorLegend, GROUP_LABEL, FactorStack, MiniBar, TIER_COLOR, TierChip, ToggleChip, fmtAon } from "./charts";
 import { TIERS, type HubRisk, type RiskRow, type Tier } from "./types";
 
 type Sort = NonNullable<PredictionFilters["sort"]>;
@@ -42,7 +42,7 @@ export default function RiskBoard({
   const activeIds = (["branch", "process", "manager"] as const)
     .map(k => ({ k, id: filters[`${k}Id` as const] }))
     .filter(x => !!x.id) as { k: "branch" | "process" | "manager"; id: string }[];
-  const anyFilter = !!(filters.tier || activeIds.length || filters.q || filters.absentOnly || filters.newJoinerOnly);
+  const anyFilter = !!(filters.tier || filters.group || activeIds.length || filters.q || filters.absentOnly || filters.newJoinerOnly);
 
   const sortHead = (s: Sort, label: string, align = "text-left") => (
     <th scope="col" aria-sort={sort === s ? (s === "name" ? "ascending" : "descending") : "none"} className={`px-3 py-2 ${align}`}>
@@ -90,6 +90,12 @@ export default function RiskBoard({
                 <span className="capitalize text-slate-500">{a.k}:</span> {labelFor(a.k, a.id, d)} <X className="h-3 w-3" aria-hidden />
               </button>
             ))}
+            {filters.group && (
+              <button type="button" onClick={() => patch({ group: undefined })} aria-label="Remove signal filter"
+                className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-2.5 py-0.5 font-semibold text-slate-700 hover:bg-slate-100">
+                <span className="text-slate-500">Signal:</span> {GROUP_LABEL[filters.group]} <X className="h-3 w-3" aria-hidden />
+              </button>
+            )}
             <button type="button" onClick={() => setFilters({ sort: filters.sort })} className="cursor-pointer font-semibold text-slate-500 underline hover:text-slate-800">Clear all</button>
           </div>
         )}

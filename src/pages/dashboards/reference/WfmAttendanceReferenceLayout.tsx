@@ -31,6 +31,7 @@ import {
   numberAt,
   read,
 } from "../reference-dashboard-model";
+import { AttritionPulseCard } from "@/components/analytics/attrition/AttritionPulseCard";
 import { useReferenceDashboardShell } from "./ReferenceDashboardShell";
 import {
   AttendanceBreakdownPanel,
@@ -96,6 +97,8 @@ export function WfmAttendanceReferenceLayout({ data, filters }: { data: Referenc
           { label: "Working Remotely", value: workingRemotely, helper: "WFH / remote", icon: Network, tone: "violet" },
         ]}
       />
+
+      <AttritionPulseCard />
 
       <div className="grid gap-4 xl:grid-cols-[0.9fr_1.05fr_1fr]">
         <ReferencePanel title="Processed Attendance Status">

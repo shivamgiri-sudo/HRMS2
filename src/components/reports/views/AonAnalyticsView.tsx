@@ -51,6 +51,7 @@ import {
 import { DrillDownProvider, useDrillDown } from "@/components/analytics/drilldown/DrillDownProvider";
 import { EmployeeListPanel } from "@/components/analytics/drilldown/EmployeeListPanel";
 import { EmployeeDetailDrawer } from "@/components/analytics/drilldown/EmployeeDetailDrawer";
+import { DrillProvider } from "@/components/analytics/attrition/DrillContext";
 import HeadlineStrip from "@/components/analytics/attrition/HeadlineStrip";
 import AlertsTab from "@/components/analytics/attrition/AlertsTab";
 import PredictionTab from "@/components/analytics/attrition/PredictionTab";
@@ -1251,6 +1252,7 @@ export default function AonAnalyticsView() {
   });
 
   return (
+    <DrillProvider>
     <div className="space-y-4 p-6">
       <header className="space-y-1">
         <h2 className="text-lg font-bold text-slate-900">AON &amp; Attrition Analytics</h2>
@@ -1261,7 +1263,7 @@ export default function AonAnalyticsView() {
         </p>
       </header>
 
-      <HeadlineStrip onHighRisk={() => openPrediction({ tier: "HIGH" })} />
+      <HeadlineStrip />
 
       <div role="tablist" aria-label="Attrition views" className="flex gap-1 overflow-x-auto rounded-lg bg-slate-50 p-1">
         {([
@@ -1315,5 +1317,6 @@ export default function AonAnalyticsView() {
       {tab === "cohort" && <CohortSurvival from={from} to={to} branchId={branchId} designationId={designationId} />}
       {tab === "deep" && <DeepDive from={from} to={to} branchId={branchId} designationId={designationId} />}
     </div>
+    </DrillProvider>
   );
 }

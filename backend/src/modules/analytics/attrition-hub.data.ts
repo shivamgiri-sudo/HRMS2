@@ -105,11 +105,11 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
   // left after it or still here; an inactive row with no exit date cannot be placed in time, so it
   // is left out rather than miscounted as someone who stayed.
   const cohortWhere = opts.live
-    ? `e.employment_status = 'Active' AND e.active_status = 1 AND (e.date_of_exit IS NULL OR e.date_of_exit > ?)`
+    ? `e.employment_status = 'Active' AND e.active_status = 1 AND (e.date_of_exit IS NULL OR e.date_of_exit > ?) AND e.date_of_joining <= ?`
     : `${AON_JOIN} <= ? AND e.date_of_joining IS NOT NULL
        AND ((e.date_of_exit IS NOT NULL AND e.date_of_exit > ? AND e.date_of_exit >= e.date_of_joining)
             OR (e.date_of_exit IS NULL AND e.employment_status = 'Active' AND e.active_status = 1))`;
-  const cohortParams = opts.live ? [asOf] : [asOf, asOf];
+  const cohortParams = opts.live ? [asOf, asOf] : [asOf, asOf];
 
   const base = await q(
     `SELECT e.id, e.employee_code,
@@ -282,4 +282,29 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
     };
   });
   return { asOf, people, inNotice: new Set(noticeRows.map((r) => String(r.employee_id))), degraded };
+}
+
+/* ── first days after joining: who turned up (for the batch tracker) ── */
+let presence: { at: number; p: Promise<{ firstPresent: Map<string, number | null>; seen: Set<string> }> } | null = null;
+export function loadFirstPresence(): Promise<{ firstPresent: Map<string, number | null>; seen: Set<string> }> {
+  if (presence && Date.now() - presence.at < 30 * 60_000) return presence.p;
+  const from = addDays(today(), -7 * 17);
+  const p = (async () => {
+    const firstPresent = new Map<string, number | null>();
+    const seen = new Set<string>();
+    const rows = await q(
+      `SELECT adr.employee_id,
+              MIN(CASE WHEN adr.attendance_status IN ('present','half_day') THEN DATEDIFF(adr.record_date, ${AON_JOIN}) END) AS first_present,
+              COUNT(*) AS n
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+        WHERE ${AON_JOIN} >= ? AND adr.record_date >= ?
+          AND adr.record_date >= ${AON_JOIN} AND adr.record_date < DATE_ADD(${AON_JOIN}, INTERVAL 7 DAY)
+        GROUP BY adr.employee_id`, [from, from]);
+    for (const r of rows) { const id = String(r.employee_id); seen.add(id); firstPresent.set(id, r.first_present == null ? null : Number(r.first_present)); }
+    return { firstPresent, seen };
+  })();
+  presence = { at: Date.now(), p };
+  p.catch(() => { if (presence?.p === p) presence = null; });
+  return p;
 }

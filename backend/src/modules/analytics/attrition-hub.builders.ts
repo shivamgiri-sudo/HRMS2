@@ -4,9 +4,9 @@
  */
 import { FACTOR_CAPS, FACTOR_GROUP_ORDER, suggestActions, type FactorGroup, type Tier } from "./attrition-model.js";
 import { addDays } from "./attrition-hub.data.js";
-import { TIERS, bucketOf, probabilityFor, type ExitRow, type Model, type ScoredPerson } from "./attrition-hub.service.js";
+import { TIERS, bucketOf, probabilityFor, type EmpEvent, type ExitRow, type Model, type ScoredPerson } from "./attrition-hub.service.js";
 
-type Events = { join: string; exit: string | null; source: string | null }[];
+export type Events = { join: string; exit: string | null; source: string | null }[];
 const r1 = (v: number) => Math.round(v * 10) / 10;
 const inWindow = (d: string, afterExcl: string, toIncl: string) => d > afterExcl && d <= toIncl;
 const live = (people: ScoredPerson[]) => people.filter((p) => !p.inNotice);
@@ -57,7 +57,7 @@ export function buildOverview(a: { asOf: string; people: ScoredPerson[]; exits: 
 }
 
 /* ── insights ── */
-const TENURE_BINS: [string, (d: number) => boolean][] = [
+export const TENURE_BINS: [string, (d: number) => boolean][] = [
   ["0-30", (d) => d <= 30], ["31-60", (d) => d > 30 && d <= 60], ["61-90", (d) => d > 60 && d <= 90],
   ["91-180", (d) => d > 90 && d <= 180], ["181-365", (d) => d > 180 && d <= 365], ["1-2y", (d) => d > 365 && d <= 730], ["2y+", (d) => d > 730],
 ];
@@ -69,20 +69,38 @@ export function buildInsights(a: { asOf: string; people: ScoredPerson[]; exits: 
   const rate = (hc: number, ex: number) => (hc + ex / 2 > 0 ? (ex * 4) / (hc + ex / 2) * 100 : null);
   const company = rate(people.length, e90.length);
 
-  type G = { id: string | null; label: string; hc: number; ex: number; high: number };
+  // What each group's 90-day exits "should" be given how long its people had been here, at the company's own
+  // rates per tenure band. Only possible when the events carry who-belongs-where (the live loader does).
+  const rich = events.length > 0 && "branchId" in events[0] ? (events as unknown as EmpEvent[]) : null;
+  const S = addDays(asOf, -90);
+  const bandOf = (daysIn: number) => (daysIn <= 30 ? 0 : daysIn <= 60 ? 1 : daysIn <= 90 ? 2 : daysIn <= 180 ? 3 : daysIn <= 365 ? 4 : 5);
+  const dayDiff = (x: string, y: string) => Math.round((new Date(`${y}T00:00:00`).getTime() - new Date(`${x}T00:00:00`).getTime()) / 86_400_000);
+  const startCohort = rich ? rich.filter((e) => e.join <= S && (!e.exit || e.exit > S)) : [];
+  const bandRate = (() => {
+    const n = [0, 0, 0, 0, 0, 0], l = [0, 0, 0, 0, 0, 0];
+    for (const e of startCohort) { const b = bandOf(dayDiff(e.join, S)); n[b]++; if (e.exit && e.exit <= asOf) l[b]++; }
+    return n.map((c, i) => (c >= 20 ? l[i] / c : null));
+  })();
+
+  type G = { id: string | null; label: string; hc: number; ex: number; high: number; exp: number };
   const dim = (idOf: (x: { branchId?: string | null; processId?: string | null; managerId?: string | null; designationId?: string | null }) => string | null,
                labelOf: (x: { branch?: string | null; process?: string | null; manager?: string | null; designation?: string | null }) => string | null) => {
     const m = new Map<string, G>();
     const get = (id: string | null, label: string | null) => {
       const k = id ?? "none";
-      if (!m.has(k)) m.set(k, { id, label: label ?? "Unassigned", hc: 0, ex: 0, high: 0 });
+      if (!m.has(k)) m.set(k, { id, label: label ?? "Unassigned", hc: 0, ex: 0, high: 0, exp: 0 });
       return m.get(k)!;
     };
     for (const p of people) { const g = get(idOf(p), labelOf(p)); g.hc++; if (!p.inNotice && (p.tier === "HIGH" || p.tier === "CRITICAL")) g.high++; }
     for (const e of e90) get(idOf(e), labelOf(e)).ex++;
+    if (rich) for (const e of startCohort) {
+      const r = bandRate[bandOf(dayDiff(e.join, S))];
+      if (r != null) get(idOf(e), labelOf(e)).exp += r;
+    }
     return [...m.values()]
       .filter((g) => g.hc >= 5 || g.ex >= 3)
-      .map((g) => { const r = rate(g.hc, g.ex); return { id: g.id, label: g.label, headcount: g.hc, exits90: g.ex, ratePct: r == null ? null : r1(r), vsCompany: r != null && company ? r1(r / company) : null, highRisk: g.high }; })
+      .map((g) => { const r = rate(g.hc, g.ex); return { id: g.id, label: g.label, headcount: g.hc, exits90: g.ex, ratePct: r == null ? null : r1(r), vsCompany: r != null && company ? r1(r / company) : null, highRisk: g.high,
+        expected90: rich ? r1(g.exp) : null, excess90: rich ? r1(g.ex - g.exp) : null }; })
       .sort((x, y) => (y.ratePct ?? -1) - (x.ratePct ?? -1))
       .slice(0, 12);
   };
@@ -119,6 +137,15 @@ export function buildInsights(a: { asOf: string; people: ScoredPerson[]; exits: 
       involuntary: e12.filter((e) => t(e.exitType) === "involuntary").length,
       unknown: e12.filter((e) => !["voluntary", "involuntary"].includes(t(e.exitType))).length,
     },
+    reasonByBranch: (() => {
+      const m = new Map<string, { id: string | null; label: string; exits: number; recorded: number }>();
+      for (const e of e12) {
+        const k = e.branchId ?? "none";
+        const g = m.get(k) ?? m.set(k, { id: e.branchId, label: e.branch ?? "Unassigned", exits: 0, recorded: 0 }).get(k)!;
+        g.exits++; if (e.reason) g.recorded++;
+      }
+      return [...m.values()].filter((g) => g.exits >= 5).map((g) => ({ ...g, pct: r1((g.recorded / g.exits) * 100) })).sort((x, y) => x.pct - y.pct).slice(0, 12);
+    })(),
     monthlyBySource: [...src.entries()]
       .map(([source, v]) => ({ source, exits: v.exits, joiners: v.joiners, earlyExitRatePct: v.matured >= 10 ? r1((v.early / v.matured) * 100) : null }))
       .filter((x) => x.exits + x.joiners > 0).sort((x, y) => y.joiners - x.joiners).slice(0, 10),
@@ -126,10 +153,11 @@ export function buildInsights(a: { asOf: string; people: ScoredPerson[]; exits: 
 }
 
 /* ── risk board ── */
-export interface RiskFilters { tier?: Tier; branchId?: string; processId?: string; managerId?: string; q?: string; absentOnly?: boolean; newJoinerOnly?: boolean; sort?: "score" | "aon" | "name"; limit?: number; offset?: number }
+export interface RiskFilters { tier?: Tier; group?: FactorGroup; branchId?: string; processId?: string; managerId?: string; q?: string; absentOnly?: boolean; newJoinerOnly?: boolean; sort?: "score" | "aon" | "name"; limit?: number; offset?: number }
 
-export function toRiskRow(p: ScoredPerson, model: Model | null) {
+export function toRiskRow(p: ScoredPerson, model: Model | null, last?: { kind: string; outcome: string; at: string } | null) {
   return {
+    lastFollowup: last ?? null,
     employeeId: p.id, code: p.code, name: p.name, designation: p.designation, process: p.process, branch: p.branch, manager: p.manager,
     managerId: p.managerId, branchId: p.branchId, processId: p.processId, aonDays: p.aonDays,
     score: p.score, tier: p.tier, probability30: probOf(model, p.tier), factors: p.factors,
@@ -137,10 +165,10 @@ export function toRiskRow(p: ScoredPerson, model: Model | null) {
   };
 }
 
-export function buildRisk(people: ScoredPerson[], f: RiskFilters, model: Model | null) {
+export function buildRisk(people: ScoredPerson[], f: RiskFilters, model: Model | null, followups?: Map<string, { kind: string; outcome: string; at: string }>) {
   const pool = live(people).filter((p) =>
     (!f.branchId || p.branchId === f.branchId) && (!f.processId || p.processId === f.processId) && (!f.managerId || p.managerId === f.managerId) &&
-    (!f.absentOnly || (p.features.absentStreak ?? 0) >= 2) && (!f.newJoinerOnly || p.aonDays <= 90) &&
+    (!f.absentOnly || (p.features.absentStreak ?? 0) >= 2) && (!f.newJoinerOnly || p.aonDays <= 90) && (!f.group || p.factors[f.group] > 0) &&
     (!f.q || `${p.name} ${p.code}`.toLowerCase().includes(f.q.toLowerCase())));
   const tierCounts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 } as Record<Tier, number>;
   for (const p of pool) tierCounts[p.tier]++;
@@ -165,13 +193,13 @@ export function buildRisk(people: ScoredPerson[], f: RiskFilters, model: Model |
   const avgPts = FACTOR_GROUP_ORDER.map((g) => ({ group: g as FactorGroup, avgPoints: high.length ? r1(high.reduce((s, p) => s + p.factors[g], 0) / high.length) : 0 }));
   const totalPts = avgPts.reduce((s, d) => s + d.avgPoints, 0);
   return {
-    total: picked.length, rows: sorted.slice(offset, offset + limit).map((p) => toRiskRow(p, model)), tierCounts,
+    total: picked.length, rows: sorted.slice(offset, offset + limit).map((p) => toRiskRow(p, model, followups?.get(p.id))), tierCounts,
     groups: { manager: group((p) => p.managerId, (p) => p.manager), process: group((p) => p.processId, (p) => p.process), branch: group((p) => p.branchId, (p) => p.branch) },
     drivers: avgPts.map((d) => ({ ...d, sharePct: totalPts ? r1((d.avgPoints / totalPts) * 100) : 0 })),
   };
 }
 
-export function buildEmployeeRisk(p: ScoredPerson, model: Model | null) {
+export function buildEmployeeRisk(p: ScoredPerson, model: Model | null, last?: { kind: string; outcome: string; at: string } | null) {
   const f = p.features;
   const fired = (label: string) => p.reasons.some((r) => r.label === label);
   const pct = (v: number | null | undefined) => (v == null ? "No data" : `${r1(v)}%`);
@@ -193,7 +221,7 @@ export function buildEmployeeRisk(p: ScoredPerson, model: Model | null) {
     { label: "Profile items missing", value: f.hygieneMissing == null ? "No data" : `${f.hygieneMissing} of 5`, flag: fired("Profile gaps") },
     { label: "Manager's team losses (90 days)", value: f.teamExitRate90 == null ? "Small team" : `${Math.round(f.teamExitRate90 * 100)}%`, flag: fired("Team is losing people") },
   ];
-  return { row: toRiskRow(p, model), signals };
+  return { row: toRiskRow(p, model, last), signals };
 }
 
 /* ── alerts ── */

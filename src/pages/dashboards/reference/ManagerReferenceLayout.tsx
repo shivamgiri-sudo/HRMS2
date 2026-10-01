@@ -43,6 +43,7 @@ import {
   TrainingProgressPanel,
   LeaveApprovalPanel,
 } from "./ReferenceSharedPanels";
+import { AttritionPulseCard } from "@/components/analytics/attrition/AttritionPulseCard";
 import { ManagerAnalyticsPanel } from "@/components/dashboard/manager/ManagerAnalyticsPanel";
 
 export function ManagerReferenceLayout({ data, managerName, filters }: { data: ReferenceDashboardData; managerName: string; filters?: ReactNode }) {
@@ -144,6 +145,8 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
           { label: "Open Positions", value: asNumber(data.ats.open_positions ?? data.ats.openPositions), helper: "View jobs", icon: BriefcaseBusiness, tone: "blue", href: "/ats/dashboard" },
         ]}
       />
+
+      <AttritionPulseCard />
 
       <div className="grid gap-4 xl:grid-cols-[0.92fr_0.92fr_1.16fr]">
         <ReferencePanel title="Team Attendance" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/attendance">View Details</a>}>

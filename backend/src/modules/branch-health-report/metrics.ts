@@ -205,6 +205,25 @@ export function classifySignals(raw: BranchHealthRawData): {
     }
   }
 
+  // Attrition & retention risk (same scoring as the AON & Attrition page)
+  const at = raw.attrition;
+  if (at) {
+    if (at.critical > 0) {
+      criticalPoints.push({ label: `${at.critical} ${at.critical === 1 ? "person is" : "people are"} at critical attrition risk`,
+        detail: `${at.high} more at high risk; about ${at.expectedExits30 ?? "?"} exits expected in the next 30 days. ${at.calibrationNote ?? ""}`.trim(), severity: "warning" });
+    }
+    if (at.absentStreak >= 5) {
+      const share = at.headcount ? (at.absentStreak / at.headcount) * 100 : 0;
+      criticalPoints.push({ label: `${at.absentStreak} employees absent 3+ days in a row`,
+        detail: `${share.toFixed(1)}% of the branch - possible absconding; contact them and record the outcome${share >= 25 ? ". This share is very large: also confirm attendance is being recorded" : ""}`,
+        severity: share >= 15 ? "critical" : "warning" });
+    }
+    if (at.exits30 >= 5 && at.exitsPrev30 > 0 && at.exits30 >= at.exitsPrev30 * 1.5) {
+      criticalPoints.push({ label: `Exits rising: ${at.exits30} in 30 days vs ${at.exitsPrev30} before`,
+        detail: `${at.earlyExitSharePct ?? 0}% of the last 90 days' exits left within 90 days of joining`, severity: "warning" });
+    }
+  }
+
   // Unbudgeted spend, backlogs, absence, conversion, attrition
   const unbudgeted = raw.grnStats.unbudgeted;
   if (unbudgeted.count > 0) {

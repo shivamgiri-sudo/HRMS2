@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 /** An employee already chosen by the caller (roster row, team drawer...) - locks the picker. */
@@ -168,15 +169,24 @@ export function RaiseExitDialog({
   };
 
 
+  // A real Radix dialog (portaled, focus-managed), not a bare fixed <div>: opened from inside another
+  // slide-over (the attrition drill-down drawer) a fixed <div> is clipped by the table row it sits in.
+  // Radix layers it above the drawer and keeps clicks inside it from being treated as "outside" the drawer.
   return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+    <DialogPrimitive.Root open onOpenChange={(o) => { if (!o) close(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-[130] bg-slate-950/60 backdrop-blur-sm" />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          className="fixed left-1/2 top-1/2 z-[131] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto outline-none"
+        >
             <div className="flex items-center justify-between border-b p-6">
-              <h2 className="text-lg font-black text-slate-950">
+              <DialogPrimitive.Title className="text-lg font-black text-slate-950">
                 {employee ? "Raise Exit" : "New Exit Request"}
-              </h2>
+              </DialogPrimitive.Title>
               <button
                 onClick={close}
+                aria-label="Close"
                 className="text-slate-400 hover:text-slate-700"
               >
                 <X className="h-5 w-5" />
@@ -319,6 +329,13 @@ export function RaiseExitDialog({
                           e.target.value === "voluntary"
                             ? "resignation"
                             : "termination",
+                        // keep the reason category consistent with the sub-type it just defaulted to
+                        exitReasonCategory:
+                          e.target.value === "voluntary"
+                            ? ["absconding", "termination_misconduct", "contract_end"].includes(createForm.exitReasonCategory)
+                              ? "career_growth"
+                              : createForm.exitReasonCategory
+                            : "termination_misconduct",
                       })
                     }
                     className="w-full rounded-2xl border bg-white px-4 py-3 text-sm outline-none focus:border-blue-400"
@@ -333,12 +350,22 @@ export function RaiseExitDialog({
                   </label>
                   <select
                     value={createForm.exitSubType}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const sub = e.target.value;
+                      // Pre-fill the reason category from the sub-type; the user can still change it.
+                      // Resignation / retirement / mutual separation keep whatever was chosen.
+                      const auto: Record<string, string> = {
+                        absconding: "absconding",
+                        abandonment: "absconding",
+                        termination: "termination_misconduct",
+                        contract_end: "contract_end",
+                      };
                       setCreateForm({
                         ...createForm,
-                        exitSubType: e.target.value,
-                      })
-                    }
+                        exitSubType: sub,
+                        exitReasonCategory: auto[sub] ?? createForm.exitReasonCategory,
+                      });
+                    }}
                     className="w-full rounded-2xl border bg-white px-4 py-3 text-sm outline-none focus:border-blue-400"
                   >
                     {createForm.exitType === "voluntary" && (
@@ -473,8 +500,9 @@ export function RaiseExitDialog({
                 {saving ? "Submitting…" : "Submit Exit Request"}
               </button>
             </div>
-          </div>
-        </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

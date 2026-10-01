@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import { AlertOctagon, CalendarClock, Database, Flame, UserCog, UserMinus, Users, ArrowRight, BellOff } from "lucide-react";
 import { ChartSkeleton, EmptyState } from "@/components/analytics/analytics-kit";
 import { useHubAlerts } from "./api";
-import { ErrorCard, ToggleChip } from "./charts";
+import { AbscondingWatch, FollowupEffect } from "./AlertsExtras";
+import { DRILL_FOCUS, ErrorCard, ToggleChip } from "./charts";
+import { alertLinkToDrill, useDrill } from "./DrillContext";
 import type { AlertLink, AlertSeverity, HubAlert } from "./types";
 
 const SEV: Record<AlertSeverity, { label: string; bar: string; chip: string; dot: string }> = {
@@ -19,15 +21,17 @@ const CAT_LABEL: Record<HubAlert["category"], string> = {
 
 export default function AlertsTab({ onViewPeople }: { onViewPeople: (link: AlertLink) => void }) {
   const q = useHubAlerts();
+  const drill = useDrill();
   const [sev, setSev] = useState<AlertSeverity | null>(null);
   const list = useMemo(() => (q.data?.alerts ?? []).filter(a => !sev || a.severity === sev), [q.data, sev]);
 
-  if (q.isLoading) return <div className="space-y-3"><ChartSkeleton height={60} /><ChartSkeleton height={60} /><ChartSkeleton height={60} /></div>;
-  if (q.error || !q.data) return <ErrorCard what="attrition alerts" error={q.error} onRetry={() => q.refetch()} />;
+  if (q.isLoading) return <div className="space-y-3"><AbscondingWatch /><ChartSkeleton height={60} /><ChartSkeleton height={60} /><ChartSkeleton height={60} /></div>;
+  if (q.error || !q.data) return <div className="space-y-4"><AbscondingWatch /><ErrorCard what="attrition alerts" error={q.error} onRetry={() => q.refetch()} /><FollowupEffect /></div>;
   const { counts } = q.data;
 
   return (
     <div className="space-y-4">
+      <AbscondingWatch />
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter alerts by severity">
         {(["critical", "warning", "info"] as AlertSeverity[]).map(s => (
           <ToggleChip key={s} active={sev === s} onClick={() => setSev(sev === s ? null : s)}>
@@ -52,7 +56,7 @@ export default function AlertsTab({ onViewPeople }: { onViewPeople: (link: Alert
           {list.map(a => {
             const Icon = CAT_ICON[a.category] ?? Flame;
             return (
-              <li key={a.id} className="relative flex overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+              <li key={a.id} className="relative flex overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm motion-safe:transition-shadow hover:shadow-md">
                 <span aria-hidden className={`w-1.5 shrink-0 ${SEV[a.severity].bar}`} />
                 <div className="flex min-w-0 flex-1 flex-col gap-3 p-3.5 sm:flex-row sm:items-center">
                   <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -78,14 +82,20 @@ export default function AlertsTab({ onViewPeople }: { onViewPeople: (link: Alert
                       </span>
                     )}
                     {a.link && (
-                      <button
-                        type="button"
-                        onClick={() => onViewPeople(a.link!)}
-                        aria-label={`View people for alert: ${a.title}`}
-                        className="inline-flex cursor-pointer items-center gap-1 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-1"
-                      >
-                        View people <ArrowRight className="h-3 w-3" aria-hidden />
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => drill(alertLinkToDrill(a.link!, a.employeeCount !== undefined ? `${a.title} - ${a.employeeCount} people` : a.title))}
+                          aria-label={`View people for alert: ${a.title}`}
+                          className={`inline-flex items-center gap-1 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 ${DRILL_FOCUS} focus-visible:ring-offset-1`}
+                        >
+                          View people <ArrowRight className="h-3 w-3" aria-hidden />
+                        </button>
+                        <button type="button" onClick={() => onViewPeople(a.link!)} aria-label={`Open in risk board: ${a.title}`}
+                          className={`inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 ${DRILL_FOCUS}`}>
+                          Open in risk board
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -94,6 +104,8 @@ export default function AlertsTab({ onViewPeople }: { onViewPeople: (link: Alert
           })}
         </ul>
       )}
+
+      <FollowupEffect />
     </div>
   );
 }

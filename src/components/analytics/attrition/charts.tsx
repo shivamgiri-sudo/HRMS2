@@ -1,5 +1,5 @@
 /** Shared visual bits for the attrition tabs: tier/factor colours, chips, gauge, error card, segmented control. */
-import type { ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent, ReactNode } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { SERIES, STATUS } from "@/components/analytics/analytics-kit";
 import { FACTOR_GROUPS, type FactorGroup, type FactorPoints, type Tier } from "./types";
@@ -178,4 +178,71 @@ export const fmtAon = (days: number) => {
   if (days < 90) return `${days}d`;
   if (days < 730) return `${Math.round(days / 30)}mo`;
   return `${(days / 365).toFixed(1)}y`;
+};
+
+/* ═══════════════ Round 2 shared bits ═══════════════ */
+
+/** Skeleton block with a shimmer sweep (disabled under prefers-reduced-motion). */
+export function Shimmer({ className = "", style }: { className?: string; style?: CSSProperties }) {
+  return (
+    <>
+      <style>{`@media (prefers-reduced-motion: no-preference){.hub-shimmer{background-image:linear-gradient(90deg,#f1f5f9 0%,#e8eef5 50%,#f1f5f9 100%);background-size:200% 100%;animation:hub-shimmer 1.4s ease-in-out infinite}}@keyframes hub-shimmer{from{background-position:200% 0}to{background-position:-200% 0}}`}</style>
+      <div aria-hidden className={`hub-shimmer rounded-lg bg-slate-100 ${className}`} style={style} />
+    </>
+  );
+}
+
+/** Props that make any element a keyboard-reachable drill target (Enter / Space). */
+export function drillable(onActivate: () => void, label: string) {
+  return {
+    role: "button" as const,
+    tabIndex: 0,
+    "aria-label": label,
+    onClick: (e: RMouseEvent) => { e.stopPropagation(); onActivate(); },
+    onKeyDown: (e: RKeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onActivate(); }
+    },
+  };
+}
+export const DRILL_FOCUS = "cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2a78d6] focus-visible:ring-offset-1";
+/** Hover lift for cards / tiles that open something. */
+export const LIFT = "motion-safe:transition-all motion-safe:duration-200 motion-safe:hover:-translate-y-0.5 hover:shadow-md";
+
+/**
+ * Chart marks are SVG, so they are not tabbable. This renders one visually hidden button per mark
+ * (appears when focused) so the same drill is reachable from the keyboard.
+ */
+export function ChartKeyNav({ items, label }: { items: { label: string; onOpen: () => void }[]; label: string }) {
+  if (items.length === 0) return null;
+  return (
+    <div role="group" aria-label={label} className="sr-only focus-within:not-sr-only focus-within:mt-2 focus-within:flex focus-within:flex-wrap focus-within:gap-1">
+      {items.map(i => (
+        <button key={i.label} type="button" onClick={i.onOpen} className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#2a78d6]">
+          {i.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Smooth red -> amber -> green for a 0-100 percentage. Returns bg + readable text colour. */
+export function heatColor(v: number | null): { bg: string; fg: string } {
+  if (v === null || Number.isNaN(v)) return { bg: "transparent", fg: "#94a3b8" };
+  // stops at 0 / 0.5 / 1 (relative to 40..100 so useful differences stand out): red-400, amber-300, emerald-400
+  const u = Math.max(0, Math.min(1, (v - 40) / 60));
+  const stops = [[248, 113, 113], [252, 211, 77], [52, 211, 153]];
+  const seg = u < 0.5 ? 0 : 1;
+  const lt = u < 0.5 ? u / 0.5 : (u - 0.5) / 0.5;
+  const c = stops[seg].map((a, i) => Math.round(a + (stops[seg + 1][i] - a) * lt));
+  return { bg: `rgb(${c[0]},${c[1]},${c[2]})`, fg: "#0f172a" };
+}
+
+export const fmtDate = (iso?: string | null) => {
+  if (!iso) return "-";
+  const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+};
+export const fmtMonthLong = (m: string) => {
+  const [y, mo] = m.split("-").map(Number);
+  return y && mo ? new Date(y, mo - 1, 1).toLocaleString("en-IN", { month: "short" }) + ` ${y}` : m;
 };

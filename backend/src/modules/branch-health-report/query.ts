@@ -8,6 +8,7 @@
  * row (created_by 00000000-…, e.g. the "db_bill backfill 2026-27" load) — no legacy or migrated data.
  * Shrinkage is roster-based (wfm_roster_assignment shift timings vs attendance_daily_record).
  */
+import { fetchBranchAttrition, type BranchAttrition } from "./branch-attrition.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getPnlReconciliation } from "../process-pnl/pnl-reconciliation.service.js";
@@ -1582,6 +1583,8 @@ export interface BranchHealthRawData {
   regularization: Awaited<ReturnType<typeof fetchRegularizationBacklog>>;
   offers: OfferConversion;
   pnlGrnTieOut: PnlGrnTieOut;
+  /** Attrition & retention risk; absent when the analytics sources are unavailable. */
+  attrition?: BranchAttrition | null;
 }
 
 const previousDay = (date: string): string => {
@@ -1779,5 +1782,6 @@ export async function fetchAllBranchHealthData(
     regularization,
     offers,
     pnlGrnTieOut,
+    attrition: await fetchBranchAttrition(branchId, today),
   };
 }
