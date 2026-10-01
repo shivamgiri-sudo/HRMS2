@@ -184,7 +184,8 @@ describe("ATS PII masking: GET /api/ats-ext/duplicates", () => {
 
 describe("ATS audit: POST /api/ats-ext/duplicates/:id/resolve", () => {
   it("writes a sensitive_action_log entry when resolving a duplicate", async () => {
-    mockAdmin();
+    // The route now resolves the duplicate's candidate first (branch scope); admin is org-wide.
+    mockAdmin([{ candidate_id: "cand-1", 1: 1 }]);
 
     const r = await request(app)
       .post("/api/ats-ext/duplicates/dup-1/resolve")

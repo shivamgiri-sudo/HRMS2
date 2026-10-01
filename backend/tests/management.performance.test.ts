@@ -5,6 +5,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import jwt from "jsonwebtoken";
 vi.mock("../src/db/supabaseAdmin.js", () => ({ supabaseAdmin: {}, supabaseAuthClient: { auth: { getUser: vi.fn() } } }));
+// Branch scoping is covered in branchScoping.batch2.test.ts; this test is about other behaviour, so allow-all here.
+vi.mock("../src/modules/dashboards/branch-scope-guards.js", () => ({
+  canAccessEmployeeRecord: async () => true,
+  employeeListScope: async () => null,
+  employeeIdInScope: async () => null,
+  attachEmployeeScope: () => (_q: any, _s: any, n: any) => n(),
+  OUTSIDE_SCOPE_MESSAGE: "outside",
+}));
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
