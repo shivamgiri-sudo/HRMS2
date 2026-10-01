@@ -217,8 +217,16 @@ export function buildAlerts(a: { asOf: string; people: ScoredPerson[]; exits: Ex
     detail: "Multiple signals are pointing the same way. Review the reasons and plan retention actions.", employeeCount: nHigh, link: { tier: "HIGH" } });
 
   const absent = lp.filter((p) => (p.features.absentStreak ?? 0) >= 3);
-  if (absent.length) out.push({ id: "absence-streak", severity: "critical", category: "absence", title: `${absent.length} ${absent.length === 1 ? "employee has" : "employees have"} been absent 3+ days in a row`,
-    detail: "Possible absconding. Reach out today and record the outcome before the notice process has to start.", employeeCount: absent.length, link: { absentOnly: true } });
+  if (absent.length) {
+    const share = lp.length ? (absent.length / lp.length) * 100 : 0;
+    const fresh = absent.filter((p) => p.aonDays <= 30).length;
+    // A very large share is either a real batch drop-out or a gap in the attendance feed; say so rather than guess.
+    const bigShare = share >= 25 && absent.length >= 15;
+    out.push({ id: "absence-streak", severity: "critical", category: "absence", title: `${absent.length} ${absent.length === 1 ? "employee has" : "employees have"} been absent 3+ days in a row`,
+      detail: `Possible absconding: ${r1(share)}% of the people in view, ${fresh} of them in their first 30 days. Reach out and record the outcome before the notice process has to start.` +
+        (bigShare ? " This is a large share - if it looks too high, check that attendance is being recorded for these people before acting on every name." : ""),
+      metric: { label: "Share of headcount", value: `${r1(share)}%` }, employeeCount: absent.length, link: { absentOnly: true } });
+  }
 
   const newHigh = lp.filter((p) => p.aonDays <= 90 && (p.tier === "HIGH" || p.tier === "CRITICAL"));
   if (newHigh.length) out.push({ id: "new-joiner-risk", severity: "warning", category: "early-attrition", title: `${newHigh.length} new ${newHigh.length === 1 ? "joiner is" : "joiners are"} already showing risk`,
