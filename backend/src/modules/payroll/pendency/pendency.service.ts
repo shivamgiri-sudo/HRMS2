@@ -20,6 +20,18 @@ export type SkipReason =
   | 'max_reminders_reached'
   | 'no_valid_link';
 
+/** Plain-language reason for a skipped reminder, shared by every screen that shows it. */
+export function describeSkip(reason: string | undefined): string {
+  switch (reason) {
+    case 'not_pending': return 'Nothing is pending for this employee.';
+    case 'no_email': return 'No valid email address on file.';
+    case 'recently_reminded': return `Already reminded in the last ${MIN_GAP_DAYS} days.`;
+    case 'max_reminders_reached': return `${MAX_REMINDERS} reminders already sent; follow up by phone.`;
+    case 'no_valid_link': return 'The onboarding link has expired — re-send the onboarding link first.';
+    default: return reason ?? 'Skipped.';
+  }
+}
+
 export interface PendencyResult {
   employee_id: string;
   employee_code: string | null;

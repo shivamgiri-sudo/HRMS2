@@ -9,7 +9,7 @@ import { db } from '../../../../db/mysql.js';
 import { emailService } from '../../../communication/email.service.js';
 import { fetchEsiPendingRows } from '../../esi-pending.query.js';
 import {
-  cooldownDecision, esiMissingItems, pickRecipient, sendPendencyReminders, MAX_REMINDERS,
+  cooldownDecision, describeSkip, esiMissingItems, pickRecipient, sendPendencyReminders, MAX_REMINDERS,
 } from '../pendency.service.js';
 import { buildPendencyEmail } from '../pendency-email.template.js';
 import { buildAppLink } from '../../../../shared/appLink.js';
@@ -52,6 +52,16 @@ describe('cooldownDecision', () => {
     expect(cooldownDecision(1, new Date('2026-10-07T09:00:00Z'), now)).toBeNull());
   it('stops at the cap even when the gap has passed', () =>
     expect(cooldownDecision(MAX_REMINDERS, new Date('2026-09-01T00:00:00Z'), now)).toBe('max_reminders_reached'));
+});
+
+describe('describeSkip', () => {
+  it('explains every skip reason in words', () => {
+    for (const r of ['not_pending', 'no_email', 'recently_reminded', 'max_reminders_reached', 'no_valid_link']) {
+      expect(describeSkip(r)).toMatch(/\w{5,}/);
+      expect(describeSkip(r)).not.toBe(r);
+    }
+    expect(describeSkip(undefined)).toBe('Skipped.');
+  });
 });
 
 describe('buildPendencyEmail', () => {

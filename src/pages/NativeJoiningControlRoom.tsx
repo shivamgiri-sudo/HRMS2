@@ -990,6 +990,15 @@ export default function NativeJoiningControlRoom() {
                           {statusBadge(esign.kit_status || undefined)}
                           <span className="text-slate-500">DigiLocker</span>
                           {statusBadge(esign.digilocker_status || undefined)}
+                          {esign.digilocker_status !== "documents_received" && (
+                            <Button
+                              type="button" size="sm" variant="outline" className="h-7"
+                              onClick={() => action("digilocker/remind", {}, "DigiLocker reminder emailed")}
+                              disabled={busy}
+                            >
+                              <Send className="mr-1 h-3 w-3" />Remind
+                            </Button>
+                          )}
                           <span className="text-slate-500">Penny drop</span>
                           {statusBadge(esign.penny_drop_status || undefined)}
                         </div>

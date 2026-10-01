@@ -5,6 +5,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { describeSkip, sendPendencyReminders } from "../payroll/pendency/pendency.service.js";
 import {
   approveSalaryProposal,
   generateEmployeeCode,
@@ -191,6 +192,35 @@ joiningControlRoomRouter.post("/candidates/:candidateId/bank-detail/sync", h(asy
   const result = await syncBankDetailFromOnboarding(String(employeeId), candidateId, req.authUser!.id);
   const data = await getJoiningControlRoomCandidate(candidateId);
   return res.json({ success: true, data: { ...data, bankSync: result } });
+}));
+
+// Email the employee a link to finish DigiLocker verification. Reuses the existing onboarding
+// link and never mints a new one (that would invalidate the link already in their inbox).
+// Cooldown, cap and the pendency_reminder_log row come from the shared pendency service.
+joiningControlRoomRouter.post("/candidates/:candidateId/digilocker/remind", h(async (req, res) => {
+  const candidateId = req.params.candidateId;
+  const [bridge] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const employeeId = (bridge as RowDataPacket[])[0]?.employee_id;
+  if (!employeeId) {
+    return res.status(409).json({ success: false, message: "No employee record exists yet for this candidate" });
+  }
+  const [result] = await sendPendencyReminders({
+    kind: "digilocker",
+    employeeIds: [String(employeeId)],
+    sentBy: req.authUser!.id,
+    trigger: "manual",
+  });
+  if (result.status !== "sent") {
+    return res.status(409).json({
+      success: false,
+      message: result.status === "failed" ? `Email could not be sent: ${result.reason ?? "unknown error"}` : describeSkip(result.reason),
+    });
+  }
+  const data = await getJoiningControlRoomCandidate(candidateId);
+  return res.json({ success: true, data: { ...data, digilockerReminder: result } });
 }));
 
 joiningControlRoomRouter.post("/candidates/:candidateId/dpdp-consent/sync", h(async (req, res) => {
