@@ -16,7 +16,7 @@ import {
   type FactorGroup, type Reason, type Tier,
 } from "./attrition-model.js";
 import { addDays, loadSnapshot, setQualityListener, today, type SnapshotPerson } from "./attrition-hub.data.js";
-import { normaliseLeavingReason } from "./leaving-reason.js";
+import { canonicalReason, normaliseLeavingReason } from "./leaving-reason.js";
 
 export const TIERS: Tier[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const MIN_TIER_SAMPLE = 30;
@@ -367,7 +367,7 @@ async function queryExits(sql: string, params: unknown[], sinceDays: number): Pr
       join, exit, source: r.source ?? null,
       branchId: r.branch_id ?? null, branch: r.branch_name ?? null, processId: r.process_id ?? null, process: r.process_name ?? null,
       managerId: r.reporting_manager_id ?? null, manager: r.manager_name ?? null, designationId: r.designation_id ?? null, designation: r.designation_name ?? null,
-      reason: r.reason ?? null, exitType: r.exit_type ?? null, reasonSource: r.reason ? "exit_record" : null,
+      reason: canonicalReason(r.reason), exitType: r.exit_type ?? null, reasonSource: r.reason ? "exit_record" : null,
     };
     if (exit && !ev.reason) {
       const l = legacy.get(ev.id);

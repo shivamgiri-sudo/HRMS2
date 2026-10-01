@@ -33,6 +33,17 @@ const RULES: [RegExp, string][] = [
 
 const NOT_A_REASON = /^(na|n\/a|n\.a\.?|none|nil|null|0|-+|\.+|not\s*available|not\s*applicable|no\s*reason|unknown)$/i;
 
+/** Every coded category: the ones above plus the exit workflow's own. A stored value that is already one is kept as is. */
+const KNOWN = new Set([...new Set(RULES.map(([, c]) => c)), "other", "career_growth", "contract_end", "entrepreneurship", "family_reasons", "absconding"]);
+
+/** An exit record's reason may be a coded category ("better_opportunity") or typed text ("Absconded"): unify them. */
+export function canonicalReason(raw: string | null | undefined): string | null {
+  const t = String(raw ?? "").trim();
+  if (!t) return null;
+  if (KNOWN.has(t)) return t;
+  return normaliseLeavingReason(t)?.category ?? t;
+}
+
 export function normaliseLeavingReason(raw: string | null | undefined): LeavingReason | null {
   const text = String(raw ?? "").trim().toLowerCase().replace(/\s+/g, " ");
   if (!text || NOT_A_REASON.test(text)) return null;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normaliseLeavingReason } from "../leaving-reason.js";
+import { canonicalReason, normaliseLeavingReason } from "../leaving-reason.js";
 
 const cat = (s: string) => normaliseLeavingReason(s)?.category ?? null;
 
@@ -37,5 +37,18 @@ describe("normaliseLeavingReason (legacy LeftReason spellings seen in db_bill)",
     expect(normaliseLeavingReason("Family Problem")?.exitType).toBe("voluntary");
     expect(normaliseLeavingReason("Left by sudeep negi")?.exitType).toBeNull();
     expect(normaliseLeavingReason("Rejoining")?.exitType).toBeNull();
+  });
+});
+
+describe("canonicalReason (exit-record reasons: coded or typed)", () => {
+  it("keeps coded categories and unifies typed spellings with them", () => {
+    expect(canonicalReason("better_opportunity")).toBe("better_opportunity");
+    expect(canonicalReason("career_growth")).toBe("career_growth");
+    expect(canonicalReason("Absconded")).toBe("absconding");
+    expect(canonicalReason("absconding")).toBe("absconding");
+    expect(canonicalReason("  Family issue ")).toBe("family_reasons");
+    expect(canonicalReason("Left for a startup in Pune")).toBe("other");
+    expect(canonicalReason("")).toBeNull();
+    expect(canonicalReason(null)).toBeNull();
   });
 });
