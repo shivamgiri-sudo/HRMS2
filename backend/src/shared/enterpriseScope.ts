@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "../middleware/authMiddleware.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "./scopeAccess.js";
 
 export type EnterpriseUser = string | { id: string; email?: string | null } | AuthenticatedRequest["authUser"];
 
@@ -70,14 +71,45 @@ function roleSet(scope: UserBusinessScope): Set<string> {
   return new Set(scope.roles);
 }
 
+/**
+ * Org-wide access is for the ORG_WIDE_EXEMPT_ROLES only (scopeAccess.ts) - super_admin, admin, ceo,
+ * coo, cfo, payroll_head, finance_head, accounts_head and finance. Every other role, HR and
+ * payroll_hr included, is limited to its own branch / assignments. This helper used to also wave
+ * `hr`, `payroll` and `finance` through, which contradicted scopeAccess.ts: the same HR user was
+ * branch-limited by one helper and company-wide by the other (owner ruling 2026-10-01).
+ */
+function holdsOrgWideRole(scope: UserBusinessScope): boolean {
+  return scope.roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r));
+}
+
 function canBypassEmployeeScope(scope: UserBusinessScope): boolean {
-  const roles = roleSet(scope);
-  return scope.isSuperAdmin || scope.isAdmin || scope.isHr || roles.has("ceo");
+  return holdsOrgWideRole(scope);
 }
 
 function canBypassPayrollScope(scope: UserBusinessScope): boolean {
-  const roles = roleSet(scope);
-  return scope.isSuperAdmin || scope.isAdmin || scope.isHr || scope.isFinance || scope.isPayroll || roles.has("ceo");
+  return holdsOrgWideRole(scope);
+}
+
+/** Does any of the user's assignments cover this employee? `all` only counts for org-wide roles. */
+function assignmentsCoverEmployee(scope: UserBusinessScope, employee: EmployeeLike): boolean {
+  return scope.assignments.some((assignment) => {
+    if (assignment.scopeType === "all") {
+      // Not honoured for branch-scoped roles: they fall back to their own branch.
+      if (holdsOrgWideRole(scope)) return true;
+      return Boolean(scope.branchId && scope.branchId === employee.branch_id);
+    }
+    if (assignment.scopeType === "branch") return Boolean(assignment.branchId && assignment.branchId === employee.branch_id);
+    if (assignment.scopeType === "process") return Boolean(assignment.processId && assignment.processId === employee.process_id);
+    if (assignment.scopeType === "branch_process") return Boolean(
+      assignment.branchId && assignment.processId &&
+      assignment.branchId === employee.branch_id &&
+      assignment.processId === employee.process_id
+    );
+    if (assignment.scopeType === "lob") return Boolean(assignment.lobId && assignment.lobId === employee.lob_id);
+    if (assignment.scopeType === "department") return Boolean(assignment.departmentId && assignment.departmentId === employee.department_id);
+    if (assignment.scopeType === "team") return Boolean(assignment.managerEmployeeId && assignment.managerEmployeeId === employee.reporting_manager_id);
+    return false;
+  });
 }
 
 function addAssignmentPredicates(
@@ -90,7 +122,13 @@ function addAssignmentPredicates(
 
   for (const assignment of scope.assignments) {
     if (assignment.scopeType === "all") {
-      ors.push("1=1");
+      if (holdsOrgWideRole(scope)) {
+        ors.push("1=1");
+      } else if (scope.branchId && alias.branchId) {
+        // Branch scoping is the default: an 'all' grant on a non-exempt role means "my branch".
+        ors.push(`${alias.branchId} = ?`);
+        params.push(scope.branchId);
+      }
       continue;
     }
     if (!allowedScopeTypes.has(assignment.scopeType)) continue;
@@ -233,7 +271,7 @@ export function buildProcessScopeCondition(
   scope: UserBusinessScope,
   alias: { processId?: string; branchId?: string; lobId?: string; departmentId?: string },
 ): ScopeCondition {
-  if (scope.isSuperAdmin || scope.isAdmin || scope.isHr || roleSet(scope).has("ceo")) return { sql: "1=1", params: [] };
+  if (holdsOrgWideRole(scope)) return { sql: "1=1", params: [] };
   return addAssignmentPredicates(scope, alias, new Set(["all", "process", "branch_process", "branch", "lob", "department"]));
 }
 
@@ -245,20 +283,7 @@ export async function canViewEmployee(user: EnterpriseUser, employeeId: string):
   const employee = await getEmployeeRow(employeeId);
   if (!employee) return false;
 
-  return scope.assignments.some((assignment) => {
-    if (assignment.scopeType === "all") return true;
-    if (assignment.scopeType === "branch") return Boolean(assignment.branchId && assignment.branchId === employee.branch_id);
-    if (assignment.scopeType === "process") return Boolean(assignment.processId && assignment.processId === employee.process_id);
-    if (assignment.scopeType === "branch_process") return Boolean(
-      assignment.branchId && assignment.processId &&
-      assignment.branchId === employee.branch_id &&
-      assignment.processId === employee.process_id
-    );
-    if (assignment.scopeType === "lob") return Boolean(assignment.lobId && assignment.lobId === employee.lob_id);
-    if (assignment.scopeType === "department") return Boolean(assignment.departmentId && assignment.departmentId === employee.department_id);
-    if (assignment.scopeType === "team") return Boolean(assignment.managerEmployeeId && assignment.managerEmployeeId === employee.reporting_manager_id);
-    return false;
-  });
+  return assignmentsCoverEmployee(scope, employee);
 }
 
 export async function canViewPayroll(user: EnterpriseUser, employeeId: string): Promise<boolean> {
@@ -269,8 +294,12 @@ export async function canViewPayroll(user: EnterpriseUser, employeeId: string): 
 
 export async function canViewSensitiveEmployeeData(user: EnterpriseUser, employeeId: string): Promise<boolean> {
   const scope = await resolveUserBusinessScope(user);
-  if (scope.isSuperAdmin || scope.isAdmin || scope.isHr) return true;
-  return scope.employeeId === employeeId;
+  if (canBypassEmployeeScope(scope)) return true;
+  if (scope.employeeId === employeeId) return true;
+  // HR sees PAN / bank / statutory data only for employees inside its own branch / assignments.
+  if (!scope.isHr) return false;
+  const employee = await getEmployeeRow(employeeId);
+  return employee ? assignmentsCoverEmployee(scope, employee) : false;
 }
 
 export async function canManageGrievance(user: EnterpriseUser): Promise<boolean> {
@@ -282,7 +311,11 @@ export async function canManageGrievance(user: EnterpriseUser): Promise<boolean>
 export async function canViewGrievance(user: EnterpriseUser, grievance: GrievanceLike): Promise<boolean> {
   const scope = await resolveUserBusinessScope(user);
   const roles = roleSet(scope);
-  if (scope.isSuperAdmin || scope.isAdmin || scope.isHr || roles.has("grievance_officer")) return true;
+  if (canBypassEmployeeScope(scope) || roles.has("grievance_officer")) return true;
+  if (scope.isHr && grievance.employee_id) {
+    const employee = await getEmployeeRow(String(grievance.employee_id));
+    if (employee && assignmentsCoverEmployee(scope, employee)) return true;
+  }
   if (!grievance.employee_id || !scope.employeeId) return false;
   if (String(grievance.employee_id) !== scope.employeeId) return false;
   return !(grievance.is_anonymous === true || grievance.is_anonymous === 1);

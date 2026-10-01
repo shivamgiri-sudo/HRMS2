@@ -84,12 +84,24 @@ const roleGuard = requireRole("admin", "finance", "payroll", ...dashboardConsume
 async function injectScopeIfNeeded(req: any): Promise<void> {
   const userId = req.authUser?.id;
   if (!userId) return;
-  if (req.query.branchId || req.query.processId) return;
 
   try {
     const ctx = await getUserRoleContext(userId);
     const scope = await resolveDashboardScopeForRequest(req.authUser, ctx.primaryRole);
     if (scope.level === "ORG_ALL") return;
+    // A ?branchId= / ?processId= from the browser used to make this function return before
+    // anything was injected, and commonWhere() then used ONLY the browser's value - so a
+    // branch-limited user read any branch by adding the parameter. The filter may now only
+    // NARROW what the user is entitled to; outside their scope it fails closed.
+    const askedBranch = req.query.branchId ? String(req.query.branchId) : "";
+    const askedProcess = req.query.processId ? String(req.query.processId) : "";
+    if (
+      (askedBranch && scope.branchIds.length && !scope.branchIds.includes(askedBranch)) ||
+      (askedProcess && scope.processIds.length && !scope.processIds.includes(askedProcess))
+    ) {
+      req.query.employeeIds = ["__no_scope__"];
+      return;
+    }
     if (scope.branchIds.length) req.query.branchIds = scope.branchIds;
     if (scope.processIds.length) req.query.processIds = scope.processIds;
     if (scope.employeeIds.length) req.query.employeeIds = scope.employeeIds;

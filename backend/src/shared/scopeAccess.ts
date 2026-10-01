@@ -44,8 +44,11 @@ export interface ScopeAliases {
 
 // Roles whose scope_type='all' grant is honoured. Every other role is branch-scoped by default:
 // an 'all' row is downgraded to the user's own employees.branch_id.
+//
+// Owner ruling 2026-10-01: hr, payroll_hr, managers (reporting managers) and branch roles are
+// BRANCH-scoped; finance, payroll_head, finance_head and accounts_head are ALL-branch.
 export const ORG_WIDE_EXEMPT_ROLES = [
-  "super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head",
+  "super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance",
 ];
 
 async function holdsOrgWideExemptRole(userId: string): Promise<boolean> {
