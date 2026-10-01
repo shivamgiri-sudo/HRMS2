@@ -58,14 +58,14 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     },
   },
   {
-    key: "housing_owner", label: "Housing Owner", processCodes: ["HOUSING_OWNER"],
+    key: "housing_owner", label: "Housing Owner", processCodes: ["HOUSING_OWNER", "HOUSING_COM"], // HOUSING_COM holds the staff (105 active, prod 2026-10-01)
     perfPrefixes: ["/housing-owner-dashboard"], inboundKeys: [],
     uploads: {
       OWNER_SALE_MASMIS: "import_owner_sale_batch", OWNER_CDR_MASMIS: "import_owner_cdr_batch", OWNER_AGENT_DETAILS_MASMIS: "import_owner_agent_details_batch",
     },
   },
   {
-    key: "housing_premium", label: "Housing Premium", processCodes: ["HOUSING_PREMIUM"],
+    key: "housing_premium", label: "Housing Premium", processCodes: ["HOUSING_PREMIUM", "HOUSING_COM"], // HOUSING_COM holds the staff (105 active, prod 2026-10-01)
     perfPrefixes: ["/housing-premium-dashboard"], inboundKeys: [],
     uploads: {
       PRE_SALE_MASMIS: "import_pre_sale_batch", PRE_CDR_MASMIS: "import_pre_cdr_batch", PRE_AGENT_DETAILS_MASMIS: "import_pre_agent_details_batch",

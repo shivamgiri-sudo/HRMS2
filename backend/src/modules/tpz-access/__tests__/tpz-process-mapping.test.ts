@@ -17,6 +17,11 @@ describe("TPZ company -> process_master mapping", () => {
     expect(tpzCompany("dubangladesh")?.processCodes).toContain("DU_DIGITAL");
   });
 
+  it("maps Housing Owner and Premium to HOUSING_COM, the process row that actually holds the Housing staff", () => {
+    expect(tpzCompany("housing_owner")?.processCodes).toContain("HOUSING_COM");
+    expect(tpzCompany("housing_premium")?.processCodes).toContain("HOUSING_COM");
+  });
+
   it("also maps the live Noida BSS_* process rows staff are assigned to (verified in production 2026-10-01)", () => {
     expect(tpzCompany("appreciate_health")?.processCodes).toContain("BSS_OB_NOIDA_923");
     expect(tpzCompany("satya_retail")?.processCodes).toContain("BSS_OB_NOIDA_1045");

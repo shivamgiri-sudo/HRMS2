@@ -105,7 +105,7 @@ const PRIMARY: CatalogueProcessDef[] = [
     ],
   },
   {
-    processKey: "housing_owner", processName: "Housing Owner", processCodes: ["HOUSING_OWNER"],
+    processKey: "housing_owner", processName: "Housing Owner", processCodes: ["HOUSING_OWNER", "HOUSING_COM"], // staff sit on HOUSING_COM (105 active, verified in prod 2026-10-01)
     kpis: [
       ...salesKpis("db_masmis.owner_sale + Owner_cdr + owner_agent_details (housing-owner-dashboard.service)", "upload", ["date", "agent", "tl", "am"]),
       ...outboundKpis("db_masmis.Owner_cdr"),
@@ -114,7 +114,7 @@ const PRIMARY: CatalogueProcessDef[] = [
     ],
   },
   {
-    processKey: "housing_premium", processName: "Housing Premium", processCodes: ["HOUSING_PREMIUM"],
+    processKey: "housing_premium", processName: "Housing Premium", processCodes: ["HOUSING_PREMIUM", "HOUSING_COM"], // staff sit on HOUSING_COM (105 active, verified in prod 2026-10-01)
     kpis: [
       ...salesKpis("db_masmis.pre_sale + pre_agent_details + Pre_cdr (housing-premium-dashboard.service)", "upload", ["date", "week", "slot", "agent", "tl", "center"]),
       ...outboundKpis("db_masmis.Pre_cdr"),
