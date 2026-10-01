@@ -5,6 +5,7 @@ import { logger } from "../../lib/logger.js";
 import { getIstDateString } from "../../utils/dateUtils.js";
 import { getInboundCalls, getInboundInsights, getInboundPeriods, isInsightProject } from "./inbound-insights.service.js";
 import { INBOUND_INSIGHT_ROLES, STATIC_PROJECTS, getInboundProject } from "./inbound-projects.js";
+import { inboundProjectAllowed, resolveProcessScope, tpzGrantCoversInboundKey } from "../dashboards/process-scope-guards.js";
 import { isProcessReadable } from "../process-dashboard/pd.config.service.js";
 
 const router = Router();
@@ -22,6 +23,14 @@ router.use(
  * reader's process scope, so a scoped manager cannot read another process's calls just by guessing its key.
  */
 async function projectAllowed(req: Request, key: string): Promise<boolean> {
+  // Branch / process scoping (owner ruling 2026-10-01): the catalogue process behind a static key must be inside
+  // the caller's scope. Org-wide callers pass; admin-registered projects keep their own process check below.
+  const callerId = (req as AuthenticatedRequest).authUser?.id;
+  if (!callerId) return false;
+  if (isInsightProject(key) || STATIC_PROJECTS.some((s) => s.key === key)) {
+    const scope = await resolveProcessScope(callerId);
+    if (!inboundProjectAllowed(scope, { key }) && !(await tpzGrantCoversInboundKey(req as AuthenticatedRequest, key))) return false;
+  }
   if (isInsightProject(key)) return true;
   const p = await getInboundProject(key);
   if (!p) return false;

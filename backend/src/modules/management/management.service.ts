@@ -388,9 +388,26 @@ export const managementService = {
 
   // ─── TNI (Training Needs Identification) ───────────────────────────────────
 
-  async listTni(filters: { employee_id?: string; status?: string }) {
+  async getTniEmployeeId(tniId: string): Promise<string | null> {
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM training_need WHERE id = ? LIMIT 1", [tniId]);
+    const id = (rows as RowDataPacket[])[0]?.employee_id;
+    return id ? String(id) : null;
+  },
+
+  async getCoachingEmployeeId(coachingId: string): Promise<string | null> {
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM coaching_session WHERE id = ? LIMIT 1", [coachingId]);
+    const id = (rows as RowDataPacket[])[0]?.employee_id;
+    return id ? String(id) : null;
+  },
+
+  async listTni(filters: { employee_id?: string; status?: string; employee_ids?: string[] }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
+    if (filters.employee_ids) {
+      // An empty list means "nobody" here, never "everybody".
+      if (filters.employee_ids.length === 0) conds.push("1=0");
+      else { conds.push(`tn.employee_id IN (${filters.employee_ids.map(() => "?").join(",")})`); params.push(...filters.employee_ids); }
+    }
     if (filters.employee_id) { conds.push("tn.employee_id = ?"); params.push(filters.employee_id); }
     if (filters.status)      { conds.push("tn.status = ?");      params.push(filters.status); }
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1616,7 +1633,7 @@ export const managementService = {
     };
   },
 
-  async getAttritionBreakdown(): Promise<{ reason: string; count: number; pct: number }[]> {
+  async getAttritionBreakdown(scope?: { sql: string; params: unknown[] } | null): Promise<{ reason: string; count: number; pct: number }[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COALESCE(er.exit_reason_category, 'Not specified') AS reason,
@@ -1633,10 +1650,12 @@ export const managementService = {
        -- previously listed occur nowhere, so the filter would have matched nothing
        -- even against the right date column. Compared case-insensitively: status is
        -- varchar with no declared vocabulary.
-         AND LOWER(er.status) IN ('completed', 'accepted', 'approved', 'exited')
+         AND LOWER(er.status) IN ('completed', 'accepted', 'approved', 'exited')${scope ? `
+         AND ${scope.sql}` : ""}
        GROUP BY er.exit_reason_category
        ORDER BY count DESC
-       LIMIT 6`
+       LIMIT 6`,
+      scope ? scope.params : undefined as any
     );
     return (rows as any[]).map((r) => ({
       reason: String(r.reason),

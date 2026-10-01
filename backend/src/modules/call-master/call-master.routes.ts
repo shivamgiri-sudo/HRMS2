@@ -5,6 +5,7 @@ import * as svc from "./call-master.service.js";
 import * as obSvc from "./outbound-sales.service.js";
 import * as oiSvc from "./opening-intelligence.service.js";
 import * as ciSvc from "./customer-intelligence.service.js";
+import { scopeClientIdsMiddleware } from "./call-master.scope.js";
 import { getIstDateString } from '../../utils/dateUtils.js';
 
 const router = Router();
@@ -13,7 +14,9 @@ const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
 
 router.use(
   requireAuth,
-  requireRole("super_admin", "admin", "ceo", "manager", "process_manager", "operations_manager", "qa", "quality_analyst")
+  requireRole("super_admin", "admin", "ceo", "manager", "process_manager", "operations_manager", "qa", "quality_analyst"),
+  // Branch / process scoping: ?clientIds= is only ever narrowed to the clients the caller's scope allows.
+  scopeClientIdsMiddleware,
 );
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -53,7 +56,11 @@ router.get("/fatal-agent-summary",h(async (req, res) => {
 }));
 router.get("/scenario-detail",    h(async (req, res) => res.json({ data: await svc.getScenarioDetail(parseFilters(req.query as Record<string, unknown>)) })));
 router.get("/active-agents-list", h(async (req, res) => res.json({ data: await svc.getActiveAgentsList(parseFilters(req.query as Record<string, unknown>)) })));
-router.get("/clients",            h(async (_req, res) => res.json({ data: await svc.getClientList() })));
+router.get("/clients",            h(async (_req, res) => {
+  const allowed = res.locals.allowedClientIds as number[] | null | undefined;
+  const clients = await svc.getClientList();
+  res.json({ data: allowed ? clients.filter((c) => allowed.includes(Number(c.id))) : clients });
+}));
 router.get("/export",             h(async (req, res) => {
   const limit = parseInt(String(req.query.limit ?? "5000"), 10);
   res.json({ data: await svc.getExportData(parseFilters(req.query as Record<string, unknown>), limit) });

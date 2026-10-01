@@ -5,6 +5,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
 import { db } from "../../db/mysql.js";
 import { hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { employeeListScope } from "../dashboards/branch-scope-guards.js";
 import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getQualityHeatmap, predictAgentRisk, generateInsights, calculateQualityROI } from "./quality-insights.service.js";
@@ -55,7 +57,8 @@ const TNI_ROLES = [...ALLOWED_ROLES, "trainer"] as const;
 
 /**
  * Resolve caller's data scope:
- * - admin/hr/ceo/qa/quality_analyst → full access (no filter)
+ * - org-wide roles (ORG_WIDE_EXEMPT_ROLES: admin, ceo, coo, cfo ...) → full access (no filter)
+ * - hr/qa/quality_analyst/trainer → their own branch / assigned scope (owner ruling 2026-10-01; were global)
  * - process_manager/manager → scoped to their assigned process campaign_ids
  * - branch_head → scoped to their branch's agent emp_codes
  * Returns extra SQL conditions to AND into queries, or null for global access.
@@ -69,7 +72,7 @@ async function resolveScope(req: AuthenticatedRequest): Promise<{
   const userId = req.authUser!.id;
 
   // Global roles see everything
-  if (await hasRole(userId, "admin", "hr", "ceo", "qa", "quality_analyst")) {
+  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
     return { global: true, campaignIds: null, agentCodes: null };
   }
 
@@ -113,8 +116,33 @@ async function resolveScope(req: AuthenticatedRequest): Promise<{
     return { global: false, campaignIds: null, agentCodes: codes.length ? codes : [] };
   }
 
+  // hr / qa / quality_analyst / trainer: only the employees inside their own branch / assigned scope.
+  if (await hasRole(userId, "hr", "qa", "quality_analyst", "trainer")) {
+    const pred = await employeeListScope(req.authUser!, "e");
+    if (!pred) return { global: true, campaignIds: null, agentCodes: null };
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.employee_code FROM employees e WHERE e.active_status = 1 AND ${pred.sql}`, pred.params as any[]
+    );
+    const codes = (empRows as any[]).map((r) => r.employee_code as string).filter(Boolean);
+    return { global: false, campaignIds: null, agentCodes: codes };
+  }
+
   // Default: no access
   return { global: false, campaignIds: [], agentCodes: [] };
+}
+
+/** Agent codes a non-global caller may see (null = unrestricted). [] means nothing. */
+function scopeAgentCodes(scope: Awaited<ReturnType<typeof resolveScope>>): string[] | null {
+  if (scope.global) return null;
+  return scope.agentCodes ?? scope.resolvedAuditCodes ?? [];
+}
+
+/** AND-condition on db_external.CallDetails.AgentName for a scoped caller (empty string when unrestricted). */
+function callDetailsScope(codes: string[] | null, params: any[]): string {
+  if (codes === null) return "";
+  if (!codes.length) return " AND 1=0";
+  params.push(...codes);
+  return ` AND AgentName IN (${codes.map(() => "?").join(",")})`;
 }
 
 function getCiPool() {
@@ -147,7 +175,9 @@ router.get("/tni-analysis", requireRole(...TNI_ROLES), h(async (req, res) => {
   const qs = (key: string) => typeof req.query[key] === "string" && (req.query[key] as string).trim()
     ? (req.query[key] as string).trim()
     : null;
-  const data = await getTniAnalysis(from, to, qs("client_id"), qs("branch_id"), qs("process_id"), qs("cost_centre_id"));
+  // Branch scoping: the client's branch/process filters only narrow what the caller's own scope already allows.
+  const empScope = await employeeListScope(req.authUser!, "e");
+  const data = await getTniAnalysis(from, to, qs("client_id"), qs("branch_id"), qs("process_id"), qs("cost_centre_id"), empScope);
   return res.json({ success: true, ...data });
 }));
 
@@ -178,6 +208,15 @@ router.get("/tni-agent-params", requireRole(...TNI_ROLES), h(async (req, res) =>
   const clientId = typeof req.query.client_id === "string" && req.query.client_id.trim()
     ? req.query.client_id.trim()
     : null;
+  const agentScope = await employeeListScope(req.authUser!, "e");
+  if (agentScope) {
+    const [own] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 AS ok FROM employees e WHERE e.employee_code = ? AND ${agentScope.sql} LIMIT 1`, [agentCode, ...agentScope.params] as any[]
+    );
+    if (!(own as any[]).length) {
+      return res.status(403).json({ success: false, message: "Forbidden: this agent is outside your branch / assigned scope" });
+    }
+  }
   try {
     const calls = await getTniAgentCalls(agentCode, param as Parameters<typeof getTniAgentCalls>[1], from, to, clientId);
     return res.json({ success: true, calls });
@@ -584,15 +623,20 @@ router.get("/apr-summary", requireRole(...ALLOWED_ROLES), h(async (req: Authenti
 }));
 
 // GET /api/quality-dashboard/sales-intelligence
-router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
     const clientId = req.query.client_id ? String(req.query.client_id) : null;
     const pool = getCiPool();
+    const codes = scopeAgentCodes(await resolveScope(req));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const summaryParams: any[] = [from, to];
     const clientCond = clientId ? " AND client_id = ?" : "";
     if (clientId) summaryParams.push(clientId);
+    const scopeCondSummary = callDetailsScope(codes, summaryParams);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const competitorParams: any[] = [from, to];
+    const scopeCondCompetitor = callDetailsScope(codes, competitorParams);
 
     const [[summaryRows], [competitorRows]] = await Promise.all([
     pool.execute<RowDataPacket[]>(`
@@ -603,18 +647,18 @@ router.get("/sales-intelligence", requireRole(...ALLOWED_ROLES), h(async (req, r
         COUNT(DISTINCT client_id) as unique_clients,
         SUM(CASE WHEN ObjectionHandling='1' OR ObjectionHandling=1 THEN 1 ELSE 0 END) as objection_calls
       FROM db_external.CallDetails
-      WHERE CallDate BETWEEN ? AND ?${clientCond}
+      WHERE CallDate BETWEEN ? AND ?${clientCond}${scopeCondSummary}
     `, summaryParams),
     pool.execute<RowDataPacket[]>(`
       SELECT CompetitorName, COUNT(*) as mentions
       FROM db_external.CallDetails
       WHERE CallDate BETWEEN ? AND ?
         AND CompetitorName IS NOT NULL
-        AND CompetitorName NOT IN ('','null','None','none')
+        AND CompetitorName NOT IN ('','null','None','none')${scopeCondCompetitor}
       GROUP BY CompetitorName
       ORDER BY mentions DESC
       LIMIT 10
-    `, [from, to]),
+    `, competitorParams),
     ]);
 
     return res.json({ success: true, summary: summaryRows[0], top_competitors: competitorRows });
@@ -679,7 +723,7 @@ router.get("/fraud-signals", requireRole(...ALLOWED_ROLES), h(async (req: Authen
 }));
 
 // GET /api/quality-dashboard/sales-funnel
-router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
     const clientId = req.query.client_id as string | undefined;
@@ -689,6 +733,8 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req, res) =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const params: any[] = [from, to];
     if (clientId) { whereClauses.push("client_id = ?"); params.push(clientId); }
+    const funnelScope = callDetailsScope(scopeAgentCodes(await resolveScope(req)), params);
+    if (funnelScope) whereClauses.push(funnelScope.replace(/^ AND /, ""));
     const where = whereClauses.join(" AND ");
 
     const [[sales], [rejection], [reasons]] = await Promise.all([
@@ -734,10 +780,10 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req, res) =>
 }));
 
 // GET /api/quality-dashboard/heatmap
-router.get("/heatmap", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+router.get("/heatmap", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
-    const data = await getQualityHeatmap(from, to);
+    const data = await getQualityHeatmap(from, to, scopeAgentCodes(await resolveScope(req)));
     return res.json({ success: true, heatmap: data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -765,10 +811,10 @@ router.get("/agent-risk", requireRole(...ALLOWED_ROLES), h(async (req: Authentic
 }));
 
 // GET /api/quality-dashboard/insights
-router.get("/insights", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+router.get("/insights", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
-    const insights = await generateInsights(from, to);
+    const insights = await generateInsights(from, to, scopeAgentCodes(await resolveScope(req)));
     return res.json({ success: true, insights });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -778,10 +824,10 @@ router.get("/insights", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
 }));
 
 // GET /api/quality-dashboard/roi
-router.get("/roi", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+router.get("/roi", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
-    const roi = await calculateQualityROI(from, to);
+    const roi = await calculateQualityROI(from, to, scopeAgentCodes(await resolveScope(req)));
     return res.json({ success: true, roi });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";

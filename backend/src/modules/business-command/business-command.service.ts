@@ -3,7 +3,8 @@ import { businessActionsService } from "../business-actions/business-actions.ser
 import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
 
 export const businessCommandService = {
-  async overview() {
+  /** `allowedProcessIds`: limits the revenue-risk block to the caller's processes (null/undefined = org-wide). */
+  async overview(allowedProcessIds?: ReadonlySet<string> | null) {
     // Parallel table existence checks first
     const [hasAttendance, hasHelpdesk, hasPeopleExp, hasGrievance, hasPayroll, hasContract] = await Promise.all([
       tableExists("attendance_daily_record"),
@@ -23,7 +24,7 @@ export const businessCommandService = {
     // Run all independent sections in parallel
     const [actions, revenueRisk, activeEmployees, attendanceData, supportData, peopleRiskData, grievanceData, payrollData] = await Promise.all([
       businessActionsService.summary() as Promise<ActionSummaryRow>,
-      revenueRiskService.snapshot(),
+      allowedProcessIds ? revenueRiskService.snapshot(undefined, allowedProcessIds) : revenueRiskService.snapshot(),
       scalar("SELECT COUNT(*) FROM employees WHERE active_status = 1 AND LOWER(COALESCE(employment_status, 'active')) = 'active'"),
       hasAttendance
         ? Promise.all([

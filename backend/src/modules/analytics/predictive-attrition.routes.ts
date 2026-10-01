@@ -6,6 +6,7 @@
 
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
+import { attachEmployeeScope } from '../dashboards/branch-scope-guards.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import {
   getAttritionRiskSummary,
@@ -25,6 +26,7 @@ router.get(
   '/summary',
   requireAuth,
   requireRole('hr', 'wfm', 'manager', 'admin', 'super_admin'),
+  attachEmployeeScope('e'),
   getAttritionRiskSummary
 );
 
@@ -33,6 +35,7 @@ router.get(
   '/at-risk',
   requireAuth,
   requireRole('hr', 'wfm', 'manager', 'admin', 'super_admin'),
+  attachEmployeeScope('e'),
   getAtRiskEmployees
 );
 

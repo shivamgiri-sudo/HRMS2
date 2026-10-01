@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Response } from "express";
 import multer from "multer";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireTpzCompanyInScope } from "../dashboards/process-scope-guards.js";
 import * as svc from "./sales-upload.service.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -23,6 +24,15 @@ salesUploadRouter.use(
     "manager", "process_manager", "operations_manager", "branch_head"
   )
 );
+
+// Owner ruling 2026-10-01: each company dashboard needs that company's process inside the caller's scope.
+const COMPANY_BY_PREFIX: Array<[string, string]> = [
+  ["/bellavita", "bellavita"], ["/gnc", "gnc"], ["/neemans", "neemans"], ["/nms", "neemans"], ["/aw", "appreciate_health"],
+];
+salesUploadRouter.use((req, res, next) => {
+  const hit = COMPANY_BY_PREFIX.find(([prefix]) => req.path.startsWith(prefix));
+  return hit ? requireTpzCompanyInScope(hit[1])(req, res, next) : next();
+});
 
 salesUploadRouter.get("/health", h(async (_req, res) => {
   return res.json({

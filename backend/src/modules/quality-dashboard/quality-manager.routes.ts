@@ -5,6 +5,8 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { QualityManagerService } from './quality-manager.service.js';
 import { logger } from '../../logger.js';
 import type { RowDataPacket } from 'mysql2';
+import { hasRole } from '../../shared/accessGuard.js';
+import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
 
 const router = Router();
 
@@ -90,8 +92,12 @@ router.get(
         return res.status(400).json({ success: false, error: 'daysBack must be between 1 and 365' });
       }
 
-      // Wide roles (admin/hr/ceo) without an employee record get org-wide quality via null managerCode
-      const result = await service.getTeamQuality(employeeCode ?? '__ALL__', daysBack, process);
+      // Only org-wide roles (ORG_WIDE_EXEMPT_ROLES) without an employee record get org-wide quality. Anyone else
+      // without an employee record used to fall through to '__ALL__' too (every role on the route gate, hr
+      // included) - owner ruling 2026-10-01: they see nothing instead.
+      const managerCode = employeeCode
+        ?? ((await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) ? '__ALL__' : '__NONE__');
+      const result = await service.getTeamQuality(managerCode, daysBack, process);
 
       res.json({
         success: true,

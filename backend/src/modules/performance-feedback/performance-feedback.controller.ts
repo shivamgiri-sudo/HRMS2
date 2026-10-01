@@ -1,6 +1,12 @@
 import type { Request, Response } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import {
+  canAccessEmployeeRecord,
+  employeeIdInScope,
+  employeeListScope,
+  OUTSIDE_SCOPE_MESSAGE,
+} from "../dashboards/branch-scope-guards.js";
 import { PerformanceFeedbackService } from "./performance-feedback.service.js";
 import {
   createCycleSchema,
@@ -25,9 +31,15 @@ async function resolveReportScope(req: AuthenticatedRequest, includeOwnForManage
     : typeof req.query.employeeId === "string" ? req.query.employeeId : undefined;
   const canViewAll = await hasRole(userId, "admin", "hr");
   if (canViewAll) {
-    if (!requestedEmployeeId) return { authorized: true, filters: {} };
+    // Owner ruling 2026-10-01: hr is limited to its own branch / assigned scope. Org-wide roles
+    // get a null predicate (SQL unchanged); hr gets an employee predicate AND-ed onto the query.
+    const scope = await employeeListScope(req.authUser, "e");
+    if (!requestedEmployeeId) return { authorized: true, filters: scope ? { scope } : {} };
     if (requestedEmployeeId !== userId) {
-      return { authorized: true, filters: { employee_id: requestedEmployeeId } };
+      if (scope && !(await canAccessEmployeeRecord(req.authUser, requestedEmployeeId))) {
+        return { authorized: false, outsideScope: true, filters: {} };
+      }
+      return { authorized: true, filters: { employee_id: requestedEmployeeId, ...(scope ? { scope } : {}) } };
     }
 
     const ownEmployee = await getEmployeeForUser(userId);
@@ -236,7 +248,13 @@ export const performanceFeedbackController = {
       const isPrivileged = await hasRole(req.authUser!.id, "admin", "hr");
       let reviewer_id: string | undefined;
       let employee_id = parsed.data.employeeId;
-      if (!isPrivileged) {
+      let scope: { sql: string; params: unknown[] } | null = null;
+      if (isPrivileged) {
+        scope = await employeeIdInScope(req.authUser!, "employee_id");
+        if (scope && employee_id && !(await canAccessEmployeeRecord(req.authUser!, employee_id))) {
+          return res.status(403).json({ error: OUTSIDE_SCOPE_MESSAGE });
+        }
+      } else {
         const emp = await getEmployeeForUser(req.authUser!.id);
         if (!emp) return res.status(200).json({ data: [] });
         reviewer_id = emp.id;
@@ -249,6 +267,7 @@ export const performanceFeedbackController = {
         employee_id,
         reviewer_id,
         status: parsed.data.status?.toLowerCase().replace("-", "_"),
+        scope,
       };
 
       const requests = await service.getRequests(filters);
@@ -302,6 +321,9 @@ export const performanceFeedbackController = {
       const existing = await service.getRequestById(requestId);
       if (!existing) {
         return res.status(404).json({ error: "Request not found" });
+      }
+      if (!(await canAccessEmployeeRecord((req as AuthenticatedRequest).authUser, String((existing as any).employee_id)))) {
+        return res.status(403).json({ error: OUTSIDE_SCOPE_MESSAGE });
       }
 
       await service.deleteRequest(requestId);
@@ -485,6 +507,9 @@ export const performanceFeedbackController = {
       if (!request) {
         return res.status(404).json({ error: "Request not found" });
       }
+      if (!(await canAccessEmployeeRecord((req as AuthenticatedRequest).authUser, String((request as any).employee_id)))) {
+        return res.status(403).json({ error: OUTSIDE_SCOPE_MESSAGE });
+      }
 
       const result = await service.generateReport(requestId);
       return res.status(201).json({ data: result });
@@ -504,6 +529,7 @@ export const performanceFeedbackController = {
       const authReq = req as AuthenticatedRequest;
       const scope = await resolveReportScope(authReq);
       if (!scope.authorized) {
+        if ((scope as any).outsideScope) return res.status(403).json({ success: false, error: OUTSIDE_SCOPE_MESSAGE });
         return res.status(403).json({ success: false, error: "No employee record for authenticated user" });
       }
 
@@ -528,6 +554,7 @@ export const performanceFeedbackController = {
     try {
       const scope = await resolveReportScope(req as AuthenticatedRequest, true);
       if (!scope.authorized) {
+        if ((scope as any).outsideScope) return res.status(403).json({ success: false, error: OUTSIDE_SCOPE_MESSAGE });
         return res.status(403).json({ success: false, error: "No employee record for authenticated user" });
       }
 
@@ -550,6 +577,10 @@ export const performanceFeedbackController = {
       const parsed = createDevelopmentPlanSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.flatten() });
+      }
+
+      if (!(await canAccessEmployeeRecord((req as AuthenticatedRequest).authUser, parsed.data.employeeId))) {
+        return res.status(403).json({ error: OUTSIDE_SCOPE_MESSAGE });
       }
 
       const createdBy = (req as any).user?.emp_id || (req as any).userId || "system";
@@ -585,9 +616,19 @@ export const performanceFeedbackController = {
    */
   async getDevelopmentPlans(req: Request, res: Response) {
     try {
+      const user = (req as AuthenticatedRequest).authUser;
+      // The route has no role gate (every employee reads their own plan), so the scope predicate
+      // is what keeps a caller to themselves / their branch / their direct reports. A client
+      // ?employeeId= may only narrow it.
+      const scope = await employeeIdInScope(user, "employee_id");
+      const requestedEmployee = req.query.employeeId as string | undefined;
+      if (scope && requestedEmployee && !(await canAccessEmployeeRecord(user, requestedEmployee))) {
+        return res.status(403).json({ error: OUTSIDE_SCOPE_MESSAGE });
+      }
       const filters = {
-        employee_id: req.query.employeeId as string | undefined,
+        employee_id: requestedEmployee,
         status: req.query.status as string | undefined,
+        scope,
       };
 
       const plans = await service.getDevelopmentPlans(filters);
@@ -639,6 +680,12 @@ export const performanceFeedbackController = {
         }
       }
 
+      const planEmployeeId = await service.getPlanEmployeeId(planId);
+      if (!planEmployeeId) return res.status(404).json({ error: "Development plan not found" });
+      if (!(await canAccessEmployeeRecord((req as AuthenticatedRequest).authUser, planEmployeeId))) {
+        return res.status(403).json({ error: OUTSIDE_SCOPE_MESSAGE });
+      }
+
       await service.updateDevelopmentPlan(planId, updates);
       return res.status(200).json({ message: "Development plan updated successfully" });
     } catch (error) {
@@ -667,6 +714,12 @@ export const performanceFeedbackController = {
         updates.status = parsed.data.status.toLowerCase().replace(" ", "_");
       }
       if (parsed.data.completedDate !== undefined) updates.actual_date = parsed.data.completedDate;
+
+      const goalEmployeeId = await service.getGoalEmployeeId(goalId);
+      if (!goalEmployeeId) return res.status(404).json({ error: "Goal not found" });
+      if (!(await canAccessEmployeeRecord((req as AuthenticatedRequest).authUser, goalEmployeeId))) {
+        return res.status(403).json({ error: OUTSIDE_SCOPE_MESSAGE });
+      }
 
       await service.updateGoal(goalId, updates);
       return res.status(200).json({ message: "Goal updated successfully" });

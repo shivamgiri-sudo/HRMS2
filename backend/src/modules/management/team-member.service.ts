@@ -35,9 +35,12 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { managementService } from "./management.service.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { canViewEmployee } from "../../shared/enterpriseScope.js";
 
 /** Roles that may look at any employee, matching resolveTeamScope()'s wide set. */
-const WIDE_ROLES = ["admin", "hr", "ceo", "qa", "super_admin"] as const;
+// Owner ruling 2026-10-01: hr and qa are no longer wide; they reach a member through their branch / assigned scope.
+const WIDE_ROLES = ORG_WIDE_EXEMPT_ROLES;
 
 /** How far back every trend in the drawer looks. */
 const WINDOW_DAYS = 90;
@@ -69,7 +72,7 @@ export async function assertCanViewMember(userId: string, targetEmployeeId: stri
   if (caller.id === targetEmployeeId) return; // own record
 
   const reports = await managementService.getDirectReportIds(caller.id);
-  if (!reports.includes(targetEmployeeId)) {
+  if (!reports.includes(targetEmployeeId) && !(await canViewEmployee({ id: userId }, targetEmployeeId))) {
     throw httpError("Forbidden: this employee is not in your reporting line", 403);
   }
 }

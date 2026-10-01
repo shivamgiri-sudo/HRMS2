@@ -121,6 +121,21 @@ router.post("/audits", requireRole(...AUDITOR_ROLES), h(async (req, res) => {
     return res.status(400).json({ success: false, message: "scores must be an array" });
   }
 
+  // Branch scoping (owner ruling 2026-10-01): the role gate says who may audit, not whom. The target employee must
+  // sit inside the auditor's branch/process scope - the same predicate GET /audits applies. Org-wide roles pass.
+  {
+    const roleContext = await getUserRoleContext(req.authUser!.id);
+    const scope = await resolveDashboardScopeForRequest(req.authUser!, roleContext.primaryRole);
+    const scopeWhere = buildScopeWhereEmployees(scope, "e");
+    const [allowed] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id FROM employees e WHERE e.id = ? AND ${scopeWhere.sql} LIMIT 1`,
+      [resolvedEmployeeId, ...scopeWhere.params],
+    );
+    if (!allowed.length) {
+      return res.status(403).json({ success: false, message: "Forbidden: that employee is outside your branch / assigned scope" });
+    }
+  }
+
   try {
     const result = await submitQaAudit({
       formId: String(formId),

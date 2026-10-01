@@ -3,6 +3,8 @@ import type { Response, NextFunction } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { MANAGEMENT_ROLES } from "../../platform/policy/roles.js";
+import { hasRole } from "../../shared/accessGuard.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { businessActionsService } from "./business-actions.service.js";
 import { businessActionSignalSync } from "./business-actions.signal-sync.js";
 
@@ -32,11 +34,17 @@ const WRITE_ROLES = [...MANAGEMENT_ROLES] as string[];
 const requireRead = requireRole(...READ_ROLES);
 const requireWrite = requireRole(...WRITE_ROLES);
 
+/** undefined for org-wide roles (queue unfiltered); the caller's user id otherwise (queue carries no branch). */
+async function ownerScope(req: AuthenticatedRequest): Promise<string | undefined> {
+  return (await hasRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES)) ? undefined : req.authUser!.id;
+}
+
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
 businessActionsRouter.get("/summary", requireRead, h(async (req, res) => {
-  res.json({ success: true, data: await businessActionsService.summary(req.query as Record<string, unknown>) });
+  const owner = await ownerScope(req);
+  res.json({ success: true, data: owner ? await businessActionsService.summary(req.query as Record<string, unknown>, owner) : await businessActionsService.summary(req.query as Record<string, unknown>) });
 }));
 
 businessActionsRouter.post("/sync-signals", requireWrite, h(async (req, res) => {
@@ -80,11 +88,13 @@ businessActionsRouter.post("/sync-signals/roster", requireWrite, h(async (req, r
 }));
 
 businessActionsRouter.get("/", requireRead, h(async (req, res) => {
-  res.json({ success: true, data: await businessActionsService.list(req.query as Record<string, unknown>) });
+  const owner = await ownerScope(req);
+  res.json({ success: true, data: owner ? await businessActionsService.list(req.query as Record<string, unknown>, owner) : await businessActionsService.list(req.query as Record<string, unknown>) });
 }));
 
 businessActionsRouter.get("/:id", requireRead, h(async (req, res) => {
-  const data = await businessActionsService.get(req.params.id);
+  const owner = await ownerScope(req);
+  const data = owner ? await businessActionsService.get(req.params.id, owner) : await businessActionsService.get(req.params.id);
   if (!data) return res.status(404).json({ success: false, message: "Business action not found" });
   res.json({ success: true, data });
 }));

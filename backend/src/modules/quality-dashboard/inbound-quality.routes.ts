@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./inbound-quality.service.js";
+import { requireClientInScope } from "../call-master/call-master.scope.js";
 
 const router = Router();
 const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -29,7 +30,9 @@ const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
 // buildClientScopeCondition), once that data exists.
 router.use(
   requireAuth,
-  requireRole("super_admin", "admin", "ceo", "operations_manager", "qa", "quality_analyst")
+  requireRole("super_admin", "admin", "ceo", "operations_manager", "qa", "quality_analyst"),
+  // Branch / process scoping (owner ruling 2026-10-01): ?clientId= must be a client inside the caller's scope.
+  requireClientInScope({ listPaths: ["/clients"], exemptPaths: ["/agent-master", "/neg-keywords"] }),
 );
 
 function parseFilters(q: Record<string, unknown>): svc.InboundQualityFilters {
@@ -41,7 +44,11 @@ function parseFilters(q: Record<string, unknown>): svc.InboundQualityFilters {
 }
 
 // ── Dashboard endpoints ───────────────────────────────────────────────────────
-router.get("/clients",               h(async (req, res) => res.json({ data: await svc.getInboundClients(parseFilters(req.query as Record<string, unknown>)) })));
+router.get("/clients",               h(async (req, res) => {
+  const allowed = res.locals.allowedClientIds as number[] | null | undefined;
+  const rows = await svc.getInboundClients(parseFilters(req.query as Record<string, unknown>));
+  res.json({ data: allowed ? rows.filter((r) => allowed.includes(Number(r.client_id))) : rows });
+}));
 router.get("/kpis",                  h(async (req, res) => res.json({ data: await svc.getInboundProcessKPIs(parseFilters(req.query as Record<string, unknown>)) })));
 router.get("/top-performers",        h(async (req, res) => res.json({ data: await svc.getTopPerformers(parseFilters(req.query as Record<string, unknown>)) })));
 router.get("/daily-scores",          h(async (req, res) => res.json({ data: await svc.getDailyScores(parseFilters(req.query as Record<string, unknown>)) })));

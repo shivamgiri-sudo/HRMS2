@@ -19,7 +19,8 @@ import {
   isInReportingSpan,
   spanClauseFor,
 } from "../../shared/reportingSpan.js";
-import { hasAnyRole } from "../../shared/scopeAccess.js";
+import { hasAnyRole, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { employeeListScope } from "../dashboards/branch-scope-guards.js";
 import {
   attentionReasons,
   isFailedResult,
@@ -29,17 +30,12 @@ import {
 export const lmsCoachingRouter = Router();
 lmsCoachingRouter.use(requireAuth);
 
-/** Roles that coach or oversee learning across teams. */
-const ORG_WIDE_COACHING_ROLES = [
-  "super_admin",
-  "admin",
-  "hr",
-  "hr_admin",
-  "ceo",
-  "coo",
-  "trainer",
-  "operations_head",
-] as const;
+/**
+ * Roles that see the coaching roll-up beyond their own reporting line.
+ * Owner ruling 2026-10-01: only the org-wide roles see every branch; hr / hr_admin / trainer /
+ * operations_head are limited to their own branch / assigned scope (plus their reporting span).
+ */
+const ORG_WIDE_COACHING_ROLES = ORG_WIDE_EXEMPT_ROLES;
 const TEAM_LIST_LIMIT = 300;
 
 type Handler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -79,8 +75,15 @@ lmsCoachingRouter.get(
     const params: unknown[] = [];
     if (!orgWide) {
       const span = spanClauseFor(String(caller!.id), "e");
-      where.push(span.sql);
-      params.push(...span.params);
+      // Same reach canSeeCoaching grants per person: reporting span OR branch / assigned scope.
+      const branch = await employeeListScope(req.authUser, "e");
+      if (branch) {
+        where.push(`(${span.sql} OR ${branch.sql})`);
+        params.push(...span.params, ...branch.params);
+      } else {
+        where.push(span.sql);
+        params.push(...span.params);
+      }
     }
     const search = String(req.query.search ?? "")
       .trim()

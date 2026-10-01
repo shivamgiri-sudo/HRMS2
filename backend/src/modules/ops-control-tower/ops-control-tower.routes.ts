@@ -4,6 +4,11 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logger } from "../../logger.js";
 import {
+  DashboardScopeConfigurationError,
+  resolveDashboardScopeForRequest,
+} from "../../shared/dashboardScope.js";
+import { scopeSummaryToBranches } from "./ops-control-tower.logic.js";
+import {
   getOpsControlTowerSummary,
   getAttendanceMismatchDetail,
   getFnfPendingDetail,
@@ -43,6 +48,24 @@ function todayIST(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * Branch ids the caller may see; null = org-wide. Only ORG_ALL and branch / process level scopes
+ * carry a branch list - team / self scopes and unconfigured accounts get an empty set (fail closed).
+ */
+async function allowedBranchIds(req: import("express").Request): Promise<Set<string> | null> {
+  try {
+    const scope = await resolveDashboardScopeForRequest((req as any).authUser, "");
+    if (scope.level === "ORG_ALL") return null;
+    if (scope.level === "BRANCH_ALL" || scope.level === "PROCESS_ALL" || scope.level === "CUSTOM_SCOPE") {
+      return new Set(scope.branchIds);
+    }
+    return new Set();
+  } catch (err) {
+    if (err instanceof DashboardScopeConfigurationError) return new Set();
+    throw err;
+  }
+}
+
 function fail(
   res: import("express").Response,
   err: unknown,
@@ -64,7 +87,8 @@ opsControlTowerRouter.get("/", requireRole(...VIEW_ROLES), async (req, res) => {
       res.status(400).json({ error: "date must be YYYY-MM-DD" });
       return;
     }
-    res.json(await getOpsControlTowerSummary(dateParam ?? todayIST()));
+    const allowed = await allowedBranchIds(req);
+    res.json(scopeSummaryToBranches(await getOpsControlTowerSummary(dateParam ?? todayIST()), allowed));
   } catch (err) {
     fail(res, err, "load the ops control tower");
   }
@@ -102,6 +126,12 @@ opsControlTowerRouter.get(
       const loader = DETAIL_BY_BLOCK[block];
       if (!loader) {
         res.status(404).json({ error: `Unknown block "${block}"` });
+        return;
+      }
+      // The branchId comes from the URL, so it is only a request: it must sit inside the caller's scope.
+      const allowed = await allowedBranchIds(req);
+      if (allowed !== null && !allowed.has(branchId)) {
+        res.status(403).json({ error: "Forbidden: this branch is outside your branch / assigned scope" });
         return;
       }
       res.json({ rows: await loader(branchId) });

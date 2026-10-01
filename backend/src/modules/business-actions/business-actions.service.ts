@@ -2,7 +2,8 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { BusinessActionCommentInput, BusinessActionInput } from "./business-actions.types.js";
-
+
+
 import { blankToNull } from "../../shared/sql-values.js";
 const OPEN_STATUSES = ["open", "in_progress", "blocked", "escalated", "overdue"];
 
@@ -17,9 +18,14 @@ function defaultDueDate(severity: string) {
   return date.toISOString().slice(0, 10);
 }
 
-function listWhere(filters: Record<string, unknown> = {}) {
+/**
+ * `ownerScopeUserId`: owner ruling 2026-10-01 - the queue carries no branch, so a caller who is not org-wide
+ * (e.g. branch_head) only sees actions assigned to them. undefined = org-wide, SQL unchanged.
+ */
+function listWhere(filters: Record<string, unknown> = {}, ownerScopeUserId?: string) {
   const clauses: string[] = [];
   const params: unknown[] = [];
+  if (ownerScopeUserId) { clauses.push("a.owner_user_id = ?"); params.push(ownerScopeUserId); }
   const allowed = ["source_module", "risk_type", "severity", "status", "owner_user_id", "owner_role"];
 
   for (const key of allowed) {
@@ -37,8 +43,8 @@ function listWhere(filters: Record<string, unknown> = {}) {
 }
 
 export const businessActionsService = {
-  async list(filters: Record<string, unknown> = {}) {
-    const where = listWhere(filters);
+  async list(filters: Record<string, unknown> = {}, ownerScopeUserId?: string) {
+    const where = listWhere(filters, ownerScopeUserId);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT a.*,
               COALESCE(NULLIF(emp_u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS owner_name,
@@ -54,8 +60,10 @@ export const businessActionsService = {
     return rows;
   },
 
-  async summary(filters: Record<string, unknown> = {}) {
-    const where = listWhere(filters);
+  async summary(filters: Record<string, unknown> = {}, ownerScopeUserId?: string) {
+    const where = listWhere(filters, ownerScopeUserId);
+    const ownerClause = ownerScopeUserId ? " AND a.owner_user_id = ?" : "";
+    const ownerParams = ownerScopeUserId ? [ownerScopeUserId] : [];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
           COUNT(*) AS total,
@@ -71,13 +79,13 @@ export const businessActionsService = {
     );
 
     const [bySource] = await db.execute<RowDataPacket[]>(
-      `SELECT source_module AS label, COUNT(*) AS value
-         FROM business_action_queue
-        WHERE status IN (${OPEN_STATUSES.map(() => "?").join(",")})
-        GROUP BY source_module
+      `SELECT a.source_module AS label, COUNT(*) AS value
+         FROM business_action_queue a
+        WHERE a.status IN (${OPEN_STATUSES.map(() => "?").join(",")})${ownerClause}
+        GROUP BY a.source_module
         ORDER BY value DESC
         LIMIT 12`,
-      OPEN_STATUSES
+      [...OPEN_STATUSES, ...ownerParams]
     );
 
     const [byOwner] = await db.execute<RowDataPacket[]>(
@@ -85,24 +93,24 @@ export const businessActionsService = {
          FROM business_action_queue a
          LEFT JOIN auth_user u ON u.id = a.owner_user_id
          LEFT JOIN employees emp_u ON emp_u.user_id = u.id
-        WHERE a.status IN (${OPEN_STATUSES.map(() => "?").join(",")})
+        WHERE a.status IN (${OPEN_STATUSES.map(() => "?").join(",")})${ownerClause}
         GROUP BY label
         ORDER BY value DESC
         LIMIT 12`,
-      OPEN_STATUSES
+      [...OPEN_STATUSES, ...ownerParams]
     );
 
     return { ...(rows[0] ?? {}), by_source: bySource, by_owner: byOwner, generated_at: new Date().toISOString() };
   },
 
-  async get(id: string) {
+  async get(id: string, ownerScopeUserId?: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT a.*, COALESCE(NULLIF(emp_u.full_name, ''), u.email, a.owner_role, 'Unassigned') AS owner_name
          FROM business_action_queue a
          LEFT JOIN auth_user u ON u.id = a.owner_user_id
          LEFT JOIN employees emp_u ON emp_u.user_id = u.id
-        WHERE a.id = ? LIMIT 1`,
-      [id]
+        WHERE a.id = ?${ownerScopeUserId ? " AND a.owner_user_id = ?" : ""} LIMIT 1`,
+      ownerScopeUserId ? [id, ownerScopeUserId] : [id]
     );
     const action = rows[0];
     if (!action) return null;

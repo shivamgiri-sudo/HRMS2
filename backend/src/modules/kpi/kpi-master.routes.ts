@@ -6,6 +6,8 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
 import { hasProcessScope } from '../../shared/accessGuard.js';
 import { db } from '../../db/mysql.js';
+import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
+import { canAccessEmployeeRecord } from '../dashboards/branch-scope-guards.js';
 import type { RowDataPacket } from 'mysql2';
 import {
   listKpiMasterConfig,
@@ -54,7 +56,8 @@ function readPerformanceQuery(req: AuthenticatedRequest, res: Response) {
 
 async function canViewEmployeePerformance(req: AuthenticatedRequest, employeeId: string) {
   const roles = ((req as AuthenticatedRequest & { userRoles?: string[] }).userRoles ?? []);
-  if (roles.some((role) => ['super_admin', 'admin', 'hr'].includes(role))) return true;
+  // Owner ruling 2026-10-01: hr is no longer a bypass - it falls through to the branch / assigned-scope check below.
+  if (roles.some((role) => ORG_WIDE_EXEMPT_ROLES.includes(role))) return true;
 
   const viewer = await getEmployeeForUser(req.authUser!.id);
   if (!viewer) return false;
@@ -75,7 +78,7 @@ async function canViewEmployeePerformance(req: AuthenticatedRequest, employeeId:
        SELECT id FROM reporting_tree WHERE id = ? LIMIT 1`,
       [viewer.id, employeeId]
     );
-    return rows.length > 0;
+    if (rows.length > 0) return true;
   }
 
   if (roles.includes('qa')) {
@@ -84,15 +87,16 @@ async function canViewEmployeePerformance(req: AuthenticatedRequest, employeeId:
       [employeeId]
     );
     const target = rows[0] as any;
-    return Boolean(target?.process_id) && hasProcessScope(
+    if (Boolean(target?.process_id) && await hasProcessScope(
       req.authUser!.id,
       target.process_id,
       target.branch_id,
       'qa'
-    );
+    )) return true;
   }
 
-  return false;
+  // hr / branch_head / any other role: inside the caller's own branch / assigned scope (or a direct report).
+  return canAccessEmployeeRecord(req.authUser!, employeeId);
 }
 
 // Admin: list configs

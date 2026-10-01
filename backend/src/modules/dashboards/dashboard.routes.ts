@@ -238,6 +238,22 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
 
   const salaryScope = buildScopeWhere(scope, "e.branch_id", "e.process_id");
 
+  // Branch scoping (owner ruling 2026-10-01): a run id taken from the query string is only a request. A caller who is
+  // not org-wide must have at least one line of that run inside their scope, otherwise the run is not theirs to read.
+  if (scope.level !== "ORG_ALL") {
+    const [inScope] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 AS ok FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
+        WHERE spl.run_id = ? AND ${salaryScope.sql} LIMIT 1`,
+      [currentRun.id, ...salaryScope.params],
+    );
+    if (!(inScope as any[]).length) {
+      throw Object.assign(new Error("Forbidden: this payroll run has no employees inside your branch / assigned scope"), {
+        statusCode: 403,
+        errorCode: "PAYROLL_RUN_OUT_OF_SCOPE",
+      });
+    }
+  }
+
   // salaryBill, unpaidActive and zeroAttendanceRisk are mutually independent —
   // none reads another's result, only currentRun (already resolved above) and
   // salaryScope. Previously three sequential awaits; against the live DB this
@@ -403,7 +419,10 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
     catch (err) { logSourceFailure(`dashboard.payroll-${key}`, err, { runId: currentRun?.id }); return null; }
   };
 
+  // payroll_disbursement is one org-wide row per run (no branch dimension), so a scoped caller gets "unavailable"
+  // rather than the company total.
   const disbursementP = currentRun ? panel("disbursement", async () => {
+    if (scope.level !== "ORG_ALL") return null;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT status, total_amount, employee_count, bank_ref, disbursed_at
          FROM payroll_disbursement WHERE run_id = ? ORDER BY disbursed_at DESC LIMIT 1`,
@@ -420,13 +439,19 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
   }) : Promise.resolve(null);
 
   const branchReadinessP = currentRun ? panel("branch-readiness", async () => {
+    // Only the caller's own branches (payroll_branch_readiness carries branch_id, no process).
+    const readinessScope = scope.level === "ORG_ALL"
+      ? { sql: "", params: [] as string[] }
+      : scope.branchIds.length > 0
+        ? { sql: ` AND branch_id IN (${scope.branchIds.map(() => "?").join(",")})`, params: [...scope.branchIds] }
+        : { sql: " AND 1=0", params: [] as string[] };
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS branches,
               SUM(attendance_frozen = 1) AS attendanceFrozen,
               SUM(attendance_data_ready = 1) AS dataReady
          FROM payroll_branch_readiness
-        WHERE process_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci`,
-      [currentRun.run_month],
+        WHERE process_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci${readinessScope.sql}`,
+      [currentRun.run_month, ...readinessScope.params],
     );
     const r = rows[0];
     return Number(r?.branches ?? 0) === 0 ? null : {
@@ -441,12 +466,22 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
   // Generation Status" panel was trying to show with a `disbursement` breakdown
   // that the endpoint never returned.
   const payslipsP = currentRun ? panel("payslips", async () => {
+    // Scoped callers count only payslips / lines of employees inside their own scope.
+    const scoped = scope.level !== "ORG_ALL";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT
+      scoped
+        ? `SELECT
+         (SELECT COUNT(*) FROM salary_payslip sp JOIN employees e ON e.id = sp.employee_id
+           WHERE sp.run_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci AND ${salaryScope.sql}) AS \`generated\`,
+         (SELECT COUNT(*) FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
+           WHERE spl.run_id = ? AND ${salaryScope.sql}) AS expected`
+        : `SELECT
          (SELECT COUNT(*) FROM salary_payslip
            WHERE run_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci) AS \`generated\`,
          (SELECT COUNT(*) FROM salary_prep_line WHERE run_id = ?) AS expected`,
-      [currentRun.run_month, currentRun.id],
+      scoped
+        ? [currentRun.run_month, ...salaryScope.params, currentRun.id, ...salaryScope.params]
+        : [currentRun.run_month, currentRun.id],
     );
     const r = rows[0];
     const expected = Number(r?.expected ?? 0);

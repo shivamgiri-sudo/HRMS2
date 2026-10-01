@@ -18,6 +18,10 @@ import {
   getInterventionOutcomes
 } from './intervention-recommendation.service.js';
 import { getInterventionDetail, listInterventionCases } from './intervention-cases.service.js';
+import { db } from '../../db/mysql.js';
+import { canAccessEmployeeRecord, employeeListScope } from '../dashboards/branch-scope-guards.js';
+import type { NextFunction, Request, Response } from 'express';
+import type { RowDataPacket } from 'mysql2';
 
 const router = Router();
 
@@ -36,12 +40,47 @@ router.param('id', async (req, res, next, id) => {
     return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
   } catch (err) { return next(err); }
 });
+/**
+ * Branch scoping (owner ruling 2026-10-01): the role list says who may open the page, not whose retention cases they
+ * see. List endpoints get the caller's employee-scope predicate (null for org-wide roles, SQL unchanged); a client
+ * ?branchId / ?processId only narrows it.
+ */
+async function attachEmployeeScope(req: Request, res: Response, next: NextFunction) {
+  try {
+    const user = (req as Request & { authUser?: { id: string } }).authUser;
+    if (!user) return res.status(403).json({ success: false, message: 'Forbidden: no resolvable scope' });
+    (req as Request & { employeeScope?: unknown }).employeeScope = await employeeListScope(user, 'e');
+    return next();
+  } catch (err) {
+    return next(err);
+  }
+}
+
+/** By-id guard: the recommendation's employee must be inside the caller's scope (unknown ids fall through to the handler's 404). */
+async function guardCaseEmployee(req: Request, res: Response, next: NextFunction) {
+  try {
+    const user = (req as Request & { authUser?: { id: string } }).authUser;
+    if (!user) return res.status(403).json({ success: false, message: 'Forbidden: no resolvable scope' });
+    const [rows] = await db.execute<RowDataPacket[]>(
+      'SELECT employee_id FROM mas_hrms.employee_retention_recommendation WHERE id = ? LIMIT 1',
+      [String(req.params.id ?? '').trim()],
+    );
+    const employeeId = rows[0]?.employee_id ? String(rows[0].employee_id) : null;
+    if (employeeId && !(await canAccessEmployeeRecord(user, employeeId))) {
+      return res.status(403).json({ success: false, message: 'Forbidden: this employee is outside your branch / assigned scope' });
+    }
+    return next();
+  } catch (err) {
+    return next(err);
+  }
+}
 
 // Outcome summary — must be registered before /:id to avoid route shadowing
 router.get(
   '/outcomes',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
+  attachEmployeeScope,
   getInterventionOutcomes
 );
 
@@ -50,6 +89,7 @@ router.get(
   '/pending',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
+  attachEmployeeScope,
   getPendingInterventions
 );
 
@@ -58,6 +98,7 @@ router.get(
   '/cases',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
+  attachEmployeeScope,
   listInterventionCases
 );
 
@@ -66,6 +107,7 @@ router.get(
   '/:id',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
+  guardCaseEmployee,
   getInterventionDetail
 );
 
@@ -74,6 +116,7 @@ router.patch(
   '/:id',
   requireAuth,
   requireRole('hr', 'admin', 'super_admin', 'manager'),
+  guardCaseEmployee,
   markInterventionActioned
 );
 

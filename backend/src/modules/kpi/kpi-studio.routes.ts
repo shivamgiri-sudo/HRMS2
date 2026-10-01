@@ -188,12 +188,13 @@ router.get(
   '/employees',
   requireRole(...VIEW_ROLES),
   h(async (req, res) => {
+    const viewer = await studioViewerFor(req.authUser!.id);
     const rows = await findEmployeesForScope({
       search: req.query.search ? String(req.query.search) : undefined,
       branch_id: req.query.branch_id ? String(req.query.branch_id) : undefined,
       process_id: req.query.process_id ? String(req.query.process_id) : undefined,
       designation_id: req.query.designation_id ? String(req.query.designation_id) : undefined,
-    });
+    }, viewer);
     res.json({ success: true, data: rows });
   }),
 );

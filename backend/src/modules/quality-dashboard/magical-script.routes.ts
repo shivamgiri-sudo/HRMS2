@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getMagicalScript } from "./magical-script.service.js";
+import { requireClientInScope } from "../call-master/call-master.scope.js";
 
 const router = Router();
 const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -9,7 +10,8 @@ const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
 
 router.use(
   requireAuth,
-  requireRole("super_admin", "admin", "ceo", "manager", "process_manager", "operations_manager", "qa", "quality_analyst")
+  requireRole("super_admin", "admin", "ceo", "manager", "process_manager", "operations_manager", "qa", "quality_analyst"),
+  requireClientInScope(),
 );
 
 router.get(

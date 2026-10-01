@@ -1590,9 +1590,18 @@ export async function findEmployeesForScope(filters: {
   branch_id?: string;
   process_id?: string;
   designation_id?: string;
-}) {
+}, viewer?: { orgWide: boolean; processIds: ReadonlySet<string> }) {
   const where: string[] = ['e.active_status = 1'];
   const params: unknown[] = [];
+
+  // Branch / process scoping: a non-org-wide caller only sees people in the processes they can read
+  // (the same set that gates authoring). A client-supplied branch/process filter only narrows this.
+  if (viewer && !viewer.orgWide) {
+    const ids = [...viewer.processIds];
+    if (!ids.length) return [];
+    where.push(`e.process_id IN (${ids.map(() => '?').join(',')})`);
+    params.push(...ids);
+  }
 
   if (filters.branch_id) { where.push('e.branch_id = ?'); params.push(filters.branch_id); }
   if (filters.process_id) { where.push('e.process_id = ?'); params.push(filters.process_id); }

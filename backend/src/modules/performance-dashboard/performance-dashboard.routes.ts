@@ -13,6 +13,7 @@ import {
   narrowDashboardScope,
   resolveDashboardScope,
 } from '../../shared/dashboardScope.js'
+import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js'
 import { logSourceFailure } from "../../shared/apiResponse.js"
 import { randomUUID } from "node:crypto"
 
@@ -48,7 +49,8 @@ function pdDates(q: Record<string, unknown>): { from: string; to: string } {
 const PERF_ROLES = ['admin', 'hr', 'super_admin', 'manager', 'process_manager', 'ceo', 'qa', 'wfm'] as const
 
 // Roles that see ALL agents (org-wide) — others get scope-filtered to their branch/process
-const WIDE_SCOPE_ROLES = new Set(['super_admin', 'admin', 'ceo', 'coo', 'operations_manager', 'wfm'])
+// Owner ruling 2026-10-01: operations_manager and wfm are no longer org-wide - only ORG_WIDE_EXEMPT_ROLES are.
+const WIDE_SCOPE_ROLES = new Set<string>(ORG_WIDE_EXEMPT_ROLES)
 
 /**
  * Returns allowed employee_codes for the calling user.
@@ -356,6 +358,14 @@ performanceDashboardRouter.get('/trend', requireRole(...PERF_ROLES),
     try {
       const { from, to } = pdDates(req.query)
       const pool = getCiPool()
+      const scope = await getScopeFilter(req)
+      let scopeSql = ''
+      const extraParams: string[] = []
+      if (scope.codes !== null) {
+        if (scope.codes.length === 0) return res.json({ success: true, apr_trend: [], audit_trend: [], sales_trend: [] })
+        scopeSql = ` AND UserID IN (${scope.codes.map(() => '?').join(',')})`
+        extraParams.push(...scope.codes)
+      }
       const [aprTrend] = await pool.execute<RowDataPacket[]>(
         `SELECT
            DATE_FORMAT(ReportDate, '%Y-%m-%d') AS date,
@@ -369,10 +379,10 @@ performanceDashboardRouter.get('/trend', requireRole(...PERF_ROLES),
              ELSE 0 END
            ), 2) AS avg_shrinkage
          FROM Shivamgiri.apr
-         WHERE ReportDate BETWEEN ? AND ?
+         WHERE ReportDate BETWEEN ? AND ?${scopeSql}
          GROUP BY DATE_FORMAT(ReportDate, '%Y-%m-%d')
          ORDER BY date ASC`,
-        [from, to]
+        [from, to, ...extraParams]
       )
       return res.json({
         success: true,
@@ -392,6 +402,14 @@ performanceDashboardRouter.get('/process-comparison', requireRole(...PERF_ROLES)
     try {
       const { from, to } = pdDates(req.query)
       const pool = getCiPool()
+      const scope = await getScopeFilter(req)
+      let scopeSql = ''
+      const extraParams: string[] = []
+      if (scope.codes !== null) {
+        if (scope.codes.length === 0) return res.json({ success: true, processes: [] })
+        scopeSql = ` AND apr.UserID IN (${scope.codes.map(() => '?').join(',')})`
+        extraParams.push(...scope.codes)
+      }
       const [rows] = await pool.execute<RowDataPacket[]>(
         `SELECT
            COALESCE(pm.process_name, apr.campaign_id, 'Unknown') AS process,
@@ -407,10 +425,10 @@ performanceDashboardRouter.get('/process-comparison', requireRole(...PERF_ROLES)
            ), 2) AS avg_shrinkage
          FROM Shivamgiri.apr apr
          LEFT JOIN mas_hrms.process_master pm ON pm.process_code = apr.campaign_id
-         WHERE apr.ReportDate BETWEEN ? AND ?
+         WHERE apr.ReportDate BETWEEN ? AND ?${scopeSql}
          GROUP BY apr.campaign_id
          ORDER BY avg_calls DESC`,
-        [from, to]
+        [from, to, ...extraParams]
       )
       return res.json({ success: true, processes: rows })
     } catch (err) {

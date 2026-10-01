@@ -2,6 +2,7 @@ import { Router, type NextFunction, type Response } from "express";
 import multer from "multer";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireTpzCompanyInScope } from "../dashboards/process-scope-guards.js";
 import * as svc from "./bla-bli-blu-dashboard.service.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -26,6 +27,8 @@ const hu = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) 
   };
 
 blaBliBluDashboardRouter.use(requireAuth);
+// Owner ruling 2026-10-01: Bellavita data is only for callers whose scope includes that process (org-wide roles pass).
+blaBliBluDashboardRouter.use(requireTpzCompanyInScope("bellavita"));
 
 const q = (req: AuthenticatedRequest, k: string) => (typeof req.query[k] === "string" ? (req.query[k] as string) : undefined);
 

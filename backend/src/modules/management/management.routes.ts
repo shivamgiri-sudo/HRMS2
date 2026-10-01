@@ -4,6 +4,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { canAccessEmployeeRecord, employeeIdInScope, employeeListScope, OUTSIDE_SCOPE_MESSAGE } from "../dashboards/branch-scope-guards.js";
 import { managementService } from "./management.service.js";
 import { db } from "../../db/mysql.js";
 import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
@@ -80,13 +82,15 @@ function requireRoleOrDirectReports(...roles: string[]) {
 }
 
 /**
- * Resolve scoped employee ID list for non-admin/hr roles.
- * Admins, HR, CEO see everyone. Managers/TLs see only their direct reports.
+ * Resolve scoped employee ID list.
+ * Org-wide roles (ORG_WIDE_EXEMPT_ROLES: admin, ceo, coo, cfo ...) see everyone. Everyone else - hr and qa included,
+ * owner ruling 2026-10-01 - is limited: managers/TLs to their direct reports, hr/qa to their own branch / assigned
+ * scope plus their reporting line.
  * Returns null if the caller has no employee record (block the request).
  * Returns [] if the manager has no reports yet (no data returned).
  */
 async function resolveTeamScope(userId: string): Promise<{ employeeIds: string[] | null; isWide: boolean }> {
-  if (await hasRole(userId, "admin", "hr", "ceo", "qa")) {
+  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
     return { employeeIds: null, isWide: true };
   }
   const emp = await getEmployeeForUser(userId);
@@ -94,7 +98,27 @@ async function resolveTeamScope(userId: string): Promise<{ employeeIds: string[]
   const ids = await managementService.getDirectReportIds(emp.id);
   // Include the manager's own employee ID for completeness (e.g. their own alerts)
   if (!ids.includes(emp.id)) ids.push(emp.id);
+  if (await hasRole(userId, "hr", "qa")) {
+    const pred = await employeeListScope({ id: userId }, "e");
+    if (pred) {
+      const [rows] = await db.execute<any[]>(
+        `SELECT e.id FROM employees e WHERE e.active_status = 1 AND ${pred.sql}`,
+        pred.params as any[],
+      );
+      for (const r of rows as any[]) {
+        const id = String(r.id);
+        if (!ids.includes(id)) ids.push(id);
+      }
+    }
+  }
   return { employeeIds: ids, isWide: false };
+}
+
+/** 403 helper for the by-employee writes below; org-wide roles pass inside canAccessEmployeeRecord. */
+async function guardEmployee(req: AuthenticatedRequest, res: Response, employeeId: string): Promise<boolean> {
+  if (await canAccessEmployeeRecord(req.authUser!, employeeId)) return true;
+  res.status(403).json({ success: false, message: OUTSIDE_SCOPE_MESSAGE });
+  return false;
 }
 
 router.get("/team-kpi", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -109,11 +133,19 @@ router.get("/team-kpi", requireRole("admin", "hr", "manager", "branch_head", "ce
 
 router.get("/coaching", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr", "qa")) {
+  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
     return res.json({ data: await managementService.listCoachingSessions(req.query as any) });
   }
   const emp = await getEmployeeForUser(userId);
   if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+  if (await hasRole(userId, "hr", "qa")) {
+    // hr / qa: sessions of people inside their own branch / assigned scope only (was: every session).
+    const { employeeIds } = await resolveTeamScope(userId);
+    const ids = employeeIds ?? [emp.id];
+    const requested = typeof req.query.employee_id === "string" ? req.query.employee_id : undefined;
+    if (requested && !ids.includes(requested)) return res.status(403).json({ success: false, message: OUTSIDE_SCOPE_MESSAGE });
+    return res.json({ data: await managementService.listCoachingSessions({ ...(req.query as any), employee_ids: ids }) });
+  }
   // Managers see sessions for all their direct reports
   const directIds = await managementService.getDirectReportIds(emp.id);
   if (directIds.length > 0) {
@@ -127,6 +159,7 @@ router.post("/coaching", requireRole("admin", "hr", "qa", "manager", "branch_hea
   const { employee_id, session_date, session_type } = req.body;
   if (!employee_id || !session_date || !session_type)
     return res.status(400).json({ error: "employee_id, session_date, session_type required" });
+  if (!(await guardEmployee(req, res, String(employee_id)))) return;
   res.status(201).json({ data: await managementService.createCoachingSession(req.body, req.authUser!.id, req) });
 }));
 
@@ -203,7 +236,7 @@ router.get("/system-dashboard", requireRole("admin", "super_admin"), h(async (_r
 // Returns the calling manager's direct reports (for coaching modal dropdowns, etc.)
 router.get("/team-members", requireRoleOrDirectReports("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, "admin", "hr", "ceo")) {
+  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
     // Wide roles: return a small employee list (name + id only) filtered by process if provided
     const processId = req.query.process_id as string | undefined;
     const conds = ["e.active_status = 1"];
@@ -217,7 +250,10 @@ router.get("/team-members", requireRoleOrDirectReports("admin", "hr", "manager",
   }
   const emp = await getEmployeeForUser(userId);
   if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
-  const ids = await managementService.getDirectReportIds(emp.id);
+  // hr / qa: their branch / assigned scope as well as their reporting line (resolveTeamScope).
+  const ids = (await hasRole(userId, "hr", "qa"))
+    ? ((await resolveTeamScope(userId)).employeeIds ?? [])
+    : await managementService.getDirectReportIds(emp.id);
   if (ids.length === 0) return res.json({ data: [] });
   const placeholders = ids.map(() => "?").join(",");
   const [rows] = await db.execute(
@@ -228,7 +264,14 @@ router.get("/team-members", requireRoleOrDirectReports("admin", "hr", "manager",
 }));
 
 router.get("/tni", requireRole("admin", "hr", "manager", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
-  res.json({ data: await managementService.listTni(req.query as { employee_id?: string; status?: string }) });
+  const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
+  if (isWide) return res.json({ data: await managementService.listTni(req.query as { employee_id?: string; status?: string }) });
+  const ids = employeeIds ?? [];
+  const requested = typeof req.query.employee_id === "string" ? req.query.employee_id : undefined;
+  if (ids.length === 0 || (requested && !ids.includes(requested))) {
+    return requested ? res.status(403).json({ success: false, message: OUTSIDE_SCOPE_MESSAGE }) : res.json({ data: [] });
+  }
+  res.json({ data: await managementService.listTni({ ...(req.query as { employee_id?: string; status?: string }), employee_ids: ids }) });
 }));
 
 router.post("/tni", requireRole("admin", "hr", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -243,6 +286,7 @@ router.post("/tni", requireRole("admin", "hr", "qa"), h(async (req: Authenticate
   if (!employee_id || !need_type) {
     return res.status(400).json({ error: "employee_id and need_type required" });
   }
+  if (!(await guardEmployee(req, res, String(employee_id)))) return;
   const data = await managementService.createTni(
     { employee_id, metric_id, need_type, description, priority, coaching_session_id },
     req.authUser!.id
@@ -253,6 +297,9 @@ router.post("/tni", requireRole("admin", "hr", "qa"), h(async (req: Authenticate
 router.patch("/tni/:id", requireRole("admin", "hr", "qa"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { status } = req.body as { status: string };
   if (!status) return res.status(400).json({ error: "status required" });
+  const tniEmployeeId = await managementService.getTniEmployeeId(req.params.id);
+  if (!tniEmployeeId) return res.status(404).json({ error: "Training need not found" });
+  if (!(await guardEmployee(req, res, tniEmployeeId))) return;
   const data = await managementService.updateTniStatus(req.params.id, status);
   res.json({ data });
 }));
@@ -264,6 +311,8 @@ router.post("/coaching/:coachingId/create-tni", requireRole("admin", "hr"), h(as
     priority?: string;
     metric_id?: string;
   };
+  const sessionEmployeeId = await managementService.getCoachingEmployeeId(req.params.coachingId);
+  if (sessionEmployeeId && !(await guardEmployee(req, res, sessionEmployeeId))) return;
   const data = await managementService.createTniFromCoaching(
     req.params.coachingId,
     { need_type: need_type ?? "soft_skills", description, priority, metric_id },
@@ -272,9 +321,12 @@ router.post("/coaching/:coachingId/create-tni", requireRole("admin", "hr"), h(as
   res.status(201).json({ data });
 }));
 
-router.get("/attrition-breakdown", requireRole("admin", "hr", "ceo", "manager", "branch_head", "process_manager"), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/attrition-breakdown", requireRole("admin", "hr", "ceo", "manager", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const data = await managementService.getAttritionBreakdown();
+    // Branch scoping: org-wide roles keep the company view; everyone else sees exits of people inside their own
+    // branch / assigned scope / reporting line only (null predicate = SQL unchanged).
+    const scope = await employeeIdInScope(req.authUser!, "er.employee_id");
+    const data = scope ? await managementService.getAttritionBreakdown(scope) : await managementService.getAttritionBreakdown();
     res.json({ success: true, data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed";

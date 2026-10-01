@@ -136,8 +136,11 @@ function aggregateRows(rows: DailyRow[]) {
   };
 }
 
-export async function getProjectSummary(filters: InboundFilters, projectKey?: string) {
-  const projects = (await getInboundProjects({ includeDbOnly: Boolean(projectKey) })).filter((p) => !projectKey || p.key === projectKey);
+/** Optional scope predicate (branch scoping): projects it refuses are never queried. */
+export type ProjectAllow = (p: { key: string; processId?: string | null; clientId?: string | null }) => boolean;
+
+export async function getProjectSummary(filters: InboundFilters, projectKey?: string, allow?: ProjectAllow) {
+  const projects = (await getInboundProjects({ includeDbOnly: Boolean(projectKey) })).filter((p) => (!projectKey || p.key === projectKey) && (!allow || allow(p)));
 
   const results = await Promise.all(
     projects.map(async (p) => {
@@ -181,8 +184,8 @@ export async function getProjectOverview(filters: InboundFilters, projectKey: st
   };
 }
 
-export async function getProjectTrend(filters: InboundFilters, projectKey?: string) {
-  const projects = (await getInboundProjects({ includeDbOnly: Boolean(projectKey) })).filter((p) => !projectKey || p.key === projectKey);
+export async function getProjectTrend(filters: InboundFilters, projectKey?: string, allow?: ProjectAllow) {
+  const projects = (await getInboundProjects({ includeDbOnly: Boolean(projectKey) })).filter((p) => (!projectKey || p.key === projectKey) && (!allow || allow(p)));
 
   return Promise.all(
     projects.map(async (p) => {
@@ -192,8 +195,8 @@ export async function getProjectTrend(filters: InboundFilters, projectKey?: stri
   );
 }
 
-export async function getConsolidatedTrend(filters: InboundFilters) {
-  const trendData = await getProjectTrend(filters);
+export async function getConsolidatedTrend(filters: InboundFilters, allow?: ProjectAllow) {
+  const trendData = await getProjectTrend(filters, undefined, allow);
   const byDate: Record<string, { date: string; offered: number; answered: number; sl_num: number }> = {};
 
   for (const proj of trendData) {
