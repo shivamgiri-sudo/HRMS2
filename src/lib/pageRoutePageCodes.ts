@@ -23,6 +23,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/finance/client-payments": "FINANCE_CLIENT_PAYMENTS",
   "/finance/gst-export": "FINANCE_GST_EXPORT",
   "/kpi-targets": "KPI_MASTER",
+  "/kpi/catalogue": "KPI_CONFIG",
   "/kpi/process-metrics": "KPI_CONFIG",
   "/maternity-leave": "MATERNITY_LEAVE",
   "/meetings": "MCNMEET",

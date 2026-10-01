@@ -1257,6 +1257,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1987_branch_wfm_head_wfm_alignment_page_access.sql", // Registered 2026-10-01. Grants branch_wfm and branch_head PROVISIONING_WFM_ALIGNMENT (branch-scoped by the API). INSERT IGNORE, additive.
   "migrations/1988_branch_wfm_payroll_branch_holiday_work_page_access.sql", // Registered 2026-10-01. PAYROLL_HOLIDAY_WORK for branch_wfm + payroll_branch (branch-scoped by the API). INSERT IGNORE, additive.
   "migrations/1989_pendency_reminder_log.sql", // Audit + cooldown for ESI-document / bank-account / DigiLocker pendency reminder emails. Additive, IF NOT EXISTS, no FK.
+  "migrations/1990_kpi_catalogue.sql", // Registered 2026-10-01. KPI Catalogue (kpi_catalogue, _role, _conflict, rating scale) + nullable kpi_studio_definition.catalogue_id. Additive, idempotent.
 ];
 
 export type MigrationHealth = {

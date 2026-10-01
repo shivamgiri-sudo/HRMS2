@@ -20,6 +20,7 @@
  */
 
 import { db } from '../../db/mysql.js';
+import { linkDefinitionToCatalogue } from '../kpi-catalogue/kpi-catalogue.studio-sync.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { validateFormula, listFormulaFunctions } from './kpi-formula.engine.js';
 import { validateSheetCsvUrl } from './kpi-studio.gsheet.js';
@@ -1277,6 +1278,11 @@ export async function saveDefinition(input: StudioDefinitionInput, userId?: stri
     }
 
     await connection.commit();
+    // Mirror into the KPI catalogue so Studio and the catalogue cannot drift. Best effort: a catalogue problem
+    // must never fail a Studio save that has already committed.
+    await linkDefinitionToCatalogue(definitionId).catch((err) =>
+      console.warn('[kpi-studio] catalogue link skipped:', err instanceof Error ? err.message : String(err)),
+    );
     return {
       id: definitionId,
       effective_from: effectiveFrom,

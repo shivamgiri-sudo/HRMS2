@@ -257,6 +257,7 @@ import { performanceDashboardRouter } from "./modules/performance-dashboard/perf
 import { performanceIntelligenceRouter } from "./modules/performance-intelligence/performance-intelligence.routes.js";
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import { kpiStudioRouter } from "./modules/kpi/kpi-studio.routes.js";
+import { kpiCatalogueRouter } from "./modules/kpi-catalogue/kpi-catalogue.routes.js";
 import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
 import { metaCampaignRouter } from "./modules/meta-campaign/meta-campaign.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
@@ -659,6 +660,8 @@ app.use("/api/kpi-master", kpiMasterRouter);
 // routes, which reads as a permissions bug and hid it). Its migrations were
 // applied on 2026-09-03; only the mount was missing.
 app.use("/api/kpi-studio", kpiStudioRouter);
+// KPI Catalogue: one source of truth for process KPIs, reconciled with KPI Studio (2026-10-01).
+app.use("/api/kpi-catalogue", kpiCatalogueRouter);
 app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api/portal/admin", portalAdminRouter);

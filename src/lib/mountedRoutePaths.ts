@@ -179,6 +179,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/kpi-targets",
   "/kpi/dashboard",
   "/kpi/my-team",
+  "/kpi/catalogue",
   "/kpi/process-metrics",
   "/leave-approvals",
   "/leave-types",

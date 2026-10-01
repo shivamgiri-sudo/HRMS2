@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1215,
-  "columnCount": 17685,
+  "tableCount": 1220,
+  "columnCount": 17739,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -11475,6 +11475,55 @@
       "source_ip",
       "created_at"
     ],
+    "kpi_catalogue": [
+      "id",
+      "process_key",
+      "process_name",
+      "process_codes",
+      "metric_key",
+      "metric_name",
+      "metric_code",
+      "theme",
+      "family",
+      "unit",
+      "direction",
+      "grain",
+      "source_kind",
+      "source_ref",
+      "formula",
+      "freshness",
+      "dimensions",
+      "has_data",
+      "target_source",
+      "default_target",
+      "rating_scale_id",
+      "status",
+      "legacy_refs",
+      "studio_definition_id",
+      "seeded",
+      "notes",
+      "created_at",
+      "updated_at"
+    ],
+    "kpi_catalogue_conflict": [
+      "id",
+      "conflict_type",
+      "process_key",
+      "metric_key",
+      "detail",
+      "resolved",
+      "detected_at",
+      "resolved_at"
+    ],
+    "kpi_catalogue_role": [
+      "id",
+      "catalogue_id",
+      "role_key",
+      "department_key",
+      "access",
+      "display_order",
+      "weight"
+    ],
     "kpi_daily_actual": [
       "id",
       "employee_id",
@@ -11669,6 +11718,20 @@
       "max_score_pct",
       "color_code"
     ],
+    "kpi_rating_scale": [
+      "id",
+      "scale_key",
+      "scale_name",
+      "is_default",
+      "created_at"
+    ],
+    "kpi_rating_scale_band": [
+      "id",
+      "scale_id",
+      "band_label",
+      "min_score",
+      "sort_order"
+    ],
     "kpi_review_action": [
       "id",
       "period_id",
@@ -11826,7 +11889,8 @@
       "approved_at",
       "created_at",
       "updated_at",
-      "scope_key"
+      "scope_key",
+      "catalogue_id"
     ],
     "kpi_studio_definition_source": [
       "id",

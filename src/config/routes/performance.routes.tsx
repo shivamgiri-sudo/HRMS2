@@ -18,6 +18,7 @@ const TeamCoachingPage              = lazy(() => import("@/pages/team/TeamCoachi
 const MyKpiDashboard                 = lazy(() => import("@/pages/MyKpiDashboard"));
 const NativeAgentPerformanceDashboard = lazy(() => import("@/pages/NativeAgentPerformanceDashboard"));
 const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetricConfig"));
+const KpiCataloguePage = lazy(() => import("@/pages/KpiCataloguePage"));
 const ProcessPerformancePage = lazy(() => import("@/pages/ProcessPerformancePage"));
 const ProcessKpiDashboardPage = lazy(() => import("@/pages/ProcessKpiDashboardPage"));
 const ProcessDataSourcePage = lazy(() => import("@/pages/ProcessDataSourcePage"));
@@ -142,6 +143,7 @@ export const performanceRouteElements = (
       <Route path="/performance/process-performance-v2" element={<TpzRoute><ProcessPerformanceV2Page /></TpzRoute>} />
       <Route path="/process-performance-v2" element={<Navigate to="/performance/process-performance-v2" replace />} />
       <Route path="/process-operations-demo" element={<ProcessOperationsDemoPage />} />
+      <Route path="/kpi/catalogue" element={<ProtectedRoute roles={['super_admin','admin','hr','qa','tq_head','process_manager','operations_manager','manager','branch_head','ceo','coo','wfm','branch_wfm']}><Gate pageCode="KPI_CONFIG"><KpiCataloguePage /></Gate></ProtectedRoute>} />
       <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager','manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
       <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head','branch_head','branch_qa','ceo','coo','manager']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
       <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />

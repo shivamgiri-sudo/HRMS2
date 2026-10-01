@@ -49,7 +49,8 @@
     "performance:safe-sync": "tsx scripts/performance-safe-sync.ts",
     "performance:install-ingestion-schema": "tsx scripts/performance-ingestion-install.ts --apply",
     "performance:verify-manual-upload": "tsx scripts/performance-manual-upload-verify.ts",
-    "performance:certify-migrations": "tsx scripts/performance-migration-certify.ts"
+    "performance:certify-migrations": "tsx scripts/performance-migration-certify.ts",
+    "kpi:catalogue-map": "tsx scripts/generate-kpi-catalogue-map.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
