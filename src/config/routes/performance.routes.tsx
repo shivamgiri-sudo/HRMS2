@@ -33,7 +33,10 @@ const ProcessPerformanceV2Page = lazy(() => import("@/pages/ProcessPerformanceV2
 const ProcessOperationsDemoPage = lazy(() => import("@/pages/ProcessOperationsDemoPage"));
 const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
 const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
-const NativeCallMasterDashboard      = lazy(() => import("@/pages/NativeCallMasterDashboard"));
+const CallMasterPage                = lazy(() => import("@/features/call-master-sync/pages").then((m) => ({ default: m.CallMasterPage })));
+const OpeningIntelligencePage       = lazy(() => import("@/features/call-master-sync/pages").then((m) => ({ default: m.OpeningIntelligencePage })));
+const CustomerIntelligencePage      = lazy(() => import("@/features/call-master-sync/pages").then((m) => ({ default: m.CustomerIntelligencePage })));
+const OutboundSalesPage             = lazy(() => import("@/features/call-master-sync/pages").then((m) => ({ default: m.OutboundSalesPage })));
 const NativeOpsCommandCenter         = lazy(() => import("@/pages/NativeOpsCommandCenter"));
 const NativeInboundDashboard         = lazy(() => import("@/pages/NativeInboundDashboard"));
 const NativeTATMatrix                = lazy(() => import("@/pages/NativeTATMatrix"));
@@ -153,7 +156,10 @@ export const performanceRouteElements = (
       {/* Operations — consolidated into one role-based drill-down page at /operations-dashboard. */}
       <Route path="/operations/dashboard" element={<Navigate to="/operations-dashboard" replace />} />
       <Route path="/ops/command-center"  element={<ProtectedRoute roles={['super_admin','admin','ceo','operations_manager','process_manager','branch_head','coo','manager','qa','quality_analyst','tq_head']}><Gate pageCode="OPERATIONS_DASHBOARD"><NativeOpsCommandCenter /></Gate></ProtectedRoute>} />
-      <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><NativeCallMasterDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/call-master" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><CallMasterPage /></Gate></ProtectedRoute>} />
+      <Route path="/call-master/opening-intelligence" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><OpeningIntelligencePage /></Gate></ProtectedRoute>} />
+      <Route path="/call-master/customer-intelligence" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><CustomerIntelligencePage /></Gate></ProtectedRoute>} />
+      <Route path="/call-master/outbound-sales" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER"><OutboundSalesPage /></Gate></ProtectedRoute>} />
       <Route path="/call-master/inbound" element={<ProtectedRoute roles={['super_admin','admin','ceo','manager','process_manager','operations_manager','qa','quality_analyst','coo','tq_head']}><Gate pageCode="CALL_MASTER_INBOUND"><NativeInboundDashboard /></Gate></ProtectedRoute>} />
       {/* The live dialler dashboards live inside Process Operations (Live Dashboard view);
           this older standalone copy is no longer served. */}

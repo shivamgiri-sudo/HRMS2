@@ -287,6 +287,9 @@ export const navGroups: NavGroup[] = [
         children: [
           { label: "Call Master",       href: "/call-master",          icon: ic(Activity),    roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "KPIs, quality, agents" },
           { label: "Inbound Dashboard", href: "/call-master/inbound",  icon: ic(TrendingUp),  roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "All-project inbound" },
+          { label: "Outbound Sales", href: "/call-master/outbound-sales", icon: ic(TrendingUp), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "Conversion, agents, dispositions" },
+          { label: "Opening Intelligence", href: "/call-master/opening-intelligence", icon: ic(Activity), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "Opening & context quality" },
+          { label: "Customer Intelligence", href: "/call-master/customer-intelligence", icon: ic(Activity), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "Sentiment, NPS, objections" },
         ],
       },
       {

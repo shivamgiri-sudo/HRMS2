@@ -246,6 +246,7 @@ import { qualityGovernanceRouter } from "./modules/quality-dashboard/quality-gov
 import { processMetricDefinitionRouter } from "./modules/kpi/process-metric-definition.routes.js";
 import { qualityAggregationRouter } from "./modules/quality-dashboard/quality-aggregation.routes.js";
 import { callMasterRouter } from "./modules/call-master/call-master.routes.js";
+import { myDashboardsRouter } from "./modules/call-master/mydashboards.routes.js";
 import { inboundRouter } from "./modules/call-master/inbound.routes.js";
 import { inboundInsightsRouter } from "./modules/call-master/inbound-insights.routes.js";
 import { salesUploadRouter } from "./modules/sales-upload/sales-upload.routes.js";
@@ -967,6 +968,7 @@ app.use("/api/quality-governance", qualityGovernanceRouter); // per-process qual
 app.use("/api/kpi/process-metrics", processMetricDefinitionRouter); // per-process metric definitions — 1047 had readers and no writer
 app.use("/api/agent", qualityAggregationRouter);
 app.use("/api/call-master", callMasterRouter);
+app.use("/api/mydashboards/call-master", myDashboardsRouter);
 app.use("/api/inbound", tpzInboundProjectGate);
 app.use("/api/inbound", inboundRouter);
 app.use("/api/sales-upload", salesUploadRouter);
