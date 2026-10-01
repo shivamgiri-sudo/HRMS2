@@ -29,6 +29,7 @@ import { getAtsOverview, type OverviewPeriod } from "./dashboard.overview.servic
 import { getAtsInsights, getSourcingInsights, getSourcingLeads } from "./dashboard.insights.service.js";
 import { getOperations } from "./dashboard.operations.service.js";
 import { getCandidateJourney, getDrill, listPipeline } from "./dashboard.pipeline.service.js";
+import { getCohorts, getLeakage, getStageDwell } from "./dashboard.commandcenter.service.js";
 
 export const atsRouter = Router();
 export const atsPublicRouter = Router(); // Public routes (no auth)
@@ -314,6 +315,15 @@ atsRouter.get("/dashboard/candidates", requireRole(...DASH_CANDIDATE_ROLES), h(a
 }));
 atsRouter.get("/dashboard/drill", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
   return res.json({ success: true, data: await getDrill(await dashFilters(req)) });
+}));
+atsRouter.get("/dashboard/stage-dwell", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getStageDwell(await dashFilters(req)) });
+}));
+atsRouter.get("/dashboard/cohorts", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getCohorts(await dashFilters(req), req.query.weeks) });
+}));
+atsRouter.get("/dashboard/leakage", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  return res.json({ success: true, data: await getLeakage(await dashFilters(req)) });
 }));
 atsRouter.get("/dashboard/candidates/:id/journey", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
   // 404 (not 403) when out of scope, matching assertCandidateInScope: a 403 would confirm the id exists.

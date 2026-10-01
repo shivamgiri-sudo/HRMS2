@@ -17,14 +17,14 @@ export interface PipelineFilters {
 }
 
 const HOLD = ['Hold', 'Client Round - Pending'];
-const OPEN_STATUSES = ['Waiting', 'Hold', 'Client Round - Pending', 'profile_submitted', 'hr_approved', 'Pending', 'active', 'hr_pushback'];
+export const OPEN_STATUSES = ['Waiting', 'Hold', 'Client Round - Pending', 'profile_submitted', 'hr_approved', 'Pending', 'active', 'hr_pushback'];
 const IDLE: Record<string, [number, number]> = { '0-1d': [0, 1], '2-3d': [2, 3], '4-7d': [4, 7], '8-14d': [8, 14], '15d+': [15, 100000] };
 const inSql = (xs: string[]) => xs.map(() => '?').join(',');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const cache = createSwrCache<Record<string, unknown>>({ freshMs: 30_000, staleMs: 5 * 60_000 });
 
-function where(f: PipelineFilters, opts: { skipStatus?: boolean; raw?: Awaited<ReturnType<typeof rawValues>>; joinedIds?: readonly string[] } = {}) {
+export function where(f: PipelineFilters, opts: { skipStatus?: boolean; raw?: Awaited<ReturnType<typeof rawValues>>; joinedIds?: readonly string[] } = {}) {
   const c = ['c.active_status = 1', reportingScope('c')];
   const p: unknown[] = [];
   if (!f.includeLeads) { c.push('c.status <> ?'); p.push(LEAD); }
@@ -151,10 +151,15 @@ async function computeDrill(f: PipelineFilters) {
   const t = { total: 0, selected: 0, rejected: 0, noShow: 0, hold: 0, waiting: 0, joined: 0 };
   const day = new Map<string, { total: number; selected: number; rejected: number }>();
   const dow = new Map<number, { total: number; selected: number }>();
-  const dims: Record<string, Map<string, { total: number; selected: number; rejected: number }>> = { branch: new Map(), process: new Map(), source: new Map(), recruiter: new Map(), stage: new Map(), status: new Map() };
-  const bump = (m: Map<string, { total: number; selected: number; rejected: number }>, k: string, r: DrillRow) => {
-    const x = m.get(k) ?? { total: 0, selected: 0, rejected: 0 };
-    x.total += num(r.n); if (selected(r)) x.selected += num(r.n); if (r.status === 'Rejected') x.rejected += num(r.n); m.set(k, x);
+  type Split = { total: number; selected: number; rejected: number; noShow: number; hold: number; waiting: number; joined: number };
+  const dims: Record<string, Map<string, Split>> = { branch: new Map(), process: new Map(), source: new Map(), recruiter: new Map(), stage: new Map(), status: new Map() };
+  const bump = (m: Map<string, Split>, k: string, r: DrillRow) => {
+    const x = m.get(k) ?? { total: 0, selected: 0, rejected: 0, noShow: 0, hold: 0, waiting: 0, joined: 0 };
+    const n = num(r.n);
+    x.total += n; if (selected(r)) x.selected += n; if (r.status === 'Rejected') x.rejected += n;
+    if (r.status === 'No Show') x.noShow += n; if (HOLD.includes(r.status)) x.hold += n; if (r.status === 'Waiting') x.waiting += n;
+    if (r.jn || JOINED.includes(r.stage)) x.joined += n;
+    m.set(k, x);
   };
   for (const r of rows) {
     const n = num(r.n);
@@ -175,8 +180,14 @@ async function computeDrill(f: PipelineFilters) {
     bump(dims.stage, r.stage, r);
     bump(dims.status, r.status, r);
   }
-  const top = (m: Map<string, { total: number; selected: number; rejected: number }>) =>
-    [...m.entries()].map(([name, x]) => ({ name, ...x, selRate: pct(x.selected, x.total) })).sort((a, b) => b.total - a.total).slice(0, 10);
+  const top = (m: Map<string, Split>) =>
+    [...m.entries()].map(([name, x]) => ({
+      name, ...x, selRate: pct(x.selected, x.total), rejRate: pct(x.rejected, x.total), noShowRate: pct(x.noShow, x.total), joinRate: pct(x.joined, x.selected),
+    })).sort((a, b) => b.total - a.total).slice(0, 25);
+  const hourDow = await safe('hourDow', () => q<{ dow: number; hour: number; total: number; selected: number }>(
+    `SELECT DAYOFWEEK(c.created_at) dow, HOUR(c.created_at) hour, COUNT(*) total,
+            SUM(c.status = 'Selected' OR c.current_stage IN (${inSql(OFFERED)})) selected
+     FROM ats_candidate c WHERE ${w.sql} GROUP BY dow, hour`, [...OFFERED, ...w.params]), []);
   const days = [...day.entries()].sort(([a], [b]) => a.localeCompare(b));
   // Long slices are shown by week so the chart stays readable.
   const bucketed = days.length > 75 ? weekly(days) : days.map(([date, x]) => ({ date, ...x }));
@@ -185,6 +196,7 @@ async function computeDrill(f: PipelineFilters) {
     trend: bucketed, weekly: days.length > 75,
     weekday: [1, 2, 3, 4, 5, 6, 7].map((d) => ({ dow: d, total: dow.get(d)?.total ?? 0, selRate: pct(dow.get(d)?.selected ?? 0, dow.get(d)?.total ?? 0) })),
     splits: Object.fromEntries(Object.entries(dims).map(([k, m]) => [k, top(m)])),
+    hourDow: hourDow.map((r) => ({ dow: num(r.dow), hour: num(r.hour), total: num(r.total), selected: num(r.selected) })),
   };
 }
 
