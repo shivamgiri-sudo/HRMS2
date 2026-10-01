@@ -71,7 +71,7 @@ export function workforceKpis(): CatalogueKpiDef[] {
     k("wf_login_hours", "Login hours", "workforce", "duration", "hours", H, "employee", "daily_sync", "attendance_daily_record.dialler_minutes", "dialler_minutes / 60", "daily", ["date", "agent"], A_WFM),
     k("wf_late_login_pct", "Late login %", "workforce", "rate", "percent", L, "both", "daily_sync", "attendance_daily_record.late_mark", "late days / present days", "daily", ["date", "agent", "team"], A_WFM),
     k("wf_break_minutes", "Break / AUX minutes", "workforce", "duration", "minutes", L, "employee", "daily_sync", "break_sessions / break_daily_summary", "SUM(duration_seconds)/60 per shift", "hourly", ["date", "agent", "break_type"], A_WFM),
-    k("wf_occupancy_pct", "Occupancy %", "workforce", "rate", "percent", H, "both", "derived", "process-dashboard APR (pd.metrics)", "(talk + dispo) / (talk + wait + dispo)", "hourly", ["date", "hour", "agent", "team"], A_WFM, { metricCode: "OCCUPANCY" }),
+    k("wf_occupancy_pct", "Occupancy %", "workforce", "rate", "percent", H, "both", "derived", "process-dashboard APR (pd.metrics)", "(talk + dispo) / (talk + wait + dispo)", "hourly", ["date", "hour", "agent", "team"], A_WFM, { notes: "Derived from APR; kpi_metric_master has no OCCUPANCY metric." }),
     k("wf_utilization_pct", "Utilization %", "workforce", "rate", "percent", H, "both", "derived", "process-dashboard APR (pd.metrics)", "(talk + wait + dispo) / login", "hourly", ["date", "agent", "team"], A_WFM),
     k("wf_adherence_pct", "Schedule adherence %", "workforce", "rate", "percent", H, "both", "daily_sync", "wfm_rta_exception / roster", "in-adherence minutes / scheduled minutes", "daily", ["date", "agent", "team"], A_WFM, { metricCode: "ADHERENCE", hasData: false, notes: "Defined in kpi_metric_master but no rows are produced yet." }),
     k("wf_shrinkage_pct", "Shrinkage %", "workforce", "rate", "percent", L, "process", "daily_sync", "employee_performance_daily_snapshot.team_shrinkage_pct", "(login - net login) / login", "daily", ["date", "team", "branch"], A_MGMT, { metricCode: "SHRINKAGE", hasData: false, notes: "Defined but not yet populated." }),
@@ -118,7 +118,7 @@ export function salesKpis(ref: string, fresh: CatalogueKpiDef["freshness"] = "up
 
 export function prepaidRtoKpis(ref: string, fresh: CatalogueKpiDef["freshness"] = "upload"): CatalogueKpiDef[] {
   return [
-    k("sl_prepaid_pct", "Prepaid %", "sales", "rate", "percent", H, "both", "upload", ref, "prepaid orders / orders", fresh, ["date", "agent", "lob"], A_ALL, { metricCode: "COD_SHARE", notes: "COD_SHARE is tracked; prepaid = 100 - COD_SHARE." }),
+    k("sl_prepaid_pct", "Prepaid %", "sales", "rate", "percent", H, "both", "upload", ref, "prepaid orders / orders", fresh, ["date", "agent", "lob"], A_ALL, { notes: "Derived: prepaid = 100 - COD_SHARE. Not mapped to COD_SHARE itself because that metric has the opposite direction." }),
     k("sl_rto_pct", "RTO %", "sales", "rate", "percent", L, "both", "upload", ref, "RTO orders / orders", fresh, ["date", "agent", "lob"], A_ALL, { metricCode: "RTO_RATE" }),
   ];
 }

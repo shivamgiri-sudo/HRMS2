@@ -65,7 +65,7 @@ const PRIMARY: CatalogueProcessDef[] = [
       k("gnc_alloc_same_day", "Same-day connected", "allocation", "rate", "percent", H, "both", "upload", "db_masmis.gnc_allocation", "connected on allocation day / allocated", "upload", ["date", "agent"], A_ALL),
       k("gnc_cart_conversion", "Abandon-cart conversion %", "abandon_cart", "rate", "percent", H, "both", "upload", "db_masmis.gnc_allocation + gnc_sale (campaign Abandon Cart)", "sales / connected", "upload", ["date", "agent"], A_ALL),
       k("gnc_prepaid_pct", "Prepaid %", "sales", "rate", "percent", H, "both", "upload", "db_masmis.gnc_sale", "prepaid orders / orders", "upload", ["date", "agent", "campaign"], A_ALL),
-      k("gnc_lob_target_ach", "LOB monthly target achievement %", "sales", "rate", "percent", H, "both", "derived", "mas_hrms.gnc_lob_target (gnc-targets.service)", "revenue / (per-agent or fixed target x days)", "upload", ["month", "lob", "agent"], A_ALL, { metricCode: "REVENUE" }),
+      k("gnc_lob_target_ach", "LOB monthly target achievement %", "sales", "rate", "percent", H, "both", "derived", "mas_hrms.gnc_lob_target (gnc-targets.service)", "revenue / (per-agent or fixed target x days)", "upload", ["month", "lob", "agent"], A_ALL, { notes: "Percentage of target; the underlying REVENUE actual is a currency metric." }),
       k("gnc_chat_resp_pct", "Chat response in TAT (60 min) %", "chat", "rate", "percent", H, "both", "upload", "db_masmis.gnc_chat", "responses within 60 min / tickets", "upload", ["date", "agent", "qrc_bucket"], A_ALL),
       ...chatKpis("db_masmis.gnc_chat (gnc-chat-dashboard.service)", 60),
       ...inboundKpis("cdr_in_4"),
