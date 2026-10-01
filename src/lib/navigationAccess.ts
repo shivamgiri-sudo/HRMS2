@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { NavGroup, NavItem } from "@/components/layout/SidebarNav";
 import { getRoutePageCode } from "@/lib/pageRoutePageCodes";
+import { getRouteRoleCeiling } from "@/lib/routeRoleCeiling";
 import {
   DASHBOARD_ACCESS_REGISTRY,
   canAccessDashboard,
@@ -35,6 +36,10 @@ export function canAccessNavItem(
   const dashboardCode = getDashboardDefinition(pageCode)?.code ?? dashboardByRoute.get(item.href);
 
   if (item.tpzVisible && access.hasTpzAccess) return true;
+  // The route's own role guard is a hard ceiling (ProtectedRoute: super_admin or a listed role).
+  // An entry the guard would 403 is never shown, whatever grant or `roles` list the item carries.
+  const routeCeiling = getRouteRoleCeiling(item.href);
+  if (routeCeiling && !access.hasAnyRole("super_admin") && !access.hasAnyRole(...routeCeiling)) return false;
   if (dashboardCode) return canAccessDashboard(dashboardCode, access.roleKeys);
   if (isSuperAdmin) return true;
   if (pageCode) {

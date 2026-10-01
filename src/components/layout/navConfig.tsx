@@ -567,7 +567,7 @@ export const navGroups: NavGroup[] = [
           { label: "Visitor Desk", href: "/visitor-management/desk", icon: ic(UserPlus), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Reception and check-in desk" },
           { label: "Visitor Security", href: "/visitor-management/security", icon: ic(ShieldCheck), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Visitor security operations" },
           { label: "Exit Pass Verification", href: "/security/exit-pass-verify", icon: ic(ShieldCheck), pageCode: "ASSET_EXIT_PASS_VERIFY", description: "Verify a Gate Pass at exit" },
-          { label: "Assets",           href: "/assets",             icon: ic(Package), roles: ["admin","hr","super_admin","manager","branch_head"], description: "Assets" },
+          { label: "Assets",           href: "/assets",             icon: ic(Package), roles: ["admin","hr","super_admin","manager","branch_head","branch_admin","it","it_head","it_admin","branch_it","ho_it"], description: "Assets" },
           { label: "Assets Manager",   href: "/assets-manager",     icon: ic(Package),   pageCode: "ASSETS_MANAGER",        description: "Asset management" },
           { label: "Exit Pass",        href: "/it-admin/exit-pass", icon: ic(Package),   pageCode: "ASSET_EXIT_PASS",       description: "Asset & Material Exit Gate Pass" },
           { label: "Mobility",         href: "/mobility",           icon: ic(Users),     pageCode: "MOBILITY",              description: "Mobility" },

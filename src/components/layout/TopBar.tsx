@@ -39,6 +39,7 @@ import { useUserRole } from "@/hooks/useUserRole";
 import { cn } from "@/lib/utils";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { useBreadcrumbLabels } from "@/lib/breadcrumbLabel";
+import { getRouteRoleCeiling } from "@/lib/routeRoleCeiling";
 import { navGroups } from "./navConfig";
 
 interface TopBarProps {
@@ -98,6 +99,10 @@ export function TopBar({
   const { user, signOut, isSigningOut } = useAuth();
   const { data: myProfile } = useEmployeeProfile();
   const { data: roleData } = useUserRole();
+  const settingsCeiling = getRouteRoleCeiling("/settings");
+  const canOpenSettings =
+    !settingsCeiling ||
+    (roleData?.roleKeys ?? []).some((r: string) => r === "super_admin" || settingsCeiling.includes(r));
   const breadcrumbs = useBreadcrumbs();
   const userInitials = (user?.email ?? "MC").slice(0, 2).toUpperCase();
 
@@ -322,12 +327,14 @@ export function TopBar({
                   Profile
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link to="/settings" className="flex items-center gap-2">
-                  <Settings className="h-4 w-4" />
-                  Settings
-                </Link>
-              </DropdownMenuItem>
+              {canOpenSettings && (
+                <DropdownMenuItem asChild>
+                  <Link to="/settings" className="flex items-center gap-2">
+                    <Settings className="h-4 w-4" />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={handleSignOut}

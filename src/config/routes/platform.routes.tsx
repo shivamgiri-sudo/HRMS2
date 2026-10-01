@@ -115,7 +115,7 @@ const REPORT_VALIDATION_ROLES = [
 export const platformRouteElements = (
   <>
       {/* Core platform */}
-      <Route path="/settings"        element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/settings"        element={<ProtectedRoute roles={['admin','super_admin','hr','hr_admin','ho_hr','branch_hr','branch_admin','manager','it','payroll_head','wfm']}><Settings /></ProtectedRoute>} />
       <Route path="/profile"         element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><Profile /></Gate></ProtectedRoute>} />
       {/*
         * Consolidated 2026-08-27. Four components rendered "my profile" — Profile,
@@ -158,7 +158,7 @@ export const platformRouteElements = (
         * makes the `roles` prop below inert — the page code is the single gate. The list is
         * kept as documentation of who the code is expected to admit. */}
       <Route path="/bulk-upload/approvals" element={<ProtectedRoute roles={['super_admin','branch_head','branch_admin','payroll_head','wfm','payroll_hr']}><Gate pageCode="BULK_UPLOAD_APPROVALS"><BulkUploadApprovals /></Gate></ProtectedRoute>} />
-      <Route path="/assets"          element={<ProtectedRoute><Assets /></ProtectedRoute>} />
+      <Route path="/assets"          element={<ProtectedRoute roles={['admin','super_admin','hr','manager','branch_head','branch_admin','it','it_head','it_admin','branch_it','ho_it']}><Assets /></ProtectedRoute>} />
       <Route path="/onboarding"      element={<ProtectedRoute roles={['admin','hr','branch_head','branch_hr','payroll_hr']}><Onboarding /></ProtectedRoute>} />
       <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />
 
@@ -242,7 +242,7 @@ export const platformRouteElements = (
       {/* AI / Copilot */}
       <Route path="/settings/ai-providers"       element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />
       <Route path="/admin/mira-complaints"       element={<ProtectedRoute roles={['super_admin']}><MiraComplaintsPage /></ProtectedRoute>} />
-      <Route path="/peopleos/copilot"            element={<ProtectedRoute><DashboardLayout><PeopleOSCopilot /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/peopleos/copilot"            element={<ProtectedRoute roles={['super_admin','admin','hr','manager']}><DashboardLayout><PeopleOSCopilot /></DashboardLayout></ProtectedRoute>} />
 
       {/* Customization */}
       <Route path="/customization"               element={<ProtectedRoute><Gate pageCode="CUSTOMIZATION_MANAGER"><DashboardLayout><NativeCustomizationManager /></DashboardLayout></Gate></ProtectedRoute>} />
