@@ -7,6 +7,7 @@ import { useCohorts, useStageDwell } from "@/hooks/useAtsCommandCenter";
 import { useDrillActions } from "@/components/ats/overview/drill";
 import { Empty, Gauge, V, fmt, tooltipStyle } from "@/components/ats/overview/viz";
 import { FlowViz, FunnelViz, Heatmap, SourceTreemap, TrendViz } from "@/components/ats/overview/charts";
+import { humanizeStage } from "./stage-label";
 import { Card, ExportButton, FilterBar, HeatTable, InsightList, KpiCard, Section, downloadCsv, type InsightItem } from "./cc-kit";
 import { useCC } from "./cc-context";
 
@@ -134,9 +135,9 @@ export function PulseTab() {
         <Card className="lg:col-span-7" i={8} title="Where candidates wait" hint="Median and 90th-percentile hours in each stage; red marks the bottleneck" icon={<CalendarClock className="h-4 w-4" />}>
           {dwell.isLoading ? <Skeleton className="h-52" /> : dwell.data?.stages.length ? (
             <ResponsiveContainer width="100%" height={Math.max(200, dwell.data.stages.slice(0, 8).length * 34)}>
-              <BarChart layout="vertical" data={dwell.data.stages.slice(0, 8)} margin={{ left: 8, right: 14 }}>
+              <BarChart layout="vertical" data={dwell.data.stages.slice(0, 8).map((s) => ({ ...s, label: humanizeStage(s.stage) }))} margin={{ left: 8, right: 14 }}>
                 <CartesianGrid stroke={V.grid} strokeDasharray="3 4" horizontal={false} />
-                <XAxis type="number" tick={tick} axisLine={false} tickLine={false} unit=" h" /><YAxis type="category" dataKey="stage" width={120} tick={tick} axisLine={false} tickLine={false} />
+                <XAxis type="number" tick={tick} axisLine={false} tickLine={false} unit=" h" /><YAxis type="category" dataKey="label" width={150} tick={tick} axisLine={false} tickLine={false} />
                 <Tooltip {...tooltipStyle} cursor={{ fill: V.track }} formatter={(v: number, n: string) => [`${v} h`, n]} />
                 <Bar dataKey="medianHours" name="Median" radius={[0, 6, 6, 0]} className="cursor-pointer" onClick={(p: { stage?: string }) => p.stage && go(`In ${p.stage}`, { stage: p.stage })}>
                   {dwell.data.stages.slice(0, 8).map((s) => <Cell key={s.stage} fill={s.stage === dwell.data!.bottleneck ? V.red : V.blue} />)}

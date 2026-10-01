@@ -23,6 +23,12 @@ export function percentile(sorted: number[], p: number): number {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
+/**
+ * Stages where a long stay is normal rather than a delay (an approved offer waits for the joining date, rejected/no-show are over).
+ * They are still reported, but are never named the bottleneck.
+ */
+export const isExpectedWait = (stage: string) => /^(offer[ _-]?(approved|rejected|submitted)|joined|selected|rejected|no[ _-]?show)$/i.test(stage.trim());
+
 /** Dwell = next log row's time minus the row that entered the stage; the candidate's last row is open (NOW - entry) only while the status is open. */
 export function computeDwell(rows: StageLogRow[], nowMs: number, openStatuses: readonly string[] = OPEN_STATUSES, minBottleneckN = 20) {
   const byCand = new Map<string, StageLogRow[]>();
@@ -45,7 +51,7 @@ export function computeDwell(rows: StageLogRow[], nowMs: number, openStatuses: r
     const s = [...x.hours].sort((a, b) => a - b);
     return { stage, n: s.length, medianHours: r1(percentile(s, 0.5)), p90Hours: r1(percentile(s, 0.9)), avgHours: r1(s.reduce((a, b) => a + b, 0) / s.length), stuckOver72h: x.stuck };
   }).sort((a, b) => b.medianHours - a.medianHours);
-  const elig = stages.filter((s) => s.n >= minBottleneckN);
+  const elig = stages.filter((s) => s.n >= minBottleneckN && !isExpectedWait(s.stage));
   return { stages, bottleneck: elig.length ? elig[0].stage : null };
 }
 

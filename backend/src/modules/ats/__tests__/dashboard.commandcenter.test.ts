@@ -6,7 +6,7 @@ vi.mock("../dashboard.overview.service.js", async (orig) => ({ ...(await orig<ty
 vi.mock("../dashboard.joined.js", () => ({ getJoinedInfo: async () => ({ ids: [] }), joinedIdSql: () => ({ sql: "0", params: [] }) }));
 
 import { getDrill } from "../dashboard.pipeline.service.js";
-import { buildCohorts, buildLeakage, clampWeeks, computeDwell, weekStarts } from "../dashboard.commandcenter.service.js";
+import { buildCohorts, buildLeakage, clampWeeks, computeDwell, isExpectedWait, weekStarts } from "../dashboard.commandcenter.service.js";
 
 const H = 3_600_000;
 
@@ -93,5 +93,23 @@ describe("buildLeakage", () => {
     expect(out.stages.map((s) => s.n)).toEqual([24, 14, 10, 8, 5, 5]);
     expect(out.losses[0]).toMatchObject({ from: "registered", to: "selected", reason: "Rejected in interview", n: 10 });
     expect(out.losses.find((l) => l.reason === "BGV adverse / refer")).toMatchObject({ from: "offerApproved", to: "bgvClear", n: 3 });
+  });
+});
+
+describe("bottleneck ignores stages where waiting is expected", () => {
+  it("recognises approved-offer and terminal stages", () => {
+    for (const s of ["offer_approved", "Offer Rejected", "Joined", "No Show", "rejected"]) expect(isExpectedWait(s)).toBe(true);
+    for (const s of ["Round 1- HR Screening", "BGV In Progress", "Selection Discussion"]) expect(isExpectedWait(s)).toBe(false);
+  });
+
+  it("names the slowest real stage, not an approved offer waiting to join", () => {
+    const H = 3_600_000, rows: { candidate_id: string; to_stage: string; at: number; status: string }[] = [];
+    for (let i = 0; i < 25; i++) {
+      rows.push({ candidate_id: "a" + i, to_stage: "offer_approved", at: 0, status: "Selected" }, { candidate_id: "a" + i, to_stage: "Joined", at: 500 * H, status: "Selected" });
+      rows.push({ candidate_id: "b" + i, to_stage: "Round 1", at: 0, status: "Selected" }, { candidate_id: "b" + i, to_stage: "Round 2", at: 30 * H, status: "Selected" });
+    }
+    const out = computeDwell(rows, 1000 * H);
+    expect(out.stages[0].stage).toBe("offer_approved");
+    expect(out.bottleneck).toBe("Round 1");
   });
 });

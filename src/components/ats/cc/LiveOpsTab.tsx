@@ -1,3 +1,4 @@
+import { humanizeStage } from "./stage-label";
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
@@ -287,7 +288,7 @@ export function LiveOpsTab() {
       <div className="grid gap-4 lg:grid-cols-12">
         <Card className="lg:col-span-7" i={15} title="Stage dwell and bottlenecks" hint="Hours in each stage; stuck means longer than 72 hours" icon={<Clock className="h-4 w-4" />}>
           {dwell.isLoading ? <Skeleton className="h-52" /> : dwell.data?.stages.length ? (
-            <HeatTable rows={dwell.data.stages.map((s) => ({ ...s, name: s.stage === dwell.data!.bottleneck ? `${s.stage} (bottleneck)` : s.stage, key: s.stage }))} max={10}
+            <HeatTable rows={dwell.data.stages.map((s) => ({ ...s, name: s.stage === dwell.data!.bottleneck ? `${humanizeStage(s.stage)} (bottleneck)` : humanizeStage(s.stage), key: s.stage }))} max={10}
               cols={[{ key: "n", label: "Candidates", get: (r) => r.n }, { key: "m", label: "Median h", get: (r) => r.medianHours, invert: true, hue: "red" }, { key: "p", label: "P90 h", get: (r) => r.p90Hours, invert: true, hue: "red" }, { key: "s", label: "Stuck over 72 h", get: (r) => r.stuckOver72h, invert: true, hue: "red" }]}
               onRow={(r) => go(`In ${r.stage}`, { stage: r.stage })} onCell={(r) => go(`In ${r.stage}`, { stage: r.stage })} />
           ) : <Empty text="No stage history in this window" />}

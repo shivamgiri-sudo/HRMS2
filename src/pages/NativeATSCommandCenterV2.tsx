@@ -73,7 +73,7 @@ function CommandCenterV2() {
           <CCHero live eyebrow="Talent Acquisition" title="ATS Command Center"
             subtitle="Pipeline health, live queue, sourcing, decision quality and system controls in one place. Click any number to open it."
             right={<>
-              <LiveBadge />
+              <LiveBadge onDark />
               <button onClick={() => void qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith("ats-") })}
                 className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3.5 text-sm font-medium text-white backdrop-blur transition-colors hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
                 <RefreshCcw className="h-4 w-4" aria-hidden />Refresh

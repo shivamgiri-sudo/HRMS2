@@ -224,10 +224,10 @@ export function Waterfall({ steps, onStep }: { steps: { key: string; label: stri
 }
 
 /** Small live indicator for auto-refreshing data. */
-export function LiveBadge({ at }: { at?: string | number | Date | null }) {
+export function LiveBadge({ at, onDark }: { at?: string | number | Date | null; onDark?: boolean }) {
   const t = at ? new Date(at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : null;
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${onDark ? "border border-emerald-300/40 bg-emerald-400/20 text-emerald-100" : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"}`}>
       <span className="cc-live inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 text-emerald-500" aria-hidden />Live{t && <span className="font-normal opacity-80"> · {t}</span>}
     </span>
   );
