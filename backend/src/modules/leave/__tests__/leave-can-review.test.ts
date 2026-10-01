@@ -15,14 +15,16 @@ const m = vi.hoisted(() => ({
   exceptionLookup: vi.fn(),
 }));
 
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn(async () => [[], []]) } }));
+const dbExecute = vi.hoisted(() => vi.fn(async (..._a: unknown[]) => [[], []] as any));
+const scopeBuilder = vi.hoisted(() => vi.fn(async () => ({ sql: "1=1", params: [] })));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({ requireAuth: (_q: any, _s: any, n: any) => n() }));
 vi.mock("../../../shared/reportingSpan.js", () => ({ reportingSpanClause: vi.fn(async () => null) }));
 vi.mock("../../../shared/accessGuard.js", () => ({
   getEmployeeForUser: vi.fn(async () => (m.callerEmpId ? { id: m.callerEmpId } : null)),
 }));
 vi.mock("../../../shared/scopeAccess.js", () => ({
-  buildScopeWhereClause: vi.fn(async () => ({ sql: "1=1", params: [] })),
+  buildScopeWhereClause: scopeBuilder,
   isOrgWideUser: vi.fn(async () => false),
   hasAnyRole: vi.fn(async (_u: string, ...roles: string[]) => roles.some((r) => m.roles.has(r))),
 }));
@@ -39,7 +41,9 @@ vi.mock("../leave-policy.service.js", () => ({
   leavePolicyService: { getExceptionApproverRole: (...a: unknown[]) => { m.exceptionLookup(...a); return Promise.resolve(m.exceptionRole); } },
 }));
 
-import { annotateCanReview, makeLeaveReviewChecker } from "../leave.secure.routes.js";
+import express from "express";
+import request from "supertest";
+import { annotateCanReview, leaveSecureRouter, makeLeaveReviewChecker } from "../leave.secure.routes.js";
 
 const req = (over: Record<string, unknown> = {}) => ({
   employee_id: "emp-a", status: "pending", leave_type_id: "lt-1", branch_id: "b1", process_id: "p1", reporting_manager_id: "emp-manager", ...over,
@@ -126,5 +130,31 @@ describe("annotateCanReview", () => {
     await annotateCanReview("u1", rows);
     expect(rows[0].can_review).toBe(false);
     expect(m.resolveApprover).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /requests?mine=1", () => {
+  const app = () => {
+    const a = express();
+    a.use((req: any, _res, next) => { req.authUser = { id: "u1" }; next(); });
+    a.use("/", leaveSecureRouter);
+    return a;
+  };
+
+  it("pins the scope to the caller's own employee row instead of the role's scope", async () => {
+    m.callerEmpId = "emp-caller";
+    const res = await request(app()).get("/requests?mine=1&limit=50");
+    expect(res.status).toBe(200);
+    expect(scopeBuilder).not.toHaveBeenCalled();
+    const listCall = dbExecute.mock.calls.find((c) => String(c[0]).includes("FROM leave_request lr"))!;
+    expect(String(listCall[0])).toContain("e.id = ?");
+    expect(listCall[1]).toContain("emp-caller");
+  });
+
+  it("returns nothing for a login with no employee record", async () => {
+    m.callerEmpId = null;
+    await request(app()).get("/requests?mine=1");
+    const listCall = dbExecute.mock.calls.find((c) => String(c[0]).includes("FROM leave_request lr"))!;
+    expect(String(listCall[0])).toContain("1=0");
   });
 });

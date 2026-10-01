@@ -153,7 +153,16 @@ leaveSecureRouter.get("/requests", h(async (req: any, res: any) => {
   const page = Math.max(1, Number(req.query.page ?? 1) || 1);
   const limit = Math.min(Math.max(1, Number(req.query.limit ?? 100) || 100), 500);
   const offset = (page - 1) * limit;
-  const scope = await leaveListScope(req.authUser!.id);
+  // ?mine=1 is "my own leave", whatever my role: the scope is pinned to the caller's own employee
+  // row instead of widening with the role. The My Leave tab needs this because a manager's team
+  // scope does not necessarily include the manager.
+  let scope: { sql: string; params: unknown[] };
+  if (String(req.query.mine ?? "") === "1") {
+    const me = await getEmployeeForUser(req.authUser!.id);
+    scope = me?.id ? { sql: "e.id = ?", params: [me.id] } : { sql: "1=0", params: [] };
+  } else {
+    scope = await leaveListScope(req.authUser!.id);
+  }
   const conds: string[] = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
   if (req.query.employeeId) { conds.push("lr.employee_id = ?"); params.push(String(req.query.employeeId)); }
