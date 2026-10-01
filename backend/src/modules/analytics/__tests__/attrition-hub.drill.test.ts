@@ -208,7 +208,7 @@ describe("legacy reasons in the insights and alerts", () => {
 describe("buildPulse", () => {
   it("is the crisp card: tier counts, absent streak, new-joiner risk, six-month sparkline, top alerts without info noise", () => {
     const e1 = ev({ daysAgo: 20 }), e2 = ev({ daysAgo: 400 });
-    const people = [person(e1, { aonDays: 20, absentStreak: 5, att60Pct: 50 }), person(e2, { aonDays: 400 })];
+    const people = [person(e1, { aonDays: 20, absentStreak: 5, att60Pct: 50, teamExitRate90: 0.45 }), person(e2, { aonDays: 400 })];
     const trend = [...Array(12)].map((_, i) => ({ month: `2026-${String(i % 12 + 1).padStart(2, "0")}`, exits: i }));
     const pulse = buildPulse({
       overview: { asOf: ASOF, headcount: 2, exits30: 9, exitsPrev30: 12, earlyExitSharePct: 40, expectedExits30: 0.5, atRisk: { CRITICAL: 1, HIGH: 0, MEDIUM: 0, LOW: 1 }, trend, degraded: [] },

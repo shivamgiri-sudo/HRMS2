@@ -5,7 +5,8 @@
 //   DOTENV_CONFIG_PATH=/var/www/HRMS2/backend/.env npx tsx scripts/attrition-model-lab.ts
 import "dotenv/config";
 import { loadSnapshot, addDays, today } from "../src/modules/analytics/attrition-hub.data.js";
-import { aucOf, scoreFeatures, type Features } from "../src/modules/analytics/attrition-model.js";
+import { aucOf, scoreFeatures, tierOf, TIER_CUTOFFS, type Features } from "../src/modules/analytics/attrition-model.js";
+import { scoreFeatures as scoreV1, tierOf as tierV1 } from "./lab/attrition-model-v1.js";
 
 const WEEKS = 16;
 const t = today();
@@ -74,12 +75,14 @@ const all = NAMES.map((_, i) => i);
 const auc = (data: Row[], score: (r: Row) => number) => aucOf(data.map((r) => ({ score: score(r), leaver: r.y === 1 })));
 const f2 = (v: number | null) => (v == null ? "n/a" : v.toFixed(3));
 
-const current = (r: Row) => scoreFeatures(r.f).score;
+const current = (r: Row) => scoreV1(r.f).score;     // the scorer before re-weighting
+const reweighted = (r: Row) => scoreFeatures(r.f).score;
 const tenureOnly = fit(train, [0, 1, 2, 3, 4]);
 const noAbsence = fit(train, all.filter((i) => ![8, 9, 10].includes(i)));
 const full = fit(train, all);
 console.log("\n== out-of-time AUC (higher is better; 0.5 = coin flip) ==");
-console.log(`current hand-tuned score        test ${f2(auc(test, current))}   train ${f2(auc(train, current))}`);
+console.log(`OLD hand-tuned score            test ${f2(auc(test, current))}   train ${f2(auc(train, current))}`);
+console.log(`NEW re-weighted score           test ${f2(auc(test, reweighted))}   train ${f2(auc(train, reweighted))}`);
 console.log(`tenure bands only (fitted)      test ${f2(auc(test, (r) => tenureOnly.predict(r.x)))}`);
 console.log(`fitted, without absence streaks test ${f2(auc(test, (r) => noAbsence.predict(r.x)))}`);
 console.log(`fitted, all features            test ${f2(auc(test, (r) => full.predict(r.x)))}   train ${f2(auc(train, (r) => full.predict(r.x)))}`);
@@ -92,7 +95,29 @@ for (const c of coefs) console.log(`${c.name.padEnd(20)} ${c.coef >= 0 ? "+" : "
 const sorted = test.map((r) => ({ p: full.predict(r.x), y: r.y })).sort((a, b) => b.p - a.p);
 console.log("\n== fitted model on test cohorts, by decile of predicted risk (top = riskiest) ==");
 for (let k = 0; k < 10; k++) { const s = sorted.slice(Math.floor(k * sorted.length / 10), Math.floor((k + 1) * sorted.length / 10)); console.log(`decile ${k + 1}: predicted ${(100 * s.reduce((a, b) => a + b.p, 0) / s.length).toFixed(1)}%  observed ${(100 * s.reduce((a, b) => a + b.y, 0) / s.length).toFixed(1)}%  (n=${s.length})`); }
-const curSorted = test.map((r) => ({ s: current(r), y: r.y })).sort((a, b) => b.s - a.s);
+const curSorted = test.map((r) => ({ s: reweighted(r), y: r.y })).sort((a, b) => b.s - a.s);
 const cap = (arr: { y: number }[], pct: number) => { const n = Math.floor(arr.length * pct); const caught = arr.slice(0, n).reduce((a, b) => a + b.y, 0); return (100 * caught / arr.reduce((a, b) => a + b.y, 0)).toFixed(1); };
-console.log(`\nshare of real leavers caught by flagging the riskiest 10% / 20% / 30%:  current ${cap(curSorted, 0.1)} / ${cap(curSorted, 0.2)} / ${cap(curSorted, 0.3)}   fitted ${cap(sorted, 0.1)} / ${cap(sorted, 0.2)} / ${cap(sorted, 0.3)}`);
+console.log(`\nshare of real leavers caught by flagging the riskiest 10% / 20% / 30%:  NEW scorer ${cap(curSorted, 0.1)} / ${cap(curSorted, 0.2)} / ${cap(curSorted, 0.3)}   fitted ${cap(sorted, 0.1)} / ${cap(sorted, 0.2)} / ${cap(sorted, 0.3)}`);
+
+// score bands: how many people and what share left within 30 days, per scorer, on the TEST cohorts
+function bands(label: string, score: (r: Row) => number) {
+  console.log(`\n== ${label}: test cohorts by score band ==`);
+  const edges = [0, 10, 20, 25, 30, 40, 50, 55, 60, 70, 101];
+  for (let i = 0; i < edges.length - 1; i++) {
+    const g = test.filter((r) => { const v = score(r); return v >= edges[i] && v < edges[i + 1]; });
+    if (g.length) console.log(`${String(edges[i]).padStart(3)}-${String(edges[i + 1] - 1).padEnd(3)} n=${String(g.length).padStart(5)} (${(100 * g.length / test.length).toFixed(1)}% of people)  left in 30d ${(100 * g.reduce((a, b) => a + b.y, 0) / g.length).toFixed(1)}%`);
+  }
+  const q = test.map(score).sort((a, b) => a - b); const at = (p: number) => q[Math.floor(p * (q.length - 1))];
+  console.log(`score quantiles: p50 ${at(0.5)}  p75 ${at(0.75)}  p90 ${at(0.9)}  p95 ${at(0.95)}  max ${q[q.length - 1]}`);
+}
+bands("OLD scorer", current); bands("NEW scorer", reweighted);
+const tiers = (label: string, tf: (n: number) => string, score: (r: Row) => number) => {
+  const out: Record<string, { n: number; l: number }> = {};
+  for (const r of test) { const t = tf(score(r)); (out[t] ||= { n: 0, l: 0 }).n++; out[t].l += r.y; }
+  console.log(`${label} tiers: ` + ["CRITICAL", "HIGH", "MEDIUM", "LOW"].map((k) => out[k] ? `${k} ${(100 * out[k].n / test.length).toFixed(1)}% of people, ${(100 * out[k].l / out[k].n).toFixed(1)}% left` : `${k} none`).join(" | "));
+};
+console.log("\ncurrent cut-offs:", JSON.stringify(TIER_CUTOFFS));
+tiers("OLD", tierV1, current); tiers("NEW", tierOf, reweighted);
+// candidate cut-offs for the new scorer (share of people flagged and observed rate at or above)
+for (const c of [25, 30, 35, 40, 45, 50, 55]) { const g = test.filter((r) => reweighted(r) >= c); console.log(`new score >= ${c}: ${(100 * g.length / test.length).toFixed(1)}% of people, ${g.length ? (100 * g.reduce((a, b) => a + b.y, 0) / g.length).toFixed(1) : "-"}% left in 30d`); }
 process.exit(0);

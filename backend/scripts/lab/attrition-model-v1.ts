@@ -1,3 +1,4 @@
+// FROZEN COPY of the hand-tuned scorer as it was before the 2026-10-02 re-weighting, kept only so the model lab can compare old and new.
 /**
  * Attrition risk model - the pure part (no I/O), so the same scorer runs on today's employees and
  * on historical snapshots when the model is tested against what really happened.
@@ -21,7 +22,7 @@ export type Tier = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 export type FactorGroup = "lifecycle" | "attendance" | "performance" | "compensation" | "conduct" | "team";
 export const FACTOR_GROUP_ORDER: FactorGroup[] = ["lifecycle", "attendance", "performance", "compensation", "conduct", "team"];
 export const FACTOR_CAPS: Record<FactorGroup, number> = {
-  lifecycle: 24, attendance: 16, performance: 20, compensation: 14, conduct: 10, team: 30,
+  lifecycle: 30, attendance: 28, performance: 20, compensation: 12, conduct: 10, team: 10,
 };
 export const FACTOR_LABELS: Record<FactorGroup, string> = {
   lifecycle: "Tenure & lifecycle", attendance: "Attendance behaviour", performance: "Performance",
@@ -78,32 +79,32 @@ export function scoreFeatures(f: Features): Scored {
 
   // ── lifecycle ──
   const aon = f.aonDays;
-  if (aon <= 30) add("lifecycle", 16, "First 30 days", `Day ${Math.max(0, aon)} - the highest-loss window`);
-  else if (aon <= 60) add("lifecycle", 14, "Days 31-60", `Day ${aon} of joining`);
-  else if (aon <= 90) add("lifecycle", 10, "Days 61-90", `Day ${aon} of joining`);
+  if (aon <= 30) add("lifecycle", 22, "First 30 days", `Day ${Math.max(0, aon)} - the highest-loss window`);
+  else if (aon <= 60) add("lifecycle", 16, "Days 31-60", `Day ${aon} of joining`);
+  else if (aon <= 90) add("lifecycle", 11, "Days 61-90", `Day ${aon} of joining`);
   else if (aon <= 180) add("lifecycle", 6, "Months 4-6", `Day ${aon} - the post-probation slump`);
   else if (aon <= 365) add("lifecycle", 2, "First year", `Day ${aon} of joining`);
-  if (f.walkIn && aon <= 45) add("lifecycle", 3, "Walk-in joiner", "Walk-in hires leave early more often");
+  if (f.walkIn && aon <= 45) add("lifecycle", 4, "Walk-in joiner", "Walk-in hires leave early more often");
 
   // ── attendance ──
   if (has(f.att60Pct)) {
     const a = f.att60Pct;
-    const p = a < 70 ? 8 : a < 80 ? 6 : a < 88 ? 3 : a < 93 ? 1 : 0;
+    const p = a < 70 ? 14 : a < 80 ? 10 : a < 88 ? 5 : a < 93 ? 2 : 0;
     add("attendance", p, "Low attendance", `${r1(a)}% of working days present in the last 60 days`);
   }
   if (has(f.attDeltaPts)) {
     const d = f.attDeltaPts;
-    const p = d <= -15 ? 2 : d <= -8 ? 1 : 0;
+    const p = d <= -15 ? 6 : d <= -8 ? 3 : 0;
     add("attendance", p, "Attendance falling", `${r1(Math.abs(d))} points lower than the 30 days before`);
   }
   const streak = f.absentStreak ?? 0;
   const absent7 = f.absent7 ?? 0;
-  if (streak >= 3) add("attendance", 4, "Absent streak", `${streak} absent days in a row - check before it becomes absconding`);
-  else if (streak === 2) add("attendance", 2, "Absent two days running", "Two absent days in a row");
-  else if (absent7 >= 3) add("attendance", 1, "Frequent absence this week", `${absent7} absent days in the last 7`);
-  // Late marks and leave frequency are NOT scored: on 16 weekly cohorts of real data people who still turn up late or
-  // apply for leave were slightly LESS likely to leave (they are still engaged); the absconders just stop coming.
-  if (has(f.reg60) && f.reg60 >= 5) add("attendance", 4, "Many regularisations", `${f.reg60} attendance corrections requested in 60 days`);
+  if (streak >= 3) add("attendance", 8, "Absent streak", `${streak} absent days in a row - check before it becomes absconding`);
+  else if (streak === 2) add("attendance", 4, "Absent two days running", "Two absent days in a row");
+  else if (absent7 >= 3) add("attendance", 3, "Frequent absence this week", `${absent7} absent days in the last 7`);
+  if (has(f.late30)) add("attendance", f.late30 > 10 ? 4 : f.late30 > 6 ? 2 : 0, "Repeated late marks", `${f.late30} late marks in 30 days`);
+  if (has(f.leaveCount60) && f.leaveCount60 >= 4) add("attendance", 3, "Frequent leave", `${f.leaveCount60} leave applications in 60 days`);
+  if (has(f.reg60) && f.reg60 >= 5) add("attendance", 3, "Many regularisations", `${f.reg60} attendance corrections requested in 60 days`);
 
   // ── performance ──
   if (has(f.kpiScore)) {
@@ -123,15 +124,16 @@ export function scoreFeatures(f: Features): Scored {
   // ── compensation ──
   if (has(f.peerCtcRatio)) {
     const x = f.peerCtcRatio;
-    add("compensation", x < 0.85 ? 10 : x < 0.93 ? 6 : 0, "Paid below peers", `${Math.round(x * 100)}% of the average pay for the same designation`);
+    add("compensation", x < 0.85 ? 6 : x < 0.93 ? 3 : 0, "Paid below peers", `${Math.round(x * 100)}% of the average pay for the same designation`);
   }
   if (has(f.monthsSinceIncrement) && has(f.tenureMonths)) {
     const m = f.monthsSinceIncrement;
-    if (f.tenureMonths >= 18 && m >= 18) add("compensation", 3, "No increment in 18+ months", `Last increment ${Math.round(m)} months ago`);
-    else if (f.tenureMonths >= 12 && m >= 12) add("compensation", 1, "No increment in a year", `Last increment ${Math.round(m)} months ago`);
+    if (f.tenureMonths >= 18 && m >= 18) add("compensation", 4, "No increment in 18+ months", `Last increment ${Math.round(m)} months ago`);
+    else if (f.tenureMonths >= 12 && m >= 12) add("compensation", 2, "No increment in a year", `Last increment ${Math.round(m)} months ago`);
   } else if (has(f.tenureMonths) && f.tenureMonths >= 18 && f.monthsSinceIncrement == null) {
-    add("compensation", 3, "No increment on record", `${Math.round(f.tenureMonths)} months of service, no increment recorded`);
+    add("compensation", 4, "No increment on record", `${Math.round(f.tenureMonths)} months of service, no increment recorded`);
   }
+  if (has(f.ctc) && f.ctc > 0) add("compensation", f.ctc < 12000 ? 4 : f.ctc < 15000 ? 2 : 0, "Entry-level pay", "CTC is at the low end of the pay scale");
 
   // ── conduct & hygiene ──
   const ws = f.warningSeverity ?? 0;
@@ -143,7 +145,7 @@ export function scoreFeatures(f: Features): Scored {
   // ── team ──
   if (has(f.teamExitRate90)) {
     const t = f.teamExitRate90;
-    add("team", t >= 0.4 ? 30 : t >= 0.25 ? 22 : t >= 0.15 ? 14 : t >= 0.08 ? 7 : 0, "Team is losing people", `${Math.round(t * 100)}% of this manager's team left in 90 days`);
+    add("team", t >= 0.25 ? 10 : t >= 0.15 ? 6 : t >= 0.08 ? 3 : 0, "Team is losing people", `${Math.round(t * 100)}% of this manager's team left in 90 days`);
   }
 
   const factors = { lifecycle: 0, attendance: 0, performance: 0, compensation: 0, conduct: 0, team: 0 } as Record<FactorGroup, number>;
@@ -163,7 +165,7 @@ export function suggestActions(reasons: Reason[], tier: Tier): string[] {
   if (groups.has("lifecycle") && reasons.some((r) => r.group === "lifecycle" && r.points >= 11)) out.push("Hold a 1:1 stay interview this week and pair with a buddy or floor mentor.");
   if (groups.has("compensation")) out.push("Review pay against the designation band and check increment eligibility with HR.");
   if (groups.has("performance")) out.push("Agree a short coaching plan with the manager and re-check the score in two weeks.");
-  if (has_("Low attendance") || has_("Attendance falling")) out.push("Ask about shift fit and commute; consider a shift or roster change.");
+  if (has_("Low attendance") || has_("Attendance falling") || has_("Repeated late marks")) out.push("Ask about shift fit and commute; consider a shift or roster change.");
   if (has_("Team is losing people")) out.push("Escalate to the process head: review this manager's team handling and workload.");
   if (has_("Profile gaps")) out.push("Get the missing profile documents completed - it also closes compliance gaps.");
   if (!out.length && (tier === "CRITICAL" || tier === "HIGH")) out.push("Manager to hold a 1:1 within 3 days and log what is driving the risk.");
