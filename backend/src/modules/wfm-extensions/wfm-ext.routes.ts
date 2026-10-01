@@ -7,40 +7,16 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasProcessScope, hasRole } from "../../shared/accessGuard.js";
-import { buildScopeWhereClause, ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
 import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
-import { scopePredicate, canAccessEmployee, employeeOwnerGuard, OUT_OF_SCOPE_MSG } from "../wfm/branch-scope.js";
+import { canAccessEmployee, employeeOwnerGuard, OUT_OF_SCOPE_MSG } from "../wfm/branch-scope.js";
+import { employeeScope, WFM_SCOPE_ROLES } from "./employee-scope.js";
 import { rosterSwapService, rosterConflictService, coverageService, attritionService } from "./wfm-ext.service.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const WFM_SCOPE_ROLES = ["wfm", "process_manager", "branch_head", "manager", "assistant_manager", "tl", "hr", "operations_manager"];
 
 router.use(requireAuth);
-
-async function employeeScope(userId: string, aliases: { employee?: string } = {}) {
-  const e = aliases.employee ?? "e";
-  // Org-wide roles only (owner ruling 2026-10-01): hr / wfm are limited to their own branch / scope.
-  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return { sql: "1=1", params: [] as unknown[] };
-  const own = scopePredicate(await resolveUserBusinessScope(userId), {
-    branchId: `${e}.branch_id`, processId: `${e}.process_id`, employeeId: `${e}.id`, managerEmployeeId: `${e}.reporting_manager_id`,
-  });
-  const assigned = await buildScopeWhereClause(
-    userId,
-    WFM_SCOPE_ROLES,
-    {
-      branchId: `${e}.branch_id`,
-      processId: `${e}.process_id`,
-      departmentId: `${e}.department_id`,
-      managerEmployeeId: `${e}.reporting_manager_id`,
-      employeeId: `${e}.id`,
-    },
-    { allowAdminBypass: true, allowCeoAllRead: true },
-  );
-  if (assigned.sql === "1=0") return own;
-  if (own.sql === "1=0") return assigned;
-  return { sql: `(${own.sql}) OR (${assigned.sql})`, params: [...own.params, ...assigned.params] };
-}
 
 async function computedCoverageSnapshot(input: any, userId: string) {
   const snapshotDate = String(input.snapshot_date ?? input.date ?? "").slice(0, 10);
