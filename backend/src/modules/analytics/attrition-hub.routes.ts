@@ -10,7 +10,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { hasRole } from "../../shared/accessGuard.js";
 import { hasDirectReports } from "../../shared/reportingSpan.js";
-import { getModel, loadExits, scopedPopulation } from "./attrition-hub.service.js";
+import { getModel, getPopulation, loadExits, scopedPopulation } from "./attrition-hub.service.js";
 import { buildAlerts, buildEmployeeRisk, buildInsights, buildOverview, buildRisk, type RiskFilters } from "./attrition-hub.builders.js";
 import type { Model } from "./attrition-hub.service.js";
 import type { Tier } from "./attrition-model.js";
@@ -82,7 +82,9 @@ attritionHubRouter.get("/model", h(async (_req, res) => {
   res.json({ success: true, data: await getModel() });
 }));
 
-// Warm the backtest shortly after boot so the first person to open the page gets calibrated odds.
+// Warm the risk list and the backtest shortly after boot so the first person to open the page does not wait.
 if (process.env.NODE_ENV !== "test") {
-  setTimeout(() => { getModel().catch((e) => console.error("[attrition-hub] model warm-up failed:", e instanceof Error ? e.message : e)); }, 60_000).unref();
+  setTimeout(() => {
+    for (const warm of [getPopulation, getModel]) warm().catch((e) => console.error("[attrition-hub] warm-up failed:", e instanceof Error ? e.message : e));
+  }, 45_000).unref();
 }

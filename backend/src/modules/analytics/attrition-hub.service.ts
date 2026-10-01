@@ -15,7 +15,7 @@ import {
   FACTOR_CAPS, FACTOR_GROUP_ORDER, FACTOR_LABELS, aucOf, gainCurve, scoreFeatures, suggestActions, tierOf,
   type FactorGroup, type Reason, type Tier,
 } from "./attrition-model.js";
-import { addDays, loadSnapshot, today, type SnapshotPerson } from "./attrition-hub.data.js";
+import { addDays, loadSnapshot, setQualityListener, today, type SnapshotPerson } from "./attrition-hub.data.js";
 
 export const TIERS: Tier[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const MIN_TIER_SAMPLE = 30;
@@ -32,21 +32,41 @@ const POP_TTL = 10 * 60_000, MODEL_TTL = 6 * 3_600_000;
 
 export function clearAttritionHubCache() { popCache = null; modelCache = null; }
 
+async function buildPopulation(): Promise<Population> {
+  const asOf = today();
+  const t0 = Date.now();
+  const snap = await loadSnapshot(asOf, { live: true });
+  console.log(`[attrition-hub] population built: ${snap.people.length} people in ${Date.now() - t0} ms, degraded=[${snap.degraded.join(",")}]`);
+  const people: ScoredPerson[] = snap.people.map((s) => {
+    const sc = scoreFeatures(s.features);
+    return { ...s, score: sc.score, tier: sc.tier, factors: sc.factors, reasons: sc.reasons, inNotice: snap.inNotice.has(s.id) };
+  });
+  return { asOf, people, degraded: snap.degraded, builtAt: Date.now() };
+}
+
+/**
+ * Stale-while-revalidate: once a population exists it is always served instantly; an expired one
+ * is rebuilt in the background. Only the very first caller after a restart waits for a build.
+ */
 export function getPopulation(): Promise<Population> {
-  if (popCache && Date.now() - popCache.at < POP_TTL) return popCache.p;
-  const p = (async () => {
-    const asOf = today();
-    const snap = await loadSnapshot(asOf, { live: true });
-    const people: ScoredPerson[] = snap.people.map((s) => {
-      const sc = scoreFeatures(s.features);
-      return { ...s, score: sc.score, tier: sc.tier, factors: sc.factors, reasons: sc.reasons, inNotice: snap.inNotice.has(s.id) };
-    });
-    return { asOf, people, degraded: snap.degraded, builtAt: Date.now() };
-  })();
+  if (popCache) {
+    if (Date.now() - popCache.at >= POP_TTL && !popRefreshing) {
+      popRefreshing = true;
+      buildPopulation()
+        .then((fresh) => { popCache = { at: Date.now(), p: Promise.resolve(fresh) }; })
+        .catch((e) => console.error("[attrition-hub] population refresh failed:", e instanceof Error ? e.message : e))
+        .finally(() => { popRefreshing = false; });
+    }
+    return popCache.p;
+  }
+  const p = buildPopulation();
   popCache = { at: Date.now(), p };
   p.catch(() => { if (popCache?.p === p) popCache = null; });
   return p;
 }
+let popRefreshing = false;
+// when call quality first becomes available, rebuild so scores include it
+setQualityListener(() => { if (popCache) popCache = { ...popCache, at: 0 }; });
 
 /* ── backtest ── */
 export interface Model {
@@ -120,25 +140,37 @@ export function buildModel(
   };
 }
 
+async function computeModel(): Promise<Model> {
+  const t = today();
+  const dates = [addDays(t, -90), addDays(t, -60), addDays(t, -30)];
+  const cohorts: Parameters<typeof buildModel>[0] = [];
+  for (const date of dates) {
+    const snap = await loadSnapshot(date, { live: false });
+    const end = addDays(date, 30);
+    cohorts.push({
+      date,
+      rows: snap.people.map((s) => {
+        const sc = scoreFeatures(s.features);
+        return { score: sc.score, factors: sc.factors, leaver: !!s.exitDate && s.exitDate > date && s.exitDate <= end };
+      }),
+    });
+  }
+  return buildModel(cohorts);
+}
+
+let modelRefreshing = false;
 export function getModel(): Promise<Model> {
-  if (modelCache && Date.now() - modelCache.at < MODEL_TTL) return modelCache.p;
-  const p = (async () => {
-    const t = today();
-    const dates = [addDays(t, -90), addDays(t, -60), addDays(t, -30)];
-    const cohorts: Parameters<typeof buildModel>[0] = [];
-    for (const date of dates) {
-      const snap = await loadSnapshot(date, { live: false });
-      const end = addDays(date, 30);
-      cohorts.push({
-        date,
-        rows: snap.people.map((s) => {
-          const sc = scoreFeatures(s.features);
-          return { score: sc.score, factors: sc.factors, leaver: !!s.exitDate && s.exitDate > date && s.exitDate <= end };
-        }),
-      });
+  if (modelCache) {
+    if (Date.now() - modelCache.at >= MODEL_TTL && !modelRefreshing) {
+      modelRefreshing = true;
+      computeModel()
+        .then((fresh) => { modelCache = { at: Date.now(), p: Promise.resolve(fresh) }; })
+        .catch((e) => console.error("[attrition-hub] model refresh failed:", e instanceof Error ? e.message : e))
+        .finally(() => { modelRefreshing = false; });
     }
-    return buildModel(cohorts);
-  })();
+    return modelCache.p;
+  }
+  const p = computeModel();
   modelCache = { at: Date.now(), p };
   p.catch(() => { if (modelCache?.p === p) modelCache = null; });
   return p;

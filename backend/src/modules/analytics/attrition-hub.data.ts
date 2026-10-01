@@ -36,11 +36,21 @@ async function q(sql: string, params: unknown[] = []): Promise<Row[]> {
   return rows;
 }
 
+/** At most this many source queries hit the database at once. */
+const MAX_PARALLEL = 4;
+let running = 0;
+const waiting: (() => void)[] = [];
+async function slot<T>(run: () => Promise<T>): Promise<T> {
+  if (running >= MAX_PARALLEL) await new Promise<void>((r) => waiting.push(r));
+  running++;
+  try { return await run(); } finally { running--; waiting.shift()?.(); }
+}
+
 /** Run an optional source; on failure record it and carry on without it. */
-async function optional<T>(name: string, degraded: string[], run: () => Promise<T>, timeoutMs = 25_000): Promise<T | null> {
+async function optional<T>(name: string, degraded: string[], run: () => Promise<T>, timeoutMs = 60_000): Promise<T | null> {
   try {
     return await Promise.race([
-      run(),
+      slot(run),
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), timeoutMs)),
     ]);
   } catch (err) {
@@ -48,6 +58,40 @@ async function optional<T>(name: string, degraded: string[], run: () => Promise<
     degraded.push(name);
     return null;
   }
+}
+
+/* ── call quality: slow cross-database scan, cached and refreshed off the request path ── */
+const QUALITY_TTL = 30 * 60_000;
+let quality: { at: number; rows: Row[] | null; inflight: boolean } = { at: 0, rows: null, inflight: false };
+let onQualityWarm: (() => void) | null = null;
+export const setQualityListener = (fn: () => void) => { onQualityWarm = fn; };
+
+function qualityRowsWarm(): Row[] | null {
+  if (!quality.inflight && Date.now() - quality.at > QUALITY_TTL) {
+    quality.inflight = true;
+    const t0 = Date.now();
+    Promise.race([
+      q(`SELECT ei.id AS employee_id,
+                ROUND(AVG(cqa.quality_percentage), 2) AS avg_quality,
+                ROUND(AVG(CASE WHEN cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN cqa.quality_percentage END)
+                    - AVG(CASE WHEN cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 60 DAY) AND cqa.CallDate < DATE_SUB(NOW(), INTERVAL 30 DAY) THEN cqa.quality_percentage END), 2) AS velocity
+           FROM mas_hrms.employees ei
+           JOIN db_audit.call_quality_assessment cqa ON ei.employee_code = cqa.User
+          WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 60 DAY) AND ei.employment_status = 'Active' AND ei.active_status = 1
+          GROUP BY ei.id`),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout after 180s")), 180_000)),
+    ]).then((rows) => {
+      const first = !quality.rows;
+      quality = { at: Date.now(), rows, inflight: false };
+      console.log(`[attrition-hub] call quality loaded: ${rows.length} people in ${Date.now() - t0} ms`);
+      if (first) onQualityWarm?.();
+    }).catch((err) => {
+      // retry in 5 minutes rather than hammering a source that is struggling
+      quality = { at: Date.now() - QUALITY_TTL + 5 * 60_000, rows: quality.rows, inflight: false };
+      console.error("[attrition-hub] call quality unavailable:", err instanceof Error ? err.message : err);
+    });
+  }
+  return quality.rows;
 }
 
 const SEVERITY_RANK: Record<string, number> = { verbal: 1, written: 2, final: 3 };
@@ -89,7 +133,7 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
   );
 
   // ── attendance: rates, trend, absent streak, late marks ──
-  const attRows = await optional("attendance", degraded, () => q(
+  const attRowsP = optional("attendance", degraded, () => q(
     `SELECT employee_id,
             SUM(CASE WHEN attendance_status IN ('present','half_day','absent') AND record_date > ? THEN 1 ELSE 0 END) AS wd_r,
             SUM(CASE WHEN record_date > ? THEN (CASE attendance_status WHEN 'present' THEN 1 WHEN 'half_day' THEN 0.5 ELSE 0 END) ELSE 0 END) AS ok_r,
@@ -102,7 +146,7 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
       GROUP BY employee_id`,
     [d30, d30, d30, d30, d30, d7, d60, asOf],
   ));
-  const streakRows = await optional("attendance-streak", degraded, () => q(
+  const streakRowsP = optional("attendance-streak", degraded, () => q(
     `SELECT employee_id, attendance_status
        FROM attendance_daily_record
       WHERE record_date > ? AND record_date <= ?
@@ -110,18 +154,18 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
       ORDER BY employee_id, record_date DESC`,
     [d10, asOf],
   ));
-  const leaveRows = await optional("leave", degraded, () => q(
+  const leaveRowsP = optional("leave", degraded, () => q(
     `SELECT employee_id, COUNT(*) AS n FROM leave_request
       WHERE LOWER(status) IN ('approved','auto_approved') AND from_date > ? AND from_date <= ?
       GROUP BY employee_id`,
     [d60, asOf],
   ));
-  const regRows = await optional("regularisation", degraded, () => q(
+  const regRowsP = optional("regularisation", degraded, () => q(
     `SELECT employee_id, COUNT(*) AS n FROM attendance_regularization
       WHERE session_date > ? AND session_date <= ? GROUP BY employee_id`,
     [d60, asOf],
   ));
-  const warnRows = await optional("warnings", degraded, () => q(
+  const warnRowsP = optional("warnings", degraded, () => q(
     `SELECT employee_id, MAX(FIELD(severity,'verbal','written','final')) AS sev, COUNT(*) AS n
        FROM employee_warning
       WHERE warning_date > ? AND warning_date <= ?
@@ -129,14 +173,14 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
       GROUP BY employee_id`,
     [d180, asOf, asOf],
   ));
-  const incRows = await optional("increments", degraded, () => q(
+  const incRowsP = optional("increments", degraded, () => q(
     `SELECT employee_id, DATE_FORMAT(MAX(effective_from), '%Y-%m-%d') AS last_inc
        FROM salary_increment_request
       WHERE status IN ('approved','implemented') AND effective_from <= ?
       GROUP BY employee_id`,
     [asOf],
   ));
-  const teamExitRows = await optional("team-exits", degraded, () => q(
+  const teamExitRowsP = optional("team-exits", degraded, () => q(
     `SELECT reporting_manager_id AS mid, COUNT(*) AS n FROM employees
       WHERE date_of_exit > ? AND date_of_exit <= ? AND reporting_manager_id IS NOT NULL
       GROUP BY reporting_manager_id`,
@@ -144,29 +188,22 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
   ));
 
   // Live-only sources: no point-in-time history exists for these.
-  let kpiRows: Row[] | null = null, qualRows: Row[] | null = null, pipRows: Row[] | null = null, noticeRows: Row[] = [];
-  if (opts.live) {
-    kpiRows = await optional("kpi", degraded, () => q(
-      `SELECT employee_id,
-              SUBSTRING_INDEX(GROUP_CONCAT(final_score ORDER BY COALESCE(locked_at, reviewed_at) DESC SEPARATOR ','), ',', 2) AS scores
-         FROM kpi_score_summary WHERE final_score IS NOT NULL GROUP BY employee_id`));
-    qualRows = await optional("call-quality", degraded, () => q(
-      `SELECT ei.id AS employee_id,
-              ROUND(AVG(cqa.quality_percentage), 2) AS avg_quality,
-              ROUND(AVG(CASE WHEN cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN cqa.quality_percentage END)
-                  - AVG(CASE WHEN cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 60 DAY) AND cqa.CallDate < DATE_SUB(NOW(), INTERVAL 30 DAY) THEN cqa.quality_percentage END), 2) AS velocity
-         FROM mas_hrms.employees ei
-         JOIN db_audit.call_quality_assessment cqa ON ei.employee_code = cqa.User
-        WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 60 DAY) AND ei.employment_status = 'Active' AND ei.active_status = 1
-        GROUP BY ei.id`));
-    pipRows = await optional("pip", degraded, () => q(`SELECT DISTINCT employee_id FROM pip_record WHERE status = 'active'`));
-    noticeRows = (await optional("notice", degraded, () => q(
-      `SELECT DISTINCT employee_id FROM exit_request
-        WHERE status NOT IN ('rejected','revoked','exited','withdrawn','cancelled')`))) ?? [];
-  }
-  const bankRows = opts.live
-    ? await optional("bank-record", degraded, () => q(`SELECT DISTINCT employee_id FROM employee_bank_detail WHERE active_status = 1`))
-    : null;
+  const kpiP = opts.live ? optional("kpi", degraded, () => q(
+    `SELECT employee_id,
+            SUBSTRING_INDEX(GROUP_CONCAT(final_score ORDER BY COALESCE(locked_at, reviewed_at) DESC SEPARATOR ','), ',', 2) AS scores
+       FROM kpi_score_summary WHERE final_score IS NOT NULL GROUP BY employee_id`)) : Promise.resolve(null);
+  const pipP = opts.live ? optional("pip", degraded, () => q(`SELECT DISTINCT employee_id FROM pip_record WHERE status = 'active'`)) : Promise.resolve(null);
+  const noticeP = opts.live ? optional("notice", degraded, () => q(
+    `SELECT DISTINCT employee_id FROM exit_request
+      WHERE status NOT IN ('rejected','revoked','exited','withdrawn','cancelled')`)) : Promise.resolve(null);
+  const bankP = opts.live ? optional("bank-record", degraded, () => q(`SELECT DISTINCT employee_id FROM employee_bank_detail WHERE active_status = 1`)) : Promise.resolve(null);
+  // Call quality is a heavy cross-database scan: it refreshes in the background and is used once warm.
+  const qualRows = opts.live ? qualityRowsWarm() : null;
+  if (opts.live && !qualRows) degraded.push("call-quality");
+
+  const [attRows, streakRows, leaveRows, regRows, warnRows, incRows, teamExitRows, kpiRows, pipRows, noticeRaw, bankRows] =
+    await Promise.all([attRowsP, streakRowsP, leaveRowsP, regRowsP, warnRowsP, incRowsP, teamExitRowsP, kpiP, pipP, noticeP, bankP]);
+  const noticeRows = noticeRaw ?? [];
 
   const by = <T extends Row>(rows: T[] | null, key = "employee_id") => {
     const m = new Map<string, T>();
@@ -217,7 +254,8 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
     const size = mid ? (teamSize.get(mid) ?? 0) : 0;
     const exits = mid ? (num(teamExits.get(mid)?.n) ?? 0) : 0;
     const w = warn.get(id);
-    const ks = String(kpi.get(id)?.scores ?? "").split(",").map(Number).filter(Number.isFinite);
+    // "" must not become 0, and a 0 is "not scored yet" (new joiners carry 0 rows), not a failing score
+    const ks = String(kpi.get(id)?.scores ?? "").split(",").filter((x) => x.trim() !== "").map(Number).filter((x) => Number.isFinite(x) && x > 0);
     const qa = qual.get(id);
     const missing = (r.no_pan ? 1 : 0) + (r.no_uan ? 1 : 0) + (r.no_mobile ? 1 : 0) + (r.no_email ? 1 : 0) + (opts.live && bankRows && !bank.has(id) ? 1 : 0);
     const features: Features = {
