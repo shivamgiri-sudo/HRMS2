@@ -168,6 +168,6 @@ attritionHubRouter.get("/pulse", h(async (req, res) => {
 // Warm the risk list and the backtest shortly after boot so the first person to open the page does not wait.
 if (process.env.NODE_ENV !== "test") {
   setTimeout(() => {
-    for (const warm of [getPopulation, getModel]) warm().catch((e) => console.error("[attrition-hub] warm-up failed:", e instanceof Error ? e.message : e));
+    for (const warm of [getPopulation, getModel, loadFirstPresence]) warm().catch((e) => console.error("[attrition-hub] warm-up failed:", e instanceof Error ? e.message : e));
   }, 45_000).unref();
 }

@@ -227,7 +227,7 @@ export function buildOutlook(a: { people: ScoredPerson[]; data: Pick<ExitsData, 
   const notices = data.notice.length, planned = data.planned.length;
   const notes = [
     "Expected exits use the calibrated 30-day chance of each person not already serving notice.",
-    "Notice exits are people with a last working day in the next 30 days. Planned joiners are employee records with a joining date in the next 30 days.",
+    "Notice exits are people with an open exit request whose last working day falls within 30 days, including overdue or undated ones. Planned joiners are employee records with a joining date in the next 30 days.",
   ];
   if (!model) notes.push("The calibration model is still warming up, so expected exits show as 0 for now.");
   return {

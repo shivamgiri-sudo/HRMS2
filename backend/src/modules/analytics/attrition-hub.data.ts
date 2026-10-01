@@ -286,24 +286,38 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
 
 /* ── first days after joining: who turned up (for the batch tracker) ── */
 let presence: { at: number; p: Promise<{ firstPresent: Map<string, number | null>; seen: Set<string> }> } | null = null;
-export function loadFirstPresence(): Promise<{ firstPresent: Map<string, number | null>; seen: Set<string> }> {
-  if (presence && Date.now() - presence.at < 30 * 60_000) return presence.p;
+let presenceRefreshing = false;
+async function queryFirstPresence() {
   const from = addDays(today(), -7 * 17);
-  const p = (async () => {
-    const firstPresent = new Map<string, number | null>();
-    const seen = new Set<string>();
-    const rows = await q(
-      `SELECT adr.employee_id,
-              MIN(CASE WHEN adr.attendance_status IN ('present','half_day') THEN DATEDIFF(adr.record_date, ${AON_JOIN}) END) AS first_present,
-              COUNT(*) AS n
-         FROM attendance_daily_record adr
-         JOIN employees e ON e.id = adr.employee_id
-        WHERE ${AON_JOIN} >= ? AND adr.record_date >= ?
-          AND adr.record_date >= ${AON_JOIN} AND adr.record_date < DATE_ADD(${AON_JOIN}, INTERVAL 7 DAY)
-        GROUP BY adr.employee_id`, [from, from]);
-    for (const r of rows) { const id = String(r.employee_id); seen.add(id); firstPresent.set(id, r.first_present == null ? null : Number(r.first_present)); }
-    return { firstPresent, seen };
-  })();
+  const t0 = Date.now();
+  const firstPresent = new Map<string, number | null>();
+  const seen = new Set<string>();
+  const rows = await q(
+    `SELECT adr.employee_id,
+            MIN(CASE WHEN adr.attendance_status IN ('present','half_day') THEN DATEDIFF(adr.record_date, ${AON_JOIN}) END) AS first_present,
+            COUNT(*) AS n
+       FROM attendance_daily_record adr
+       JOIN employees e ON e.id = adr.employee_id
+      WHERE ${AON_JOIN} >= ? AND adr.record_date >= ?
+        AND adr.record_date >= ${AON_JOIN} AND adr.record_date < DATE_ADD(${AON_JOIN}, INTERVAL 7 DAY)
+      GROUP BY adr.employee_id`, [from, from]);
+  for (const r of rows) { const id = String(r.employee_id); seen.add(id); firstPresent.set(id, r.first_present == null ? null : Number(r.first_present)); }
+  console.log(`[attrition-hub] first-week presence loaded: ${rows.length} people in ${Date.now() - t0} ms`);
+  return { firstPresent, seen };
+}
+/** Served stale-while-revalidate (30 min): only the very first caller after a restart waits. */
+export function loadFirstPresence(): Promise<{ firstPresent: Map<string, number | null>; seen: Set<string> }> {
+  if (presence) {
+    if (Date.now() - presence.at >= 30 * 60_000 && !presenceRefreshing) {
+      presenceRefreshing = true;
+      queryFirstPresence()
+        .then((fresh) => { presence = { at: Date.now(), p: Promise.resolve(fresh) }; })
+        .catch((e) => console.error("[attrition-hub] presence refresh failed:", e instanceof Error ? e.message : e))
+        .finally(() => { presenceRefreshing = false; });
+    }
+    return presence.p;
+  }
+  const p = queryFirstPresence();
   presence = { at: Date.now(), p };
   p.catch(() => { if (presence?.p === p) presence = null; });
   return p;

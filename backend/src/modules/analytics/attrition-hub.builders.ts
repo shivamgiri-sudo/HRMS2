@@ -98,7 +98,7 @@ export function buildInsights(a: { asOf: string; people: ScoredPerson[]; exits: 
       if (r != null) get(idOf(e), labelOf(e)).exp += r;
     }
     return [...m.values()]
-      .filter((g) => g.hc >= 5 || g.ex >= 3)
+      .filter((g) => g.hc >= 5 || (g.ex >= 3 && g.hc >= 3)) // a group with nobody left has no meaningful rate
       .map((g) => { const r = rate(g.hc, g.ex); return { id: g.id, label: g.label, headcount: g.hc, exits90: g.ex, ratePct: r == null ? null : r1(r), vsCompany: r != null && company ? r1(r / company) : null, highRisk: g.high,
         expected90: rich ? r1(g.exp) : null, excess90: rich ? r1(g.ex - g.exp) : null }; })
       .sort((x, y) => (y.ratePct ?? -1) - (x.ratePct ?? -1))

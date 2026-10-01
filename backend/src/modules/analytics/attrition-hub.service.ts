@@ -341,7 +341,7 @@ async function queryExits(sql: string, params: unknown[], sinceDays: number): Pr
   try {
     const [nr] = await db.execute<RowDataPacket[]>(
       `SELECT e.id AS employee_id, e.branch_id, b.branch_name, e.process_id, p.process_name,
-              DATE_FORMAT(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed), '%Y-%m-%d') AS lwd
+              DATE_FORMAT(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, CURDATE()), '%Y-%m-%d') AS lwd
          FROM exit_request er
          JOIN employees e ON e.id = er.employee_id
          LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -349,9 +349,8 @@ async function queryExits(sql: string, params: unknown[], sinceDays: number): Pr
         WHERE ${sql}
           AND er.status NOT IN ('rejected','revoked','exited','withdrawn','cancelled')
           AND e.active_status = 1
-          AND COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) > ?
-          AND COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) <= ?`,
-      [...params, todayStr, horizon] as never[],
+          AND COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, CURDATE()) <= ?`,
+      [...params, horizon] as never[],
     );
     notice = nr.map((r) => ({ employeeId: String(r.employee_id), branchId: r.branch_id ?? null, branch: r.branch_name ?? null, processId: r.process_id ?? null, process: r.process_name ?? null, lwd: String(r.lwd) }));
   } catch (err) { console.error("[attrition-hub] notice exits unavailable:", err instanceof Error ? err.message : err); }

@@ -166,6 +166,16 @@ describe("buildInsights additions", () => {
     expect(h("Noida").excess90!).toBeLessThan(0);
     expect(h("Delhi").expected90).not.toBeNull();
   });
+  it("a manager whose team is gone is not rated (no headcount, no meaningful rate)", () => {
+    const gone = [...Array(8)].map(() => ev({ daysAgo: 300, stayed: 100, managerId: "mGone", manager: "Gone" }));
+    const ok = [...Array(10)].map(() => ev({ daysAgo: 300, managerId: "mOk", manager: "Ok" }));
+    const events = [...gone, ...ok];
+    const people = ok.map((e) => person(e, { aonDays: 300 }));
+    const exits = gone.map((e) => ({ id: e.id, joinDate: e.join, exitDate: ymd(ASOF, -20), tenureDays: 100, source: e.source, branchId: e.branchId, branch: e.branch, processId: e.processId, process: e.process, managerId: e.managerId, manager: e.manager, designationId: e.designationId, designation: e.designation, reason: null, exitType: null }));
+    const ins = buildInsights({ asOf: ASOF, people, exits, events });
+    expect(ins.hotspots.manager.some((h) => h.label === "Gone")).toBe(false);
+    expect(ins.hotspots.manager.some((h) => h.label === "Ok")).toBe(true);
+  });
   it("reason capture by branch, worst first, small branches skipped", () => {
     const exits = [...[...Array(6)].map((_, i) => ({ branchId: "b1", branch: "Noida", reason: i < 5 ? "x" : null })), ...[...Array(6)].map(() => ({ branchId: "b2", branch: "Delhi", reason: null })), ...[...Array(2)].map(() => ({ branchId: "b3", branch: "Tiny", reason: null }))]
       .map((p, i) => ({ id: `r${i}`, joinDate: ymd(ASOF, -200), exitDate: ymd(ASOF, -10), tenureDays: 190, source: null, processId: null, process: null, managerId: null, manager: null, designationId: null, designation: null, exitType: null, ...p }));
