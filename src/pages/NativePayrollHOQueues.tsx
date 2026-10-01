@@ -8,6 +8,7 @@
  * 6. Payroll run window status & closure
  */
 import { useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
@@ -2506,6 +2507,10 @@ const TABS = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function NativePayrollHOQueues() {
+  // ?tab=<value> makes a tab linkable (e.g. the bank-change email links to ?tab=bankchg).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const activeTab = TABS.some((t) => t.value === requestedTab) ? (requestedTab as string) : "optout";
   return (
     <div className="space-y-6">
       {/* Page header */}
@@ -2524,7 +2529,10 @@ export default function NativePayrollHOQueues() {
         </div>
       </div>
 
-      <Tabs defaultValue="optout">
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
+      >
         {/* Tab bar */}
         <TabsList className="mb-6 flex h-auto w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm">
           {TABS.map(({ value, label, icon: Icon }) => (

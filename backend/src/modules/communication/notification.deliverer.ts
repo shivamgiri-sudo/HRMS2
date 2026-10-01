@@ -22,6 +22,7 @@ import { templateService } from './template.service.js';
 import { registerDeliverer } from './notification.gateway.js';
 import type { NotificationDeliverer } from './notification.gateway.js';
 import type { ResolvedRecipient } from '../../shared/recipient-resolver.types.js';
+import { resolveActionUrl, withActionLink } from './notification.links.js';
 import { inboxService } from '../inbox/inbox.service.js';
 
 /** More than this many CC addresses becomes BCC — recipients should not be exposed to
@@ -93,6 +94,11 @@ export const notificationDeliverer: NotificationDeliverer = {
       const f = fallbackBody(eventCode, data);
       subject = f.subject; html = f.html; text = f.text;
     }
+
+    // Every gateway mail carries a link to the page where the recipient acts.
+    const linked = withActionLink(html, text, resolveActionUrl(eventCode, data));
+    html = linked.html;
+    text = linked.text;
 
     const attachments = (data.__attachments as EmailAttachment[] | undefined) ?? undefined;
 

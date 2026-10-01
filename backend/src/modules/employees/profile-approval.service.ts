@@ -221,7 +221,9 @@ export const profileApprovalService = {
     }
 
     // Email to all Payroll Branch users with the penny drop verification link
-    const verifyUrl = `${FRONTEND_URL}/payroll/bank-verify/${verificationToken}`;
+    // /payroll/bank-verify/:token has no frontend route (404 for every recipient); the
+    // request is actioned from the Bank Changes tab of the HO queue.
+    const verifyUrl = `${FRONTEND_URL}/payroll/ho-queues?tab=bankchg`;
     const expiresAtStr = expiresAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
     const maskedAccount = acctRaw ? `****${acctRaw.slice(-4)}` : '****';
 
