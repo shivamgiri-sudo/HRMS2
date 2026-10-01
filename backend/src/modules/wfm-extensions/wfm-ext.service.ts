@@ -8,6 +8,7 @@ import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
 import { validateMinimumRest, isRestPolicyFeatureActive, logRestOverride } from "../wfm/rest-policy.service.js";
+import { notifyRosterRequest } from "../roster-requests/roster-requests.notify.js";
 import type { Request } from "express";
 
 type ScopeFilter = { sql?: string; params?: unknown[] };
@@ -137,9 +138,33 @@ export const rosterSwapService = {
         throw Object.assign(new Error("Request not found, or already processed"), { statusCode: 409 });
       }
       await logSensitiveAction({ actor_user_id: reviewedBy, action_type: "ROSTER_SWAP_REVIEWED", module_key: "WFM", entity_type: "wfm_roster_swap_request", entity_id: id, change_summary: { status }, req });
+      await rosterSwapService.notifySwapDecision(id, "rejected");
       return { status: "rejected" as const, applied: false };
     }
-    return rosterSwapService.applyApprovedSwap(id, reviewedBy, req, opts);
+    const applied = await rosterSwapService.applyApprovedSwap(id, reviewedBy, req, opts);
+    await rosterSwapService.notifySwapDecision(id, "approved");
+    return applied;
+  },
+
+  /** Tells the requester and counterpart a swap was decided. Never throws: the decision is already committed. */
+  async notifySwapDecision(id: string, decision: "approved" | "rejected") {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT requester_emp_id, swap_with_emp_id, DATE_FORMAT(swap_date, '%Y-%m-%d') AS swap_date FROM wfm_roster_swap_request WHERE id = ? LIMIT 1",
+        [id]
+      );
+      const swap = rows[0];
+      if (!swap) return;
+      await notifyRosterRequest({
+        employeeIds: [swap.requester_emp_id, swap.swap_with_emp_id],
+        kind: "swap",
+        sourceId: id,
+        title: decision === "approved" ? "Shift swap approved" : "Shift swap rejected",
+        description: `Your shift swap on ${swap.swap_date} was ${decision}.`,
+      });
+    } catch (err) {
+      console.error("[roster-requests] swap notification lookup failed:", (err as Error)?.message);
+    }
   },
 
   /**
@@ -439,6 +464,13 @@ export const rosterConflictService = {
         after: { resolved: 1, resolution_action: resolutionAction, resolution_remarks: resolutionRemarks, resolved_by: resolvedBy },
       },
       req,
+    });
+    await notifyRosterRequest({
+      employeeIds: [conflict.employee_id],
+      kind: "conflict",
+      sourceId: id,
+      title: "Roster conflict resolved",
+      description: `Your roster conflict was resolved: ${resolutionAction}`,
     });
   },
 };

@@ -11,6 +11,7 @@ import { rtaSyncService } from "./rta-sync.service.js";
 import { weekoffAllocationService } from "./weekoff-allocation.service.js";
 import { weekOffPolicyConfigService } from "./week-off-policy-config.service.js";
 import { db } from "../../db/mysql.js";
+import { notifyRosterRequest } from "../roster-requests/roster-requests.notify.js";
 import { validateAmendmentInput } from "../wfm/roster-audit.helpers.js";
 import { recordAmendmentInDecisionAudit } from "../wfm/roster-audit.amendment.js";
 import type { RowDataPacket } from "mysql2";
@@ -641,6 +642,13 @@ router.post("/assignments/:id/resolve-dispute", h(async (req: AuthenticatedReque
     : [userId, now, dispute_resolution.trim(), req.params.id];
 
   await db.execute(`UPDATE roster_daily_assignment SET ${setClause} WHERE id = ?`, setParams);
+  await notifyRosterRequest({
+    employeeIds: [assignment.employee_id],
+    kind: "dispute",
+    sourceId: String(req.params.id),
+    title: "Roster dispute resolved",
+    description: `Your dispute for ${String(assignment.roster_date instanceof Date ? assignment.roster_date.toISOString() : assignment.roster_date).slice(0, 10)} was resolved: ${dispute_resolution.trim()}`.slice(0, 1000),
+  });
   return res.json({ success: true, message: "Dispute resolved" });
 }));
 
