@@ -49,7 +49,7 @@ export function Journey({ id, onClose, onChanged }: { id: string; onClose: () =>
 
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+      <SheetContent className="w-full overflow-y-auto sm:w-[60vw] sm:max-w-[60vw]">
         <SheetHeader><SheetTitle className="text-left">{c?.full_name ?? "Candidate journey"}</SheetTitle></SheetHeader>
         {isLoading || !j ? <div className="mt-4 space-y-3"><Skeleton className="h-16" /><Skeleton className="h-40" /><Skeleton className="h-32" /></div> : !c ? <Empty text="Candidate not found" /> : (
           <div className="mt-4 space-y-5 text-sm">

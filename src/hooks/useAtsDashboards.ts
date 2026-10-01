@@ -105,13 +105,19 @@ export type DrillFilters = {
   gender?: string; idle?: string; hour?: number; dow?: number; experience?: string; education?: string; shift?: string; age?: string; voc?: string; interviewer?: string; search?: string;
 };
 
-export interface DrillSplit { name: string; total: number; selected: number; rejected: number; selRate: number }
+export interface DrillSplit {
+  name: string; total: number; selected: number; rejected: number; selRate: number;
+  /** Added with the Command Center upgrade; absent on an older backend, so treat as optional. */
+  noShow?: number; hold?: number; waiting?: number; joined?: number; rejRate?: number; noShowRate?: number; joinRate?: number;
+}
 export interface DrillData {
   total: number;
   kpis: { total: number; selected: number; rejected: number; noShow: number; hold: number; waiting: number; joined: number; selRate: number; rejRate: number; noShowRate: number; joinRate: number };
   trend: { date: string; total: number; selected: number; rejected: number }[]; weekly: boolean;
   weekday: { dow: number; total: number; selRate: number }[];
   splits: Record<"branch" | "process" | "source" | "recruiter" | "stage" | "status", DrillSplit[]>;
+  /** Arrival grid for the slice (dow 1=Sun..7=Sat, hour 0-23). Absent on an older backend. */
+  hourDow?: { dow: number; hour: number; total: number; selected: number }[];
 }
 
 const drillQs = (f: DrillFilters, extra: Record<string, string> = {}) => {

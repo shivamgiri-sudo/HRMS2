@@ -9,7 +9,7 @@ const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactN
 
 const NativeATSDashboardReplica        = lazy(() => import("@/pages/NativeATSDashboardReplica"));
 const NativeATSDashboardV2             = lazy(() => import("@/pages/NativeATSDashboardV2"));
-const NativeATSFullParityCommandCenter = lazy(() => import("@/pages/NativeATSFullParityCommandCenter"));
+const NativeATSFullParityCommandCenter = lazy(() => import("@/pages/NativeATSCommandCenterV2"));
 const ATSCommandCentre                 = lazy(() => import("@/pages/ATSCommandCentre"));
 const NativeATSRegistrationEnhanced   = lazy(() => import("@/pages/NativeATSRegistrationEnhanced"));
 const NativeATSOnboardingBridge        = lazy(() => import("@/pages/NativeATSOnboardingBridge"));
