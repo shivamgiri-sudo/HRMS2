@@ -33,10 +33,11 @@ describe('pickRecipient', () => {
 
 describe('esiMissingItems', () => {
   it('lists only what is missing', () => {
-    expect(esiMissingItems({ pan_ready: true, photo_ready: true, bank_passbook_ready: true })).toEqual([]);
-    const all = esiMissingItems({ pan_ready: false, photo_ready: false, bank_passbook_ready: false });
-    expect(all).toHaveLength(3);
-    expect(esiMissingItems({ pan_ready: true, photo_ready: false, bank_passbook_ready: true })).toEqual([
+    expect(esiMissingItems({ pan_ready: true, aadhaar_ready: true, photo_ready: true, bank_passbook_ready: true })).toEqual([]);
+    const all = esiMissingItems({ pan_ready: false, aadhaar_ready: false, photo_ready: false, bank_passbook_ready: false });
+    expect(all).toHaveLength(4);
+    expect(esiMissingItems({ pan_ready: true, aadhaar_ready: false, photo_ready: true, bank_passbook_ready: true })).toEqual(['Aadhaar card']);
+    expect(esiMissingItems({ pan_ready: true, aadhaar_ready: true, photo_ready: false, bank_passbook_ready: true })).toEqual([
       'Your photo (clear face, plain background)',
     ]);
   });
@@ -82,7 +83,7 @@ describe('sendPendencyReminders', () => {
   it('sends the ESI email with the documents link, and logs it to pendency_reminder_log', async () => {
     mockDb({ contacts: [{ id: 'e1', employee_code: 'MAS1', first_name: 'Asha', email: null, official_email: null, personal_email: 'asha@x.com' }] });
     vi.mocked(fetchEsiPendingRows).mockResolvedValue([
-      { employee_id: 'e1', pan_ready: 1, photo_ready: 0, bank_passbook_url: null },
+      { employee_id: 'e1', pan_ready: 1, aadhaar_ready: 1, photo_ready: 0, bank_passbook_url: null },
     ] as any);
     vi.mocked(emailService.send).mockResolvedValue({} as any);
 
@@ -105,7 +106,7 @@ describe('sendPendencyReminders', () => {
   it('skips employees who are not pending, without sending', async () => {
     mockDb({ contacts: [{ id: 'e1', employee_code: 'MAS1', first_name: 'A', personal_email: 'a@x.com' }] });
     vi.mocked(fetchEsiPendingRows).mockResolvedValue([
-      { employee_id: 'e1', pan_ready: 1, photo_ready: 1, bank_passbook_url: '/x' },
+      { employee_id: 'e1', pan_ready: 1, aadhaar_ready: 1, photo_ready: 1, bank_passbook_url: '/x' },
     ] as any);
     const res = await sendPendencyReminders({ kind: 'esi_docs', employeeIds: ['e1'], sentBy: null, trigger: 'manual' });
     expect(res[0]).toMatchObject({ status: 'skipped', reason: 'not_pending' });
@@ -117,7 +118,7 @@ describe('sendPendencyReminders', () => {
       contacts: [{ id: 'e1', employee_code: 'MAS1', first_name: 'A', personal_email: 'a@x.com' }],
       history: [{ employee_id: 'e1', sent: 1, last_sent: new Date('2026-10-09T10:00:00Z') }],
     });
-    vi.mocked(fetchEsiPendingRows).mockResolvedValue([{ employee_id: 'e1', pan_ready: 0, photo_ready: 0, bank_passbook_url: null }] as any);
+    vi.mocked(fetchEsiPendingRows).mockResolvedValue([{ employee_id: 'e1', pan_ready: 0, aadhaar_ready: 0, photo_ready: 0, bank_passbook_url: null }] as any);
     const res = await sendPendencyReminders({
       kind: 'esi_docs', employeeIds: ['e1'], sentBy: null, trigger: 'scheduler', now: new Date('2026-10-10T10:00:00Z'),
     });
@@ -127,14 +128,14 @@ describe('sendPendencyReminders', () => {
 
   it('skips when there is no deliverable address', async () => {
     mockDb({ contacts: [{ id: 'e1', employee_code: 'MAS1', first_name: 'A', personal_email: null, official_email: null, email: null }] });
-    vi.mocked(fetchEsiPendingRows).mockResolvedValue([{ employee_id: 'e1', pan_ready: 0, photo_ready: 1, bank_passbook_url: '/x' }] as any);
+    vi.mocked(fetchEsiPendingRows).mockResolvedValue([{ employee_id: 'e1', pan_ready: 0, aadhaar_ready: 1, photo_ready: 1, bank_passbook_url: '/x' }] as any);
     const res = await sendPendencyReminders({ kind: 'esi_docs', employeeIds: ['e1'], sentBy: null, trigger: 'manual' });
     expect(res[0]).toMatchObject({ status: 'skipped', reason: 'no_email' });
   });
 
   it('records a failed send as failed, not sent, so it does not count toward the cap', async () => {
     mockDb({ contacts: [{ id: 'e1', employee_code: 'MAS1', first_name: 'A', personal_email: 'a@x.com' }] });
-    vi.mocked(fetchEsiPendingRows).mockResolvedValue([{ employee_id: 'e1', pan_ready: 0, photo_ready: 1, bank_passbook_url: '/x' }] as any);
+    vi.mocked(fetchEsiPendingRows).mockResolvedValue([{ employee_id: 'e1', pan_ready: 0, aadhaar_ready: 1, photo_ready: 1, bank_passbook_url: '/x' }] as any);
     vi.mocked(emailService.send).mockRejectedValue(new Error('smtp down'));
     const res = await sendPendencyReminders({ kind: 'esi_docs', employeeIds: ['e1'], sentBy: null, trigger: 'manual' });
     expect(res[0]).toMatchObject({ status: 'failed', reason: 'smtp down' });

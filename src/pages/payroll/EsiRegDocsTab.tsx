@@ -23,6 +23,7 @@ interface EsiEmployee {
   pan_ready: boolean;
   pan_doc_id: string | null;
   pan_file_url: string | null;
+  aadhaar_ready: boolean;
   photo_ready: boolean;
   photo_url: string | null;
   bank_ready: boolean;
@@ -143,7 +144,7 @@ const REMINDER_SKIP_TEXT: Record<string, string> = {
 function KpiStrip({ employees, total }: { employees: EsiEmployee[]; total: number }) {
   const onPage = employees.length;
   const allReady = employees.filter(
-    (e) => e.pan_ready && e.photo_ready && e.bank_ready && e.bank_passbook_ready
+    (e) => e.pan_ready && e.aadhaar_ready && e.photo_ready && e.bank_ready && e.bank_passbook_ready
   ).length;
   const missing = onPage - allReady;
 
@@ -226,7 +227,7 @@ function EmployeeTable({
                   aria-label="Select all"
                 />
               </th>
-              {["Emp Code", "Name", "Branch", "ESIC No.", "PAN", "Photo", "Bank", "Passbook", "Actions"].map((h) => (
+              {["Emp Code", "Name", "Branch", "ESIC No.", "PAN", "Aadhaar", "Photo", "Bank", "Passbook", "Actions"].map((h) => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
                   {h}
                 </th>
@@ -236,7 +237,7 @@ function EmployeeTable({
           <tbody>
             {employees.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-8 text-center text-slate-400 text-sm">
+                <td colSpan={11} className="px-4 py-8 text-center text-slate-400 text-sm">
                   No ESI-eligible employees pending registration.
                 </td>
               </tr>
@@ -261,6 +262,7 @@ function EmployeeTable({
                 <td className="px-4 py-3 text-slate-600">{emp.branch}</td>
                 <td className="px-4 py-3 text-xs text-slate-500">{emp.esic_number ?? "—"}</td>
                 <td className="px-4 py-3"><ReadyChip ready={emp.pan_ready} label="PAN" /></td>
+                <td className="px-4 py-3"><ReadyChip ready={emp.aadhaar_ready} label="Aadhaar" /></td>
                 <td className="px-4 py-3"><ReadyChip ready={emp.photo_ready} label="Photo" /></td>
                 <td className="px-4 py-3"><ReadyChip ready={emp.bank_ready} label="Bank" /></td>
                 <td className="px-4 py-3"><ReadyChip ready={emp.bank_passbook_ready} label="Passbook" /></td>
@@ -389,7 +391,7 @@ function EsiDrawer({
 
   if (!emp) return null;
 
-  const allReady = emp.pan_ready && emp.photo_ready && emp.bank_ready && emp.bank_passbook_ready;
+  const allReady = emp.pan_ready && emp.aadhaar_ready && emp.photo_ready && emp.bank_ready && emp.bank_passbook_ready;
 
   async function uploadFile(
     endpoint: string,

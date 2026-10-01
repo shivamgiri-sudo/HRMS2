@@ -50,6 +50,20 @@ export async function fetchEsiPendingRows(args: {
           WHERE ed.employee_id = e.id
             AND ed.doc_category = 'pan'
           ORDER BY ed.created_at DESC LIMIT 1)            AS pan_file_url,
+         -- Aadhaar is mandatory for ESI registration (it is in the ZIP pack) but was not
+         -- tracked on this screen. Sources match the pack's own lookup: a typed employee
+         -- document (category 'aadhaar' or an Aadhaar doc_type spelling) or the candidate's
+         -- own onboarding upload.
+         (
+           EXISTS (SELECT 1 FROM employee_documents ed
+                    WHERE ed.employee_id = e.id
+                      AND (ed.doc_category = 'aadhaar'
+                           OR LOWER(ed.doc_type) IN ('aadhaar','aadhaar card','aadhaar_card','aadhar')))
+           OR EXISTS (SELECT 1 FROM candidate_onboarding_document d
+                        JOIN ats_onboarding_bridge ab ON ab.candidate_id = d.candidate_id
+                       WHERE ab.employee_id = e.id AND d.deleted_at IS NULL
+                         AND LOWER(d.doc_type) IN ('aadhaar','aadhaar_card','aadhar'))
+         )                                                 AS aadhaar_ready,
          (e.photo_url IS NOT NULL OR e.avatar_url IS NOT NULL) AS photo_ready,
          COALESCE(e.photo_url, e.avatar_url)              AS photo_url,
          (SELECT COUNT(*) FROM employee_bank_detail ebd

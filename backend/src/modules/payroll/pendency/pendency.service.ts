@@ -52,11 +52,13 @@ export function pickRecipient(row: {
 /** What the ESI screen calls "not ready", turned into plain-language lines. */
 export function esiMissingItems(row: {
   pan_ready: boolean;
+  aadhaar_ready: boolean;
   photo_ready: boolean;
   bank_passbook_ready: boolean;
 }): string[] {
   const items: string[] = [];
   if (!row.pan_ready) items.push('PAN card');
+  if (!row.aadhaar_ready) items.push('Aadhaar card');
   if (!row.photo_ready) items.push('Your photo (clear face, plain background)');
   if (!row.bank_passbook_ready) items.push('Bank passbook (first page showing account number, IFSC and your name)');
   return items;
@@ -126,6 +128,7 @@ export async function pendingEsi(ids: string[]): Promise<Map<string, PendingItem
   for (const r of rows) {
     const items = esiMissingItems({
       pan_ready: !!r.pan_ready,
+      aadhaar_ready: !!r.aadhaar_ready,
       photo_ready: !!r.photo_ready,
       bank_passbook_ready: !!r.bank_passbook_url,
     });
@@ -190,7 +193,7 @@ const COPY: Record<PendencyKind, { subject: string; heading: string; intro: stri
     heading: 'Documents needed for your ESI registration',
     intro: 'We cannot complete your ESI registration until the following are on your profile:',
     cta: 'Upload documents',
-    hint: 'Open Documents on your profile and upload your PAN card and bank passbook. Your photo can be changed from the picture at the top of your profile.',
+    hint: 'Open Documents on your profile and upload your PAN card, Aadhaar and bank passbook. Your photo can be changed from the picture at the top of your profile.',
   },
   bank_account: {
     subject: 'Action needed: add your bank details',
