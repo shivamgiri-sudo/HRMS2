@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { format, differenceInDays, subDays, startOfDay, eachDayOfInterval, parseISO, isSameDay } from "date-fns";
 import { normalizeDate } from "@/lib/utils";
 import { useLeaveTypes, useSubmitLeaveRequest } from "@/hooks/useLeaveRequests";
+import { isBalanceGated } from "./leaveFormRules";
 import { useLeaveEligibility } from "@/hooks/useLeaveEligibility";
 import { useQuery } from "@tanstack/react-query";
 import { useCompanyHolidays } from "@/hooks/useCompanyHolidays";
@@ -183,7 +184,8 @@ export function LeaveRequestForm({ employeeId, onSubmitted }: LeaveRequestFormPr
     onSubmitted?.();
   };
 
-  const selectedBalance = leaveTypeId && !isUnpaid ? leaveBalances[leaveTypeId] : null;
+  const selectedLeaveType = leaveTypes.find((t) => t.id === leaveTypeId);
+  const selectedBalance = leaveTypeId && isBalanceGated(isUnpaid, selectedLeaveType?.is_paid) ? leaveBalances[leaveTypeId] : null;
 
   // CL and ML draw from ONE shared yearly pool at approval — see POOL_PARTNER_CODE in
   // backend/src/modules/leave/leave.service.ts: a CL shortfall is covered by whatever ML is
