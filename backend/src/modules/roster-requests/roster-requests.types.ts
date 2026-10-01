@@ -13,3 +13,23 @@ export interface ImpactResult {
   sameDayHeadcount: { date: string; processName: string | null; planned: number } | null;
   week: Array<{ employeeId: string; days: Array<{ date: string; shiftName: string | null; isWeekOff: boolean }> }>;
 }
+
+export type DecisionAction = "approve" | "reject" | "realign" | "escalate";
+
+export interface DecideInput {
+  action: DecisionAction;
+  reason?: string;
+  newDate?: string;
+  newShiftTemplateId?: string;
+  restOverrideReason?: string;
+  forceWithoutCounterpartAcceptance?: boolean;
+}
+
+export interface DecideResult {
+  ok: true;
+  kind: RequestKind;
+  id: string;
+  action: DecisionAction;
+  /** Swap: the swap service's own `applied` flag. Other kinds: true once the decision is committed. */
+  applied: boolean;
+}
