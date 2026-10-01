@@ -44,3 +44,13 @@ jobs:
           set -euo pipefail
           test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
           npx tsx scripts/kpi-catalogue-sync.ts
+
+      - name: Smoke-test live performance on real data (read-only)
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          npx tsx scripts/kpi-performance-smoke.ts
