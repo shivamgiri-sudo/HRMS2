@@ -34,20 +34,20 @@ export function PulseBody({ data }: { data: Partial<HubPulse> | null | undefined
   ];
 
   return (
-    <div className="space-y-3">
-      <div className="grid gap-3">
+    <div className="min-w-0 space-y-3 [&_*]:min-w-0">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
       <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] text-[#71809a]">{SCOPE_SUB[d.scope ?? "org"]}{d.headcount ? ` · ${fmt(n0(d.headcount))} people` : ""}</p>
         <button type="button" onClick={() => drill({ population: "exits", windowDays: 30, sort: "date", title: `Exits in the last 30 days - ${fmt(exits30)}` })}
           aria-label={`Open ${exits30} exits in the last 30 days`}
-          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${diff > 0 ? "bg-rose-50 text-rose-700" : diff < 0 ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"} ${DRILL_FOCUS}`}>
+          className={`inline-flex max-w-full items-center gap-1 whitespace-normal rounded-full px-2 py-0.5 text-left text-[11px] font-semibold tabular-nums ${diff > 0 ? "bg-rose-50 text-rose-700" : diff < 0 ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"} ${DRILL_FOCUS}`}>
           {diff > 0 ? <ArrowUpRight className="h-3 w-3" aria-hidden /> : diff < 0 ? <ArrowDownRight className="h-3 w-3" aria-hidden /> : <Minus className="h-3 w-3" aria-hidden />}
           {fmt(exits30)} exits in 30d · {diff > 0 ? "+" : ""}{diff} vs prev 30d
         </button>
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(76px,1fr))] gap-2">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(72px,1fr))] gap-2">
         {nums.map(x => (
           <button key={x.label} type="button" onClick={() => drill(x.query)} aria-label={x.aria}
             className={`rounded-xl border border-[#e6edf7] bg-white px-3 py-2.5 text-left shadow-sm hover:border-[#c9d8ef] ${DRILL_FOCUS} ${LIFT}`}>

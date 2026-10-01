@@ -62,7 +62,7 @@ async function optional<T>(name: string, degraded: string[], run: () => Promise<
 
 /* ── call quality: slow cross-database scan, cached and refreshed off the request path ── */
 const QUALITY_TTL = 30 * 60_000;
-let quality: { at: number; rows: Row[] | null; inflight: boolean } = { at: 0, rows: null, inflight: false };
+let quality: { at: number; rows: Row[] | null; inflight: boolean; failed?: boolean } = { at: 0, rows: null, inflight: false };
 let onQualityWarm: (() => void) | null = null;
 export const setQualityListener = (fn: () => void) => { onQualityWarm = fn; };
 
@@ -82,12 +82,12 @@ function qualityRowsWarm(): Row[] | null {
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout after 180s")), 180_000)),
     ]).then((rows) => {
       const first = !quality.rows;
-      quality = { at: Date.now(), rows, inflight: false };
+      quality = { at: Date.now(), rows, inflight: false, failed: false };
       console.log(`[attrition-hub] call quality loaded: ${rows.length} people in ${Date.now() - t0} ms`);
       if (first) onQualityWarm?.();
     }).catch((err) => {
       // retry in 5 minutes rather than hammering a source that is struggling
-      quality = { at: Date.now() - QUALITY_TTL + 5 * 60_000, rows: quality.rows, inflight: false };
+      quality = { at: Date.now() - QUALITY_TTL + 5 * 60_000, rows: quality.rows, inflight: false, failed: true };
       console.error("[attrition-hub] call quality unavailable:", err instanceof Error ? err.message : err);
     });
   }
@@ -199,7 +199,8 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
   const bankP = opts.live ? optional("bank-record", degraded, () => q(`SELECT DISTINCT employee_id FROM employee_bank_detail WHERE active_status = 1`)) : Promise.resolve(null);
   // Call quality is a heavy cross-database scan: it refreshes in the background and is used once warm.
   const qualRows = opts.live ? qualityRowsWarm() : null;
-  if (opts.live && !qualRows) degraded.push("call-quality");
+  // Still loading is not a failure: only call it out when the load actually failed. Quality covers ~5% of people.
+  if (opts.live && !qualRows && quality.failed) degraded.push("call-quality");
 
   const [attRows, streakRows, leaveRows, regRows, warnRows, incRows, teamExitRows, kpiRows, pipRows, noticeRaw, bankRows] =
     await Promise.all([attRowsP, streakRowsP, leaveRowsP, regRowsP, warnRowsP, incRowsP, teamExitRowsP, kpiP, pipP, noticeP, bankP]);
