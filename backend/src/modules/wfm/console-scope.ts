@@ -205,34 +205,52 @@ export interface ConsoleOptions {
   processes: { id: string; process_name: string; branch_id: string | null }[];
 }
 
-/** Branch and Process dropdown options limited to what the caller may see. */
+/**
+ * A branch belongs on this console only when it is active (and not past its close date) and its legal entity is
+ * MAS Callnet. The Dialdesk branch (company_name 'Ispark Dataconnect Pvt Ltd') and branches with no company recorded
+ * are left out. company_name is free text ('Mas Callnet India Pvt. Ltd.' / 'MAS Call Net India Pvt Ltd' / ...), so it
+ * is compared with spaces and dots removed.
+ */
+const MAS_ACTIVE_BRANCH =
+  "b.active_status = 1 AND (b.close_date IS NULL OR b.close_date >= CURDATE()) " +
+  "AND LOWER(REPLACE(REPLACE(COALESCE(b.company_name, ''), ' ', ''), '.', '')) LIKE 'mascallnet%'";
+
+/** Branch and Process dropdown options limited to what the caller may see: active, MAS Callnet only. */
 export async function getConsoleOptions(scope: UserBusinessScope): Promise<ConsoleOptions> {
   const orgWide = isOrgWide(scope);
   const allowed = allowedBranchIds(scope); // null = org-wide
   const processIds = assignedProcessIds(scope);
 
-  const conds: string[] = ["pm.active_status = 1"];
-  const params: unknown[] = [];
-  if (!orgWide) {
+  // Scope filter shared by both queries: the caller's branches, or processes they are assigned to.
+  const scopeSql = (branchCol: string, processCol: string | null) => {
+    if (orgWide) return { sql: "1=1", params: [] as unknown[] };
     const ors: string[] = [];
-    if (allowed && allowed.length) { ors.push(`pm.branch_id IN (${allowed.map(() => "?").join(",")})`); params.push(...allowed); }
-    if (processIds.length) { ors.push(`pm.id IN (${processIds.map(() => "?").join(",")})`); params.push(...processIds); }
-    conds.push(ors.length ? `(${ors.join(" OR ")})` : "1=0");
-  }
+    const params: unknown[] = [];
+    if (allowed && allowed.length) { ors.push(`${branchCol} IN (${allowed.map(() => "?").join(",")})`); params.push(...allowed); }
+    if (processCol && processIds.length) { ors.push(`${processCol} IN (${processIds.map(() => "?").join(",")})`); params.push(...processIds); }
+    return { sql: ors.length ? `(${ors.join(" OR ")})` : "1=0", params };
+  };
+
+  const ps = scopeSql("pm.branch_id", "pm.id");
   const [processes] = await db.execute<RowDataPacket[]>(
-    `SELECT pm.id, pm.process_name, pm.branch_id FROM process_master pm WHERE ${conds.join(" AND ")} ORDER BY pm.process_name`,
-    params,
+    `SELECT pm.id, pm.process_name, pm.branch_id
+       FROM process_master pm
+       JOIN branch_master b ON b.id = pm.branch_id
+      WHERE pm.active_status = 1 AND (pm.close_date IS NULL OR pm.close_date >= CURDATE())
+        AND ${MAS_ACTIVE_BRANCH} AND ${ps.sql}
+      ORDER BY pm.process_name`,
+    ps.params,
   );
 
   // Branches: the caller's own, plus the branch of any process they are assigned to.
   const branchIds = new Set<string>(allowed ?? []);
   if (!orgWide) for (const p of processes as RowDataPacket[]) if (p.branch_id) branchIds.add(String(p.branch_id));
   const [branches] = orgWide
-    ? await db.execute<RowDataPacket[]>("SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name")
+    ? await db.execute<RowDataPacket[]>(`SELECT b.id, b.branch_name FROM branch_master b WHERE ${MAS_ACTIVE_BRANCH} ORDER BY b.branch_name`)
     : branchIds.size === 0
       ? [[] as RowDataPacket[]]
       : await db.execute<RowDataPacket[]>(
-          `SELECT id, branch_name FROM branch_master WHERE active_status = 1 AND id IN (${[...branchIds].map(() => "?").join(",")}) ORDER BY branch_name`,
+          `SELECT b.id, b.branch_name FROM branch_master b WHERE ${MAS_ACTIVE_BRANCH} AND b.id IN (${[...branchIds].map(() => "?").join(",")}) ORDER BY b.branch_name`,
           [...branchIds],
         );
   return { orgWide, branches: branches as ConsoleOptions["branches"], processes: processes as ConsoleOptions["processes"] };
