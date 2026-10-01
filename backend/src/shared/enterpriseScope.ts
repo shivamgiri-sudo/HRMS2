@@ -205,6 +205,22 @@ export async function resolveUserBusinessScope(user: EnterpriseUser): Promise<Us
   const roleKeys = new Set(roles);
   const employee = employeeRows[0] as RowDataPacket | undefined;
 
+  const branchId = employee?.branch_id ? String(employee.branch_id) : null;
+  const assignments: BusinessScopeAssignment[] = (scopeRows as RowDataPacket[]).map((row: any) => ({
+    roleKey: String(row.role_key),
+    scopeType: String(row.scope_type),
+    branchId: row.branch_id ? String(row.branch_id) : null,
+    processId: row.process_id ? String(row.process_id) : null,
+    lobId: row.lob_id ? String(row.lob_id) : null,
+    departmentId: row.department_id ? String(row.department_id) : null,
+    managerEmployeeId: row.manager_employee_id ? String(row.manager_employee_id) : null,
+    clientId: row.client_id ? String(row.client_id) : null,
+  }));
+  // admin is branch-scoped (owner ruling 2026-10-01): without an org-wide role they get their own branch.
+  if (roleKeys.has("admin") && !roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r)) && branchId) {
+    assignments.push({ roleKey: "admin", scopeType: "branch", branchId, processId: null, lobId: null, departmentId: null, managerEmployeeId: null, clientId: null });
+  }
+
   return {
     userId,
     roles,
@@ -219,16 +235,7 @@ export async function resolveUserBusinessScope(user: EnterpriseUser): Promise<Us
     isHr: roleKeys.has("hr"),
     isPayroll: roleKeys.has("payroll"),
     isFinance: roleKeys.has("finance"),
-    assignments: (scopeRows as RowDataPacket[]).map((row: any) => ({
-      roleKey: String(row.role_key),
-      scopeType: String(row.scope_type),
-      branchId: row.branch_id ? String(row.branch_id) : null,
-      processId: row.process_id ? String(row.process_id) : null,
-      lobId: row.lob_id ? String(row.lob_id) : null,
-      departmentId: row.department_id ? String(row.department_id) : null,
-      managerEmployeeId: row.manager_employee_id ? String(row.manager_employee_id) : null,
-      clientId: row.client_id ? String(row.client_id) : null,
-    })),
+    assignments,
   };
 }
 

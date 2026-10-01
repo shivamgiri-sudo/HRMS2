@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * Branch-scoping policy (owner ruling 2026-10-01):
  *   - hr, payroll_hr, reporting managers and branch roles: their own branch / assignments only
- *   - finance, payroll_head, finance_head, accounts_head (plus admin, ceo...): all branches
+ *   - finance, payroll_head, finance_head, accounts_head (plus super_admin, ceo...): all branches
+ *   - admin: own branch only (owner ruling 2026-10-01, later)
  * enterpriseScope.ts used to wave hr, payroll and finance through and to honour scope_type='all'
  * for every role, which contradicted scopeAccess.ts (an 'all' grant is downgraded to the user's
  * own branch for non-exempt roles).
@@ -47,7 +48,7 @@ const ALIAS = { employeeId: "e.id", branchId: "e.branch_id" };
 beforeEach(() => dbExecute.mockReset());
 
 describe("who is org-wide", () => {
-  it.each(["finance", "payroll_head", "finance_head", "accounts_head", "admin", "super_admin", "ceo"])(
+  it.each(["finance", "payroll_head", "finance_head", "accounts_head", "super_admin", "ceo"])(
     "%s sees every branch",
     async (role) => {
       asUser({ roles: [role], branchId: BRANCH_A });
@@ -58,8 +59,8 @@ describe("who is org-wide", () => {
     },
   );
 
-  it.each(["hr", "payroll_hr", "manager", "branch_head"])("%s is NOT org-wide", async (role) => {
-    asUser({ roles: [role], branchId: BRANCH_A, assignments: [{ role_key: role, scope_type: "branch", branch_id: BRANCH_A }] });
+  it.each(["hr", "payroll_hr", "manager", "branch_head", "admin"])("%s is NOT org-wide", async (role) => {
+    asUser({ roles: [role], branchId: BRANCH_A, assignments: role === "admin" ? [] : [{ role_key: role, scope_type: "branch", branch_id: BRANCH_A }] });
     const scope = await resolveUserBusinessScope("u1");
     const cond = buildEmployeeScopeCondition(scope, ALIAS);
     expect(cond.sql).not.toBe("1=1");

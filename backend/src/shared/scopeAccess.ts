@@ -47,8 +47,11 @@ export interface ScopeAliases {
 //
 // Owner ruling 2026-10-01: hr, payroll_hr, managers (reporting managers) and branch roles are
 // BRANCH-scoped; finance, payroll_head, finance_head and accounts_head are ALL-branch.
+// Owner ruling 2026-10-01 (later): `admin` is branch-scoped too - only super_admin / ceo / coo / cfo
+// and the finance roles below are org-wide. An admin sees their own employees.branch_id (fails closed
+// with no branch); `allowAdminBypass` now means "admin takes part, limited to own branch".
 export const ORG_WIDE_EXEMPT_ROLES = [
-  "super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance",
+  "super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance",
 ];
 
 async function holdsOrgWideExemptRole(userId: string): Promise<boolean> {
@@ -142,7 +145,9 @@ export async function hasScopedAccess(
 
   // super_admin bypasses all scope checks unconditionally
   if (await hasAnyRole(userId, "super_admin")) return true;
-  if (allowAdminBypass && await hasAnyRole(userId, "admin")) return true;
+  if (allowAdminBypass && !(await holdsOrgWideExemptRole(userId)) && await hasAnyRole(userId, "admin")) {
+    return Boolean(target.branchId) && (await ownBranchId(userId)) === target.branchId;
+  }
   if (!(await hasAnyRole(userId, ...allowedRoles))) return false;
 
   const scopes = await getUserAssignmentScopes(userId, allowedRoles);
@@ -300,8 +305,9 @@ export async function buildScopeWhereClause(
     return { sql: "1=1", params: [] };
   }
 
-  if (allowAdminBypass && await hasAnyRole(userId, "admin")) {
-    return { sql: "1=1", params: [] };
+  if (allowAdminBypass && !(await holdsOrgWideExemptRole(userId)) && await hasAnyRole(userId, "admin")) {
+    const branchId = aliases.branchId ? await ownBranchId(userId) : null;
+    return branchId && aliases.branchId ? { sql: `${aliases.branchId} = ?`, params: [branchId] } : { sql: "1=0", params: [] };
   }
 
   if (allowCeoAllRead && await hasAnyRole(userId, "ceo")) {
