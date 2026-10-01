@@ -11,12 +11,40 @@ import type { Response, NextFunction } from "express";
 import { db } from "../../db/mysql.js";
 import { sqlLimitOffset } from "../../db/pagination.js";
 import { randomUUID } from "crypto";
+import { getJourneySummary } from "./resignation-journey.service.js";
+import { requestTalkFirst, withdrawResignation } from "./resignation-self.service.js";
 
 export const resignationRouter = Router();
 resignationRouter.use(requireAuth);
 
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
+
+/** Answers a statusCode-carrying service error (4xx) directly; anything else goes to next(). */
+function sendServiceError(res: Response, err: unknown): boolean {
+  const e = err as { statusCode?: unknown; message?: unknown; code?: unknown };
+  const code = Number(e?.statusCode);
+  if (Number.isInteger(code) && code >= 400 && code < 500) {
+    res.status(code).json({ success: false, message: String(e.message ?? "Request failed"), ...(e.code ? { code: e.code } : {}) });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Non-privileged callers may read an exit request's offers/audit only when it is their own.
+ * `denied` is null when access is allowed, else the status code to answer with.
+ */
+async function ownExitOrStatus(userId: string, exitId: string): Promise<{ privileged: boolean; denied: number | null }> {
+  if (await hasRole(userId, "admin", "hr", "manager")) return { privileged: true, denied: null };
+  const emp = await getEmployeeForUser(userId);
+  if (!emp) return { privileged: false, denied: 403 };
+  const [check] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM exit_request WHERE id = ? AND employee_id = ? LIMIT 1`,
+    [exitId, emp.id]
+  );
+  return { privileged: false, denied: (check as RowDataPacket[]).length ? null : 403 };
+}
 
 /**
  * Record an exit-request status change in the exit approval trail.
@@ -60,6 +88,26 @@ async function logExitStatusChange(
 
 // ── Create Resignation (employee self-service) ────────────────────────────────
 
+/**
+ * The voluntary subset of exit.validation.ts's exitReasonCategory enum - the reasons an employee
+ * can give for their own resignation. Mirrored by RESIGNATION_REASONS in
+ * src/components/resignation/resignation-types.ts (same codes, same labels as
+ * NativeExitManagement's REASON_CATEGORIES).
+ */
+export const SELF_RESIGNATION_REASON_CATEGORIES = [
+  "better_opportunity",
+  "career_growth",
+  "compensation",
+  "relocation",
+  "health_personal",
+  "family_reasons",
+  "higher_education",
+  "work_environment",
+  "dissatisfaction_management",
+  "entrepreneurship",
+  "other",
+];
+
 resignationRouter.post(
   "/",
   h(async (req: AuthenticatedRequest, res: Response) => {
@@ -83,7 +131,24 @@ resignationRouter.post(
       if (!emp) {
         return res.status(403).json({ success: false, message: "Forbidden: no employee record linked to your account" });
       }
-      req.body = { ...req.body, employeeId: emp.id };
+      // Acting on yourself is always a voluntary resignation. Without this an employee could post
+      // exitType 'involuntary' (which lands at 'exited' at once and deactivates them), choose an
+      // involuntary sub-type, or set their own notice period to 0 - all of which are HR decisions.
+      const own: Record<string, unknown> = { ...((req.body ?? {}) as Record<string, unknown>) };
+      for (const k of ["exitSubType", "exit_sub_type", "noticePeriodDays", "notice_period_days", "abscondingSince", "absconding_since"]) {
+        delete own[k];
+      }
+      req.body = { ...own, employeeId: emp.id, exitType: "voluntary", exitSubType: "resignation" };
+      // The reason categories that describe an HR action (performance_action,
+      // termination_misconduct, absconding, contract_end) are not something a person resigns for.
+      const category = own.exitReasonCategory ?? own.exit_reason_category;
+      if (category !== undefined && category !== null && category !== "" &&
+          !SELF_RESIGNATION_REASON_CATEGORIES.includes(String(category))) {
+        return res.status(400).json({ success: false, message: "Please choose a reason from the list" });
+      }
+      if (own.exit_reason_category !== undefined && own.exitReasonCategory === undefined) {
+        req.body.exitReasonCategory = own.exit_reason_category;
+      }
     }
     req.body = {
       ...req.body,
@@ -91,6 +156,51 @@ resignationRouter.post(
       exitDate: req.body.exitDate ?? req.body.last_working_day,
     };
     return exitController.createExitRequest(req, res);
+  })
+);
+
+// ── "Before you go" (employee self-service) ───────────────────────────────────
+
+// GET /me/journey-summary — the CALLER's own profile, tenure, journey timeline and achievements.
+// The employee is always resolved from the authenticated user; no id is read from the client.
+resignationRouter.get(
+  "/me/journey-summary",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp) {
+      return res.status(403).json({ success: false, message: "No employee record linked to your account" });
+    }
+    const data = await getJourneySummary(emp.id);
+    if (!data) return res.status(404).json({ success: false, message: "Employee record not found" });
+    return res.json({ success: true, data });
+  })
+);
+
+// POST /me/talk-first — "Talk to my manager / HR first". Creates NO exit request: notifies the
+// reporting manager and branch HR via the work inbox, once per employee per 24 h.
+resignationRouter.post(
+  "/me/talk-first",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp) {
+      return res.status(403).json({ success: false, message: "No employee record linked to your account" });
+    }
+    try {
+      const data = await requestTalkFirst({
+        employeeId: emp.id,
+        actorUserId: req.authUser!.id,
+        actorRole: req.authUser!.role ?? null,
+        note: (req.body ?? {}).note,
+      });
+      return res.status(201).json({
+        success: true,
+        data,
+        message: "Your manager and HR have been told you would like to talk. No resignation has been submitted.",
+      });
+    } catch (err) {
+      if (sendServiceError(res, err)) return;
+      throw err;
+    }
   })
 );
 
@@ -266,8 +376,12 @@ resignationRouter.post(
 // GET /:exitId/retention-offers — list retention offers for an exit request
 resignationRouter.get(
   "/:exitId/retention-offers",
-  requireRole("admin", "hr", "manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    // Was requireRole(admin, hr, manager) only, yet the employee's own My Resignation page reads
+    // this list - every employee got a 403 there and saw "Failed to load retention offers".
+    // The employee may now read the offers on THEIR OWN exit request; nobody else's.
+    const access = await ownExitOrStatus(req.authUser!.id, req.params.exitId);
+    if (access.denied) return res.status(access.denied).json({ success: false, message: "Forbidden" });
     const [rows] = await db.execute(
       `SELECT ro.*,
               COALESCE(
@@ -371,45 +485,36 @@ resignationRouter.post(
   })
 );
 
-// POST /:exitId/withdraw — employee withdraws own resignation; HR/admin may withdraw on behalf
+// POST /:exitId/withdraw — the employee withdraws their own resignation; HR/admin/manager may
+// withdraw on someone else's behalf.
+//
+// Self-withdraw (including a manager/HR/admin withdrawing their OWN resignation): allowed in any
+// pre-exit status (see SELF_WITHDRAWABLE_STATUSES) and only while today is on or before the last
+// working day (confirmed, else proposed). Before 2026-10-01 the page only offered it in
+// 'submitted', and the FSM refused production's 'notice_active' outright.
+// On behalf of someone else: unchanged - the exit.secure.routes.ts FSM decides.
+// Both paths: row-level expected-status update, exit_approval_log + sensitive_action_log entries,
+// open clearance tasks waived, manager + HR told via the work inbox.
 resignationRouter.post(
   "/:exitId/withdraw",
   h(async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.authUser!.id;
-    const isPrivileged = await import("../../shared/accessGuard.js").then((m) =>
-      m.hasRole(userId, "admin", "hr", "manager")
-    );
-    if (!isPrivileged) {
-      // Employee may only withdraw their own exit request
-      const emp = await getEmployeeForUser(userId);
-      if (!emp) return res.status(403).json({ success: false, message: "Forbidden" });
-      const [check] = await db.execute(
-        `SELECT id FROM exit_request WHERE id = ? AND employee_id = ? LIMIT 1`,
-        [req.params.exitId, emp.id]
-      ) as any[];
-      if (!(check as any[]).length) {
-        return res.status(403).json({ success: false, message: "You may only withdraw your own resignation" });
-      }
+    const isPrivileged = await hasRole(userId, "admin", "hr", "manager");
+    const emp = await getEmployeeForUser(userId);
+    if (!isPrivileged && !emp) return res.status(403).json({ success: false, message: "Forbidden" });
+    try {
+      const data = await withdrawResignation({
+        exitId: req.params.exitId,
+        actorUserId: userId,
+        actorRole: req.authUser!.role ?? null,
+        callerEmployeeId: emp?.id ?? null,
+        isPrivileged,
+      });
+      return res.json({ success: true, data, message: "Resignation withdrawn" });
+    } catch (err) {
+      if (sendServiceError(res, err)) return;
+      throw err;
     }
-
-    // Was a raw UPDATE with no precondition at all — a resignation already 'exited', 'closed'
-    // or itself already 'withdrawn' could be "withdrawn" again. Guarded against the same FSM
-    // exit.secure.routes.ts's /:id/status already enforces (delta-audit 2026-08-14, Stage 5g).
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
-      [req.params.exitId]
-    );
-    const current = (rows as RowDataPacket[])[0];
-    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
-    const transition = assertValidExitTransition(current.status, "withdrawn");
-    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
-
-    await db.execute(
-      `UPDATE exit_request SET status = 'withdrawn', updated_at = NOW() WHERE id = ?`,
-      [req.params.exitId]
-    );
-    await logExitStatusChange(req, "withdrawn", "Resignation withdrawn");
-    return res.json({ success: true, message: "Resignation withdrawn" });
   })
 );
 
@@ -512,8 +617,14 @@ resignationRouter.post(
 // GET /:exitId/audit — audit trail for an exit request
 resignationRouter.get(
   "/:exitId/audit",
-  requireRole("admin", "hr", "manager"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    // Same 403 the retention-offers list had for the employee's own page. The owner may read the
+    // trail of their own exit request; internal_notes (HR-only) are never shown to them.
+    const access = await ownExitOrStatus(req.authUser!.id, req.params.exitId);
+    if (access.denied) return res.status(access.denied).json({ success: false, message: "Forbidden" });
+    const remarksExpr = access.privileged
+      ? "COALESCE(eal.discussion_remarks, eal.internal_notes)"
+      : "eal.discussion_remarks";
     // Two corrections here, both proven against production:
     //
     // 1. This read exit_retention_action alone — a table that has 0 rows and, per
@@ -536,7 +647,7 @@ resignationRouter.get(
                 eal.stage,
                 eal.action_by                                     AS performed_by,
                 eal.created_at                                    AS performed_at,
-                COALESCE(eal.discussion_remarks, eal.internal_notes) AS remarks,
+                ${remarksExpr} AS remarks,
                 COALESCE(
                   NULLIF(actor_emp.full_name, ''),
                   NULLIF(TRIM(CONCAT(COALESCE(actor_emp.first_name, ''), ' ', COALESCE(actor_emp.last_name, ''))), ''),
@@ -581,8 +692,16 @@ resignationRouter.get(
     if (!emp) {
       return res.status(403).json({ success: false, message: "No employee record linked to your account" });
     }
+    // effective_lwd / within_lwd let the page show "Withdraw" exactly when the server will allow
+    // it, computed by MySQL rather than the phone's clock. Additive columns; SELECT * unchanged.
     const [rows] = await db.execute(
-      `SELECT * FROM exit_request WHERE employee_id = ? ORDER BY created_at DESC`,
+      `SELECT er.*,
+              DATE_FORMAT(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed), '%Y-%m-%d') AS effective_lwd,
+              (COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) IS NULL
+                OR CURDATE() <= COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed)) AS within_lwd
+         FROM exit_request er
+        WHERE er.employee_id = ?
+        ORDER BY er.created_at DESC`,
       [emp.id]
     );
     return res.json({ success: true, data: rows });

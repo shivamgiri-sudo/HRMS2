@@ -449,9 +449,12 @@ export const exitService = {
     },
     userId: string,
   ): Promise<ExitRequest> {
+    // 'withdrawn' / 'cancelled' are reversal terminals exactly like 'revoked': the resignation was
+    // taken back. Without them here, an employee who withdrew could never resign again - every
+    // later attempt hit this 409 against the withdrawn row (found 2026-10-01).
     const [openRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM exit_request
-        WHERE employee_id = ? AND status NOT IN ('rejected','revoked','exited')
+        WHERE employee_id = ? AND status NOT IN ('rejected','revoked','exited','withdrawn','cancelled')
         LIMIT 1`,
       [input.employeeId],
     );

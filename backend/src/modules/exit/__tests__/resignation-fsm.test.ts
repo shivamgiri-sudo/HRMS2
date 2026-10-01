@@ -66,8 +66,9 @@ function app() {
 
 function mockStatusThenUpdate(currentStatus: string) {
   dbExecute.mockImplementation((sql: string) => {
-    if (String(sql).includes("SELECT status FROM exit_request")) {
-      return Promise.resolve([[{ status: currentStatus }], []]);
+    // The withdraw route now also reads employee_id and the LWD in the same statement.
+    if (/SELECT status\b[\s\S]*FROM exit_request/.test(String(sql))) {
+      return Promise.resolve([[{ status: currentStatus, employee_id: "emp-other", lwd: null, within_lwd: 1 }], []]);
     }
     return Promise.resolve([{ affectedRows: 1 }, []]);
   });
