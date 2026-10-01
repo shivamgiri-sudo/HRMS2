@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Loader2, Bell, Mail, MessageSquare, Phone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type Channel = 'email' | 'sms' | 'whatsapp';
 type NotificationCategory = 'onboarding' | 'payroll' | 'attendance' | 'leave' | 'performance' | 'alerts' | 'announcements';
@@ -120,92 +121,118 @@ export default function NativeNotificationPreferences() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
+      <DashboardLayout>
+        <div className="flex min-h-[50vh] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-[#1B6AB5]" />
+        </div>
+      </DashboardLayout>
     );
   }
 
+  const enabledCount = preferences.filter((p) => p.enabled).length;
+
   return (
-    <div className="container mx-auto p-6 max-w-4xl">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold flex items-center gap-2">
-          <Bell className="h-8 w-8" />
-          Notification Preferences
-        </h1>
-        <p className="text-muted-foreground mt-2">
-          Choose how you want to receive notifications for different categories
-        </p>
-      </div>
+    <DashboardLayout>
+      <div className="mx-auto w-full max-w-5xl space-y-5 pb-12">
+        <section className="relative overflow-hidden rounded-3xl bg-[#073f78] text-white shadow-lg">
+          <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-10 left-1/4 h-48 w-48 rounded-full bg-[#3BAD49]/10 blur-3xl" />
+          <div className="relative flex flex-col gap-4 p-6 sm:p-7 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.2em] text-green-200">
+                <Bell className="h-3.5 w-3.5" />
+                Communication
+              </p>
+              <h1 className="mt-2 text-2xl font-black tracking-tight">Notification Preferences</h1>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-300">
+                Choose how you want to receive notifications for each category.
+              </p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.08] px-4 py-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Enabled</p>
+              <p className="text-sm font-bold text-[#3BAD49]">
+                {enabledCount} / {categories.length} categories
+              </p>
+            </div>
+          </div>
+        </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Communication Channels</CardTitle>
-          <CardDescription>
-            Select your preferred channel (Email, SMS, or WhatsApp) for each notification category
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {categories.map(category => {
-            const pref = preferences.find(p => p.category === category.key);
-            if (!pref) return null;
+        <Card className="rounded-2xl border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-sm font-semibold tracking-tight text-slate-950">
+              Communication Channels
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Select your preferred channel (Email, SMS, or WhatsApp) for each notification category
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {categories.map(category => {
+              const pref = preferences.find(p => p.category === category.key);
+              if (!pref) return null;
 
-            return (
-              <div key={category.key} className="flex items-start justify-between border-b pb-4 last:border-0">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Label className="text-base font-semibold">{category.label}</Label>
+              return (
+                <div
+                  key={category.key}
+                  className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex items-start gap-3">
                     <Switch
                       checked={pref.enabled}
                       onCheckedChange={() => handleEnabledToggle(category.key)}
+                      aria-label={`${category.label} notifications`}
+                      className="mt-0.5"
                     />
+                    <div>
+                      <Label className="text-sm font-semibold text-slate-950">{category.label}</Label>
+                      <p className="mt-0.5 text-xs text-slate-500">{category.description}</p>
+                    </div>
                   </div>
-                  <p className="text-sm text-muted-foreground">{category.description}</p>
-                </div>
 
-                <div className="ml-6 w-48">
-                  <Select
-                    value={pref.preferred_channel}
-                    onValueChange={(value: Channel) => handleChannelChange(category.key, value)}
-                    disabled={!pref.enabled}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="email">
-                        <div className="flex items-center gap-2">
-                          {channelIcons.email}
-                          Email
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="sms">
-                        <div className="flex items-center gap-2">
-                          {channelIcons.sms}
-                          SMS
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="whatsapp">
-                        <div className="flex items-center gap-2">
-                          {channelIcons.whatsapp}
-                          WhatsApp
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <div className="w-full sm:w-48">
+                    <Select
+                      value={pref.preferred_channel}
+                      onValueChange={(value: Channel) => handleChannelChange(category.key, value)}
+                      disabled={!pref.enabled}
+                    >
+                      <SelectTrigger className="h-10 rounded-xl bg-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="email">
+                          <div className="flex items-center gap-2">
+                            {channelIcons.email}
+                            Email
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="sms">
+                          <div className="flex items-center gap-2">
+                            {channelIcons.sms}
+                            SMS
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="whatsapp">
+                          <div className="flex items-center gap-2">
+                            {channelIcons.whatsapp}
+                            WhatsApp
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
 
-          <div className="flex justify-end pt-4">
-            <Button onClick={handleSave} disabled={saving}>
-              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save Preferences
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+            <div className="flex justify-end pt-2">
+              <Button onClick={handleSave} disabled={saving} className="rounded-xl bg-[#1B6AB5] hover:bg-[#155a9c]">
+                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save Preferences
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </DashboardLayout>
   );
 }
