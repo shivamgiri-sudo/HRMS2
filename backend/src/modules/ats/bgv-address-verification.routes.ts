@@ -193,6 +193,21 @@ async function syncAddressBgvCheck(
         WHERE candidate_id = ? AND (locked = 0 OR locked IS NULL)`,
       [addressStatus, addressRemarks, candidateId],
     );
+
+    // Roll the new address result into the overall BGV verdict (score + overall_status), the same
+    // way every other check update does. Without this the Joining Control Room and the
+    // appointment-letter gate kept reading a stale 'in_progress' even with all categories done.
+    // Only when a report already exists (computeAndSaveScore would otherwise insert a bare one);
+    // a locked report is left alone inside computeAndSaveScore. Reaching 'clear' also triggers
+    // the appointment-letter auto-issue there.
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM candidate_bgv_report WHERE candidate_id = ? LIMIT 1`,
+      [candidateId],
+    );
+    if (existing.length) {
+      const { computeAndSaveScore } = await import("./bgv-verification.service.js");
+      await computeAndSaveScore(candidateId);
+    }
   }
 }
 
