@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { leaveTypeChartVar } from "./leaveTheme";
+import { fetchApprovedLeavesForMonth } from "./leaveCalendarData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -23,76 +24,6 @@ import {
 } from "date-fns";
 import { normalizeDate } from "@/lib/utils";
 
-interface LeaveData {
-  id: string;
-  start_date?: string;
-  end_date?: string;
-  from_date?: string;
-  to_date?: string;
-  days_count?: number;
-  total_days?: number;
-  employee_name?: string;
-  avatar_url?: string | null;
-  leave_type_name?: string;
-  employee: {
-    first_name: string;
-    last_name: string;
-    avatar_url: string | null;
-  } | null;
-  leave_type: {
-    name: string;
-  } | null;
-}
-
-function normalizeLeave(row: any): LeaveData {
-  if (row.start_date && row.end_date && row.employee && row.leave_type) return row as LeaveData;
-  const employeeName = String(row.employee_name ?? "Unknown").trim();
-  const [firstName = "Unknown", ...rest] = employeeName.split(/\s+/);
-  return {
-    ...row,
-    start_date: row.from_date ?? row.start_date,
-    end_date: row.to_date ?? row.end_date,
-    days_count: Number(row.total_days ?? row.days_count ?? 0),
-    employee: {
-      first_name: firstName,
-      last_name: rest.join(" "),
-      avatar_url: row.avatar_url ?? null,
-    },
-    leave_type: {
-      name: row.leave_type_name ?? row.leave_type?.name ?? "Leave",
-    },
-  };
-}
-
-async function fetchApprovedLeavesForYear(year: number): Promise<LeaveData[]> {
-  const limit = 100;
-  const first = await hrmsApi.get<{success:boolean;data:any[];total?:number}>(
-    `/api/leave/requests?status=approved&year=${year}&page=1&limit=${limit}`
-  );
-  const rows = first.data ?? [];
-  const total = Number(first.total ?? rows.length);
-  const totalPages = Math.ceil(total / limit);
-
-  const remaining = totalPages > 1
-    ? await Promise.all(
-        Array.from({ length: totalPages - 1 }, (_, index) =>
-          hrmsApi.get<{success:boolean;data:any[]}>(
-            `/api/leave/requests?status=approved&year=${year}&page=${index + 2}&limit=${limit}`
-          )
-        )
-      )
-    : [];
-
-  const byId = new Map<string, LeaveData>();
-  for (const raw of rows.concat(...remaining.map((page) => page.data ?? []))) {
-    const leave = normalizeLeave(raw);
-    const key = String(leave.id ?? "");
-    if (!key || byId.has(key) || !leave.start_date || !leave.end_date) continue;
-    byId.set(key, leave);
-  }
-  return Array.from(byId.values());
-}
-
 // leaveTypeColors, leaveColorFallbacks, getLeaveColor imported from @/lib/leaveColors
 
 export function LeaveCalendarView() {
@@ -103,12 +34,12 @@ export function LeaveCalendarView() {
   const monthEnd = endOfMonth(currentDate);
   const monthName = format(currentDate, "MMMM yyyy");
 
-  const { data: leaves = [], isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["leave-calendar-view", format(monthStart, "yyyy-MM-dd")],
-    queryFn: async () => {
-      return fetchApprovedLeavesForYear(currentDate.getFullYear());
-    },
+    queryFn: () => fetchApprovedLeavesForMonth(format(monthStart, "yyyy-MM-dd"), format(monthEnd, "yyyy-MM-dd")),
+    staleTime: 60_000,
   });
+  const leaves = data?.rows ?? [];
 
   // Generate all dates that have leaves
   const leaveDates = leaves.flatMap((leave) => {
@@ -212,6 +143,19 @@ export function LeaveCalendarView() {
               day_outside: "text-muted-foreground opacity-50",
             }}
           />
+
+          {isError && (
+            <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+              Could not load leave for this month.{" "}
+              <button type="button" className="font-semibold underline" onClick={() => refetch()}>Retry</button>
+            </p>
+          )}
+          {data?.truncated && (
+            <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800" role="status">
+              Showing {data.rows.length.toLocaleString("en-IN")} of {data.total.toLocaleString("en-IN")} approved leaves this month. Days
+              with more leave than shown may be missing people; use History with filters for the full list.
+            </p>
+          )}
 
           {/* Legend */}
           <div className="mt-4 flex items-center gap-4 border-t border-border pt-4 text-xs text-muted-foreground">

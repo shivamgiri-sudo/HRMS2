@@ -52,10 +52,10 @@ export function ApprovalsTab({ requests, loading, busy, onQuickApprove, onReview
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" className="h-4 w-4 rounded border-border accent-[hsl(var(--primary))]" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} />
+            <input type="checkbox" className="h-4 w-4 rounded border-border accent-[hsl(var(--primary))]" checked={onlyMine} onChange={(e) => { setOnlyMine(e.target.checked); pager.setPage(1); }} />
             Only requests I can act on
           </label>
-          <Select value={sort} onValueChange={(v) => setSort(v as SortMode)}>
+          <Select value={sort} onValueChange={(v) => { setSort(v as SortMode); pager.setPage(1); }}>
             <SelectTrigger className="h-9 w-[150px] rounded-lg text-xs" aria-label="Sort requests"><SelectValue /></SelectTrigger>
             <SelectContent>{SORT_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
           </Select>

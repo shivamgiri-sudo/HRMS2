@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { usePagination } from "@/hooks/usePagination";
 import { useMyLeaveRequests, type LeaveRequest } from "@/hooks/useLeaves";
 import { CancelLeaveDialog } from "./CancelLeaveDialog";
 import { LeaveCharts } from "./LeaveCharts";
 import { LeaveRequestRow } from "./LeaveRequestRow";
 import { LeaveTimeline } from "./LeaveTimeline";
+import { ListPager } from "./ListPager";
 import { canCancelLeave, sortLeaves } from "./leaveData";
 import { isOpenStatus, normalizeLeaveStatus } from "./leaveStatus";
 
@@ -35,6 +37,7 @@ export function MyLeaveTab({ onApply }: { onApply: () => void }) {
   const [cancelTarget, setCancelTarget] = useState<LeaveRequest | null>(null);
 
   const rows = useMemo(() => sortLeaves(mine.filter((r) => matches(r, filter)), "newest"), [mine, filter]);
+  const pager = usePagination(rows, { initialPageSize: 10 });
   const today = todayYmd();
 
   return (
@@ -47,7 +50,7 @@ export function MyLeaveTab({ onApply }: { onApply: () => void }) {
             <button
               key={f.value}
               type="button"
-              onClick={() => setFilter(f.value)}
+              onClick={() => { setFilter(f.value); pager.setPage(1); }}
               aria-pressed={active}
               className={cn(
                 "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
@@ -76,7 +79,7 @@ export function MyLeaveTab({ onApply }: { onApply: () => void }) {
         />
       ) : (
         <div className="space-y-3">
-          {rows.map((r) => (
+          {pager.paginatedItems.map((r) => (
             <LeaveRequestRow
               key={r.id}
               request={r}
@@ -92,6 +95,10 @@ export function MyLeaveTab({ onApply }: { onApply: () => void }) {
               }
             />
           ))}
+          <ListPager
+            currentPage={pager.currentPage} totalPages={pager.totalPages} pageSize={pager.pageSize} totalItems={pager.totalItems}
+            onPrev={pager.goToPreviousPage} onNext={pager.goToNextPage} onPageSize={pager.setPageSize}
+          />
         </div>
       )}
 

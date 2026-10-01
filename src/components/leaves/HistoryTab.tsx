@@ -39,7 +39,7 @@ const uniq = (values: Array<string | undefined>) => [...new Set(values.filter((v
 export function HistoryTab({ requests, loading, onDiscard }: Props) {
   const [filters, setFilters] = useState<HistoryFilters>(EMPTY_HISTORY_FILTERS);
   const [sort, setSort] = useState<SortMode>("newest");
-  const set = <K extends keyof HistoryFilters>(key: K, value: HistoryFilters[K]) => setFilters((f) => ({ ...f, [key]: value }));
+  const set = <K extends keyof HistoryFilters>(key: K, value: HistoryFilters[K]) => { setFilters((f) => ({ ...f, [key]: value })); pager.setPage(1); };
 
   const decided = useMemo(() => filterHistory(requests, EMPTY_HISTORY_FILTERS), [requests]);
   const types = useMemo(() => uniq(decided.map((r) => r.type)), [decided]);
@@ -102,7 +102,7 @@ export function HistoryTab({ requests, loading, onDiscard }: Props) {
           <p className="text-xs text-muted-foreground">{filtered.length} of {decided.length} requests</p>
           <div className="flex items-center gap-2">
             {active > 0 && (
-              <Button variant="ghost" size="sm" className="h-9 rounded-xl text-xs" onClick={() => setFilters(EMPTY_HISTORY_FILTERS)}>
+              <Button variant="ghost" size="sm" className="h-9 rounded-xl text-xs" onClick={() => { setFilters(EMPTY_HISTORY_FILTERS); pager.setPage(1); }}>
                 <RotateCcw className="mr-2 h-3.5 w-3.5" aria-hidden="true" />Clear filters
               </Button>
             )}
