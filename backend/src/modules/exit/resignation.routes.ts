@@ -65,13 +65,20 @@ resignationRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.authUser!.id;
     const isPrivileged = await hasRole(userId, "admin", "hr", "manager");
+    // A manager/HR/admin who names NO employee is resigning themselves - the "My Resignation"
+    // page never sends one. Before this they got "Validation failed" (employeeId or employeeCode
+    // is required) because only non-privileged callers had their own employee filled in, so a
+    // manager could not resign through the self-service page at all (found 2026-10-01).
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const namesAnEmployee = !!(b.employeeId ?? b.employee_id ?? b.employeeCode ?? b.employee_code);
+    const actingOnSelf = !isPrivileged || !namesAnEmployee;
     // See the equivalent block in exit.routes.ts POST / — initiated_by is derived from the
     // caller's roles, not accepted from the body, so an exit raised on someone else's behalf
     // is recorded as such instead of masquerading as a self-resignation.
-    (req as unknown as { exitInitiatedBy?: string }).exitInitiatedBy = !isPrivileged
+    (req as unknown as { exitInitiatedBy?: string }).exitInitiatedBy = actingOnSelf
       ? "employee"
       : (await hasRole(userId, "admin", "hr")) ? "hr" : "manager";
-    if (!isPrivileged) {
+    if (actingOnSelf) {
       const emp = await getEmployeeForUser(userId);
       if (!emp) {
         return res.status(403).json({ success: false, message: "Forbidden: no employee record linked to your account" });
