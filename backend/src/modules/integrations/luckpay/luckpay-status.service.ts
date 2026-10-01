@@ -346,8 +346,12 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
       console.error(`[DigiLocker] demographics pre-fill failed for ${candidateId}:`, (error as Error)?.message);
     }
 
+    const { documentTypesFromStatusPayload } = await import("../../ats/digilocker-evidence.js");
     await autoCreateDigilockerVerifiedChecks(candidateId, {
       fileName: documentMeta.fileName,
+      // Provider-reported document list: credits PAN when DigiLocker returned a PAN entry even
+      // though the single downloaded file was the Aadhaar PDF.
+      documentTypes: documentTypesFromStatusPayload(status.sanitized),
       downloadError: documentMeta.downloadError,
     });
   } catch (error) {
