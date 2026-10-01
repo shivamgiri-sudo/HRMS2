@@ -59,4 +59,16 @@ describe('calculateSalary', () => {
     expect(r.professional_tax).toBe(0);
     expect(r.net_in_hand).toBeCloseTo(r.gross - r.pf_employee - r.esic_employee, 1);
   });
+
+  // Same calculator as the Salary Package page (src/lib/salaryCalculator.ts calcFromCtc);
+  // full parity grid lives in src/lib/__tests__/offerSalaryCalculatorParity.test.ts.
+  it('matches the package page for monthly CTC 20,000 at 40/40 with PF and ESI, with no gratuity', async () => {
+    const r = await calculateSalary(240000, 40, 40, false, undefined, true, true);
+    expect(r).toMatchObject({
+      offered_ctc: 20000, gross: 18441.68, basic: 7376.67, hra: 2950.67, conveyance: 1600,
+      special_allowance: 5899.86, bonus: 614.48, pf_employee: 885.2, pf_employer: 885.2,
+      esic_employee: 138.31, esic_employer: 599.35, admin_charges: 73.77, net_in_hand: 17418.17,
+      gratuity: 0,
+    });
+  });
 });

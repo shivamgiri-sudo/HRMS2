@@ -903,6 +903,64 @@ async function syncCandidateProcessFromCostCentre(
   ).catch((e) => console.warn('[syncCandidateProcessFromCostCentre] update failed:', e));
 }
 
+/**
+ * The offer's salary components taken verbatim from an active salary_package_master
+ * row (the package Payroll HR picked on the offer form). Nothing is recalculated.
+ *
+ * Refuses rather than silently drifting when the package is retired/missing, when the
+ * CTC sent does not match the package, or when the candidate was opted out of PF/ESI
+ * but the package deducts it. The offer has no lta/portfolio/medical/pli slots, so any
+ * such amounts are carried in other_allowance to keep the components adding up to the
+ * package's gross. Gratuity is not part of the package and is saved as 0.
+ */
+export async function componentsFromCatalogPackage(
+  packageId: string,
+  monthlyCtc: number,
+  pfEligible: boolean,
+  esiEligible: boolean,
+): Promise<SalaryComponents> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM salary_package_master WHERE id = ? AND active_status = 1 LIMIT 1`,
+    [packageId],
+  );
+  const pkg = (rows as RowDataPacket[])[0];
+  const bad = (message: string) => Object.assign(new Error(message), { statusCode: 400 });
+  if (!pkg) throw bad('The selected salary package is no longer active. Pick another package.');
+  const n = (v: unknown) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : 0;
+  };
+  const packageAmount = n(pkg.package_amount);
+  if (Math.abs(packageAmount - monthlyCtc) > 0.01) {
+    throw bad(`Monthly CTC ₹${monthlyCtc.toLocaleString('en-IN')} does not match the selected package (₹${packageAmount.toLocaleString('en-IN')}). Pick the package again.`);
+  }
+  if (!pfEligible && n(pkg.epf_employee) > 0) {
+    throw bad('The candidate is marked not PF eligible, but the selected package deducts PF. Pick a package without PF or tick PF Eligible.');
+  }
+  if (!esiEligible && n(pkg.esic_employee) > 0) {
+    throw bad('The candidate is marked not ESI eligible, but the selected package deducts ESIC. Pick a package without ESIC or tick ESI Eligible.');
+  }
+  return {
+    offered_ctc:       packageAmount,
+    gross:             n(pkg.gross),
+    basic:             n(pkg.basic),
+    hra:               n(pkg.hra),
+    conveyance:        n(pkg.conveyance),
+    da:                0,
+    special_allowance: n(pkg.special_allowance),
+    other_allowance:   n(pkg.other_allowance) + n(pkg.lta) + n(pkg.portfolio) + n(pkg.medical) + n(pkg.pli),
+    bonus:             n(pkg.bonus),
+    pf_employee:       n(pkg.epf_employee),
+    pf_employer:       n(pkg.epf_employer),
+    esic_employee:     n(pkg.esic_employee),
+    esic_employer:     n(pkg.esic_employer),
+    professional_tax:  n(pkg.professional_tax),
+    gratuity:          0,
+    admin_charges:     n(pkg.admin_charges),
+    net_in_hand:       n(pkg.net_in_hand),
+  };
+}
+
 export async function saveOffer(
   requestId: string,
   offerData: Record<string, unknown>,
@@ -970,16 +1028,24 @@ export async function saveOffer(
     ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
     stateCode = (stateRows as RowDataPacket[])[0]?.state ?? null;
   }
-  const components: SalaryComponents = await calculateSalary(
-    annualCtcInput,
-    band.basicPct,
-    band.hraPct,
-    false,
-    undefined,
-    pfEligible,
-    esiEligible,
-    stateCode,
-  );
+  // A package picked from the catalog is saved exactly as the catalog stores it. This
+  // used to be thrown away and the offer recalculated from the package's CTC, so the
+  // saved breakdown drifted from the package Payroll HR had chosen.
+  const selectedPackageId = !offerData.is_proposed_exception && typeof offerData.selected_package_id === 'string'
+    ? offerData.selected_package_id.trim()
+    : '';
+  const components: SalaryComponents = selectedPackageId
+    ? await componentsFromCatalogPackage(selectedPackageId, annualCtcInput / 12, pfEligible, esiEligible)
+    : await calculateSalary(
+        annualCtcInput,
+        band.basicPct,
+        band.hraPct,
+        false,
+        undefined,
+        pfEligible,
+        esiEligible,
+        stateCode,
+      );
 
   // Persisted so an out-of-band CTC carries its justification with it, not just
   // a transient flag the request forgets the moment it is handled -- an

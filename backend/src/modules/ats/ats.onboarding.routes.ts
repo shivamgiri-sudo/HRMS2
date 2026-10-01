@@ -280,7 +280,9 @@ router.post(
     const esiEligible = esi_eligible !== false && esi_eligible !== 0;
     const stateCode = branch_id ? await resolveBranchState(String(branch_id)) : null;
     const components = await calculateSalary(annualCtc, band.basicPct, band.hraPct, Boolean(isMetro), undefined, pfEligible, esiEligible, stateCode);
-    res.json({ ok: true, components });
+    // The split is returned so the offer form can show it: the same CTC, Basic % and HRA %
+    // entered on the Salary Package page give these exact components (same calculator).
+    res.json({ ok: true, components, basic_pct: band.basicPct, hra_pct: band.hraPct, split_source: band.source });
   }),
 );
 
