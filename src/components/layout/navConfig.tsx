@@ -328,6 +328,7 @@ export const navGroups: NavGroup[] = [
           { label: "KPI Config",           href: "/kpi-config",                 icon: ic(Target),       pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
           { label: "KPI Targets", href: "/kpi-targets", icon: ic(Target), pageCode: "KPI_MASTER", description: "Targets by process & designation" },
           { label: "KPI Master", href: "/kpi-master", icon: ic(Settings2), pageCode: "KPI_MASTER", description: "KPI master configuration" },
+          { label: "KPI Live Performance", href: "/kpi/performance", icon: ic(BarChart3), pageCode: "KPI_PERFORMANCE", description: "Real KPI values, trends and breakdowns per process" },
           { label: "My KPI", href: "/my-kpi", icon: ic(Target), pageCode: "MY_KPI", description: "Personal KPI dashboard" },
           { label: "Team KPI Scorecard", href: "/kpi/my-team", icon: ic(Users2), pageCode: "TEAM_KPI_SCORECARD", description: "Direct reports KPI vs target" },
           { label: "Coaching Center", href: "/team/coaching", icon: ic(GraduationCap), pageCode: "COACHING", description: "Course progress, assessments and handover readiness for your team, from the LMS" },

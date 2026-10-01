@@ -15,6 +15,8 @@ import {
 import { computeDrift, recordDrift } from "./kpi-catalogue.drift.js";
 import { linkAllUnlinkedDefinitions } from "./kpi-catalogue.studio-sync.js";
 import { applyCatalogueTargetToStudio } from "./kpi-catalogue.studio-apply.js";
+import { getProcessPerformance, type GroupBy } from "./kpi-performance.service.js";
+import type { Period } from "./kpi-performance.calc.js";
 
 export const kpiCatalogueRouter = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -56,6 +58,42 @@ kpiCatalogueRouter.get("/process/:processKey", h(async (req, res) => {
     role, department, theme: q(req, "theme"), grain: q(req, "grain"), includeNoData: q(req, "includeNoData") === "1",
   });
   res.json({ success: true, data });
+}));
+
+
+/** Viewers may look at any role; everyone else is held to a role they actually hold. Returns null when forbidden. */
+async function viewRoleFor(req: AuthenticatedRequest): Promise<{ ok: true; role?: string } | { ok: false }> {
+  const roles = await getUserRoleKeys(req.authUser!.id);
+  const isViewer = roles.some((r) => CATALOGUE_VIEW_ROLES.includes(r));
+  let role = q(req, "role");
+  if (!isViewer) {
+    if (role && !roles.includes(role)) return { ok: false };
+    if (!role) role = roles.includes("agent") ? "agent" : roles.includes("employee") ? "employee" : roles[0];
+  }
+  return { ok: true, role };
+}
+
+const PERIODS: Period[] = ["today", "yesterday", "wtd", "mtd", "last30", "custom"];
+const GROUPS: GroupBy[] = ["employee", "team", "branch"];
+
+kpiCatalogueRouter.get("/performance/:processKey", h(async (req, res) => {
+  const view = await viewRoleFor(req);
+  if (!view.ok) return res.status(403).json({ success: false, message: "You can only view the KPIs of your own role" });
+  const period = (q(req, "period") ?? "mtd") as Period;
+  const groupBy = (q(req, "groupBy") ?? "employee") as GroupBy;
+  if (!PERIODS.includes(period)) return res.status(400).json({ success: false, message: `period must be one of ${PERIODS.join(", ")}` });
+  if (!GROUPS.includes(groupBy)) return res.status(400).json({ success: false, message: `groupBy must be one of ${GROUPS.join(", ")}` });
+  try {
+    const data = await getProcessPerformance(String(req.params.processKey), {
+      userId: req.authUser!.id, period, from: q(req, "from"), to: q(req, "to"), groupBy, role: view.role, employeeId: q(req, "employeeId"),
+    });
+    if (!data) return res.status(404).json({ success: false, message: "Process not found in the catalogue" });
+    return res.json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Could not load performance";
+    if (/period|from|Window too large|on or after/.test(msg)) return res.status(400).json({ success: false, message: msg });
+    throw err;
+  }
 }));
 
 kpiCatalogueRouter.get("/conflicts", requireRole("admin", "hr", "process_manager", "operations_manager"), h(async (req, res) => {

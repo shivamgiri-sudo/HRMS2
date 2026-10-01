@@ -10,6 +10,8 @@ export const COMMON_USER_PAGE_CODES = [
   "EXPENSE_CREATE",
   "LMS_MY_LEARNING",
   "MY_KPI",
+  // KPI Live Performance: the API scopes every request to the caller, so the page is open to every employee.
+  "KPI_PERFORMANCE",
   "RESIGNATION_MY_REQUEST",
   "DPDP_WITHDRAWAL",
   // Every employee can raise UAT feedback and retest their own item. Restricting who may

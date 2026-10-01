@@ -24,6 +24,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/finance/gst-export": "FINANCE_GST_EXPORT",
   "/kpi-targets": "KPI_MASTER",
   "/kpi/catalogue": "KPI_CONFIG",
+  "/kpi/performance": "KPI_PERFORMANCE",
   "/kpi/process-metrics": "KPI_CONFIG",
   "/maternity-leave": "MATERNITY_LEAVE",
   "/meetings": "MCNMEET",
