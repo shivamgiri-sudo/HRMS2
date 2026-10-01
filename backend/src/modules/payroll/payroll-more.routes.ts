@@ -569,6 +569,12 @@ payrollMoreRouter.get("/holiday-master", requireRole("admin", "super_admin", "fi
   return res.json({ success: true, data: rows });
 }));
 
+// Branch ids the caller may write holidays for (null = every branch); drives the form's Branch dropdown.
+payrollMoreRouter.get("/holiday-master/my-branches", requireRole(...HOLIDAY_WRITE_ROLES, "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await holidayBranchScope(req);
+  return res.json({ success: true, data: scope.unrestricted ? null : scope.branchIds });
+}));
+
 payrollMoreRouter.post("/holiday-master", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { holiday_name, holiday_date, holiday_type, branch_id, active_status } = req.body as {
     holiday_name: string; holiday_date: string; holiday_type: string;
