@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1214,
-  "columnCount": 17670,
+  "columnCount": 17674,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -2619,7 +2619,8 @@
       "verified_at",
       "status",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "pre_auth_challenge_id"
     ],
     "auth_user": [
       "id",
@@ -9039,7 +9040,10 @@
       "rejection_reason",
       "applied_at",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "cancelled_by",
+      "cancelled_at",
+      "cancellation_reason"
     ],
     "finance_budget_topup_request_split": [
       "id",

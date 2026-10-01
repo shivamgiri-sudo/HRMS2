@@ -954,6 +954,7 @@
     "1962_budget_topup_cancel.sql",
     "migrations/1970_process_dashboard_alerts.sql",
     "migrations/1971_process_sales_outbound_source_config.sql",
+    "migrations/1614_two_factor_challenge_pre_auth_binding.sql",
     "migrations/1985_sbi_merge_duplicate_process.sql"
   ],
   "approvedDeletions": [
@@ -1198,6 +1199,7 @@
     "migrations/1921_capacity_mandate_editors.sql",
     "migrations/1970_process_dashboard_alerts.sql",
     "migrations/1971_process_sales_outbound_source_config.sql",
+    "migrations/1614_two_factor_challenge_pre_auth_binding.sql",
     "migrations/1985_sbi_merge_duplicate_process.sql"
   ],
   "knownUnlisted": [

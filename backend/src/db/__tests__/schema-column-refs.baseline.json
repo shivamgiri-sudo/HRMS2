@@ -2,6 +2,13 @@
   "modules/ai/ai-insights.routes.ts": [
     "salary_payslip.run_id"
   ],
+  "modules/lms/lms.routes.ts": [
+    "portal_sessions.absolute_expires_at",
+    "portal_sessions.session_family_id",
+    "portal_sessions.token",
+    "portal_sessions.user_id",
+    "portal_sessions.user_type"
+  ],
   "modules/operations/operations-analytics.service.ts": [
     "employees.status"
   ],
