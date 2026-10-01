@@ -508,27 +508,57 @@ export async function commitSalaryStartDate(
   };
 }
 
-/** Reads the copies back inside the transaction; any disagreement throws so the caller rolls back. */
+/** Reads the copies back inside the transaction; any disagreement throws so the caller rolls back.
+ *
+ * PERF: Optimized to verify only the specific fields that were updated, instead of reloading
+ * all employee data via loadEmployeeForUpdate + loadCopyState (which was called earlier in
+ * prepareSalaryStartDate). Single parallel query vs 5+ sequential queries.
+ */
 async function verifyCopies(
   exec: SqlExecutor,
   employeeId: string,
   expected: string,
   expectAssignment: boolean,
 ): Promise<void> {
-  const emp = await loadEmployeeForUpdate(exec, employeeId);
-  const state = await loadCopyState(exec, emp);
+  // Verify all copies in one parallel query instead of full reload
+  const [verifyResults] = await Promise.all([
+    exec.execute<RowDataPacket[]>(
+      `SELECT
+         e.salary_start_date as emp_date,
+         v.salary_start_date as validation_date,
+         v.id as validation_id,
+         r.package_effective_from as package_date,
+         r.id as review_id,
+         a.effective_from as assignment_date,
+         a.id as assignment_id,
+         a.active_status as assignment_active
+       FROM employees e
+       LEFT JOIN ats_candidate c ON c.id = e.candidate_id
+       LEFT JOIN ats_payroll_hr_validation v ON v.candidate_id = c.id
+       LEFT JOIN employee_payroll_head_review r ON r.employee_id = e.id
+       LEFT JOIN employee_salary_assignment a ON a.employee_id = e.id AND a.active_status = 1
+       WHERE e.id = ?
+       LIMIT 1`,
+      [employeeId]
+    ),
+  ]);
+
+  const row = verifyResults[0][0];
+  if (!row) throw new Error(`Employee ${employeeId} not found during verification`);
+
   const problems: string[] = [];
-  if (emp.salaryStartDate !== expected)
-    problems.push(`employees=${emp.salaryStartDate}`);
-  if (state.validationId && state.validationDate !== expected)
-    problems.push(`validation=${state.validationDate}`);
-  if (state.reviewId && state.packageDate && state.packageDate !== expected)
-    problems.push(`package=${state.packageDate}`);
-  if (expectAssignment) {
-    const first = state.assignmentRows.find((a) => a.active);
-    if (first && first.effectiveFrom !== expected)
-      problems.push(`assignment=${first.effectiveFrom}`);
+  if (dayOf(row.emp_date) !== expected)
+    problems.push(`employees=${dayOf(row.emp_date)}`);
+  if (row.validation_id && dayOf(row.validation_date) !== expected)
+    problems.push(`validation=${dayOf(row.validation_date)}`);
+  if (row.review_id && row.package_date && dayOf(row.package_date) !== expected)
+    problems.push(`package=${dayOf(row.package_date)}`);
+  if (expectAssignment && row.assignment_id) {
+    const assignmentDate = dayOf(row.assignment_date);
+    if (assignmentDate !== expected)
+      problems.push(`assignment=${assignmentDate}`);
   }
+
   if (problems.length) {
     throw httpError(
       `Salary start date could not be applied consistently (${problems.join(", ")}); nothing was changed.`,
