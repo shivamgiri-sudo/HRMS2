@@ -11,6 +11,17 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
 import { effectiveDecisionCode, formatDecisionType, ENGINE_ERROR_CODE, addDaysIso } from './roster-audit.helpers.js';
 import { actorName, resolveActors } from './roster-audit.actors.js';
+import { canAccessTarget, getScope, OUT_OF_SCOPE_MSG } from './console-scope.js';
+
+/**
+ * By-id reads bypassed branch scoping: the router guard only validates branchId / processId in the query, so a
+ * scoped user could read any audit row or generation run by guessing its id. Check the row's own branch / process.
+ */
+async function rowInScope(req: AuthenticatedRequest, branchId: unknown, processId: unknown): Promise<boolean> {
+  const scope = await getScope(req);
+  if (!scope) return false;
+  return canAccessTarget(scope, { branchId: branchId ? String(branchId) : null, processId: processId ? String(processId) : null });
+}
 
 function parseJson(v: unknown): unknown {
   if (v === null || v === undefined) return null;
@@ -36,6 +47,8 @@ export function mountAuditDetailRoutes(
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT
            rda.*,
+           COALESCE(rda.branch_id, e.branch_id) AS scopeBranchId,
+           COALESCE(rda.process_id, e.process_id) AS scopeProcessId,
            e.employee_code AS employeeCode,
            e.full_name AS employeeName,
            p.process_name AS processName,
@@ -62,6 +75,10 @@ export function mountAuditDetailRoutes(
         return;
       }
       const r = rows[0];
+      if (!(await rowInScope(req, r.scopeBranchId, r.scopeProcessId))) {
+        res.status(403).json({ error: OUT_OF_SCOPE_MSG });
+        return;
+      }
       const rosterDate = String(r.roster_date).slice(0, 10);
       const code = effectiveDecisionCode(r.decision_type, r.rule_applied);
 
@@ -226,6 +243,10 @@ export function mountAuditDetailRoutes(
         return;
       }
       const r = rows[0];
+      if (!(await rowInScope(req, r.branch_id, r.process_id))) {
+        res.status(403).json({ error: OUT_OF_SCOPE_MSG });
+        return;
+      }
 
       const [[decisionRows], [breakdownRows], [dailyRows], [siblingRows]] = await Promise.all([
         db.execute<RowDataPacket[]>(

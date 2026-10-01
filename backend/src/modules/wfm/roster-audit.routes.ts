@@ -27,6 +27,7 @@ import {
 } from './roster-audit.helpers.js';
 import { actorName, resolveActors } from './roster-audit.actors.js';
 import { mountAuditDetailRoutes } from "./roster-audit-detail.routes.js";
+import { consoleScopeGuard, branchParamGuard, employeeParamGuard } from "./console-scope.js";
 
 const router = Router();
 const wrap = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -36,6 +37,11 @@ const RUN_STATUSES = ['running', 'completed', 'failed', 'partial'];
 const NOT_ENGINE_ERROR = `(rda.rule_applied IS NULL OR rda.rule_applied NOT LIKE 'error:%')`;
 
 router.use(requireAuth);
+// Branch / process scoping for the whole console (see console-scope.ts): validates the branchId / processId the
+// caller named, injects their single branch when they named none, and checks :branchId / :employeeId path params.
+router.use(consoleScopeGuard());
+router.param("branchId", branchParamGuard());
+router.param("employeeId", employeeParamGuard());
 
 interface Scope { conds: string[]; params: (string | number)[] }
 

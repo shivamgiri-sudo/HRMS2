@@ -15,7 +15,8 @@ import { cn } from "@/lib/utils";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import { DATE_PRESETS, TAB_FILTER_SUPPORT, activePreset, presetRange, type PresetKey } from "./filterState";
 
-interface Process { id: string; process_name: string }
+interface Process { id: string; process_name: string; branch_id?: string | null }
+interface ConsoleOptions { orgWide: boolean; branches: Branch[]; processes: Process[] }
 interface Branch { id: string; branch_name: string }
 
 const LABEL = "mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-600";
@@ -53,16 +54,31 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
   const { filters, setBranchId, setProcessId, setLobId, setDateRange, resetFilters } = useRosterConsoleFilters();
   const { sentinel, stuck } = useStuck();
 
-  const { data: procData } = useQuery({
-    queryKey: ["roster-console", "processes-list"],
-    queryFn: () => hrmsApi.get<{ data: Process[] }>("/api/processes?limit=200"),
+  // One feed for both dropdowns, limited server-side to the caller's branch / process scope. (It replaces
+  // /api/processes, which returned every process in the company, and /api/wfm/roster-imports/branches, which
+  // 403'd for branch heads and process managers.)
+  const { data: opts } = useQuery({
+    queryKey: ["roster-console", "console-options"],
+    queryFn: () => hrmsApi.get<ConsoleOptions>("/api/roster-intelligence/console-options"),
+    staleTime: 5 * 60_000,
   });
-  const { data: branchData } = useQuery({
-    queryKey: ["roster-console", "branches-list"],
-    queryFn: () => hrmsApi.get<{ branches: Branch[] }>("/api/wfm/roster-imports/branches"),
-  });
-  const processes = procData?.data ?? [];
-  const branches = branchData?.branches ?? [];
+  const orgWide = opts?.orgWide ?? true;
+  const branches = opts?.branches ?? [];
+  // The Process list follows the selected branch, so a process from another branch can never be picked.
+  const processes = (opts?.processes ?? []).filter((p) => !filters.branchId || !p.branch_id || p.branch_id === filters.branchId);
+
+  // A scoped user has no meaningful "All": pick their branch (or, with no branch, their process) by default,
+  // and drop a stale selection that is no longer one of their options.
+  useEffect(() => {
+    if (!opts || opts.orgWide) return;
+    if (filters.branchId && !opts.branches.some((b) => b.id === filters.branchId)) { setBranchId(""); return; }
+    if (!filters.branchId && opts.branches.length > 0) { setBranchId(opts.branches[0].id); return; }
+    if (!filters.branchId && opts.branches.length === 0 && !filters.processId && opts.processes.length > 0) setProcessId(opts.processes[0].id);
+  }, [opts, filters.branchId, filters.processId, setBranchId, setProcessId]);
+  // Changing branch can orphan the chosen process: clear it when it no longer belongs.
+  useEffect(() => {
+    if (opts && filters.processId && filters.branchId && !processes.some((p) => p.id === filters.processId)) setProcessId("");
+  }, [opts, filters.processId, filters.branchId, processes, setProcessId]);
 
   const usesDates = (TAB_FILTER_SUPPORT[activeTabKey] ?? []).includes("dates");
   const preset = activePreset(filters.from, filters.to);
@@ -83,7 +99,7 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
             <Select value={filters.branchId || "__all__"} onValueChange={(v) => setBranchId(v === "__all__" ? "" : v)}>
               <SelectTrigger id="rcc-branch" className={CONTROL}><SelectValue placeholder="All branches" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all__">All branches</SelectItem>
+                {orgWide && <SelectItem value="__all__">All branches</SelectItem>}
                 {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>)}
               </SelectContent>
             </Select>
@@ -93,7 +109,7 @@ export function RosterConsoleFilterBar({ activeTabKey }: { activeTabKey: string 
             <Select value={filters.processId || "__all__"} onValueChange={(v) => setProcessId(v === "__all__" ? "" : v)}>
               <SelectTrigger id="rcc-process" className={CONTROL}><SelectValue placeholder="All processes" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all__">All processes</SelectItem>
+                {(orgWide || !!filters.branchId) && <SelectItem value="__all__">All processes</SelectItem>}
                 {processes.map((p) => <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>)}
               </SelectContent>
             </Select>

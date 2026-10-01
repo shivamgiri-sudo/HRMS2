@@ -9,6 +9,9 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+import { consoleScopeGuard, getScope, canAccessEmployee, OUT_OF_SCOPE_MSG } from '../wfm/console-scope.js';
 import {
   getPendingInterventions,
   markInterventionActioned,
@@ -17,6 +20,22 @@ import {
 import { getInterventionDetail, listInterventionCases } from './intervention-cases.service.js';
 
 const router = Router();
+
+// Branch / process scoping (see wfm/console-scope.ts). Only the Roster Command Center calls these endpoints.
+router.use(requireAuth);
+router.use(consoleScopeGuard());
+// :id is an employee_retention_recommendation row — it must belong to an employee the caller may see.
+router.param('id', async (req, res, next, id) => {
+  try {
+    const scope = await getScope(req);
+    if (!scope) return res.status(401).json({ success: false, message: 'Unauthorized' });
+    const [rows] = await db.execute<RowDataPacket[]>('SELECT employee_id FROM employee_retention_recommendation WHERE id = ? LIMIT 1', [id]);
+    const employeeId = (rows as RowDataPacket[])[0]?.employee_id;
+    if (!employeeId) return next(); // unknown id: the handler answers its own 404
+    if (await canAccessEmployee(scope, String(employeeId))) return next();
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+  } catch (err) { return next(err); }
+});
 
 // Outcome summary — must be registered before /:id to avoid route shadowing
 router.get(

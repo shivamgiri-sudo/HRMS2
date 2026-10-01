@@ -9,6 +9,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { readLobFilter } from '../../shared/lobFilter.js';
 import { todayLocalDateStr } from './shift-due.util.js';
 import { registerLiveDetailRoutes } from './roster-intelligence-detail.routes.js';
+import { getScope, getConsoleOptions } from './console-scope.js';
 import { getShiftAdherence, getShiftAdherenceEmployees, type AdherenceEmployeeFilter } from './shift-adherence.service.js';
 import {
   generateManagerDailyDigests,
@@ -57,7 +58,10 @@ export async function resolveLiveMonitoringScope(req: AuthenticatedRequest): Pro
   const user = req.authUser!;
   try {
     const context = await getUserRoleContext(user.id);
-    if (context.primaryRole === 'wfm' || context.primaryRole === 'super_admin') return undefined;
+    // Only super_admin is unrestricted. `wfm` used to be exempt here (owner ruling 2026-09-14); under the
+    // 2026-10-01 branch-scoping ruling it is a branch-level role like branch_head / branch_wfm, so it now
+    // resolves through the same assignment scope instead of seeing every branch on the Live tab alone.
+    if (context.primaryRole === 'super_admin') return undefined;
     const scope = await resolveDashboardScopeForRequest(user, context.primaryRole);
     if (scope.level === 'ORG_ALL') return undefined;
     return { branchIds: scope.branchIds, processIds: scope.processIds };
@@ -65,6 +69,25 @@ export async function resolveLiveMonitoringScope(req: AuthenticatedRequest): Pro
     return { branchIds: [], processIds: [] };
   }
 }
+
+/**
+ * GET /api/roster-intelligence/console-options
+ * Branch and Process dropdown options for the Roster Command Center filter bar, limited to what the caller
+ * may see. The old feeds were GET /api/wfm/roster-imports/branches (403 for roles outside wfm/admin/super_admin,
+ * so branch_head / process_manager got an empty dropdown) and GET /api/processes (every process in the company).
+ * `orgWide` tells the UI whether an "All branches" choice is meaningful: for a scoped user it is not.
+ */
+const CONSOLE_OPTION_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_wfm', 'branch_head', 'operations_manager', 'process_manager', 'manager', 'ceo', 'coo'];
+router.get('/console-options', requireRole(...CONSOLE_OPTION_ROLES), async (req, res) => {
+  try {
+    const scope = await getScope(req);
+    if (!scope) { res.status(401).json({ error: 'Unauthorized' }); return; }
+    res.json(await getConsoleOptions(scope));
+  } catch (err: any) {
+    console.error('[roster-intelligence] console-options error:', err);
+    res.status(500).json({ error: 'Failed to load filter options' });
+  }
+});
 
 /**
  * GET /api/roster-intelligence/manager-digest

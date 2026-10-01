@@ -6,6 +6,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireQueryScope } from "../../middleware/scopeMiddleware.js";
 import { lobWhere, readLobFilter, type LobFilter } from "../../shared/lobFilter.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
+import { consoleScopeGuard, branchParamGuard, employeeParamGuard } from "./console-scope.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import {
@@ -37,6 +38,11 @@ export function buildEmployeeScope(f: { branchId?: string; processId?: string; l
 }
 
 router.use(requireAuth);
+// Branch / process scoping for the whole console (see console-scope.ts): validates the branchId / processId the
+// caller named, injects their single branch when they named none, and checks :branchId / :employeeId path params.
+router.use(consoleScopeGuard());
+router.param("branchId", branchParamGuard());
+router.param("employeeId", employeeParamGuard());
 
 /**
  * Middleware to verify employee scope access for compliance queries.
