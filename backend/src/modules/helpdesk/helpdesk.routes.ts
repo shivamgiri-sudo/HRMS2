@@ -25,6 +25,7 @@ import {
 } from "./helpdesk-sla.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
 import { registerUpload } from "../document-vault/documentVault.service.js";
 
 // ── Grievance evidence multer setup ───────────────────────────────────────────
@@ -522,20 +523,31 @@ router.post("/tickets/:id/comments", h(async (req: AuthenticatedRequest, res: Re
 
 // ── Grievances ─────────────────────────────────────────────────────────────────
 
+// Branch scoping for grievances (owner ruling 2026-10-01): admin/hr used to see every branch's grievances
+// and act on any of them. HR is limited to employees inside its own branch / assignments; org-wide roles
+// (admin, super_admin, ceo ...) are unaffected - buildEmployeeScopeCondition returns 1=1 for them.
+async function grievanceScope(req: AuthenticatedRequest) {
+  const { buildEmployeeScopeCondition, resolveUserBusinessScope } = await import("../../shared/enterpriseScope.js");
+  return buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!), {
+    employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+    departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+  });
+}
+
 router.get("/grievances/command-center", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getGrievanceCommandCenter(req.query as any);
+  const data = await getGrievanceCommandCenter(req.query as any, await grievanceScope(req));
   return res.json({ success: true, data });
 }));
 
 router.get("/grievances/dashboard", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getGrievanceDashboard(req.query as any);
+  const data = await getGrievanceDashboard(req.query as any, await grievanceScope(req));
   return res.json({ success: true, data });
 }));
 
 router.get("/grievances", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   if (await hasRoleForRequest(req.authUser, "admin", "hr")) {
-    return res.json({ data: await helpdeskService.listGrievances(req.query as any) });
+    return res.json({ data: await helpdeskService.listGrievances(req.query as any, await grievanceScope(req)) });
   }
   const emp = await getEmployeeForUser(userId);
   if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
@@ -556,6 +568,22 @@ router.post("/grievances", h(async (req: AuthenticatedRequest, res: Response) =>
 }));
 
 // Grievance detail — every privileged access is audit logged
+// Every /grievances/:id/* endpoint: an admin/hr caller must be able to see the employee who raised it.
+// (command-center / dashboard / the list are registered above and never reach this.)
+router.use("/grievances/:id", async (req: any, res: Response, next: any) => {
+  try {
+    if (!(await hasRoleForRequest(req.authUser, "admin", "hr"))) return next();
+    const { canViewEmployee } = await import("../../shared/enterpriseScope.js");
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT employee_id FROM grievance WHERE id = ? LIMIT 1", [req.params.id]);
+    const employeeId = (rows as RowDataPacket[])[0]?.employee_id;
+    if (!employeeId) return next(); // unknown id: let the handler return its own 404
+    if (await canViewEmployee(req.authUser!, String(employeeId))) return next();
+    return res.status(403).json({ success: false, message: "Forbidden: this grievance is outside your branch / assigned scope" });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 router.get("/grievances/:id", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const isAdminHr = await hasRoleForRequest(req.authUser, "admin", "hr");

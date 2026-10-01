@@ -11,11 +11,17 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { letterSalaryRowsOrBlank } from "./appointmentLetterData.service.js";
 import { istDate, assertUsableName } from "./letterFormat.js";
+import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
+
+// Branch scoping (owner ruling 2026-10-01): admin/hr used to mean "letters of every employee in every
+// branch". HR is limited to employees inside its own branch / assignments; org-wide roles are unaffected.
+const OUT_OF_SCOPE = { error: "Forbidden: this employee is outside your branch / assigned scope" };
+const canSeeEmployee = (req: AuthenticatedRequest, employeeId: string) => canViewEmployee(req.authUser!, String(employeeId));
 
 // ── Build logo URL from request origin ────────────────────────────────────────
 function logoUrl(req: Request): string {
@@ -41,6 +47,7 @@ router.post("/generate", requireRole("admin", "hr", "super_admin"), h(async (req
   if (!employee_id || !template_code) {
     return res.status(400).json({ error: "employee_id and template_code required" });
   }
+  if (!(await canSeeEmployee(req, employee_id))) return res.status(403).json(OUT_OF_SCOPE);
 
   const letter = await lettersService.generateLetter({
     employee_id, template_code, issued_date, override_vars,
@@ -61,12 +68,17 @@ router.post("/generate", requireRole("admin", "hr", "super_admin"), h(async (req
 }));
 
 // ── List all generated letters (HR view) ─────────────────────────────────────
-router.get("/all", requireRole("admin", "hr", "super_admin"), h(async (req, res) => {
-  res.json({ data: await lettersService.listAll() });
+router.get("/all", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res) => {
+  const scoped = buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!), {
+    employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+    departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+  });
+  res.json({ data: await lettersService.listAll(scoped) });
 }));
 
 // ── List generated letters for a specific employee ────────────────────────────
-router.get("/employee/:employeeId", requireRole("admin", "hr", "super_admin"), h(async (req, res) => {
+router.get("/employee/:employeeId", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res) => {
+  if (!(await canSeeEmployee(req, req.params.employeeId))) return res.status(403).json(OUT_OF_SCOPE);
   res.json({ data: await lettersService.listGenerated(req.params.employeeId) });
 }));
 
@@ -78,7 +90,7 @@ router.get("/:letterId/html", h(async (req: AuthenticatedRequest, res) => {
   const letter = await lettersService.getById(req.params.letterId);
   if (!letter) return res.status(404).json({ error: "Not found" });
 
-  const isAdminHr = await hasRole(userId, "admin", "hr", "super_admin");
+  const isAdminHr = (await hasRole(userId, "admin", "hr", "super_admin")) && (await canSeeEmployee(req, letter.employee_id));
   if (!isAdminHr) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== letter.employee_id) {
@@ -120,7 +132,7 @@ router.get("/:letterId/download", h(async (req: AuthenticatedRequest, res) => {
   const letter = await lettersService.getById(req.params.letterId);
   if (!letter) return res.status(404).json({ error: "Not found" });
 
-  const isAdminHr = await hasRole(userId, "admin", "hr", "super_admin");
+  const isAdminHr = (await hasRole(userId, "admin", "hr", "super_admin")) && (await canSeeEmployee(req, letter.employee_id));
   if (!isAdminHr) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== letter.employee_id) {
@@ -166,6 +178,7 @@ router.post("/preview-html", requireRole("admin", "hr", "super_admin"), h(async 
   if (!employee_id || !template_code) {
     return res.status(400).json({ error: "employee_id and template_code required" });
   }
+  if (!(await canSeeEmployee(req, employee_id))) return res.status(403).json(OUT_OF_SCOPE);
 
   // Fetch employee data
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -231,7 +244,7 @@ router.post("/:letterId/acknowledge", h(async (req: AuthenticatedRequest, res) =
   const letter = await lettersService.getById(req.params.letterId);
   if (!letter) return res.status(404).json({ error: "Not found" });
 
-  const isAdminHr = await hasRole(userId, "admin", "hr", "super_admin");
+  const isAdminHr = (await hasRole(userId, "admin", "hr", "super_admin")) && (await canSeeEmployee(req, letter.employee_id));
   if (!isAdminHr) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== letter.employee_id) {

@@ -22,6 +22,7 @@ import { db } from "../../db/mysql.js";
 import { encryptPanForSync, blindIndexPan, encryptAadhaarForSync, blindIndexAadhaar } from "../../shared/syncPiiEncryption.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { validateStatutoryFields } from "../../shared/statutoryFormat.js";
+import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -31,7 +32,15 @@ router.use(requireAuth);
 const REVIEWER_ROLES = ["admin", "super_admin", "hr"];
 
 // GET /api/statutory-change-requests/pending
-router.get("/pending", requireRole(...REVIEWER_ROLES), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/pending", requireRole(...REVIEWER_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  // Branch scoping: HR sees and decides only the change requests of employees inside its own
+  // branch / assignments. This used to list every branch's pending PAN / Aadhaar / UAN changes to
+  // any hr user. admin, super_admin and the other org-wide roles are unaffected.
+  const scope = await resolveUserBusinessScope(req.authUser!);
+  const scoped = buildEmployeeScopeCondition(scope, {
+    employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+    departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+  });
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pua.id, pua.employee_id, pua.old_values, pua.new_values, pua.status, pua.requested_at,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
@@ -40,7 +49,9 @@ router.get("/pending", requireRole(...REVIEWER_ROLES), h(async (_req: Authentica
        JOIN employees e ON e.id = pua.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE pua.request_type = 'statutory_details' AND pua.status = 'pending'
-      ORDER BY pua.requested_at ASC`
+        AND (${scoped.sql})
+      ORDER BY pua.requested_at ASC`,
+    scoped.params,
   );
   return res.json({ success: true, data: rows });
 }));
@@ -94,6 +105,10 @@ router.patch("/:id", requireRole(...REVIEWER_ROLES), h(async (req: Authenticated
     if (!rec) {
       await connection.rollback();
       return res.status(404).json({ success: false, message: "Request not found" });
+    }
+    if (!(await canViewEmployee(req.authUser!, String(rec.employee_id)))) {
+      await connection.rollback();
+      return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
     }
     if (rec.status !== "pending") {
       await connection.rollback();

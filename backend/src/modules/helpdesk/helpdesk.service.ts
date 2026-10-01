@@ -477,9 +477,11 @@ export const helpdeskService = {
     from?: string;
     to?: string;
     q?: string;
-  }) {
+  }, scope?: { sql: string; params: unknown[] }) {
     const conds: string[] = [];
     const params: unknown[] = [];
+    // Branch scoping: only grievances raised by employees inside the caller's branch / assignments.
+    if (scope && scope.sql !== "1=1") { conds.push(`employee_id IN (SELECT e.id FROM employees e WHERE (${scope.sql}))`); params.push(...scope.params); }
     if (filters.status)      { conds.push("status = ?");      params.push(filters.status); }
     if (filters.assigned_to) { conds.push("assigned_to = ?"); params.push(filters.assigned_to); }
     if (filters.employee_id) { conds.push("employee_id = ?"); params.push(filters.employee_id); }

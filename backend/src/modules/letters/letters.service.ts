@@ -123,7 +123,7 @@ export const lettersService = {
     return { id, letter_type: template.letter_type as string, template_code: data.template_code };
   },
 
-  async listAll() {
+  async listAll(scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] }) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT gl.id, gl.letter_type, gl.issued_date, gl.acknowledged_at, gl.created_at,
               lt.template_name, lt.template_code,
@@ -132,7 +132,9 @@ export const lettersService = {
        FROM generated_letter gl
        JOIN letter_template lt ON lt.id = gl.template_id
        JOIN employees e ON e.id = gl.employee_id
-       ORDER BY gl.created_at DESC`
+       WHERE (${scope.sql})
+       ORDER BY gl.created_at DESC`,
+      scope.params
     );
     return rows as RowDataPacket[];
   },

@@ -284,9 +284,11 @@ export async function getSupportCommandCenter(filters: {
 
 export async function getGrievanceDashboard(filters: {
   from?: string; to?: string; status?: string; severity?: string;
-}) {
+}, scope?: { sql: string; params: unknown[] }) {
   const conds: string[] = [];
   const params: unknown[] = [];
+  const scoped = scope && scope.sql !== "1=1";
+  if (scoped) { conds.push(`employee_id IN (SELECT e.id FROM employees e WHERE (${scope!.sql}))`); params.push(...scope!.params); }
   if (filters.from)     { conds.push("created_at >= ?"); params.push(filters.from + " 00:00:00"); }
   if (filters.to)       { conds.push("created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
   if (filters.status)   { conds.push("status = ?");      params.push(filters.status); }
@@ -329,7 +331,8 @@ export async function getGrievanceDashboard(filters: {
        SUM(DATEDIFF(NOW(), created_at) BETWEEN 8  AND 30)  AS bucket_8_30d,
        SUM(DATEDIFF(NOW(), created_at) BETWEEN 31 AND 90)  AS bucket_31_90d,
        SUM(DATEDIFF(NOW(), created_at) > 90)               AS bucket_over_90d
-     FROM grievance WHERE status NOT IN ('resolved','closed')`
+     FROM grievance WHERE status NOT IN ('resolved','closed')${scoped ? ` AND employee_id IN (SELECT e.id FROM employees e WHERE (${scope!.sql}))` : ""}`,
+    scoped ? scope!.params : []
   );
 
   return {
@@ -348,10 +351,10 @@ export async function getGrievanceCommandCenter(filters: {
   from?: string;
   to?: string;
   q?: string;
-}) {
+}, scope?: { sql: string; params: unknown[] }) {
   const [dashboard, cases] = await Promise.all([
-    getGrievanceDashboard(filters),
-    import("./helpdesk.service.js").then(({ helpdeskService }) => helpdeskService.listGrievances(filters)),
+    getGrievanceDashboard(filters, scope),
+    import("./helpdesk.service.js").then(({ helpdeskService }) => helpdeskService.listGrievances(filters, scope)),
   ]);
 
   return {
