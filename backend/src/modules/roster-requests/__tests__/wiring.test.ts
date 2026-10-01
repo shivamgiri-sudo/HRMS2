@@ -17,7 +17,8 @@ describe("decision paths notify affected employees", () => {
     expect((s.match(/notifyWeekoffDecision\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
   });
   it("dispute resolution notifies the assignment's employee", () => {
-    const s = read("../../roster/roster.governance.routes.ts");
+    // The handler delegates to resolveDispute() in dispute-resolution.service.ts.
+    const s = read("../../roster/dispute-resolution.service.ts");
     expect(s).toContain("import { notifyRosterRequest }");
     expect(s).toMatch(/notifyRosterRequest\(\s*\{\s*employeeIds: \[assignment\.employee_id\]/s);
   });

@@ -11,7 +11,7 @@ import { rtaSyncService } from "./rta-sync.service.js";
 import { weekoffAllocationService } from "./weekoff-allocation.service.js";
 import { weekOffPolicyConfigService } from "./week-off-policy-config.service.js";
 import { db } from "../../db/mysql.js";
-import { notifyRosterRequest } from "../roster-requests/roster-requests.notify.js";
+import { resolveDispute, isDisputeResolutionError, canOwnRosterForUser, DISPUTE_LOCKED_STATUSES } from "./dispute-resolution.service.js";
 import { validateAmendmentInput } from "../wfm/roster-audit.helpers.js";
 import { recordAmendmentInDecisionAudit } from "../wfm/roster-audit.amendment.js";
 import type { RowDataPacket } from "mysql2";
@@ -36,24 +36,15 @@ async function canTouchWeekOffPolicy(req: AuthenticatedRequest, row: WeekOffPoli
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-const ROSTER_OWNERS = ["manager", "wfm"];
 const SCOPED_MONITORS = ["manager", "wfm", "assistant_manager", "tl"];
 
-// Dispute resolution legitimately happens after publish (a dispute is raised against an
-// already-published/acknowledged assignment, which bulkUpsertAssignments's narrower
-// EDITABLE_ASSIGNMENT_STATUSES — draft/submitted/reviewed only — would wrongly forbid).
-// What resolve-dispute must NOT be able to touch is a cycle whose attendance is already
-// locked or whose payroll has moved on: those three statuses are excluded here, matching
-// the concern bulkUpsertAssignments's own status gate exists for, without blocking the
-// normal published/acknowledged dispute flow this route is actually for.
-const DISPUTE_LOCKED_STATUSES = new Set(["attendance_locked", "payroll_input_ready", "closed"]);
+// DISPUTE_LOCKED_STATUSES (attendance_locked / payroll_input_ready / closed) and ROSTER_OWNERS live in
+// dispute-resolution.service.ts, shared with the resolve-dispute decision.
 
 router.use(requireAuth);
 
 async function canOwnRoster(req: AuthenticatedRequest, processId: string, branchId?: string | null): Promise<boolean> {
-  const userId = req.authUser!.id;
-  if (await isOrgWideUser(userId)) return true;
-  return (await hasProcessScope(userId, processId, branchId, ...ROSTER_OWNERS)) && (await userCanAccessProcess(userId, processId, branchId));
+  return canOwnRosterForUser(req.authUser!.id, processId, branchId);
 }
 
 async function canMonitorRoster(req: AuthenticatedRequest, processId: string, branchId?: string | null): Promise<boolean> {
@@ -601,54 +592,24 @@ router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Res
   return res.json({ data: await withLobNames(rows, "lob_id") });
 }));
 
-// POST /assignments/:id/resolve-dispute — manager resolves dispute
+// POST /assignments/:id/resolve-dispute — manager resolves dispute. The resolution itself lives in
+// dispute-resolution.service.ts (shared with the Roster Requests hub); a refusal carries the exact
+// status and JSON body this handler always sent and is replayed unchanged.
 router.post("/assignments/:id/resolve-dispute", h(async (req: AuthenticatedRequest, res: Response) => {
   const { dispute_resolution, new_shift_template_id } = req.body;
-  if (!dispute_resolution?.trim()) {
-    return res.status(400).json({ error: "dispute_resolution is required" });
-  }
-  const userId = req.authUser!.id;
-
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT rda.*, wrc.process_id, wrc.branch_id, wrc.status AS cycle_status
-       FROM roster_daily_assignment rda
-       JOIN weekly_roster_cycle wrc ON wrc.id = rda.cycle_id
-      WHERE rda.id = ? LIMIT 1`,
-    [req.params.id]
-  );
-  const assignment = rows[0];
-  if (!assignment) return res.status(404).json({ error: "Assignment not found" });
-
-  if (!(await canOwnRoster(req, assignment.process_id, assignment.branch_id))) {
-    return res.status(403).json({ success: false, message: "Forbidden: roster ownership required to resolve disputes" });
-  }
-
-  // Every other assignment-mutating path in this file checks cycle status before
-  // writing (see bulkUpsertAssignments's EDITABLE_ASSIGNMENT_STATUSES); this route
-  // never did, so a shift could be silently changed on an assignment whose cycle was
-  // already attendance-locked or payroll-closed.
-  if (DISPUTE_LOCKED_STATUSES.has(assignment.cycle_status)) {
-    return res.status(409).json({
-      error: `Cannot resolve a dispute on a ${assignment.cycle_status} cycle — attendance/payroll has already moved on`,
+  try {
+    await resolveDispute({
+      assignmentId: req.params.id,
+      userId: req.authUser!.id,
+      resolution: dispute_resolution,
+      newShiftTemplateId: new_shift_template_id,
+      req,
+      canOwn: (processId, branchId) => canOwnRoster(req, processId, branchId),
     });
+  } catch (err) {
+    if (isDisputeResolutionError(err)) return res.status(err.statusCode).json(err.body);
+    throw err;
   }
-
-  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-  const setClause = new_shift_template_id
-    ? "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = ?, dispute_resolution = ?, shift_template_id = ?"
-    : "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = ?, dispute_resolution = ?";
-  const setParams = new_shift_template_id
-    ? [userId, now, dispute_resolution.trim(), new_shift_template_id, req.params.id]
-    : [userId, now, dispute_resolution.trim(), req.params.id];
-
-  await db.execute(`UPDATE roster_daily_assignment SET ${setClause} WHERE id = ?`, setParams);
-  await notifyRosterRequest({
-    employeeIds: [assignment.employee_id],
-    kind: "dispute",
-    sourceId: String(req.params.id),
-    title: "Roster dispute resolved",
-    description: `Your dispute for ${String(assignment.roster_date).slice(0, 10)} was resolved: ${dispute_resolution.trim()}`.slice(0, 1000),
-  });
   return res.json({ success: true, message: "Dispute resolved" });
 }));
 
