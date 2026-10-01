@@ -859,6 +859,44 @@ async function triggerRealBgvChecksAsync(
     }
   }
 
+  // Education verification. Previously never run automatically: no 'education_doc' check row was
+  // ever written at submit, so education sat at 'not_run' until HR marked it by hand and kept the
+  // overall BGV at in_progress. Run it from the qualification the candidate entered. Providers with
+  // no live education API (Befisc/Luckpay) return manual_review, which is recorded and never counted
+  // as a pass; only a provider-confirmed 'verified' clears it.
+  try {
+    const [quals] = await db.execute<RowDataPacket[]>(
+      `SELECT qualification, institution_name, roll_number, board_type, passed_out_year
+         FROM candidate_onboarding_qualification
+        WHERE candidate_id = ? AND NULLIF(TRIM(roll_number), '') IS NOT NULL AND passed_out_year IS NOT NULL
+        ORDER BY passed_out_year DESC LIMIT 1`,
+      [candidateId],
+    );
+    const q = (quals as RowDataPacket[])[0];
+    if (q) {
+      const board = String(q.board_type ?? '').toLowerCase();
+      const boardType = (['cbse_10', 'cbse_12', 'university'].includes(board) ? board : 'other') as 'cbse_10' | 'cbse_12' | 'university' | 'other';
+      const result = await adapter.verifyEducation({
+        boardType,
+        rollNumber: String(q.roll_number).trim(),
+        yearOfPassing: Number(q.passed_out_year),
+        candidateName: cand.full_name ?? null,
+        institutionName: q.institution_name ?? null,
+      });
+      // Persist only a definite answer. syncBgvReport below maps any manual_review row to overall
+      // 'refer' (a hard, non-forceable letter blocker), so recording the "provider has no live
+      // education API" fallback would make things worse than leaving education unrun.
+      if (result.status === 'verified' || result.status === 'failed' || result.status === 'mismatch') {
+        await storeBgvCheckResult(candidateId, 'education_doc', result, adapter.providerKey);
+      }
+      console.log(`[BGV] Education check for ${candidateId}: ${result.status}`);
+    } else {
+      console.warn(`[BGV] Education check for ${candidateId} skipped — no qualification with roll number and year`);
+    }
+  } catch (err) {
+    await storeBgvCheckError(candidateId, 'education_doc', adapter.providerKey, err);
+  }
+
   // Sync all checks to overall BGV report
   await syncBgvReport(candidateId, adapter.providerKey);
 }
