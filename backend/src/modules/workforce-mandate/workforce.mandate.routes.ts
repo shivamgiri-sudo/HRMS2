@@ -31,12 +31,18 @@ async function assertCanEditMandate(userId: string, target: { branchId?: string 
   );
 }
 
+import { sumWfmMandate, syncProcessSeatsSafe } from "../process-pnl/seat-mandate-sync.service.js";
 const router = Router();
 
 // 30s in-memory cache of the (user-independent) capacity payload, per branch filter. Mandate
 // edits clear it so the editor sees their change immediately.
 const capacityCache = new Map<string, { at: number; body: unknown }>();
 const CAPACITY_TTL_MS = 30_000;
+
+/** Lets other modules (seat-mandate sync) drop the cached capacity payload after changing a mandate. */
+export function clearCapacityCache(): void {
+  capacityCache.clear();
+}
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let t: NodeJS.Timeout;
@@ -148,6 +154,11 @@ router.post(
       req.authUser!.id
     );
 
+    // Push the process total to the P&L revenue rule / monthly plan / cost centre.
+    void sumWfmMandate(processId).then((total) => {
+      if (total !== null) syncProcessSeatsSafe({ processId, seats: total, source: "wfm_mandate", actorId: req.authUser!.id });
+    }).catch(() => undefined);
+
     return res.json({ data: record });
   })
 );
@@ -208,6 +219,11 @@ router.patch(
     );
 
     capacityCache.clear();
+    if (next.mandated_hc !== undefined && Number(before.mandated_hc) !== next.mandated_hc) {
+      void sumWfmMandate(String(before.process_id)).then((total) => {
+        if (total !== null) syncProcessSeatsSafe({ processId: String(before.process_id), seats: total, source: "wfm_mandate", actorId: req.authUser!.id });
+      }).catch(() => undefined);
+    }
     await logSensitiveAction({
       actor_user_id: req.authUser!.id,
       action_type: "WORKFORCE_MANDATE_UPDATED",

@@ -157,5 +157,9 @@ businessCommandRouter.post("/workforce-mandates", h(async (req, res) => {
       req.authUser!.id,
     ]
   );
+  void import("../process-pnl/seat-mandate-sync.service.js").then(async ({ sumWfmMandate, syncProcessSeatsSafe }) => {
+    const total = await sumWfmMandate(String(process_id));
+    if (total !== null) syncProcessSeatsSafe({ processId: String(process_id), seats: total, source: "wfm_mandate", actorId: req.authUser!.id });
+  }).catch(() => undefined);
   res.status(201).json({ success: true, data: { id } });
 }));

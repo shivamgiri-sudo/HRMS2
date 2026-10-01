@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
+import { sumApprovedRuleSeats, syncProcessSeatsSafe } from "./seat-mandate-sync.service.js";
 import {
   allocatePoolAmount,
   calculateBpoCostWaterfall,
@@ -2336,6 +2337,16 @@ export const bpoPnlService = {
       ]
     );
     await auditConfigSave("revenue_rule_saved", "process_revenue_rule", id, before, payload, userId);
+
+    // Seats changed on an approved rule: bring WFM mandate / monthly plan / cost centre in line.
+    // Only on an actual change, so re-saving a rule's rate cannot overwrite a newer WFM number.
+    if (status === "approved" && payload.mandatedSeats !== null && payload.mandatedSeats !== undefined
+        && toNumber(before?.mandated_seats, NaN) !== toNumber(payload.mandatedSeats) && payload.processId) {
+      const processId = String(payload.processId);
+      void sumApprovedRuleSeats(processId).then((total) => {
+        if (total !== null) syncProcessSeatsSafe({ processId, seats: total, source: "revenue_rule", actorId: userId });
+      }).catch(() => undefined);
+    }
     return { id };
   },
 
