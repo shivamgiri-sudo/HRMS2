@@ -170,13 +170,13 @@ describe("builders", () => {
     const abs = a.alerts.find((x) => x.id === "absence-streak")!;
     expect(abs.metric).toEqual({ label: "Share of headcount", value: "33.3%" });
     expect(abs.detail).toMatch(/first 30 days/);
-    expect(abs.detail).not.toMatch(/check that attendance/);
+    expect(abs.detail).not.toMatch(/check that clock-ins/);
   });
 
   it("alerts: a very large absent share is flagged as possibly an attendance-feed gap", () => {
     const crowd = [...Array(40)].map(() => person({ f: { aonDays: 20, absentStreak: 4, att60Pct: 55 } }));
     const a = buildAlerts({ asOf: ASOF, people: crowd, exits: [], events: [], model, degraded: [] });
-    expect(a.alerts.find((x) => x.id === "absence-streak")!.detail).toMatch(/check that attendance is being recorded/);
+    expect(a.alerts.find((x) => x.id === "absence-streak")!.detail).toMatch(/check that clock-ins are being recorded/);
   });
 
   it("alerts: a hotspot needs 2x the company rate AND 3+ exits", () => {

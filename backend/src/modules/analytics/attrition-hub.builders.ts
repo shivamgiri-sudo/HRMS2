@@ -252,8 +252,8 @@ export function buildAlerts(a: { asOf: string; people: ScoredPerson[]; exits: Ex
     // A very large share is either a real batch drop-out or a gap in the attendance feed; say so rather than guess.
     const bigShare = share >= 25 && absent.length >= 15;
     out.push({ id: "absence-streak", severity: "critical", category: "absence", title: `${absent.length} ${absent.length === 1 ? "employee has" : "employees have"} been absent 3+ days in a row`,
-      detail: `Possible absconding: ${r1(share)}% of the people in view, ${fresh} of them in their first 30 days. Reach out and record the outcome before the notice process has to start.` +
-        (bigShare ? " This is a large share - if it looks too high, check that attendance is being recorded for these people before acting on every name." : ""),
+      detail: `Possible absconding: ${r1(share)}% of the people in view missed their last 3+ rostered days with no leave, ${fresh} of them in their first 30 days. Reach out and record the outcome before the notice process has to start.` +
+        (bigShare ? " This is a large share - if it looks too high, check that clock-ins are being recorded for these people before acting on every name." : ""),
       metric: { label: "Share of headcount", value: `${r1(share)}%` }, employeeCount: absent.length, link: { absentOnly: true } });
   }
 

@@ -7,7 +7,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getModel, getPopulation, probabilityFor } from "../analytics/attrition-hub.service.js";
+import { getModel, getPopulation, loadSnapshotModel, probabilityFor } from "../analytics/attrition-hub.service.js";
 
 export interface BranchAttritionPerson { code: string; name: string; process: string | null; aonDays: number; score: number; tier: string; reasons: string[]; absentStreak: number }
 export interface BranchAttrition {
@@ -28,7 +28,7 @@ export async function fetchBranchAttrition(branchId: string, reportDate: string)
   try {
     const pop = await withTimeout(getPopulation(), 90_000);
     if (!pop) return null;
-    const model = await withTimeout(getModel(), 8_000);
+    const model = (await withTimeout(getModel(), 8_000)) ?? (await loadSnapshotModel());
     const here = pop.people.filter((p) => p.branchId === branchId);
     const live = here.filter((p) => !p.inNotice);
     const tier = (t: string) => live.filter((p) => p.tier === t).length;

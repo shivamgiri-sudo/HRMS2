@@ -18,8 +18,29 @@ beforeEach(() => {
     await new Promise((r) => setTimeout(r, 5));
     m.inflight--;
     if (sql.includes("LEFT JOIN designation_master")) return [[person("noKpi"), person("zeroKpi"), person("scored")], []];
+    if (sql.includes("FROM wfm_roster_assignment")) return [[
+      // newest first per employee: A missed 4 in a row then had turned up before; B missed 2; C turned up yesterday; D never rostered
+      ...[1, 1, 1, 1, 0, 1].map((missed) => ({ employee_id: "noKpi", missed })),
+      ...[1, 1, 0].map((missed) => ({ employee_id: "zeroKpi", missed })),
+      ...[0, 1, 1, 1].map((missed) => ({ employee_id: "scored", missed })),
+    ], []];
     if (sql.includes("FROM kpi_score_summary")) return [[{ employee_id: "zeroKpi", scores: "0" }, { employee_id: "scored", scores: "80,70" }], []];
     return [[], []];
+  });
+});
+
+describe("loadSnapshot (live) - absence streak", () => {
+  it("counts consecutive ROSTERED days with no clock-in, newest first, stopping at the first day they came", async () => {
+    const snap = await loadSnapshot(today(), { live: true });
+    const by = Object.fromEntries(snap.people.map((p) => [p.id, p.features.absentStreak]));
+    expect(by.noKpi).toBe(4);
+    expect(by.zeroKpi).toBe(2);
+    expect(by.scored).toBe(0);
+  });
+  it("asks the roster, not the raw attendance status, so unrostered people (e.g. trainees) are never counted", async () => {
+    await loadSnapshot(today(), { live: true });
+    const sqls = m.execute.mock.calls.map((c) => String(c[0]));
+    expect(sqls.some((q) => q.includes("FROM wfm_roster_assignment") && q.includes("clock_in_time IS NULL"))).toBe(true);
   });
 });
 

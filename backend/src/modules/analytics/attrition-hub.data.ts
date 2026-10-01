@@ -146,12 +146,18 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
       GROUP BY employee_id`,
     [d30, d30, d30, d30, d30, d7, d60, asOf],
   ));
+  // An absence streak means ROSTERED working days with no clock-in and no leave - the same definition the Branch
+  // Health Report uses, so the two never disagree. People with no roster row are not counted (we cannot say
+  // they should have been in: new joiners in training, for one, show as 'absent' in the raw attendance table).
   const streakRowsP = optional("attendance-streak", degraded, () => q(
-    `SELECT employee_id, attendance_status
-       FROM attendance_daily_record
-      WHERE record_date > ? AND record_date <= ?
-        AND attendance_status IN ('present','half_day','absent','leave_approved')
-      ORDER BY employee_id, record_date DESC`,
+    `SELECT ra.employee_id,
+            (a.clock_in_time IS NULL AND COALESCE(a.attendance_status, '') NOT IN ('leave_approved','approved_leave','half_day_leave','leave')) AS missed
+       FROM wfm_roster_assignment ra
+       LEFT JOIN attendance_daily_record a ON a.employee_id = ra.employee_id AND a.record_date = ra.roster_date
+      WHERE ra.roster_date > ? AND ra.roster_date < ?
+        AND ra.is_week_off = 0
+        AND UPPER(COALESCE(ra.assignment_type, '')) NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY')
+      ORDER BY ra.employee_id, ra.roster_date DESC`,
     [d10, asOf],
   ));
   const leaveRowsP = optional("leave", degraded, () => q(
@@ -216,13 +222,13 @@ export async function loadSnapshot(asOf: string, opts: { live: boolean }): Promi
   const bank = new Set((bankRows ?? []).map((r) => String(r.employee_id)));
   const teamExits = by(teamExitRows, "mid");
 
-  // absent streak: statuses arrive newest first per employee; stop at the first non-absent day.
+  // absent streak: rostered days arrive newest first per employee; stop at the first day they did turn up.
   const streak = new Map<string, number>();
   const done = new Set<string>();
   for (const r of streakRows ?? []) {
     const id = String(r.employee_id);
     if (done.has(id)) continue;
-    if (r.attendance_status === "absent") streak.set(id, (streak.get(id) ?? 0) + 1);
+    if (Number(r.missed) === 1) streak.set(id, (streak.get(id) ?? 0) + 1);
     else done.add(id);
   }
 

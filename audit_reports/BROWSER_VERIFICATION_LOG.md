@@ -411,3 +411,9 @@ Verified on production data via the localhost preview API + Playwright (zero con
 - Change: the attrition hub and the old Attrition Deep Dive now use the exit record's reason and fall back to the legacy one (normalised into the same coded categories, voluntary/involuntary inferred from the category); a new "absconding share" alert and a reason-source line on the reasons chart.
 - Calibration banner: the page said "model-calibration failed to load" when it was opened soon after a restart (the live 30-day test needs ~25 s and the page waited 8 s). The last saved calibration is now used until the live one is ready.
 - Not verified yet at the time of writing: the changed Deep Dive SQL against production, and the new reason chart with real data (checked after the deploy).
+
+## 2026-10-02 (follow-ups) — branch health preview on real data, absence definition, call-quality banner, narrow pulse card
+- Branch Health Report built from live data for NOIDA-2 (workflow "Ops branch health preview", read-only, sends nothing): the Attrition & Retention Risk section is present and its numbers match the page (347 people, 37 critical / 87 high, 105 exits in 30 days vs 151, 79.4% early exits, 187 absent streaks).
+- Found: the same email said 187 employees absent 3+ days (my count, from raw attendance status) and 31 absent 3+ days (the report's own roster-based check). The raw status also marks people with no roster row (e.g. trainees) absent. The streak now uses the report's definition: consecutive ROSTERED working days with no clock-in and no leave; unrostered people are not counted.
+- Call quality is only listed as a degraded source when its load failed, not while it is still loading; the pulse card no longer overflows at 320 / 280 px; the branch email falls back to the saved calibration when the live one is not ready.
+- Not verified yet at the time of writing: the new streak counts on production (checked after the deploy).
