@@ -9,6 +9,7 @@ import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
 import { validateMinimumRest, isRestPolicyFeatureActive, logRestOverride } from "../wfm/rest-policy.service.js";
 import { notifyRosterRequest } from "../roster-requests/roster-requests.notify.js";
+import { columnExists } from "../../shared/schema-object-cache.js";
 import type { Request } from "express";
 
 type ScopeFilter = { sql?: string; params?: unknown[] };
@@ -44,8 +45,13 @@ export const rosterSwapService = {
     // LOB filter applies to the requester (e1).
     const lobCond = filters.lob ? lobCondition(filters.lob, "e1") : null;
     if (lobCond) { conds.push(lobCond.sql); params.push(...lobCond.params); }
+    // counterpart_status needs migration 1212; a plain SELECT of a missing column would 500 the list.
+    const counterpartCol = (await columnExists("wfm_roster_swap_request", "counterpart_status"))
+      ? "s.counterpart_status"
+      : "NULL AS counterpart_status";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT s.id,
+              ${counterpartCol},
               e1.lob_id AS requester_lob_id,
               s.requester_emp_id AS requester_employee_id,
               s.swap_with_emp_id AS target_employee_id,

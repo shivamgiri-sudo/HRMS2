@@ -14,14 +14,14 @@ export function computeSla(raisedAt: string, shiftDate: string, now: Date): { st
   return { state: "ok", ageHours };
 }
 
-function build(kind: RequestKind, id: string, p: Omit<RosterRequest, "key" | "kind" | "id" | "slaState" | "ageHours">, now: Date): RosterRequest {
+function build(kind: RequestKind, id: string, p: Omit<RosterRequest, "key" | "kind" | "id" | "slaState" | "ageHours" | "counterpartStatus"> & { counterpartStatus?: string | null }, now: Date): RosterRequest {
   const sla = computeSla(p.raisedAt, p.date, now);
-  return { key: `${kind}:${id}`, kind, id, ...p, slaState: sla.state, ageHours: sla.ageHours };
+  return { key: `${kind}:${id}`, kind, id, ...p, counterpartStatus: p.counterpartStatus ?? null, slaState: sla.state, ageHours: sla.ageHours };
 }
 const d10 = (v: unknown) => String(v ?? "").slice(0, 10);
 
 export const normalizeSwap = (s: any, now = new Date()) =>
-  build("swap", String(s.id), { employeeId: s.requester_employee_id ?? null, employeeName: s.requester_name ?? "Employee", secondaryName: s.target_name ?? null, date: d10(s.swap_date), reason: s.reason ?? null, raisedAt: String(s.created_at ?? ""), raw: s }, now);
+  build("swap", String(s.id), { employeeId: s.requester_employee_id ?? null, employeeName: s.requester_name ?? "Employee", secondaryName: s.target_name ?? null, date: d10(s.swap_date), reason: s.reason ?? null, counterpartStatus: s.counterpart_status ?? null, raisedAt: String(s.created_at ?? ""), raw: s }, now);
 
 export const normalizeWeekoff = (w: any, now = new Date()) =>
   build("weekoff_rejection", String(w.id), { employeeId: w.employee_id ?? null, employeeName: w.employee_name ?? "Employee", secondaryName: null, date: d10(w.roster_date), reason: w.employee_rejection_reason ?? null, raisedAt: String(w.updated_at ?? w.created_at ?? ""), raw: w }, now);

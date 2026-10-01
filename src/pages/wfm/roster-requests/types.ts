@@ -10,6 +10,7 @@ export interface RosterRequest {
   secondaryName: string | null;
   date: string;           // YYYY-MM-DD
   reason: string | null;
+  counterpartStatus: string | null; // swap only (pending/accepted/declined)
   raisedAt: string;
   slaState: SlaState;
   ageHours: number;

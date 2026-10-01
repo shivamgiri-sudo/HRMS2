@@ -14,6 +14,10 @@ vi.mock("@/components/layout/DashboardLayout", () => ({
     React.createElement("div", { "data-layout": "mock" }, children),
 }));
 
+vi.mock("@/pages/wfm/roster-requests/useRosterRequests", () => ({
+  useRosterRequests: () => ({ requests: [], isLoading: false, errors: [], refetch() {} }),
+}));
+
 import RosterInsightsPage from "@/pages/wfm/RosterInsightsPage";
 import RosterRequestsPage from "@/pages/wfm/RosterRequestsPage";
 
@@ -53,6 +57,12 @@ describe("Roster Requests", () => {
     // renderToStaticMarkup escapes & as &amp;
     expect(html).toContain("Disputes &amp; week-offs");
     expect(html).toContain("Swaps &amp; conflicts");
+  });
+
+  it("keeps the classic tabs inside a disclosure and shows the empty inbox", () => {
+    const html = render(RosterRequestsPage, "/wfm/roster-requests");
+    expect(html).toContain("Decide in classic view");
+    expect(html).toContain("No pending roster requests");
   });
 
   it("defaults to disputes and honours ?tab=", () => {

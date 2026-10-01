@@ -9,11 +9,15 @@
  * it here, or two employees want to swap and a manager approves that here. Splitting them across
  * two menu entries is why the second one was never wired up at all.
  */
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RefreshCw } from "lucide-react";
+import { RequestList } from "./roster-requests/RequestList";
+import { ImpactPanel } from "./roster-requests/ImpactPanel";
+import { useRosterRequests } from "./roster-requests/useRosterRequests";
+import { KIND_LABEL, type RequestKind } from "./roster-requests/types";
 
 const ManagerQueue  = lazy(() => import("@/pages/NativeRosterManagerQueue"));
 const WFMExtensions = lazy(() => import("@/pages/NativeWFMExtensions"));
@@ -43,6 +47,16 @@ export default function RosterRequestsPage() {
   }, [searchParams]);
   const activeTab = TABS.find((t) => t.value === active) ?? TABS[0];
 
+  const { requests, isLoading, errors } = useRosterRequests();
+  const [kindFilter, setKindFilter] = useState<RequestKind | "all">("all");
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const kinds = Object.keys(KIND_LABEL) as RequestKind[];
+  const visible = useMemo(
+    () => (kindFilter === "all" ? requests : requests.filter((r) => r.kind === kindFilter)),
+    [requests, kindFilter],
+  );
+  const selected = visible.find((r) => r.key === selectedKey) ?? null;
+
   return (
     <DashboardLayout>
       <div className="space-y-6 p-6">
@@ -54,6 +68,46 @@ export default function RosterRequestsPage() {
           </p>
         </div>
 
+        {errors.length > 0 ? (
+          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            Could not load: {errors.join(", ")}. The list below may be incomplete.
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            aria-label="Filter by request type"
+            className="rounded border bg-white px-2 py-1 text-sm"
+            value={kindFilter}
+            onChange={(e) => setKindFilter(e.target.value as RequestKind | "all")}
+          >
+            <option value="all">All types</option>
+            {kinds.map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
+          </select>
+          {kinds.map((k) => (
+            <span key={k} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+              {KIND_LABEL[k]}: {requests.filter((r) => r.kind === k).length}
+            </span>
+          ))}
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+          {isLoading ? (
+            <div className="flex items-center gap-3 rounded-lg border p-10 text-slate-500">
+              <RefreshCw className="h-5 w-5 animate-spin" />
+              <span className="text-sm font-medium">Loading requests…</span>
+            </div>
+          ) : (
+            <RequestList requests={visible} selectedKey={selectedKey} onSelect={(r) => setSelectedKey(r.key)} />
+          )}
+          <div className="rounded-lg border bg-white">
+            {selected ? <ImpactPanel request={selected} /> : <div className="p-10 text-center text-sm text-slate-500">Select a request to see its roster impact.</div>}
+          </div>
+        </div>
+
+        <details className="rounded-lg border p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-700">Decide in classic view</summary>
+        <div className="mt-4">
         <Tabs
           value={active}
           onValueChange={(next) =>
@@ -85,6 +139,8 @@ export default function RosterRequestsPage() {
             </TabsContent>
           ))}
         </Tabs>
+        </div>
+        </details>
       </div>
     </DashboardLayout>
   );

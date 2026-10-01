@@ -8,6 +8,12 @@ describe("normalize", () => {
     const r = normalizeSwap({ id: "s1", requester_employee_id: "e1", target_employee_id: "e2", swap_date: "2026-10-10", reason: "family", status: "pending", created_at: "2026-10-01T10:00:00Z", requester_name: "A", target_name: "B" } as any, now);
     expect(r).toMatchObject({ kind: "swap", id: "s1", date: "2026-10-10", employeeName: "A", secondaryName: "B", reason: "family" });
   });
+  it("carries swap counterpart_status, null for other kinds", () => {
+    const s = normalizeSwap({ id: "s2", requester_employee_id: "e1", target_employee_id: "e2", swap_date: "2026-10-10", status: "pending", created_at: "2026-10-01T10:00:00Z", counterpart_status: "declined" } as any, now);
+    expect(s.counterpartStatus).toBe("declined");
+    expect(normalizeSwap({ id: "s3", swap_date: "2026-10-10" } as any, now).counterpartStatus).toBeNull();
+    expect(normalizeDispute({ id: "d9", roster_date: "2026-10-04" } as any, now).counterpartStatus).toBeNull();
+  });
   it("maps a week-off rejection", () => {
     const r = normalizeWeekoff({ id: "w1", employee_id: "e1", employee_name: "A", roster_date: "2026-10-04", employee_rejection_reason: "exam", updated_at: "2026-10-01T10:00:00Z" } as any, now);
     expect(r).toMatchObject({ kind: "weekoff_rejection", reason: "exam" });
