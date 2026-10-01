@@ -92,4 +92,27 @@ for (const table of ["masjclrentry", "his_masjclrentry", "NewJclrMaster"]) {
   out(`\n   ${table}: matched ${found} of ${codes.length} by employee code; at least one reason filled for ${anyFilled}; ${Object.entries(perCol).map(([c, n]) => `${c}=${n}`).join(", ")}; leaving date within 7 days of HRMS date_of_exit for ${dateAgrees}`);
   out("   most common reasons among the matched (5+ people):", [...vals.entries()].filter(([, n]) => n >= MIN_SHOW).sort((a, b) => b[1] - a[1]).slice(0, 25).map(([v, n]) => `${v} (${n})`).join("; ") || "none");
 }
+
+// 4. What HRMS already holds of this
+out("\n== what mas_hrms already stores about leaving reasons ==");
+const elm = await sel(hrms, "SHOW COLUMNS FROM employee_legacy_meta");
+out("employee_legacy_meta columns:", elm.map((x) => x.Field).join(", "));
+const cov = await sel(hrms, `SELECT COUNT(*) exits,
+      SUM(l.left_reason IS NOT NULL AND TRIM(l.left_reason) <> '') legacy_meta_reason,
+      SUM(e.attrition_reason IS NOT NULL AND TRIM(e.attrition_reason) <> '') attrition_reason_col,
+      SUM((l.left_reason IS NOT NULL AND TRIM(l.left_reason) <> '') OR (e.attrition_reason IS NOT NULL AND TRIM(e.attrition_reason) <> '')) either_col,
+      SUM(l.employee_id IS NOT NULL) has_legacy_meta_row
+    FROM employees e
+    LEFT JOIN employee_legacy_meta l ON l.employee_id = e.id
+    LEFT JOIN (SELECT er.employee_id, MAX(COALESCE(NULLIF(TRIM(er.exit_reason_category),''), NULLIF(TRIM(er.resignation_reason),''))) reason FROM exit_request er GROUP BY er.employee_id) x ON x.employee_id = e.id
+   WHERE e.date_of_exit IS NOT NULL AND e.date_of_exit >= e.date_of_joining AND e.date_of_exit > DATE_SUB(CURDATE(), INTERVAL 365 DAY) AND x.reason IS NULL`);
+out("among the same exits with no exit_request reason:", JSON.stringify(cov[0]));
+const cov2 = await sel(hrms, `SELECT COUNT(*) all_exits_12m, SUM(x.reason IS NULL) no_exit_request_reason,
+      SUM(EXISTS(SELECT 1 FROM exit_request er WHERE er.employee_id = e.id)) has_exit_request
+    FROM employees e
+    LEFT JOIN (SELECT er.employee_id, MAX(COALESCE(NULLIF(TRIM(er.exit_reason_category),''), NULLIF(TRIM(er.resignation_reason),''))) reason FROM exit_request er GROUP BY er.employee_id) x ON x.employee_id = e.id
+   WHERE e.date_of_exit IS NOT NULL AND e.date_of_exit >= e.date_of_joining AND e.date_of_exit > DATE_SUB(CURDATE(), INTERVAL 365 DAY)`);
+out("all exits last 12 months:", JSON.stringify(cov2[0]));
+const lt = await sel(hrms, "SELECT LEFT(TRIM(left_reason), 45) v, COUNT(*) n FROM employee_legacy_meta WHERE left_reason IS NOT NULL AND TRIM(left_reason) <> '' GROUP BY v HAVING n >= 5 ORDER BY n DESC LIMIT 15");
+out("employee_legacy_meta.left_reason values (5+):", lt.map((r) => `${r.v} (${r.n})`).join("; "));
 await bill.end(); await hrms.end();
