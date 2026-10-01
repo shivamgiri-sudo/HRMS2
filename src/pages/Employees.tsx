@@ -135,7 +135,7 @@ const EmployeeMetricCard = ({
           </p>
 
           <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-            {value}
+            {typeof value === "number" ? value.toLocaleString("en-IN") : value}
           </h3>
         </div>
 
