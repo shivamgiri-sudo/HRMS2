@@ -25,11 +25,14 @@ beforeEach(() => {
   updateExitStatus.mockReset().mockResolvedValue({});
   dbExecute.mockReset();
   policy.values = {};
-  rows = { submitted: [], review: [], accepted: [], due: [] };
+  rows = { submitted: [], review: [], accepted: [], due: [], noLwd: [] };
   dbExecute.mockImplementation(async (sql: string) => {
+    if (/^\s*UPDATE exit_request/.test(sql)) return [{ affectedRows: 1 }, []];
     if (/status = 'submitted'/.test(sql)) return [rows.submitted, []];
     if (/status = 'manager_review'/.test(sql)) return [rows.review, []];
     if (/status = 'accepted'/.test(sql)) return [rows.accepted, []];
+    if (/status = 'notice_serving' AND last_working_day_confirmed IS NULL/.test(sql)) return [rows.noLwd ?? [], []];
+    if (/UPDATE exit_request/.test(sql)) return [{ affectedRows: 1 }, []];
     if (/status = 'notice_serving'/.test(sql)) return [rows.due, []];
     return [[], []];
   });
@@ -94,5 +97,22 @@ describe("runExitAutoProgress", () => {
     expect(res).toMatchObject({ toNotice: 0, toExited: 0 });
     const reviewCall = dbExecute.mock.calls.find((c) => /status = 'manager_review'/.test(String(c[0])));
     expect(reviewCall?.[1]).toEqual([6]);
+  });
+
+  it("confirms a missing last working day on a stuck notice_serving resignation and logs it", async () => {
+    rows.noLwd = [{ id: "n1" }];
+    const res = await runExitAutoProgress();
+    expect(res.lwdConfirmed).toBe(1);
+    const sqls = dbExecute.mock.calls.map((c) => String(c[0]));
+    expect(sqls.some((q) => /UPDATE exit_request[\s\S]*last_working_day_confirmed = COALESCE\(last_working_day_proposed/.test(q))).toBe(true);
+    expect(sqls.some((q) => /INSERT INTO exit_approval_log[\s\S]*auto_confirm_lwd/.test(q))).toBe(true);
+  });
+
+  it("only automates genuine resignations: every selection excludes absconding / termination cases", async () => {
+    rows.submitted = [{ id: "s1" }];
+    await runExitAutoProgress();
+    const selects = dbExecute.mock.calls.map((c) => String(c[0])).filter((q) => /^\s*SELECT/.test(q));
+    expect(selects.length).toBeGreaterThanOrEqual(5);
+    for (const q of selects) expect(q).toMatch(/exit_sub_type, 'resignation'\) = 'resignation'/);
   });
 });

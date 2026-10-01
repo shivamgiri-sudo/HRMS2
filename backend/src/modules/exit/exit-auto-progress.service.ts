@@ -26,12 +26,15 @@ import {
  * Every move goes through exitService.updateExitStatus, so the audit log row, the row lock and
  * the expected-status check are the same as a person's click; the actor is 'system'. Each
  * transition is its own call: one failing exit never stops the rest, and the next run retries it.
- * Terminal/inactive states (revoked, withdrawn, rejected, closed...) are never touched.
+ * Terminal/inactive states (revoked, withdrawn, rejected, closed...) are never touched. Only
+ * genuine resignations are automated: HR-raised absconding / termination cases carry a decision
+ * HR has not made (deactivating someone is not a formality), so they are never moved here.
  */
 export interface AutoProgressResult {
   toManagerReview: number;
   toAccepted: number;
   toNotice: number;
+  lwdConfirmed: number;
   toExited: number;
   failed: number;
   skipped?: string;
@@ -54,12 +57,12 @@ async function move(
 }
 
 export async function runExitAutoProgress(): Promise<AutoProgressResult> {
-  const res: AutoProgressResult = { toManagerReview: 0, toAccepted: 0, toNotice: 0, toExited: 0, failed: 0 };
+  const res: AutoProgressResult = { toManagerReview: 0, toAccepted: 0, toNotice: 0, lwdConfirmed: 0, toExited: 0, failed: 0 };
   if (!(await isExitAutoEnabled())) return { ...res, skipped: "disabled by policy exit/auto/enabled" };
 
   // 1. submitted -> manager_review
   const [submitted] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM exit_request WHERE status = 'submitted' AND exit_type = 'voluntary'`,
+    `SELECT id FROM exit_request WHERE status = 'submitted' AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'`,
   );
   for (const r of submitted) {
     (await move(String(r.id), "submitted", "manager_review", "Auto: routed to the reporting manager for review"))
@@ -70,7 +73,7 @@ export async function runExitAutoProgress(): Promise<AutoProgressResult> {
   const hours = await autoAcceptAfterHours();
   const [review] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM exit_request
-      WHERE status = 'manager_review' AND exit_type = 'voluntary'
+      WHERE status = 'manager_review' AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'
         AND updated_at <= DATE_SUB(NOW(), INTERVAL ? HOUR)`,
     [hours],
   );
@@ -85,7 +88,7 @@ export async function runExitAutoProgress(): Promise<AutoProgressResult> {
       `SELECT id,
               last_working_day_confirmed IS NOT NULL AS has_confirmed,
               DATE_FORMAT(last_working_day_proposed, '%Y-%m-%d') AS proposed
-         FROM exit_request WHERE status = 'accepted' AND exit_type = 'voluntary'`,
+         FROM exit_request WHERE status = 'accepted' AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'`,
     );
     for (const r of accepted) {
       if (!r.has_confirmed && !r.proposed) { res.failed++; continue; }
@@ -95,11 +98,47 @@ export async function runExitAutoProgress(): Promise<AutoProgressResult> {
     }
   }
 
+  // 3b. notice_serving with no confirmed last working day (stuck: nothing would ever exit it).
+  // Confirm the employee's proposed date, else submission + notice period.
+  if (await isAutoStartNotice()) {
+    const [noLwd] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM exit_request
+        WHERE status = 'notice_serving' AND last_working_day_confirmed IS NULL
+          AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'
+          AND (last_working_day_proposed IS NOT NULL OR (submitted_at IS NOT NULL AND notice_period_days > 0))`,
+    );
+    for (const r of noLwd) {
+      try {
+        const [u] = await db.execute<any>(
+          `UPDATE exit_request
+              SET last_working_day_confirmed = COALESCE(last_working_day_proposed, DATE_ADD(DATE(submitted_at), INTERVAL notice_period_days DAY)),
+                  notice_start_date = COALESCE(notice_start_date, DATE(submitted_at), DATE(created_at)),
+                  notice_end_date = COALESCE(notice_end_date, last_working_day_proposed, DATE_ADD(DATE(submitted_at), INTERVAL notice_period_days DAY)),
+                  updated_at = NOW()
+            WHERE id = ? AND status = 'notice_serving' AND last_working_day_confirmed IS NULL`,
+          [r.id],
+        );
+        if (u.affectedRows === 1) {
+          await db.execute(
+            `INSERT INTO exit_approval_log (id, exit_request_id, stage, action, action_by, discussion_remarks)
+             VALUES (UUID(), ?, 'notice_serving', 'auto_confirm_lwd', ?, ?)`,
+            [r.id, AUTO_ACTOR, "Auto: last working day confirmed from the proposed date (none was set)"],
+          );
+          res.lwdConfirmed++;
+        }
+      } catch (err) {
+        logger.error({ err, exitRequestId: r.id }, "[exit-auto] confirming last working day failed");
+        res.failed++;
+      }
+    }
+  }
+
   // 4. notice_serving -> exited once the last working day has passed
   if (await isAutoExitAtLwd()) {
     const [due] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM exit_request
-        WHERE status = 'notice_serving' AND last_working_day_confirmed < CURDATE()`,
+        WHERE status = 'notice_serving' AND last_working_day_confirmed < CURDATE()
+          AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'`,
     );
     for (const r of due) {
       (await move(String(r.id), "notice_serving", "exited", "Auto: last working day passed"))
