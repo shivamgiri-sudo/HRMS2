@@ -14,6 +14,16 @@ vi.mock("@/components/layout/DashboardLayout", () => ({
     React.createElement("div", { "data-layout": "mock" }, children),
 }));
 
+vi.mock("@/pages/wfm/roster-requests/useDecide", () => ({
+  useDecide: () => ({ mutate() {}, isPending: false }),
+  useBulkDecide: () => ({ mutate() {}, isPending: false }),
+  errorInfo: () => ({ message: "", blockers: [] }),
+}));
+
+vi.mock("@/pages/wfm/roster-requests/useKeyboardNav", () => ({
+  useKeyboardNav: () => () => {},
+}));
+
 vi.mock("@/pages/wfm/roster-requests/useRosterRequests", () => ({
   useRosterRequests: () => ({ requests: [], isLoading: false, errors: [], refetch() {} }),
 }));

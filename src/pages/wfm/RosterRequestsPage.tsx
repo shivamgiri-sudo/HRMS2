@@ -16,8 +16,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RefreshCw } from "lucide-react";
 import { RequestList } from "./roster-requests/RequestList";
 import { ImpactPanel } from "./roster-requests/ImpactPanel";
+import { ActionBar } from "./roster-requests/ActionBar";
+import { BulkBar } from "./roster-requests/BulkBar";
+import { BULK_KINDS } from "./roster-requests/actions";
+import { useDecide } from "./roster-requests/useDecide";
+import { useKeyboardNav } from "./roster-requests/useKeyboardNav";
+import { useToast } from "@/hooks/use-toast";
 import { useRosterRequests } from "./roster-requests/useRosterRequests";
-import { KIND_LABEL, type RequestKind } from "./roster-requests/types";
+import { KIND_LABEL, type RequestKind, type RosterRequest } from "./roster-requests/types";
 
 const ManagerQueue  = lazy(() => import("@/pages/NativeRosterManagerQueue"));
 const WFMExtensions = lazy(() => import("@/pages/NativeWFMExtensions"));
@@ -56,6 +62,27 @@ export default function RosterRequestsPage() {
     [requests, kindFilter],
   );
   const selected = visible.find((r) => r.key === selectedKey) ?? null;
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [rejectSignal, setRejectSignal] = useState(0);
+  const decide = useDecide();
+  const { toast } = useToast();
+  const checkedItems = visible.filter((r) => checked.has(r.key) && BULK_KINDS.includes(r.kind));
+  const toggle = (r: RosterRequest) =>
+    setChecked((prev) => { const n = new Set(prev); if (n.has(r.key)) n.delete(r.key); else n.add(r.key); return n; });
+
+  /** After a decision, move to the next request in the list (or the previous if it was last). */
+  const advance = (done: RosterRequest) => {
+    const i = visible.findIndex((r) => r.key === done.key);
+    setSelectedKey((visible[i + 1] ?? visible[i - 1])?.key ?? null);
+  };
+  const quickApprove = (r: RosterRequest) =>
+    decide.mutate({ kind: r.kind, id: r.id, action: "approve" }, {
+      onSuccess: () => { toast({ title: "Approved", description: r.employeeName }); advance(r); },
+      onError: (e) => toast({ title: "Could not approve", description: (e as Error).message, variant: "destructive" }),
+    });
+  const onKeyDown = useKeyboardNav({
+    visible, selected, select: (r) => setSelectedKey(r.key), approve: quickApprove, focusReject: () => setRejectSignal((n) => n + 1),
+  });
 
   return (
     <DashboardLayout>
@@ -98,10 +125,20 @@ export default function RosterRequestsPage() {
               <span className="text-sm font-medium">Loading requests…</span>
             </div>
           ) : (
-            <RequestList requests={visible} selectedKey={selectedKey} onSelect={(r) => setSelectedKey(r.key)} />
+            <div className="space-y-2" tabIndex={0} onKeyDown={onKeyDown} aria-label="Roster requests list (keyboard enabled)">
+              <BulkBar items={checkedItems} onDone={() => setChecked(new Set())} />
+              <RequestList requests={visible} selectedKey={selectedKey} onSelect={(r) => setSelectedKey(r.key)}
+                checkedKeys={checked} onToggle={toggle} canCheck={(r) => BULK_KINDS.includes(r.kind)} />
+              <p className="text-xs text-slate-400">j/k move · a approve · r reject</p>
+            </div>
           )}
           <div className="rounded-lg border bg-white">
-            {selected ? <ImpactPanel request={selected} /> : <div className="p-10 text-center text-sm text-slate-500">Select a request to see its roster impact.</div>}
+            {selected ? (
+              <>
+                <ImpactPanel request={selected} />
+                <ActionBar request={selected} onDecided={advance} rejectFocusSignal={rejectSignal} />
+              </>
+            ) : <div className="p-10 text-center text-sm text-slate-500">Select a request to see its roster impact.</div>}
           </div>
         </div>
 

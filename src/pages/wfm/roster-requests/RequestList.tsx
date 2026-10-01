@@ -8,8 +8,10 @@ const SLA_CLASS: Record<SlaState, string> = {
   ok: "bg-slate-100 text-slate-600",
 };
 
-export function RequestList({ requests, selectedKey, onSelect }: {
+export function RequestList({ requests, selectedKey, onSelect, checkedKeys, onToggle, canCheck }: {
   requests: RosterRequest[]; selectedKey: string | null; onSelect: (r: RosterRequest) => void;
+  /** Bulk selection: the checkbox only renders when onToggle is provided. */
+  checkedKeys?: ReadonlySet<string>; onToggle?: (r: RosterRequest) => void; canCheck?: (r: RosterRequest) => boolean;
 }) {
   if (requests.length === 0) {
     return <div className="rounded-lg border border-dashed p-10 text-center text-sm text-slate-500">No pending roster requests. You are all caught up.</div>;
@@ -21,8 +23,12 @@ export function RequestList({ requests, selectedKey, onSelect }: {
             className={`cursor-pointer p-3 hover:bg-slate-50 ${r.key === selectedKey ? "bg-blue-50" : ""}`}
             onClick={() => onSelect(r)}>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-semibold text-slate-900">
-              {r.employeeName}{r.secondaryName ? ` ⇄ ${r.secondaryName}` : ""}
+            <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              {onToggle && (canCheck ? canCheck(r) : true) ? (
+                <input type="checkbox" aria-label={`Select ${r.employeeName}`} checked={checkedKeys?.has(r.key) ?? false}
+                  onClick={(e) => e.stopPropagation()} onChange={() => onToggle(r)} />
+              ) : null}
+              <span>{r.employeeName}{r.secondaryName ? ` ⇄ ${r.secondaryName}` : ""}</span>
             </span>
             <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${SLA_CLASS[r.slaState]}`}>{SLA_LABEL[r.slaState]}</span>
           </div>

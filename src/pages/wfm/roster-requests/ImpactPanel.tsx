@@ -1,14 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { useImpact } from "./useImpact";
 import type { RosterRequest } from "./types";
-
-interface Impact {
-  blockers: string[]; warnings: string[]; locked: boolean;
-  rest: Array<{ employeeId: string; ok: boolean; message: string | null }>;
-  sameDayHeadcount: { date: string; processName: string | null; planned: number } | null;
-  week: Array<{ employeeId: string; days: Array<{ date: string; shiftName: string | null; isWeekOff: boolean }> }>;
-}
 
 /** Label a week row by name where the request knows it (requester / swap counterpart), else "Employee". */
 function nameFor(request: RosterRequest, employeeId: string): string {
@@ -19,10 +11,7 @@ function nameFor(request: RosterRequest, employeeId: string): string {
 }
 
 export function ImpactPanel({ request }: { request: RosterRequest }) {
-  const q = useQuery({
-    queryKey: ["rr", "impact", request.key],
-    queryFn: async () => (await hrmsApi.get<{ data: Impact }>(`/api/roster-requests/impact?kind=${request.kind}&id=${encodeURIComponent(request.id)}`)).data,
-  });
+  const q = useImpact(request);
   if (q.isLoading) return <div className="p-4 text-sm text-slate-500">Checking roster impact…</div>;
   if (q.isError || !q.data) return <div className="p-4 text-sm text-red-600">Could not load roster impact.</div>;
   const i = q.data;
