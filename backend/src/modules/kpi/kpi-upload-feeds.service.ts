@@ -61,7 +61,7 @@ export function bbChatFacts(row: Record<string, unknown>, date: string): FeedFac
 }
 
 export function clEmailFacts(row: Record<string, unknown>, date: string): FeedFact[] {
-  const c = code(row.mas_id);
+  const c = code(row.emp_id);
   const assigned = num(row.assigned);
   if (!c || assigned <= 0) return [];
   const closed = num(row.closed);
@@ -118,10 +118,10 @@ export const FEEDS: FeedDef[] = [
     fetch: async (date) => {
       const pool = await masmisPool();
       const [rows] = await pool.execute(
-        `SELECT UPPER(TRIM(mas_id)) AS mas_id, SUM(CAST(total_mail_assigned AS UNSIGNED)) AS assigned, SUM(CAST(closed_email AS UNSIGNED)) AS closed
+        `SELECT UPPER(TRIM(emp_id)) AS emp_id, SUM(CAST(total_mail_assigned AS UNSIGNED)) AS assigned, SUM(CAST(closed_email AS UNSIGNED)) AS closed
            FROM db_masmis.cl_email_raw
-          WHERE STR_TO_DATE(report_date, '%e-%b-%y') = ? AND mas_id IS NOT NULL AND TRIM(mas_id) <> ''
-          GROUP BY UPPER(TRIM(mas_id))`, [date]);
+          WHERE STR_TO_DATE(report_date, '%e-%b-%y') = ? AND emp_id IS NOT NULL AND TRIM(emp_id) <> ''
+          GROUP BY UPPER(TRIM(emp_id))`, [date]);
       return rows as Record<string, unknown>[];
     },
     toFacts: clEmailFacts,

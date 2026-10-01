@@ -40,12 +40,12 @@ describe("bbChatFacts", () => {
 
 describe("clEmailFacts", () => {
   it("builds assigned and closure %, capped at 100", () => {
-    const f = clEmailFacts({ mas_id: "mas7", assigned: 10, closed: 8 }, D);
+    const f = clEmailFacts({ emp_id: "mas7", assigned: 10, closed: 8 }, D);
     expect(f.find((x) => x.metricCode === "EMAIL_ASSIGNED")?.value).toBe(10);
     expect(f.find((x) => x.metricCode === "EMAIL_CLOSURE_PCT")?.value).toBe(80);
-    expect(clEmailFacts({ mas_id: "mas7", assigned: 5, closed: 9 }, D).find((x) => x.metricCode === "EMAIL_CLOSURE_PCT")?.value).toBe(100);
+    expect(clEmailFacts({ emp_id: "mas7", assigned: 5, closed: 9 }, D).find((x) => x.metricCode === "EMAIL_CLOSURE_PCT")?.value).toBe(100);
   });
   it("produces nothing for an agent with no assigned mail (no fabricated 0%)", () => {
-    expect(clEmailFacts({ mas_id: "mas7", assigned: 0, closed: 0 }, D)).toEqual([]);
+    expect(clEmailFacts({ emp_id: "mas7", assigned: 0, closed: 0 }, D)).toEqual([]);
   });
 });
