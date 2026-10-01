@@ -30,7 +30,9 @@ vi.mock("../../../shared/accessGuard.js", () => ({
   getEmployeeForUser: vi.fn(async () => ({ id: "emp-actor" })),
   hasRole: vi.fn(async () => true),
 }));
+vi.mock("../../../shared/enterpriseScope.js", () => ({ canViewEmployee: vi.fn(async () => true) }));
 vi.mock("../../../shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "admin", "ceo"],
   hasAnyRole: vi.fn(async () => true),
   hasScopedAccess: vi.fn(async () => true),
   buildScopeWhereClause: vi.fn(async () => ({ sql: "1=1", params: [] })),

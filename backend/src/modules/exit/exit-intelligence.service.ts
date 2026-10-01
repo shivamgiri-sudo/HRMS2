@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { calculateEmployeeEngagementHealth } from "../engagement/engagement-health.service.js";
 import { scalar } from "../../shared/dbHelpers.js";
-import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 
 function riskLabel(score: number): "low" | "medium" | "high" | "critical" {
   if (score >= 75) return "critical";
@@ -140,7 +140,8 @@ export async function createDefaultClearanceTasks(exitRequestId: string, employe
   return { created: tasks.length, skipped: false };
 }
 
-const BYPASS_SCOPE_ROLES = new Set(['super_admin', 'payroll_head']);
+// Owner policy 2026-10-01: only the org-wide roles skip the scope; hr and the branch roles are scoped.
+const BYPASS_SCOPE_ROLES = new Set<string>(ORG_WIDE_EXEMPT_ROLES);
 
 export async function getExitCommandCenter(scope: { actorUserId: string; actorRoles: string[] }) {
   const bypass = scope.actorRoles.some(r => BYPASS_SCOPE_ROLES.has(r));
@@ -149,13 +150,13 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
   let scopeParams: unknown[] = [];
 
   if (!bypass) {
-    const SCOPED_ROLES = ['admin','hr','finance','payroll','ceo','manager','branch_head',
-                         'process_manager','assistant_manager','tl','wfm','it'];
+    const SCOPED_ROLES = ['admin','hr','finance','payroll','payroll_hr','ceo','manager','branch_head',
+                         'process_manager','assistant_manager','tl','wfm','it','branch_hr','hr_admin'];
     const clause = await buildScopeWhereClause(
       scope.actorUserId,
       SCOPED_ROLES,
       { branchId: 'e.branch_id', processId: 'e.process_id' },
-      { blockOrgWideForRoles: ["hr", "hr_admin"] }
+      { blockOrgWideForRoles: ["hr", "hr_admin", "payroll", "payroll_hr", "branch_hr"] }
     );
     scopeWhere = clause.sql;
     scopeParams = clause.params;

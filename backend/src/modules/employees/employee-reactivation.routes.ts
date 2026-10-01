@@ -66,15 +66,14 @@ employeeReactivationRouter.get("/reactivation/pending", async (req: Authenticate
     // the same employee-scope mechanism (shared/enterpriseScope.ts) used across the rest of
     // this delta-audit remediation (delta-audit 2026-08-14, P1). hr/admin/super_admin stay
     // unrestricted (buildEmployeeScopeCondition's own admin/hr/super_admin/ceo bypass).
-    let scopeCondition: { sql: string; params: unknown[] } = { sql: "1=1", params: [] };
-    if (isBranchHead && !isHR) {
-      const scope = await resolveUserBusinessScope(userId!);
-      scopeCondition = buildEmployeeScopeCondition(scope, {
-        employeeId: "e.id",
-        branchId: "e.branch_id",
-        processId: "e.process_id",
-      });
-    }
+    // Owner ruling 2026-10-01: hr is branch-scoped too, so the scope is applied to every caller
+    // (org-wide roles get 1=1 from buildEmployeeScopeCondition).
+    const scope = await resolveUserBusinessScope(userId!);
+    const scopeCondition = buildEmployeeScopeCondition(scope, {
+      employeeId: "e.id",
+      branchId: "e.branch_id",
+      processId: "e.process_id",
+    });
 
     const query = `
       SELECT
@@ -115,15 +114,21 @@ employeeReactivationRouter.get("/reactivation/all", async (req: AuthenticatedReq
     const offset = (page - 1) * limit;
     const statusFilter = req.query.status ? String(req.query.status) : "";
 
-    let whereClause = "";
-    const params: any[] = [];
+    // Branch scoping (owner ruling 2026-10-01): hr only sees reactivations of its own branch.
+    const allScope = buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!.id), {
+      employeeId: "e.id",
+      branchId: "e.branch_id",
+      processId: "e.process_id",
+    });
+    let whereClause = `WHERE (${allScope.sql})`;
+    const params: any[] = [...allScope.params];
 
     if (statusFilter) {
-      whereClause = "WHERE r.status = ?";
+      whereClause += " AND r.status = ?";
       params.push(statusFilter);
     }
 
-    const countQuery = `SELECT COUNT(*) as total FROM employee_reactivation_requests r ${whereClause}`;
+    const countQuery = `SELECT COUNT(*) as total FROM employee_reactivation_requests r JOIN employees e ON r.employee_id = e.id ${whereClause}`;
     const [countRows] = await pool.execute<(RowDataPacket & { total: number })[]>(countQuery, params);
     const total = countRows[0]?.total ?? 0;
 
@@ -244,6 +249,11 @@ employeeReactivationRouter.post(
 
       if (!empRows.length) {
         return res.status(404).json({ success: false, message: "Employee not found" });
+      }
+
+      // Branch scoping (owner ruling 2026-10-01): hr may only start a reactivation inside its branch.
+      if (!(await canViewEmployee(initiatedBy, body.employee_id))) {
+        return res.status(403).json({ success: false, message: "This employee is outside your branch / assigned scope" });
       }
 
       const emp = empRows[0];
@@ -412,6 +422,11 @@ employeeReactivationRouter.post(
         }
 
         const request = rows[0];
+
+        if (!(await canViewEmployee(actionedBy, String(request.employee_id)))) {
+          await conn.rollback();
+          return res.status(403).json({ success: false, message: "This reactivation request is not in your branch / assigned scope" });
+        }
 
         if (request.status !== "branch_head_approved") {
           await conn.rollback();

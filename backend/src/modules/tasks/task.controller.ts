@@ -86,7 +86,7 @@ export async function getDepartmentTasks(req: Request, res: Response) {
     const { dept } = req.params;
     const { status } = req.query;
 
-    const tasks = await taskService.getDepartmentTasks(dept, status as string);
+    const tasks = await taskService.getDepartmentTasks(dept, status as string, (req as any).rowScope);
 
     return res.json({
       success: true,
@@ -271,7 +271,7 @@ export async function getTaskComments(req: Request, res: Response) {
  */
 export async function getOverdueTasks(req: Request, res: Response) {
   try {
-    const tasks = await taskService.getOverdueTasks();
+    const tasks = await taskService.getOverdueTasks((req as any).rowScope);
 
     return res.json({
       success: true,

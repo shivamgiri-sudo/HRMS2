@@ -40,7 +40,12 @@ const LWD = "COALESCE(er.last_working_day_confirmed, er.last_working_day_propose
 const NOT_AN_EXIT = "'revoked', 'withdrawn', 'rejected'";
 const FF_PENDING = "'clearance_pending', 'fnf_pending'";
 
-export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
+export async function getExitAnalyticsSummary(
+  scope: { sql: string; params: unknown[] } = { sql: "1=1", params: [] },
+): Promise<ExitAnalyticsSummary> {
+  // Branch scoping (owner ruling 2026-10-01): every aggregate below is restricted to the caller's
+  // scope (er.employee_id IN (...)); org-wide callers pass 1=1.
+  const SC = `AND (${scope.sql})`;
   const now = new Date();
   const currentMonth = now.toISOString().slice(0, 7); // YYYY-MM
   const currentYear = now.getFullYear();
@@ -51,8 +56,8 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
      FROM exit_request er
      WHERE DATE_FORMAT(${RESIGNED_ON}, '%Y-%m') = ?
        AND er.exit_type = 'voluntary'
-       AND er.status NOT IN (${NOT_AN_EXIT})`,
-    [currentMonth]
+       AND er.status NOT IN (${NOT_AN_EXIT}) ${SC}`,
+    [currentMonth, ...scope.params]
   );
 
   // Resignations YTD
@@ -61,8 +66,8 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
      FROM exit_request er
      WHERE YEAR(${RESIGNED_ON}) = ?
        AND er.exit_type = 'voluntary'
-       AND er.status NOT IN (${NOT_AN_EXIT})`,
-    [currentYear]
+       AND er.status NOT IN (${NOT_AN_EXIT}) ${SC}`,
+    [currentYear, ...scope.params]
   );
 
   // Avg notice period (resignation date to LWD)
@@ -72,8 +77,8 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
      WHERE er.exit_type = 'voluntary'
        AND ${LWD} IS NOT NULL
        AND er.status NOT IN (${NOT_AN_EXIT})
-       AND YEAR(${RESIGNED_ON}) = ?`,
-    [currentYear]
+       AND YEAR(${RESIGNED_ON}) = ? ${SC}`,
+    [currentYear, ...scope.params]
   );
 
   // F&F pending count
@@ -81,7 +86,8 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
     `SELECT COUNT(*) as count
      FROM exit_request er
      WHERE er.status IN (${FF_PENDING})
-       AND ${LWD} < CURDATE()`
+       AND ${LWD} < CURDATE() ${SC}`,
+    scope.params
   );
 
   // F&F pending > 45 days
@@ -89,7 +95,8 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
     `SELECT COUNT(*) as count
      FROM exit_request er
      WHERE er.status IN (${FF_PENDING})
-       AND ${LWD} < DATE_SUB(CURDATE(), INTERVAL 45 DAY)`
+       AND ${LWD} < DATE_SUB(CURDATE(), INTERVAL 45 DAY) ${SC}`,
+    scope.params
   );
 
   // Avg clearance TAT (LWD to the last clearance task being cleared)
@@ -104,8 +111,8 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
      ) c ON c.exit_request_id = er.id
      WHERE c.completed_at IS NOT NULL
        AND ${LWD} IS NOT NULL
-       AND YEAR(${LWD}) = ?`,
-    [currentYear]
+       AND YEAR(${LWD}) = ? ${SC}`,
+    [currentYear, ...scope.params]
   );
 
   // Exits by month (last 12 months)
@@ -115,9 +122,10 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
        COUNT(*) as count
      FROM exit_request er
      WHERE ${LWD} >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-       AND er.status NOT IN (${NOT_AN_EXIT})
+       AND er.status NOT IN (${NOT_AN_EXIT}) ${SC}
      GROUP BY month
-     ORDER BY month ASC`
+     ORDER BY month ASC`,
+    scope.params
   );
 
   // F&F aging buckets
@@ -128,7 +136,8 @@ export async function getExitAnalyticsSummary(): Promise<ExitAnalyticsSummary> {
        SUM(CASE WHEN DATEDIFF(CURDATE(), ${LWD}) > 45 THEN 1 ELSE 0 END) as over_45
      FROM exit_request er
      WHERE er.status IN (${FF_PENDING})
-       AND ${LWD} < CURDATE()`
+       AND ${LWD} < CURDATE() ${SC}`,
+    scope.params
   );
 
   return {

@@ -15,6 +15,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
+import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 import {
   createJoiningDocumentEsignRequest,
   createPublicTokenForEpfReview,
@@ -1595,6 +1596,10 @@ payrollEpfComplianceRouter.post("/epf-compliance/:employeeId/review", h(async (r
   if (!["approved", "pushback"].includes(decision)) {
     return res.status(400).json({ success: false, message: "decision must be approved or pushback" });
   }
+  // Branch scoping (owner ruling 2026-10-01): hr / payroll / manager may only review inside their own branch.
+  if (!(await canViewEmployee(req.authUser!, String(req.params.employeeId)))) {
+    return res.status(403).json({ success: false, message: "Forbidden: this employee is outside your branch / assigned scope" });
+  }
   const { profile } = await ensureEpfProfile(req.params.employeeId, req.authUser!.id);
   await syncEpfValidation(req.params.employeeId, req.authUser!.id);
   await db.execute(
@@ -1695,8 +1700,15 @@ payrollEpfComplianceRouter.post(
       return res.status(400).json({ success: false, message: "CSV must have at least one of esic_number, pf_number, uan_number" });
     }
 
+    // Branch scoping (owner ruling 2026-10-01): an hr / payroll uploader can only touch employees inside
+    // their own branch / assigned scope; rows for anyone else are reported as not found.
+    const uploadScope = buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser!), {
+      employeeId: "id", branchId: "branch_id", processId: "process_id", lobId: "lob_id",
+      departmentId: "department_id", managerEmployeeId: "reporting_manager_id",
+    });
     const [empRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, employee_code FROM employees WHERE active_status = 1"
+      `SELECT id, employee_code FROM employees WHERE active_status = 1 AND (${uploadScope.sql})`,
+      uploadScope.params,
     );
     const empMap = new Map((empRows as RowDataPacket[]).map((e) => [String(e.employee_code ?? "").trim().toLowerCase(), e.id as string]));
 
@@ -1709,7 +1721,7 @@ payrollEpfComplianceRouter.post(
       if (!code) { errors.push(`Row ${i + 1}: employee_code is blank`); continue; }
 
       const empId = empMap.get(code.toLowerCase());
-      if (!empId) { errors.push(`Row ${i + 1}: employee_code "${code}" not found among active employees`); continue; }
+      if (!empId) { errors.push(`Row ${i + 1}: employee_code "${code}" not found among active employees in your scope`); continue; }
 
       const pick = (at: number) => (at === -1 ? "" : (cols[at] ?? "").trim());
       const esic = pick(idx.esic);

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { normalizeBloodGroup } from "./bloodGroup.util.js";
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
@@ -980,10 +981,21 @@ export const employeeService = {
     const wheres: string[] = ["e.active_status = 1"];
     const qp: unknown[] = [];
 
-    if (isSuperAdmin || isAdmin || isCeo || isHr) {
+    // Owner policy 2026-10-01: only the org-wide roles see every branch. hr is limited to its own
+    // branch (fails closed with no branch); ?branch_id= can only narrow, never widen.
+    const isOrgWide = isSuperAdmin || isCeo || roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r));
+    if (isOrgWide) {
       if (processId)    { wheres.push("e.process_id = ?");    qp.push(processId); }
       if (branchId)     { wheres.push("e.branch_id = ?");     qp.push(branchId); }
       if (departmentId) { wheres.push("e.department_id = ?"); qp.push(departmentId); }
+    } else if ((isHr || isAdmin) && !isBranchHead) {
+      if (!self?.branch_id) return EMPTY_ORG_TREE(self?.id ?? null);
+      wheres.push("e.branch_id = ?");
+      qp.push(self.branch_id);
+      if (processId)    { wheres.push("e.process_id = ?");    qp.push(processId); }
+      if (departmentId) { wheres.push("e.department_id = ?"); qp.push(departmentId); }
+      // A requested branch outside the caller's own branch yields nothing.
+      if (branchId && branchId !== self.branch_id) return EMPTY_ORG_TREE(self.id);
     } else if (isBranchHead) {
       const scopeBranch = self?.branch_id;
       if (!scopeBranch) return EMPTY_ORG_TREE(self?.id ?? null);
@@ -994,6 +1006,10 @@ export const employeeService = {
       if (!scopeProcess) return EMPTY_ORG_TREE(self?.id ?? null);
       wheres.push("e.process_id = ?");
       qp.push(scopeProcess);
+      // Process-scoped roles no longer cross branches: own process AND own branch.
+      if (!self?.branch_id) return EMPTY_ORG_TREE(self?.id ?? null);
+      wheres.push("e.branch_id = ?");
+      qp.push(self.branch_id);
     } else {
       // Employee / executive / agent: scope to own process
       const scopeProcess = self?.process_id;

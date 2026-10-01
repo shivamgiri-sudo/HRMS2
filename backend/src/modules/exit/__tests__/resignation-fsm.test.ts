@@ -55,6 +55,13 @@ const { getEmployeeForUser, hasRole } = vi.hoisted(() => ({
 }));
 vi.mock("../../../shared/accessGuard.js", () => ({ getEmployeeForUser, hasRole }));
 
+// Branch-scope helpers are covered by branchScoping.exit.test.ts; here they are pass-through so the
+// FSM tests keep counting only their own queries.
+vi.mock("../exitScope.js", () => ({
+  guardExitEmployee: () => (_q: any, _r: any, next: any) => next(),
+  employeeScopeSql: async () => ({ sql: "1=1", params: [] }),
+}));
+
 const { resignationRouter } = await import("../resignation.routes.js");
 
 function app() {

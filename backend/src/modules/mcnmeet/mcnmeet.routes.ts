@@ -7,6 +7,8 @@ import {
   attendanceUpdateSchema, recordingUpdateSchema,
 } from "./mcnmeet.validation.js";
 import * as service from "./mcnmeet.service.js";
+import { meetingParamGuard, meetingScopeSql } from "./mcnmeetScope.js";
+import { employeeRowScope } from "../org/branchScope.js";
 import type { MeetingStatus, MeetingType } from "./mcnmeet.types.js";
 
 const router = Router();
@@ -47,6 +49,10 @@ function featureGuard(req: AuthenticatedRequest, res: Response, next: NextFuncti
 router.use(featureGuard);
 router.use(requireAuth);
 
+// Branch scoping (owner ruling 2026-10-01): every /meetings/:id... route requires the meeting to be in the
+// caller's scope (creator / host / invitee / host in own branch). Org-wide roles pass.
+router.param("id", meetingParamGuard);
+
 router.get('/config', (req: AuthenticatedRequest, res: Response) => {
   const role = req.authUser?.role;
   const allowedTypes = getAllowedMeetingTypes(role);
@@ -77,7 +83,7 @@ router.get('/meetings', requireRole(...MANAGER_ROLES), async (req: Authenticated
       from: from as string | undefined,
       to: to as string | undefined,
       page: page ? parseInt(page as string) : undefined,
-    });
+    }, await meetingScopeSql(req.authUser!));
     res.json({ success: true, ...result });
   } catch (err) { next(err); }
 });
@@ -137,7 +143,7 @@ router.post('/meetings/:id/cancel', requireRole(...MANAGER_ROLES), async (req: A
 
 router.post('/meetings/:id/invitees/resolve', requireRole(...MANAGER_ROLES), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const inviteesAdded = await service.resolveInvitees(req.params.id, req.authUser!.id);
+    const inviteesAdded = await service.resolveInvitees(req.params.id, req.authUser!.id, await employeeRowScope(req.authUser!, "e"));
     res.json({ success: true, invitees_added: inviteesAdded });
   } catch (err) { next(err); }
 });
@@ -200,7 +206,7 @@ router.get('/my-meetings', async (req: AuthenticatedRequest, res: Response, next
 router.get('/reports/summary', requireRole(...ADMIN_ROLES), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
     const { from, to } = req.query;
-    const report = await service.getSummaryReport(from as string | undefined, to as string | undefined);
+    const report = await service.getSummaryReport(from as string | undefined, to as string | undefined, await meetingScopeSql(req.authUser!));
     res.json({ success: true, report });
   } catch (err) { next(err); }
 });

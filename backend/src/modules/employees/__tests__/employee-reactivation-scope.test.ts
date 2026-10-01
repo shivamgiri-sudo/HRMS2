@@ -131,17 +131,18 @@ describe("GET /reactivation/:id — role gate + scope", () => {
 });
 
 describe("GET /reactivation/pending — branch_head scope", () => {
-  it("stays unrestricted for hr (no scope condition applied)", async () => {
+  it("is now branch-scoped for hr too (owner ruling 2026-10-01); org-wide roles get 1=1 from the helper", async () => {
     authUser = { id: ACTOR_ID, role: "hr", roles: ["hr"] };
+    resolveUserBusinessScope.mockResolvedValue({ userId: ACTOR_ID } as never);
+    buildEmployeeScopeCondition.mockReturnValue({ sql: "e.branch_id = ?", params: ["branch-A"] });
     dbExecute.mockResolvedValue([[REQUEST_ROW], []]);
 
     const res = await request(app()).get("/api/employees/reactivation/pending");
 
     expect(res.status).toBe(200);
-    expect(resolveUserBusinessScope).not.toHaveBeenCalled();
     const [sql, params] = dbExecute.mock.calls[0];
-    expect(String(sql)).toContain("(1=1)");
-    expect(params).toEqual([]);
+    expect(String(sql)).toContain("(e.branch_id = ?)");
+    expect(params).toEqual(["branch-A"]);
   });
 
   it("applies the branch_head's employee-scope condition instead of returning everything", async () => {

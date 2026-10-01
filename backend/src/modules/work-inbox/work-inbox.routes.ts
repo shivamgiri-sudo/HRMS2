@@ -56,6 +56,7 @@ router.patch("/:id/priority", requireRole("admin", "hr"), h(async (req: Authenti
   if (!allowed.includes(priority)) {
     return res.status(400).json({ success: false, error: "Invalid priority value" });
   }
+  await svc.assertWorkItemReadAccess(req.authUser!.id, req.params.id);
   await (await import("../../db/mysql.js")).db.execute(
     `UPDATE work_item SET priority=?, updated_at=NOW() WHERE id=?`,
     [priority, req.params.id]
@@ -135,6 +136,8 @@ router.post("/:id/reassign", h(async (req: AuthenticatedRequest, res: any) => {
 }));
 
 router.get("/:id/awol-context", h(async (req: AuthenticatedRequest, res: any) => {
+  // This endpoint had no authorization at all: any signed-in user could read any AWOL case.
+  await svc.assertWorkItemReadAccess(req.authUser!.id, req.params.id);
   const data = await getAwolContext(req.params.id);
   return res.json({ success: true, data });
 }));

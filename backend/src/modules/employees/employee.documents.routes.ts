@@ -12,6 +12,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { selfOrAdminHr, hasRole } from "../../shared/accessGuard.js";
 import { docCategoryFor, isSelfServiceDocType } from "./employee-document-category.js";
+import { guardEmployeeScope } from "./employeeScopeGuard.js";
 import { registerUpload } from "../document-vault/documentVault.service.js";
 
 // Use process.cwd() — resolves to backend/ in both dev and production
@@ -153,7 +154,7 @@ router.post("/:employeeId", requireRole("admin", "hr"), h(async (req: Authentica
 // payroll_head added per the Payroll Head salary/journey review gate (migration
 // 1541) — full write access on the review screen, reusing this endpoint rather
 // than duplicating verify logic.
-router.patch("/:employeeId/:docId/verify", requireRole("admin", "hr", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.patch("/:employeeId/:docId/verify", requireRole("admin", "hr", "super_admin", "payroll_head"), guardEmployeeScope("employeeId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { action, remarks } = req.body as { action: "verified" | "rejected"; remarks?: string };
   if (!action || !["verified", "rejected"].includes(action)) {
     return res.status(400).json({ success: false, message: "action must be 'verified' or 'rejected'" });
@@ -220,7 +221,7 @@ router.get("/:employeeId/:docId/download", selfOrAdminHr("employeeId"), h(async 
 }));
 
 // DELETE /api/employee-docs/:employeeId/:docId
-router.delete("/:employeeId/:docId", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.delete("/:employeeId/:docId", requireRole("admin", "hr"), guardEmployeeScope("employeeId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [result] = await db.execute(
     "DELETE FROM employee_documents WHERE id = ? AND employee_id = ?",
     [req.params.docId, req.params.employeeId]

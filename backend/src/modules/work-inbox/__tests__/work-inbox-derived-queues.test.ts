@@ -83,7 +83,7 @@ describe("work inbox derived approval queues", () => {
   });
 
   it("binds every branch's parameters in order", async () => {
-    // work_item(userId, role), work_inbox_item(userId), leave(userId, role),
+    // work_item(userId, role), work_inbox_item(userId), leave(userId, role, orgWide flag, userId, userId),
     // exit clearance(userId, ...CLEARANCE_OWNER_ROLES.length owner-role slots — allRoles
     // defaults to [role] when the caller (work-inbox.routes.ts) doesn't pass a full role
     // list, so a single "manager" call site pads to ["manager", "__none__" x5]),
@@ -93,7 +93,7 @@ describe("work inbox derived approval queues", () => {
     expect(params).toEqual([
       "user-7", "manager",
       "user-7",
-      "user-7", "manager",
+      "user-7", "manager", 0, "user-7", "user-7",
       "user-7", "manager", "__none__", "__none__", "__none__", "__none__", "__none__",
       "manager",
       "manager", "manager",

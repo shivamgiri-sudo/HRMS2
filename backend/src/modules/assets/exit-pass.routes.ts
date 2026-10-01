@@ -173,7 +173,9 @@ exitPassRouter.get('/employees/search', h(async (req, res) => {
 // requireRole above — the token identifies WHICH pass, it never authorises.
 exitPassRouter.get('/verify/token/:token', h(async (req, res) => {
   try {
-    const data = await findPassForVerificationByQrToken(req.params.token);
+    const requester = await resolveRequestingEmployee(req.authUser!.id);
+    const roles = await getActorRoles(req.authUser!.id);
+    const data = await findPassForVerificationByQrToken(req.params.token, { actor: requester, roles });
     return res.json({ success: true, data });
   } catch (error) {
     return fail(res, error);
@@ -182,7 +184,9 @@ exitPassRouter.get('/verify/token/:token', h(async (req, res) => {
 
 exitPassRouter.get('/verify/:passNumber', h(async (req, res) => {
   try {
-    const data = await findPassForVerification(req.params.passNumber);
+    const requester = await resolveRequestingEmployee(req.authUser!.id);
+    const roles = await getActorRoles(req.authUser!.id);
+    const data = await findPassForVerification(req.params.passNumber, { actor: requester, roles });
     return res.json({ success: true, data });
   } catch (error) {
     return fail(res, error);

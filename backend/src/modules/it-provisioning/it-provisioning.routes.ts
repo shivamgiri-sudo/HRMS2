@@ -10,6 +10,8 @@ import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { hasRole, getEmployeeForUser } from '../../shared/accessGuard.js';
 import { narrowDashboardScope, resolveDashboardScope } from '../../shared/dashboardScope.js';
+import { dashboardRowScopeSql } from '../exit/exitScope.js';
+import { branchPredicate, resolveCallerBranchScope } from '../org/branchScope.js';
 import { getUserRoleContext } from '../../shared/roleResolver.js';
 import { db } from '../../db/mysql.js';
 import {
@@ -66,6 +68,29 @@ async function assertTaskInScope(req: AuthenticatedRequest, taskId: string): Pro
   if (scope.branchIds.length && !scope.branchIds.includes(String(emp.branch_id))) throw forbidden();
   if (scope.processIds.length && !scope.processIds.includes(String(emp.process_id))) throw forbidden();
   if (!scope.branchIds.length && !scope.processIds.length) throw forbidden();
+}
+
+/**
+ * Branch scoping (owner ruling 2026-10-01). Employee-row predicate for the caller: 1=1 for admin /
+ * super_admin / ORG_ALL; otherwise the dashboard scope, which FAILS CLOSED (empty scope => 1=0). hr is
+ * no longer an unrestricted shortcut here.
+ */
+async function callerEmployeeScope(userId: string, alias = 'e'): Promise<{ sql: string; params: unknown[] }> {
+  if (await hasRole(userId, 'admin', 'super_admin')) return { sql: '1=1', params: [] };
+  return dashboardRowScopeSql(userId, alias);
+}
+
+/** Branch ids for the SLA endpoints: undefined = unrestricted; [] = nothing (fail closed). */
+async function callerSlaBranchIds(userId: string): Promise<string[] | undefined> {
+  if (await hasRole(userId, 'admin', 'super_admin')) return undefined;
+  try {
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    if (baseScope.level === 'ORG_ALL') return undefined;
+    return baseScope.branchIds ?? [];
+  } catch {
+    return [];
+  }
 }
 
 // Multer for AD log evidence uploads — stored under uploads/provisioning-evidence/
@@ -163,6 +188,18 @@ async function changeAppointmentStatus(
   action: AppointmentAction,
 ) {
   const requestId = req.params.id;
+  {
+    const rowScope = await callerEmployeeScope(req.authUser!.id, 'e');
+    if (rowScope.sql !== '1=1') {
+      const [ok] = await db.execute<RowDataPacket[]>(
+        `SELECT 1 AS ok FROM appointment_letter_request alr JOIN employees e ON e.id = alr.employee_id WHERE alr.id = ? AND (${rowScope.sql}) LIMIT 1`,
+        [requestId, ...rowScope.params],
+      );
+      if (!(ok as RowDataPacket[]).length) {
+        return res.status(403).json({ success: false, message: 'Forbidden: this appointment letter is outside your branch / assigned scope' });
+      }
+    }
+  }
   const body = req.body as Record<string, unknown>;
   const evidenceUrl = firstEvidence(body, ['evidence_url', 'document_url', 'signed_artifact_url', 'signature_evidence_url', 'final_pdf_url']);
   const providerReference = clean(body.provider_reference);
@@ -573,14 +610,17 @@ router.post('/tasks/:id/block', requireRole(...PROVISIONING_ROLES), h(async (req
   return res.json({ success: true, data });
 }));
 
-router.get('/appointment-letters', requireRole('admin', 'hr', 'super_admin'), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get('/appointment-letters', requireRole('admin', 'hr', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const rowScope = await callerEmployeeScope(req.authUser!.id, 'e');
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT alr.*, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name, c.candidate_code, c.full_name AS candidate_name
        FROM appointment_letter_request alr
        LEFT JOIN employees e ON e.id = alr.employee_id
        LEFT JOIN ats_candidate c ON c.id = alr.candidate_id
+      WHERE (${rowScope.sql})
       ORDER BY alr.updated_at DESC
       LIMIT 100`,
+    rowScope.params,
   );
   return res.json({ success: true, data: rows });
 }));
@@ -604,6 +644,7 @@ router.post('/appointment-letters/:id/complete', requireRole('admin', 'hr', 'sup
 // ── POST /api/it-provisioning/requests/:id/confirm ───────────────────────────
 // Admin-only: manually lock a request immediately
 router.post('/requests/:id/confirm', requireRole('admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
   await confirmAndLockRequest(req.params.id, req.authUser!.id);
   const data = await getProvisioningRequest(req.params.id);
   return res.json({ success: true, data });
@@ -647,6 +688,7 @@ router.post('/tasks/bulk-complete', requireRole('it', 'admin', 'super_admin', 'h
     return res.status(400).json({ success: false, message: 'rows array required' });
   }
   const results: { employee_code: string; status: 'ok' | 'error'; message?: string }[] = [];
+  const bulkScope = await callerEmployeeScope(req.authUser!.id, 'e');
 
   for (const row of rows) {
     try {
@@ -655,8 +697,9 @@ router.post('/tasks/bulk-complete', requireRole('it', 'admin', 'super_admin', 'h
         `SELECT ipr.id, ipr.task_code FROM it_provisioning_request ipr
            JOIN employees e ON e.id = ipr.employee_id
           WHERE e.employee_code = ? AND ipr.task_code = 'IT_EMAIL_DOMAIN_ASSET' AND ipr.status = 'pending'
+            AND (${bulkScope.sql})
           LIMIT 1`,
-        [row.employee_code.trim()],
+        [row.employee_code.trim(), ...bulkScope.params],
       );
       const task = (taskRows as RowDataPacket[])[0];
       if (!task) { results.push({ employee_code: row.employee_code, status: 'error', message: 'No pending IT task found' }); continue; }
@@ -695,6 +738,7 @@ router.post(
   }),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const taskId = req.params.id;
+    await assertTaskInScope(req, taskId);
     if (!(req as any).file) {
       return res.status(400).json({ success: false, message: 'No file uploaded. Send a multipart/form-data request with field "file".' });
     }
@@ -766,13 +810,8 @@ router.get('/sla/violations', requireRole('admin', 'super_admin', 'hr', 'it', 'w
   const { findSlaViolations } = await import('../employees/employee-activation.service.js');
   const taskCode = req.query.task_code ? String(req.query.task_code) : undefined;
   const userId = req.authUser!.id;
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
-  let branchIds: string[] | undefined;
-  if (!isAdmin) {
-    const roleContext = await getUserRoleContext(userId);
-    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
-    if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
-  }
+  const branchIds = await callerSlaBranchIds(userId);
+  if (branchIds && branchIds.length === 0) return res.json({ success: true, data: [], count: 0 });
   const violations = await findSlaViolations(taskCode, branchIds);
   return res.json({ success: true, data: violations, count: violations.length });
 }));
@@ -785,8 +824,15 @@ router.post('/sla/bulk-waive', requireRole('admin', 'super_admin', 'hr'), h(asyn
 
   // If specific task IDs provided, waive those; otherwise waive all current violations
   let idsToWaive: string[] = [];
+  const waiveScope = await callerEmployeeScope(req.authUser!.id, 'e');
   if (Array.isArray(task_ids) && task_ids.length > 0) {
-    idsToWaive = task_ids;
+    // Only requests of employees inside the caller's scope may be waived.
+    const [okRows] = await db.execute<RowDataPacket[]>(
+      `SELECT r.id FROM it_provisioning_request r JOIN employees e ON e.id = r.employee_id
+        WHERE r.id IN (${task_ids.map(() => '?').join(',')}) AND (${waiveScope.sql})`,
+      [...task_ids, ...waiveScope.params],
+    );
+    idsToWaive = (okRows as any[]).map(r => String(r.id));
   } else {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT r.id
@@ -795,8 +841,9 @@ router.post('/sla/bulk-waive', requireRole('admin', 'super_admin', 'hr'), h(asyn
        WHERE r.sla_due_at IS NOT NULL
          AND r.sla_due_at < NOW()
          AND r.status IN ('pending', 'pending_unassigned', 'assigned', 'in_progress')
-         AND e.active_status = 1`,
-      []
+         AND e.active_status = 1
+         AND (${waiveScope.sql})`,
+      [...waiveScope.params]
     );
     idsToWaive = (rows as any[]).map(r => r.id);
   }
@@ -828,13 +875,8 @@ router.post('/sla/bulk-waive', requireRole('admin', 'super_admin', 'hr'), h(asyn
 router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm', 'branch_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const taskCode = req.query.task_code ? String(req.query.task_code) : null;
   const userId = req.authUser!.id;
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
-  let branchIds: string[] | undefined;
-  if (!isAdmin) {
-    const roleContext = await getUserRoleContext(userId);
-    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
-    if (baseScope.branchIds?.length) branchIds = baseScope.branchIds;
-  }
+  const branchIds = await callerSlaBranchIds(userId);
+  if (branchIds && branchIds.length === 0) return res.json({ success: true, data: [] });
   const branchClause = branchIds?.length
     ? `AND r.employee_id IN (SELECT id FROM employees WHERE branch_id IN (${branchIds.map(() => '?').join(',')}))`
     : '';
@@ -880,6 +922,7 @@ router.post('/bulk-sync', requireRole('it', 'admin', 'super_admin', 'hr'), h(asy
     return res.status(400).json({ success: false, message: 'rows array required' });
   }
 
+  const syncScope = await callerEmployeeScope(req.authUser!.id, 'e');
   const results: {
     employee_code: string;
     employee_name?: string;
@@ -901,12 +944,12 @@ router.post('/bulk-sync', requireRole('it', 'admin', 'super_admin', 'hr'), h(asy
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT e.id, e.official_email,
                 CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name
-           FROM employees e WHERE e.employee_code = ? AND e.active_status = 1 LIMIT 1`,
-        [empCode],
+           FROM employees e WHERE e.employee_code = ? AND e.active_status = 1 AND (${syncScope.sql}) LIMIT 1`,
+        [empCode, ...syncScope.params],
       );
       const emp = (empRows as any[])[0];
       if (!emp) {
-        results.push({ employee_code: empCode, status: 'error', actions, message: 'Employee not found or inactive' });
+        results.push({ employee_code: empCode, status: 'error', actions, message: 'Employee not found, inactive or outside your branch / assigned scope' });
         continue;
       }
 
@@ -1010,7 +1053,11 @@ router.post('/bulk-sync', requireRole('it', 'admin', 'super_admin', 'hr'), h(asy
 // dashboard is named for.
 router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const isAdmin = await hasRole(userId, 'admin', 'hr', 'super_admin');
+  // hr is no longer an unrestricted shortcut (owner ruling 2026-10-01): it goes through the scoped branch below.
+  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
+  const dashEmpScope = await callerEmployeeScope(userId, 'e');
+  const dashCaller = await resolveCallerBranchScope({ id: userId });
+  const dashAssetScope = branchPredicate(dashCaller, 'branch_id');
 
   const provFilters: { assignedRole?: string; branchIds?: string[]; processIds?: string[] } = {
     assignedRole: 'it',
@@ -1050,8 +1097,9 @@ router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsu
            THEN TIMESTAMPDIFF(MINUTE, created_at, resolved_at) END), 0)               AS avg_resolution_minutes,
          SUM(status IN ('resolved','closed') AND sla_breached = 0)                   AS resolved_on_time
        FROM helpdesk_ticket
-       WHERE category = 'it'`,
-      [],
+       WHERE category = 'it'
+         AND employee_id IN (SELECT e.id FROM employees e WHERE ${dashEmpScope.sql})`,
+      [...dashEmpScope.params],
     ),
 
     db.execute<RowDataPacket[]>(
@@ -1077,9 +1125,10 @@ router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsu
          LEFT JOIN auth_user au ON au.id = t.assigned_to
          LEFT JOIN employees assignee ON assignee.auth_user_id = au.id AND assignee.active_status = 1
         WHERE t.category = 'it'
+          AND (${dashEmpScope.sql})
         ORDER BY t.created_at DESC
         LIMIT 50`,
-      [],
+      [...dashEmpScope.params],
     ),
 
     db.execute<RowDataPacket[]>(
@@ -1091,8 +1140,8 @@ router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsu
          SUM(warranty_expiry IS NOT NULL AND warranty_expiry BETWEEN NOW()
              AND DATE_ADD(NOW(), INTERVAL 90 DAY))                                            AS expiring_soon
        FROM asset_master
-       WHERE active_status = 1`,
-      [],
+       WHERE active_status = 1 AND (${dashAssetScope.sql})`,
+      [...dashAssetScope.params],
     ),
 
     db.execute<RowDataPacket[]>(
@@ -1117,9 +1166,10 @@ router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsu
          LEFT JOIN asset_assignment aa ON aa.employee_id = e.id AND aa.returned_date IS NULL
          LEFT JOIN asset_master am ON am.id = aa.asset_id
         WHERE e.active_status = 1
+          AND (${dashEmpScope.sql})
         ORDER BY e.employee_code
         LIMIT 200`,
-      [],
+      [...dashEmpScope.params],
     ),
   ]);
 
@@ -1152,6 +1202,12 @@ router.post('/redispatch/:employeeId', requireRole('hr', 'super_admin', 'admin')
   );
   const emp = (empRows as RowDataPacket[])[0];
   if (!emp) return res.status(404).json({ success: false, message: 'Employee not found' });
+  {
+    const { canViewEmployee } = await import('../../shared/enterpriseScope.js');
+    if (!(await canViewEmployee(req.authUser!, String(employeeId)))) {
+      return res.status(403).json({ success: false, message: 'Forbidden: this employee is outside your branch / assigned scope' });
+    }
+  }
   if (emp.legacy_emp_id) return res.status(400).json({ success: false, message: 'Cannot dispatch IT provisioning for a legacy (pre-HRMS) employee' });
   if (!emp.employee_code) return res.status(400).json({ success: false, message: 'Employee has no employee_code — cannot dispatch provisioning' });
 

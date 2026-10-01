@@ -8,6 +8,7 @@ import { computeFfPreview } from "./ff-compute.service.js";
 import { getExitAnalyticsSummary } from "./exit-analytics.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
+import { canTouchExitEmployee, dashboardRowScopeSql, employeeScopeSql, exitRequestScopeSql, guardExitEmployee } from "./exitScope.js";
 import { hasDirectReports, isInReportingSpan } from "../../shared/reportingSpan.js";
 import { resolveEmployeeRef } from "./resolveEmployeeRef.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
@@ -102,7 +103,7 @@ exitRouter.post("/", h(async (req: AuthenticatedRequest, res: Response) => {
     // the test is the reporting line, not a role list: the target must be in the caller's
     // own scope / span (TL: team, AM: each TL's team). Same guard the rest of the exit module uses.
     const managesPeople = (await hasRole(userId, "manager")) || (await hasDirectReports(userId));
-    if (!managesPeople || !(await canTouchEmployee(userId, targetId!))) {
+    if (!managesPeople || !(await canTouchExitEmployee(userId, targetId!))) {
       return res.status(403).json({ success: false, message: "Forbidden: this employee is not in your team" });
     }
     initiatedBy = "manager";
@@ -188,17 +189,15 @@ exitRouter.get(
       params.push(req.query.clearance_area.trim());
     }
 
-    if (!isPrivileged) {
-      // Branch/process row-scope, same helper the IT-provisioning queue already uses —
-      // avoids an N+1 canViewEmployee call per row on what is now a cross-employee list.
-      const roleContext = await getUserRoleContext(userId);
-      const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
-      const scoped = await narrowDashboardScope(baseScope, "", "");
-      if (scoped.branchIds.length) {
-        conds.push(`e.branch_id IN (${scoped.branchIds.map(() => "?").join(",")})`);
-        params.push(...scoped.branchIds);
-      }
-    }
+    // Branch scoping (owner ruling 2026-10-01). hr is "privileged" for the choice of queue but is still
+    // limited to its own branch / assignments; org-wide roles get 1=1. Non-HR roles use the dashboard
+    // row scope, which now FAILS CLOSED (a manager's team scope has no branchIds and used to leave
+    // the query unfiltered).
+    const rowScope = isPrivileged
+      ? await employeeScopeSql({ id: userId }, "e")
+      : await dashboardRowScopeSql(userId, "e");
+    conds.push(`(${rowScope.sql})`);
+    params.push(...rowScope.params);
 
     const where = conds.join(" AND ");
     const [countRows] = await db.execute<RowDataPacket[]>(
@@ -277,6 +276,7 @@ exitRouter.get(
 exitRouter.post(
   "/:id/clearance/generate",
   requireRole("admin", "hr"),
+  guardExitEmployee("id"),
   h(async (req, res) => {
     const exitReq = await import("./exit.service.js").then((m) => m.exitService.getExitRequest(req.params.id));
     const data = await createDefaultClearanceTasks(req.params.id, (exitReq as any).employee_id);
@@ -368,12 +368,14 @@ exitRouter.patch(
 exitRouter.get(
   "/:id/health",
   requireRole("admin", "hr", "manager"),
+  guardExitEmployee("id"),
   h(async (req, res) => res.json({ success: true, data: await createExitHealthSnapshot(req.params.id) }))
 );
 
 exitRouter.post(
   "/:id/retention",
   requireRole("admin", "hr", "manager"),
+  guardExitEmployee("id"),
   h(async (req, res) => {
     const exitReq = await import("./exit.service.js").then((m) => m.exitService.getExitRequest(req.params.id));
     const data = await addRetentionAction({
@@ -392,6 +394,7 @@ exitRouter.post(
 exitRouter.post(
   "/:id/interview",
   requireRole("admin", "hr", "manager"),
+  guardExitEmployee("id"),
   h(async (req, res) => {
     const exitReq = await import("./exit.service.js").then((m) => m.exitService.getExitRequest(req.params.id));
     const data = await saveExitInterview({
@@ -422,12 +425,14 @@ exitRouter.post(
 exitRouter.get(
   "/ff/:exitRequestId",
   requireRole("admin", "hr", "finance", "payroll"),
+  guardExitEmployee("exitRequestId"),
   h(async (req, res) => res.json({ success: true, data: await ffService.getFF(req.params.exitRequestId) }))
 );
 
 exitRouter.post(
   "/ff/:exitRequestId",
   requireRole("admin", "hr", "finance", "payroll"),
+  guardExitEmployee("exitRequestId"),
   h(async (req, res) => {
     const data = await ffService.createFF(req.params.exitRequestId, req.body, req.authUser!.id, req);
     await logSensitiveAction({
@@ -470,6 +475,7 @@ exitRouter.post(
 exitRouter.post(
   "/ff/:id/paid",
   requireRole("admin", "finance", "payroll"),
+  guardExitEmployee("id", "ff"),
   h(async (req, res) => {
     const paymentReference = String(req.body?.paymentReference ?? req.body?.payment_reference ?? "").trim();
     if (!paymentReference) {
@@ -488,6 +494,7 @@ exitRouter.post(
 exitRouter.post(
   "/ff/:id/verify",
   requireRole("admin", "hr", "finance", "payroll"),
+  guardExitEmployee("id", "ff"),
   h(async (req, res) => {
     // Reason is mandatory (CLAUDE.md: the provisional override "requires ... an audit
     // reason"). setProvisionalFalse now writes the single sensitive-action entry itself
@@ -667,6 +674,7 @@ exitRouter.get(
 exitRouter.get(
   "/ff/:exitRequestId/outstanding-advances",
   requireRole("admin", "hr", "finance", "payroll"),
+  guardExitEmployee("exitRequestId"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { exitRequestId } = req.params;
 
@@ -725,6 +733,7 @@ exitRouter.get(
 exitRouter.get(
   "/ff/:exitRequestId/compute",
   requireRole("admin", "hr", "finance", "payroll"),
+  guardExitEmployee("exitRequestId"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await computeFfPreview(req.params.exitRequestId);
     return res.json({ success: true, data });
@@ -739,6 +748,7 @@ exitRouter.get(
 exitRouter.patch(
   '/:id/approve',
   requireRole('manager', 'assistant_manager', 'process_manager', 'branch_head', 'admin', 'hr', 'super_admin'),
+  guardExitEmployee('id'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const actor = { userId: req.authUser!.id, userRole: (req.authUser!.roles ?? ['manager'])[0] };
@@ -754,6 +764,7 @@ exitRouter.patch(
 exitRouter.patch(
   '/:id/return',
   requireRole('manager', 'assistant_manager', 'process_manager', 'branch_head', 'admin', 'hr', 'super_admin'),
+  guardExitEmployee('id'),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     if (!req.body.reason?.trim()) return res.status(400).json({ success: false, message: 'reason is required' });
@@ -773,7 +784,9 @@ exitRouter.patch(
     if (!rec) return res.status(404).json({ success: false, message: 'Not found' });
     const callerEmployee = await getEmployeeForUser(req.authUser!.id);
     const callerRoles: string[] = req.authUser!.roles ?? [];
-    const isPrivileged = callerRoles.some(r => ['admin', 'hr', 'super_admin'].includes(r));
+    const isPrivileged = callerRoles.some(r => ['admin', 'hr', 'super_admin'].includes(r))
+      // hr is branch-scoped (owner ruling 2026-10-01): it may revoke on behalf only inside its scope.
+      && await canViewEmployee(req.authUser!.id, String(rec.employee_id));
     if (!isPrivileged && (!callerEmployee || callerEmployee.id !== rec.employee_id)) {
       return res.status(403).json({ success: false, message: 'You can only revoke your own resignation.' });
     }
@@ -788,7 +801,7 @@ exitRouter.get(
   "/analytics",
   requireRole("super_admin", "admin", "hr", "ceo", "coo"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const summary = await getExitAnalyticsSummary();
+    const summary = await getExitAnalyticsSummary(await exitRequestScopeSql(req.authUser!, "er"));
     res.json({ success: true, data: summary });
   })
 );

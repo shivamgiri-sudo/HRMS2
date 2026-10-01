@@ -12,10 +12,15 @@ import { db } from "../../db/mysql.js";
 import { sqlLimitOffset } from "../../db/pagination.js";
 import { randomUUID } from "crypto";
 import { getJourneySummary } from "./resignation-journey.service.js";
+import { employeeScopeSql, guardExitEmployee } from "./exitScope.js";
 import { requestTalkFirst, withdrawResignation } from "./resignation-self.service.js";
 
 export const resignationRouter = Router();
 resignationRouter.use(requireAuth);
+
+// Branch scoping (owner ruling 2026-10-01): every /:exitId/* endpoint requires the caller to be able to
+// see the exiting employee (self, own branch / assigned scope, or reporting span). Org-wide roles pass.
+resignationRouter.use("/:exitId", guardExitEmployee("exitId"));
 
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
@@ -722,7 +727,9 @@ resignationRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { status, branchId, limit = "100", offset = "0" } = req.query as Record<string, string>;
     const params: unknown[] = [];
-    let where = "1=1";
+    const rowScope = await employeeScopeSql(req.authUser!, "e");
+    let where = `(${rowScope.sql})`;
+    params.push(...rowScope.params);
     if (status) { where += " AND er.status = ?"; params.push(status); }
     if (branchId) { where += " AND e.branch_id = ?"; params.push(branchId); }
     const [rows] = await db.execute(

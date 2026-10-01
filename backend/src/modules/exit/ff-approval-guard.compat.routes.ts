@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { ffService } from "./ff.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { guardExitEmployee } from "./exitScope.js";
 
 export const ffApprovalGuardCompatRouter = Router();
 ffApprovalGuardCompatRouter.use(requireAuth);
@@ -14,6 +15,7 @@ const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (re
 ffApprovalGuardCompatRouter.post(
   "/ff/:id/approve",
   requireRole("admin", "finance", "payroll"),
+  guardExitEmployee("id", "ff"),
   h(async (req, res) => {
     const [ffRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, exit_request_id, is_ff_provisional, status

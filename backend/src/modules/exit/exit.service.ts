@@ -305,7 +305,7 @@ export const exitService = {
     search?: string;
     page: number;
     limit: number;
-  }): Promise<PaginatedResult<ExitRequest>> {
+  }, scope?: { sql: string; params: unknown[] }): Promise<PaginatedResult<ExitRequest>> {
     const { page, limit, status, employeeId, branchId, processId, search } =
       filters;
     const offset = (page - 1) * limit;
@@ -334,6 +334,11 @@ export const exitService = {
       );
       const q = `%${search}%`;
       params.push(q, q, q, q);
+    }
+
+    if (scope && scope.sql !== "1=1") {
+      conds.push(`(${scope.sql})`);
+      params.push(...scope.params);
     }
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
@@ -1180,9 +1185,13 @@ export const exitService = {
     return this.getExitRequest(id);
   },
 
-  async getExitStats(): Promise<ExitStats & Record<string, number>> {
+  async getExitStats(scope?: { sql: string; params: unknown[] }): Promise<ExitStats & Record<string, number>> {
+    const scoped = scope && scope.sql !== "1=1";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT status, COUNT(*) AS cnt FROM exit_request GROUP BY status`,
+      scoped
+        ? `SELECT er.status AS status, COUNT(*) AS cnt FROM exit_request er LEFT JOIN employees e ON e.id = er.employee_id WHERE (${scope!.sql}) GROUP BY er.status`
+        : `SELECT status, COUNT(*) AS cnt FROM exit_request GROUP BY status`,
+      scoped ? scope!.params : [],
     );
 
     const counts: Record<string, number> = {};
