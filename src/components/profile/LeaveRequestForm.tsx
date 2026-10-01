@@ -24,9 +24,11 @@ const UNPAID_LEAVE_NAME = "Unpaid Leave";
 
 interface LeaveRequestFormProps {
   employeeId: string;
+  /** Called once a request has been submitted successfully (e.g. to close a surrounding dialog). */
+  onSubmitted?: () => void;
 }
 
-export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
+export function LeaveRequestForm({ employeeId, onSubmitted }: LeaveRequestFormProps) {
   const [leaveTypeId, setLeaveTypeId] = useState<string>("");
   const [startDate, setStartDate] = useState<Date>();
   const [endDate, setEndDate] = useState<Date>();
@@ -178,6 +180,7 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
     setStartDate(undefined);
     setEndDate(undefined);
     setReason("");
+    onSubmitted?.();
   };
 
   const selectedBalance = leaveTypeId && !isUnpaid ? leaveBalances[leaveTypeId] : null;

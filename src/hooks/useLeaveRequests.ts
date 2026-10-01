@@ -121,6 +121,9 @@ export function useSubmitLeaveRequest() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leave-requests"] });
       queryClient.invalidateQueries({ queryKey: ["leave-balances"] });
+      // The Leave page's own-requests list and the status counts must show the new request too.
+      queryClient.invalidateQueries({ queryKey: ["leave-mine"] });
+      queryClient.invalidateQueries({ queryKey: ["leave-stats"] });
       toast.success("Leave request submitted successfully");
     },
     onError: (error: Error) => {
