@@ -130,8 +130,14 @@ function buildPresentAddress(profile: RowDataPacket | null): string {
     profile.present_state,
     profile.present_pincode,
   ]
-    .map((v) => (v ? String(v).trim() : ""))
+    .map((v) => (v ? String(v).trim().replace(/[\s,]+$/, "") : ""))
     .filter(Boolean)
+    // Candidates routinely type the city / state / pincode into the street line as well as its own
+    // field, which printed "..., New Delhi, Delhi, 110095" with the pincode twice. Drop a part that
+    // the text so far already contains.
+    .reduce<string[]>((acc, part) => (
+      acc.join(", ").toLowerCase().includes(part.toLowerCase()) ? acc : [...acc, part]
+    ), [])
     .join(", ");
   return structured || (profile.current_address ? String(profile.current_address).trim() : "");
 }

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useBranches } from "@/hooks/useOrgMasters";
 import { AlertTriangle, CheckCircle2, ClipboardCheck, ExternalLink, FileText, Loader2, RefreshCw, Search, Send, ShieldCheck, UserCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -417,6 +418,8 @@ export default function NativeJoiningControlRoom() {
   const canViewBgvReport = hasAnyRole(...BGV_REPORT_ROLES);
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [search, setSearch] = useState("");
+  const [branchId, setBranchId] = useState("");
+  const { data: branches = [] } = useBranches();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [dateForm, setDateForm] = useState<any>(blankDates);
@@ -436,7 +439,7 @@ export default function NativeJoiningControlRoom() {
     setBusy(true);
     setError("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/ats/joining-control-room/queue?search=${encodeURIComponent(search)}`);
+      const res = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/ats/joining-control-room/queue?search=${encodeURIComponent(search)}&branch_id=${encodeURIComponent(branchId)}`);
       setQueue(res.data || []);
       if (!selectedId && res.data?.[0]) setSelectedId(res.data[0].candidate_id);
     } catch (err: any) {
@@ -471,7 +474,7 @@ export default function NativeJoiningControlRoom() {
     }
   };
 
-  useEffect(() => { loadQueue(); }, []);
+  useEffect(() => { loadQueue(); }, [branchId]); // also the initial load
 
   // Background refresh so BGV / readiness changes made by automation show up without HR reloading.
   // Silent (no busy flag, no error banner) and paused while the tab is hidden. The open candidate's
@@ -483,7 +486,7 @@ export default function NativeJoiningControlRoom() {
     const id = window.setInterval(async () => {
       if (document.hidden) return;
       try {
-        const res = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/ats/joining-control-room/queue?search=${encodeURIComponent(search)}`);
+        const res = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/ats/joining-control-room/queue?search=${encodeURIComponent(search)}&branch_id=${encodeURIComponent(branchId)}`);
         const next = res.data || [];
         const sel = selectedIdRef.current;
         const before = queueRef.current.find((r) => r.candidate_id === sel);
@@ -497,7 +500,7 @@ export default function NativeJoiningControlRoom() {
       }
     }, 30000);
     return () => window.clearInterval(id);
-  }, [search]);
+  }, [search, branchId]);
   useEffect(() => {
     if (selectedId) {
       esignRecheckFiredFor.current = null; // reset so the new candidate gets a fresh check
@@ -601,6 +604,15 @@ export default function NativeJoiningControlRoom() {
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-white/60" />
                 <Input className="w-64 pl-9 bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:bg-white/20" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search candidate" onKeyDown={(event) => event.key === "Enter" && loadQueue()} />
               </div>
+              <select
+                aria-label="Filter by branch"
+                value={branchId}
+                onChange={(event) => { setSelectedId(null); setDetail(null); setBranchId(event.target.value); }}
+                className="min-h-[44px] w-48 rounded-md border border-white/20 bg-white/10 px-3 text-sm text-white focus:bg-white/20 focus:outline-none [&>option]:text-slate-900"
+              >
+                <option value="">All branches</option>
+                {branches.map((b) => (<option key={b.id} value={b.id}>{b.branch_name ?? b.name}</option>))}
+              </select>
               <Button type="button" variant="outline" onClick={loadQueue} disabled={busy} className="border-white/30 bg-white/10 text-white hover:bg-white/20 min-h-[44px]"><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
             </div>
           </div>

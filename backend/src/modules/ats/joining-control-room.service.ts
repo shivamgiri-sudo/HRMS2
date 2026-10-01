@@ -199,13 +199,26 @@ async function candidateSnapshots(candidateIds: string[]): Promise<RowDataPacket
   return candidateIds.map((id) => byId.get(id)).filter(Boolean) as RowDataPacket[];
 }
 
-export async function listJoiningControlRoomQueue(search = "") {
+/**
+ * `branchKeys` restricts the queue to candidates applying to those branches: null = unrestricted,
+ * [] = nothing. ats_candidate.applied_for_branch holds a branch id on some rows and a branch NAME
+ * on others, so the caller passes both spellings for every allowed branch.
+ */
+export async function listJoiningControlRoomQueue(search = "", branchKeys: string[] | null = null) {
   let searchSql = "";
   let searchParams: unknown[] = [];
   if (search.trim()) {
     searchSql = "AND (c.full_name LIKE ? OR c.mobile LIKE ? OR c.email LIKE ? OR c.candidate_code LIKE ?)";
     const like = `%${search.trim()}%`;
     searchParams = [like, like, like, like];
+  }
+  if (branchKeys) {
+    if (!branchKeys.length) {
+      searchSql += " AND 1=0";
+    } else {
+      searchSql += ` AND c.applied_for_branch IN (${branchKeys.map(() => "?").join(",")})`;
+      searchParams = [...searchParams, ...branchKeys];
+    }
   }
   // The filter is interpolated into all four arms below, so its bindings repeat once per arm.
   const params: unknown[] = [

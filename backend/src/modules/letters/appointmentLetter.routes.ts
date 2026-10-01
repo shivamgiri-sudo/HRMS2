@@ -110,6 +110,7 @@ router.get("/appointment-letters/queue", requireRole(...VIEW_ROLES), h(async (re
     scopeSql: scope.sql,
     scopeParams: scope.params,
     search: typeof req.query.search === "string" ? req.query.search : null,
+    branchId: typeof req.query.branch_id === "string" && req.query.branch_id ? req.query.branch_id : null,
   });
   return res.json({
     success: true,
@@ -151,6 +152,12 @@ router.get("/appointment-letters", requireRole(...VIEW_ROLES), h(async (req, res
   const scope = await branchScope(req, "COALESCE(e.branch_id, i.branch_id)");
   const conds = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
+
+  const branchFilter = typeof req.query.branch_id === "string" ? req.query.branch_id.trim() : "";
+  if (branchFilter) {
+    conds.push("COALESCE(e.branch_id, i.branch_id) = ?");
+    params.push(branchFilter);
+  }
 
   const search = String(req.query.search ?? "").trim();
   if (search) {
