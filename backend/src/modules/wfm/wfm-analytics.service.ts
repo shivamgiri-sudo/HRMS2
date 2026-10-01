@@ -13,6 +13,8 @@
 
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate, type Alias } from "./branch-scope.js";
 import {
   EXPECTED_TO_WORK_EXCLUSIONS,
   HALF_DAY_STATUS,
@@ -118,12 +120,27 @@ const DEFAULT_BREAK_ALLOWED_MINS = 60;
 const num = (value: unknown): number => Number(value ?? 0) || 0;
 const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 
-export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
+export async function getWfmAnalyticsSummary(scope?: UserBusinessScope): Promise<WfmAnalyticsSummary> {
+  // Branch scoping (owner ruling 2026-10-01): org-wide roles (and callers that pass no scope) run the
+  // unfiltered SQL unchanged; everyone else only counts rows in their own branch / assigned scope.
+  const emp = (a: Alias) => (scope ? scopePredicate(scope, a) : { sql: "1=1", params: [] as unknown[] });
+  const andOf = (c: { sql: string }) => (c.sql === "1=1" ? "" : `\n       AND (${c.sql})`);
+  const E = { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" };
+  const eC = emp(E);
+  const pC = emp({ branchId: "p.branch_id", processId: "p.id" });
+  const pmC = emp({ branchId: "branch_id", processId: "id" });
+  // Tables with only an employee_id column: restrict through a sub-select on employees.
+  const sub = (col: string) => {
+    const c = emp({ employeeId: "e2.id", branchId: "e2.branch_id", processId: "e2.process_id", managerEmployeeId: "e2.reporting_manager_id" });
+    return c.sql === "1=1" ? { sql: "", params: [] as unknown[] } : { sql: `\n       AND ${col} IN (SELECT e2.id FROM employees e2 WHERE ${c.sql})`, params: c.params };
+  };
+
   // Active processes — small master table, also the id -> name lookup for the roster queries
   const [processes] = await db.query<RowDataPacket[]>(
     `SELECT id, process_name
      FROM process_master
-     WHERE active_status = 1`
+     WHERE active_status = 1${andOf(pmC)}`,
+    pmC.sql === "1=1" ? [] : pmC.params
   );
   const processName = new Map<string, string>(
     processes.map((p) => [String(p.id), String(p.process_name ?? "")])
@@ -140,8 +157,9 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      INNER JOIN employees e ON e.id = ra.employee_id
      WHERE ra.roster_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
        AND ra.publish_status IN (${ROSTER_PUBLISHED})
-       AND e.active_status = 1
-     GROUP BY ra.roster_date, ${ROSTER_PROCESS}`
+       AND e.active_status = 1${andOf(eC)}
+     GROUP BY ra.roster_date, ${ROSTER_PROCESS}`,
+    eC.sql === "1=1" ? [] : eC.params
   );
 
   const publishedProcessIds = new Set<string>();
@@ -176,8 +194,9 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      WHERE ra.roster_date = CURDATE()
        AND ra.publish_status IN (${ROSTER_PUBLISHED})
        AND ${IS_ROSTERED_SHIFT}
-       AND e.active_status = 1
-     GROUP BY ${ROSTER_PROCESS}`
+       AND e.active_status = 1${andOf(eC)}
+     GROUP BY ${ROSTER_PROCESS}`,
+    eC.sql === "1=1" ? [] : eC.params
   );
 
   let expectedToday = 0;
@@ -202,7 +221,8 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
        SUM(CASE WHEN attendance_status NOT IN (${statusList(EXPECTED_TO_WORK_EXCLUSIONS)}) THEN 1 ELSE 0 END) as expected_days
      FROM attendance_daily_record
      WHERE record_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-       AND record_date < CURDATE()`
+       AND record_date < CURDATE()${sub("employee_id").sql}`,
+    sub("employee_id").params
   );
   const shrinkagePct = pct(
     num(shrinkage[0]?.unplanned_absent) + num(shrinkage[0]?.late_arrivals),
@@ -215,21 +235,24 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      FROM attendance_daily_record
      WHERE mismatch_flag = 1
        AND record_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND CURDATE()
-       AND mismatch_resolved_at IS NULL`
+       AND mismatch_resolved_at IS NULL${sub("employee_id").sql}`,
+    sub("employee_id").params
   );
 
   const [syncErrors] = await db.query<RowDataPacket[]>(
     `SELECT COUNT(*) as count
      FROM attendance_reconciliation_issue
      WHERE issue_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND CURDATE()
-       AND resolved_at IS NULL`
+       AND resolved_at IS NULL${sub("employee_id").sql}`,
+    sub("employee_id").params
   );
 
   const [manualEntries] = await db.query<RowDataPacket[]>(
     `SELECT COUNT(*) as count
      FROM attendance_manual_override
      WHERE attendance_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND CURDATE()
-       AND approval_status = 'pending'`
+       AND approval_status = 'pending'${sub("employee_id").sql}`,
+    sub("employee_id").params
   );
 
   // Break compliance — employees over their daily break allowance in the last 7 days.
@@ -253,9 +276,10 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      LEFT JOIN allowed s3 ON s3.branch_id IS NULL AND s3.process_id = b.process_id
      LEFT JOIN allowed s4 ON s4.branch_id IS NULL AND s4.process_id IS NULL
      WHERE b.shift_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 7 DAY) AND CURDATE()
-       AND b.total_break_minutes > COALESCE(s1.mins, s2.mins, s3.mins, s4.mins, ${DEFAULT_BREAK_ALLOWED_MINS})
+       AND b.total_break_minutes > COALESCE(s1.mins, s2.mins, s3.mins, s4.mins, ${DEFAULT_BREAK_ALLOWED_MINS})${andOf(eC)}
      GROUP BY b.employee_id, employee_name, bm.branch_name
-     ORDER BY avg_over_break_mins DESC`
+     ORDER BY avg_over_break_mins DESC`,
+    eC.sql === "1=1" ? [] : eC.params
   );
 
   const overBreakCount = overBreak.length;
@@ -274,8 +298,9 @@ export async function getWfmAnalyticsSummary(): Promise<WfmAnalyticsSummary> {
      INNER JOIN wfm_slot_requirement d ON d.process_id = p.id
        AND d.requirement_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
      WHERE p.active_status = 1
-       AND d.is_active = 1
-     GROUP BY d.requirement_date, d.process_id`
+       AND d.is_active = 1${andOf(pC)}
+     GROUP BY d.requirement_date, d.process_id`,
+    pC.sql === "1=1" ? [] : pC.params
   );
 
   const forecastByDate = new Map<string, { demand: number; supply: number }>();

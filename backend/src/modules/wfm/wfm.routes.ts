@@ -29,9 +29,16 @@ import { calculate } from "./hcCalculation.service.js";
 import { attendanceAprBulkRouter } from "./attendance-apr-bulk.routes.js";
 import { scopedAttendanceDailyHandler } from "./attendance-daily-scoped.routes.js";
 import { getWfmAnalyticsSummary } from "./wfm-analytics.service.js";
+import {
+  getScope, isOrgWide, scopePredicate, canAccessEmployee, canAccessTarget, canAccessBranch, canAccessProcess,
+  canTouchScopedPolicy, branchScopeGuard, employeeFieldGuard, employeeParamGuard, employeeOwnerGuard, rosterOwnerGuard, OUT_OF_SCOPE_MSG,
+} from "./branch-scope.js";
 
 export const wfmRouter = Router();
 wfmRouter.use(requireAuth);
+// Branch scoping (owner ruling 2026-10-01): any :employeeId path param (attendance policy, day detail,
+// monthly summary) must be the caller's own record or an employee inside their branch / scope.
+wfmRouter.param("employeeId", employeeParamGuard());
 wfmRouter.use("/attendance", attendanceAprBulkRouter);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -42,7 +49,10 @@ wfmRouter.get(
   "/analytics",
   requireRole("super_admin", "admin", "wfm", "ceo", "coo", "manager"),
   h(async (req, res) => {
-    const summary = await getWfmAnalyticsSummary();
+    // Owner ruling 2026-10-01: wfm / manager see their own branch / assigned scope only.
+    const scope = await getScope(req);
+    if (!scope) return res.status(401).json({ success: false, message: "Unauthorized" });
+    const summary = await getWfmAnalyticsSummary(isOrgWide(scope) ? undefined : scope);
     res.json({ success: true, data: summary });
   })
 );
@@ -94,6 +104,12 @@ wfmRouter.get("/attendance/daily", h(async (req: any, res: any) => {
     const selfEmp = await getEmployeeForUser(req.authUser.id);
     if (!selfEmp || selfEmp.id !== employeeId) {
       return res.status(403).json({ success: false, error: "Forbidden" });
+    }
+  } else {
+    // Privileged no longer means "any employee": hr / wfm / manager ... stay inside their branch / scope.
+    const callerScope = await getScope(req);
+    if (!callerScope || !(await canAccessEmployee(callerScope, String(employeeId)))) {
+      return res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG });
     }
   }
 
@@ -162,6 +178,16 @@ wfmRouter.post("/sessions/clock-out", h(wfmController.clockOut.bind(wfmControlle
 wfmRouter.get("/sessions",            requireRole("admin", "wfm", "manager"), h(wfmController.listSessions.bind(wfmController)));
 wfmRouter.post("/sessions/break",     h(wfmController.logBreak.bind(wfmController))); // Employee self-service
 wfmRouter.get("/sessions/:sessionId/breaks", h(async (req: any, res: any) => {
+  // The session's owner must be the caller or inside the caller's branch / scope.
+  const [ownerRows] = await db.execute<RowDataPacket[]>(
+    "SELECT employee_id FROM wfm_attendance_session WHERE id = ? LIMIT 1", [req.params.sessionId]);
+  const ownerId = (ownerRows as RowDataPacket[])[0]?.employee_id as string | undefined;
+  if (ownerId) {
+    const callerScope = await getScope(req);
+    if (!callerScope || !(await canAccessEmployee(callerScope, ownerId))) {
+      return res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG });
+    }
+  }
   const breaks = await wfmService.getBreaksForSession(req.params.sessionId);
   return res.json({ success: true, data: breaks });
 }));
@@ -250,7 +276,9 @@ wfmRouter.get("/live", requireRole("admin", "wfm", "manager", "branch_head", "pr
       branchName:  z.string().optional(),
     });
     const filters = schema.parse(req.query);
-    const data = await getLiveTracker(filters);
+    const callerScope = await getScope(req);
+    if (!callerScope) return res.status(401).json({ success: false, message: "Unauthorized" });
+    const data = await getLiveTracker(filters, isOrgWide(callerScope) ? undefined : callerScope);
     return res.json({ success: true, data });
   } catch (err) {
     next(err);
@@ -274,17 +302,19 @@ wfmRouter.get("/roster-preferences/my", requireAuth, h(async (req: any, res: any
   res.json({ data: prefs });
 }));
 
-wfmRouter.get("/roster-preferences/pending", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), h(async (_req: any, res: any) => {
-  const prefs = await rosterPreferenceService.getPending();
+wfmRouter.get("/roster-preferences/pending", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), h(async (req: any, res: any) => {
+  const callerScope = await getScope(req);
+  if (!callerScope) return res.status(401).json({ success: false, message: "Unauthorized" });
+  const prefs = await rosterPreferenceService.getPending(isOrgWide(callerScope) ? undefined : callerScope);
   res.json({ data: prefs });
 }));
 
-wfmRouter.patch("/roster-preferences/:id/approve", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.patch("/roster-preferences/:id/approve", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), employeeOwnerGuard("employee_roster_preference"), h(async (req: any, res: any) => {
   await rosterPreferenceService.approve(req.params.id, req.authUser!.id);
   res.json({ success: true });
 }));
 
-wfmRouter.patch("/roster-preferences/:id/reject", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.patch("/roster-preferences/:id/reject", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), employeeOwnerGuard("employee_roster_preference"), h(async (req: any, res: any) => {
   const { reason } = req.body;
   await rosterPreferenceService.reject(req.params.id, req.authUser!.id, reason || "Rejected");
   res.json({ success: true });
@@ -472,7 +502,7 @@ wfmRouter.get("/week-off-preference", requireAuth, h(async (req: any, res: any) 
 }));
 
 // PATCH /api/wfm/week-off-preference/:id/approve — WFM lead approves/rejects
-wfmRouter.patch("/week-off-preference/:id/approve", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.patch("/week-off-preference/:id/approve", requireAuth, requireRole("admin", "wfm"), employeeOwnerGuard("week_off_preference"), h(async (req: any, res: any) => {
   const { z: zod } = await import("zod");
   const { db: dbConn } = await import("../../db/mysql.js");
   const { approved } = zod.object({ approved: zod.boolean() }).parse(req.body);
@@ -489,7 +519,7 @@ wfmRouter.patch("/week-off-preference/:id/approve", requireAuth, requireRole("ad
 // ── Shift Rotation Type ────────────────────────────────────────────────────────
 
 // GET /api/wfm/rotation-summary?processId=&branchId= — per-type employee counts
-wfmRouter.get("/rotation-summary", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/rotation-summary", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const { processId, branchId } = req.query;
   if (!processId) return res.status(400).json({ error: "processId is required" });
   const { db: dbConn } = await import("../../db/mysql.js");
@@ -522,7 +552,7 @@ wfmRouter.get("/rotation-summary", requireAuth, requireRole("admin", "super_admi
 }));
 
 // PATCH /api/wfm/employees/:id/shift-rotation — set rotation type for one employee
-wfmRouter.patch("/employees/:id/shift-rotation", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), h(async (req: any, res: any) => {
+wfmRouter.patch("/employees/:id/shift-rotation", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), employeeOwnerGuard("employees", "id", "id"), h(async (req: any, res: any) => {
   const { shift_rotation_type } = req.body;
   const allowed = ["frozen", "weekly", "daily", "rotating"];
   if (!shift_rotation_type || !allowed.includes(shift_rotation_type)) {
@@ -542,7 +572,7 @@ wfmRouter.patch("/employees/:id/shift-rotation", requireAuth, requireRole("admin
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/planning-rules?processId=&branchId=
-wfmRouter.get("/planning-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/planning-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const { processId, branchId } = req.query;
   if (!processId) return res.status(400).json({ error: "processId is required" });
   const data = await planningRuleService.list(processId, branchId);
@@ -550,7 +580,7 @@ wfmRouter.get("/planning-rules", requireAuth, requireRole("admin", "super_admin"
 }));
 
 // POST /api/wfm/planning-rules
-wfmRouter.post("/planning-rules", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.post("/planning-rules", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const { process_id, workload_type, effective_from } = req.body;
   if (!process_id || !workload_type || !effective_from) {
     return res.status(400).json({ error: "process_id, workload_type and effective_from are required" });
@@ -560,13 +590,13 @@ wfmRouter.post("/planning-rules", requireAuth, requireRole("admin", "wfm"), h(as
 }));
 
 // PATCH /api/wfm/planning-rules/:id
-wfmRouter.patch("/planning-rules/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.patch("/planning-rules/:id", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), rosterOwnerGuard("wfm_process_planning_rule", "id"), h(async (req: any, res: any) => {
   const data = await planningRuleService.update(req.params.id, req.body, req.authUser!.id);
   return res.json({ success: true, data });
 }));
 
 // DELETE /api/wfm/planning-rules/:id  (soft deactivate)
-wfmRouter.delete("/planning-rules/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.delete("/planning-rules/:id", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), rosterOwnerGuard("wfm_process_planning_rule", "id"), h(async (req: any, res: any) => {
   await planningRuleService.deactivate(req.params.id, req.authUser!.id);
   return res.json({ success: true, message: "Planning rule deactivated" });
 }));
@@ -593,29 +623,53 @@ wfmRouter.get("/rest-policy", requireAuth, requireRole("admin", "super_admin", "
     scope_type: req.query.scope_type as string | undefined,
     active_status: req.query.active_status as string | undefined,
   });
-  return res.json({ success: true, data });
+  // Owner ruling 2026-10-01: branch / process / employee policies outside the caller's scope are hidden.
+  const callerScope = await getScope(req);
+  if (!callerScope) return res.status(401).json({ success: false, message: "Unauthorized" });
+  if (isOrgWide(callerScope)) return res.json({ success: true, data });
+  const visible: typeof data = [];
+  for (const row of data) if (await canTouchScopedPolicy(callerScope, row as any, false)) visible.push(row);
+  return res.json({ success: true, data: visible });
 }));
 
 // GET /api/wfm/rest-policy/:id
 wfmRouter.get("/rest-policy/:id", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), h(async (req: any, res: any) => {
   const data = await restPolicyConfigService.get(req.params.id);
+  const callerScope = await getScope(req);
+  if (!callerScope || !(await canTouchScopedPolicy(callerScope, data as any, false))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+  }
   return res.json({ success: true, data });
 }));
 
 // POST /api/wfm/rest-policy
 wfmRouter.post("/rest-policy", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+  const callerScope = await getScope(req);
+  if (!callerScope || !(await canTouchScopedPolicy(callerScope, req.body ?? {}, true))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+  }
   const data = await restPolicyConfigService.create(req.body, req.authUser!.id, req);
   return res.status(201).json({ success: true, data });
 }));
 
 // PATCH /api/wfm/rest-policy/:id  (terms only — scope is immutable, create a new policy to change it)
 wfmRouter.patch("/rest-policy/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+  const callerScope = await getScope(req);
+  const existing = await restPolicyConfigService.get(req.params.id);
+  if (!callerScope || !(await canTouchScopedPolicy(callerScope, existing as any, true))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+  }
   const data = await restPolicyConfigService.update(req.params.id, req.body, req.authUser!.id, req);
   return res.json({ success: true, data });
 }));
 
 // DELETE /api/wfm/rest-policy/:id  (soft deactivate — matches the rest of this module's pattern)
 wfmRouter.delete("/rest-policy/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+  const callerScope = await getScope(req);
+  const existing = await restPolicyConfigService.get(req.params.id);
+  if (!callerScope || !(await canTouchScopedPolicy(callerScope, existing as any, true))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+  }
   await restPolicyConfigService.deactivate(req.params.id, req.authUser!.id, req);
   return res.json({ success: true, message: "Rest policy deactivated" });
 }));
@@ -625,7 +679,7 @@ wfmRouter.delete("/rest-policy/:id", requireAuth, requireRole("admin", "wfm"), h
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/slot-requirements?processId=&fromDate=&toDate=&coverageStatus=
-wfmRouter.get("/slot-requirements", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/slot-requirements", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const { processId, branchId, fromDate, toDate, coverageStatus } = req.query;
   if (!processId) return res.status(400).json({ error: "processId is required" });
   const data = await slotRequirementService.list({ processId, branchId, fromDate, toDate, coverageStatus });
@@ -633,13 +687,13 @@ wfmRouter.get("/slot-requirements", requireAuth, requireRole("admin", "super_adm
 }));
 
 // POST /api/wfm/slot-requirements  (manual entry / upsert)
-wfmRouter.post("/slot-requirements", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.post("/slot-requirements", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const data = await slotRequirementService.upsert(req.body, req.authUser!.id);
   return res.status(201).json({ success: true, data });
 }));
 
 // POST /api/wfm/slot-requirements/calculate  (calculate HC for a single slot)
-wfmRouter.post("/slot-requirements/calculate", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.post("/slot-requirements/calculate", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const { slotId } = req.body;
   if (!slotId) return res.status(400).json({ error: "slotId is required" });
   const data = await slotRequirementService.calculateHc(slotId, req.authUser!.id);
@@ -647,7 +701,7 @@ wfmRouter.post("/slot-requirements/calculate", requireAuth, requireRole("admin",
 }));
 
 // POST /api/wfm/slot-requirements/calculate-bulk  (recalculate all slots for process/date range)
-wfmRouter.post("/slot-requirements/calculate-bulk", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.post("/slot-requirements/calculate-bulk", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const { processId, fromDate, toDate } = req.body;
   if (!processId || !fromDate || !toDate) {
     return res.status(400).json({ error: "processId, fromDate and toDate are required" });
@@ -657,7 +711,7 @@ wfmRouter.post("/slot-requirements/calculate-bulk", requireAuth, requireRole("ad
 }));
 
 // POST /api/wfm/slot-requirements/forecast-import  (bulk upsert volume rows + auto-recalculate HC)
-wfmRouter.post("/slot-requirements/forecast-import", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.post("/slot-requirements/forecast-import", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const rows = req.body?.rows;
   if (!Array.isArray(rows)) {
     return res.status(400).json({ error: "req.body.rows must be a JSON array of slot requirement objects" });
@@ -667,13 +721,13 @@ wfmRouter.post("/slot-requirements/forecast-import", requireAuth, requireRole("a
 }));
 
 // PATCH /api/wfm/slot-requirements/:id
-wfmRouter.patch("/slot-requirements/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.patch("/slot-requirements/:id", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), rosterOwnerGuard("wfm_slot_requirement", "id"), h(async (req: any, res: any) => {
   const data = await slotRequirementService.upsert({ ...req.body, id: req.params.id }, req.authUser!.id);
   return res.json({ success: true, data });
 }));
 
 // DELETE /api/wfm/slot-requirements/:id (soft delete with mandatory reason)
-wfmRouter.delete("/slot-requirements/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.delete("/slot-requirements/:id", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), rosterOwnerGuard("wfm_slot_requirement", "id"), h(async (req: any, res: any) => {
   const { reason } = req.body;
   if (!reason || String(reason).trim().length < 5) {
     return res.status(400).json({ error: "delete_reason is required (minimum 5 characters)" });
@@ -687,7 +741,7 @@ wfmRouter.delete("/slot-requirements/:id", requireAuth, requireRole("admin", "wf
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/weekoff/day-rules?processId=&weekStartDate=
-wfmRouter.get("/weekoff/day-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/weekoff/day-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const { processId, weekStartDate } = req.query;
   if (!processId) return res.status(400).json({ error: "processId is required" });
   const data = await weekoffDayRuleService.list(processId, weekStartDate);
@@ -695,19 +749,19 @@ wfmRouter.get("/weekoff/day-rules", requireAuth, requireRole("admin", "super_adm
 }));
 
 // POST /api/wfm/weekoff/day-rules  (upsert — create or update for that week)
-wfmRouter.post("/weekoff/day-rules", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.post("/weekoff/day-rules", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const data = await weekoffDayRuleService.upsert(req.body, req.authUser!.id);
   return res.status(201).json({ success: true, data });
 }));
 
 // PATCH /api/wfm/weekoff/day-rules/:id
-wfmRouter.patch("/weekoff/day-rules/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.patch("/weekoff/day-rules/:id", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), rosterOwnerGuard("process_weekoff_day_rule", "id"), h(async (req: any, res: any) => {
   const data = await weekoffDayRuleService.upsert({ ...req.body, id: req.params.id }, req.authUser!.id);
   return res.json({ success: true, data });
 }));
 
 // DELETE /api/wfm/weekoff/day-rules/:id (soft delete with mandatory reason)
-wfmRouter.delete("/weekoff/day-rules/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+wfmRouter.delete("/weekoff/day-rules/:id", requireAuth, requireRole("admin", "wfm"), branchScopeGuard({ inject: false }), rosterOwnerGuard("process_weekoff_day_rule", "id"), h(async (req: any, res: any) => {
   const { reason } = req.body;
   if (!reason || String(reason).trim().length < 5) {
     return res.status(400).json({ error: "delete_reason is required (minimum 5 characters)" });
@@ -718,7 +772,7 @@ wfmRouter.delete("/weekoff/day-rules/:id", requireAuth, requireRole("admin", "wf
 
 // GET /api/wfm/weekoff/day-rules/capacity-grid?processId=&weekStartDate=
 // Returns 7-element capacity check grid including min_hc, max_weekoff, allocated counts
-wfmRouter.get("/weekoff/day-rules/capacity-grid", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/weekoff/day-rules/capacity-grid", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), branchScopeGuard({ inject: false }), h(async (req: any, res: any) => {
   const { processId, weekStartDate } = req.query;
   if (!processId || !weekStartDate) return res.status(400).json({ error: "processId and weekStartDate are required" });
   const { db: dbConn } = await import("../../db/mysql.js");
@@ -769,6 +823,15 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
           WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
     ))`;
     params.push(emp.id, req.authUser!.id);
+  } else {
+    // admin / hr / wfm: only org-wide roles see every branch (owner ruling 2026-10-01).
+    const callerScope = await getScope(req);
+    if (!callerScope) return res.status(401).json({ error: "Unauthorized" });
+    if (!isOrgWide(callerScope)) {
+      const c = scopePredicate(callerScope, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" });
+      scopeWhere = `AND (${c.sql})`;
+      params.push(...c.params);
+    }
   }
 
   const lob = readLobFilter(req, res);
@@ -827,7 +890,7 @@ async function assertRosterDateNotLocked(
 }
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/realign
-wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
+wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), h(async (req: any, res: any) => {
   const { assignmentId } = req.params;
   const { new_roster_date, new_shift_template_id, reason } = req.body;
   if (!reason) return res.status(400).json({ error: "reason is required" });
@@ -957,7 +1020,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
 }));
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/force-approve
-wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
+wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), h(async (req: any, res: any) => {
   const { assignmentId } = req.params;
   const { reason } = req.body;
   if (!reason) return res.status(400).json({ error: "reason is required" });
@@ -1026,7 +1089,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAut
 }));
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/escalate
-wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
+wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), h(async (req: any, res: any) => {
   const { assignmentId } = req.params;
   const { reason } = req.body;
   if (!reason) return res.status(400).json({ error: "reason is required" });
@@ -1089,7 +1152,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, re
 }));
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/reject-request
-wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
+wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), h(async (req: any, res: any) => {
   const { assignmentId } = req.params;
   const { reason } = req.body;
   if (!reason) return res.status(400).json({ error: "reason is required" });
@@ -1553,6 +1616,7 @@ wfmRouter.post(
   "/roster/publish-to-employees",
   requireAuth,
   requireRole("admin", "super_admin", "wfm", "hr"),
+  rosterOwnerGuard("weekly_roster_cycle", "cycleId"),
   h(async (req: any, res: any) => {
     const cycleId = String(req.body?.cycleId ?? "").trim();
     if (!cycleId) return res.status(400).json({ success: false, error: "cycleId is required" });
@@ -1684,7 +1748,7 @@ wfmRouter.post(
 // POST /api/wfm/roster/publish-final
 // Transitions all approved_final / force_approved_by_manager / realigned_by_manager
 // assignments for a cycle to published_to_rta and sets published_to_rta_at.
-wfmRouter.post("/roster/publish-final", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), h(async (req: any, res: any) => {
+wfmRouter.post("/roster/publish-final", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), rosterOwnerGuard("weekly_roster_cycle", "cycleId"), h(async (req: any, res: any) => {
   const { cycleId } = req.body;
   if (!cycleId) return res.status(400).json({ error: "cycleId is required" });
   const { db: dbConn } = await import("../../db/mysql.js");
@@ -1716,6 +1780,14 @@ wfmRouter.get("/rta/final-roster-state", requireAuth, requireRole("admin", "wfm"
   const params: unknown[] = [date];
   let processCond = "";
   if (processId) { processCond = " AND pm.id = ?"; params.push(processId); }
+  // Branch scoping (owner ruling 2026-10-01): non-org-wide callers only see their own branch / scope.
+  const callerScope = await getScope(req);
+  if (!callerScope) return res.status(401).json({ error: "Unauthorized" });
+  if (!isOrgWide(callerScope)) {
+    const c = scopePredicate(callerScope, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" });
+    processCond += ` AND (${c.sql})`;
+    params.push(...c.params);
+  }
 
   const [rows] = await dbConn.execute(
     `SELECT wra.id, wra.employee_id, wra.roster_date, wra.is_week_off,
@@ -2198,7 +2270,7 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
 // branch_head added 2026-09-16: view-only, matching the read/write split already used by
 // planning-rules/slot-requirements/weekoff-day-rules — branch heads can see fairness scores
 // for their branch, but /compute (which recalculates and writes scores) stays wfm/admin-only.
-wfmRouter.get("/weekoff/fairness-scores", requireRole("wfm", "admin", "super_admin", "branch_head"), h(async (req, res) => {
+wfmRouter.get("/weekoff/fairness-scores", requireRole("wfm", "admin", "super_admin", "branch_head"), branchScopeGuard({ inject: false }), h(async (req, res) => {
   const { getFairnessScoresForWeek } = await import("./weekoff-fairness.service.js");
   const processId = String(req.query.processId ?? "");
   const weekStartDate = String(req.query.weekStartDate ?? "");
@@ -2209,7 +2281,7 @@ wfmRouter.get("/weekoff/fairness-scores", requireRole("wfm", "admin", "super_adm
   return res.json({ success: true, data });
 }));
 
-wfmRouter.post("/weekoff/fairness-scores/compute", requireRole("wfm", "admin", "super_admin"), h(async (req, res) => {
+wfmRouter.post("/weekoff/fairness-scores/compute", requireRole("wfm", "admin", "super_admin"), branchScopeGuard({ inject: false }), h(async (req, res) => {
   const { computeAndStoreFairnessScores } = await import("./weekoff-fairness.service.js");
   const { processId, weekStartDate } = req.body;
   if (!processId || !weekStartDate) {
@@ -2219,7 +2291,7 @@ wfmRouter.post("/weekoff/fairness-scores/compute", requireRole("wfm", "admin", "
   return res.json({ success: true, message: "Fairness scores computed and stored" });
 }));
 
-wfmRouter.post("/weekoff/allocations/record", requireRole("wfm", "admin", "super_admin"), h(async (req, res) => {
+wfmRouter.post("/weekoff/allocations/record", requireRole("wfm", "admin", "super_admin"), branchScopeGuard({ inject: false }), employeeFieldGuard("employeeId"), h(async (req, res) => {
   const { recordWeekOffAllocation } = await import("./weekoff-fairness.service.js");
   const { employeeId, processId, weekStartDate, assignedDay, exceptionReason } = req.body;
   if (!employeeId || !processId || !weekStartDate) {
@@ -2231,7 +2303,7 @@ wfmRouter.post("/weekoff/allocations/record", requireRole("wfm", "admin", "super
 
 // ── Branch WFM SPOC config ────────────────────────────────────────────────────
 
-wfmRouter.get("/branch-spoc-config", requireRole("super_admin", "admin", "wfm"), h(async (req, res) => {
+wfmRouter.get("/branch-spoc-config", requireRole("super_admin", "admin", "wfm"), branchScopeGuard(), h(async (req, res) => {
   const { listSPOCConfigs } = await import("./branch-wfm-spoc.service.js");
   const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
   const data = await listSPOCConfigs(branchId);

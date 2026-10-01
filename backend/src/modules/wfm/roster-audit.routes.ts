@@ -26,6 +26,7 @@ import {
   resolvePeriod,
 } from './roster-audit.helpers.js';
 import { actorName, resolveActors } from './roster-audit.actors.js';
+import { branchScopeGuard } from "./branch-scope.js";
 import { mountAuditDetailRoutes } from "./roster-audit-detail.routes.js";
 import { consoleScopeGuard, branchParamGuard, employeeParamGuard } from "./console-scope.js";
 

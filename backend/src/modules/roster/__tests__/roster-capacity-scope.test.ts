@@ -42,6 +42,28 @@ vi.mock("../roster-capacity.service.js", () => ({
   },
 }));
 
+
+// Branch-scoping helpers delegate to the same hasRole / hasProcessScope / execute mocks these tests drive.
+vi.mock("../../../shared/enterpriseScope.js", () => ({
+  resolveUserBusinessScope: async (u: any) => ({ userId: typeof u === "string" ? u : u.id, roles: [], assignments: [] }),
+}));
+vi.mock("../../wfm/branch-scope.js", async () => {
+  const accessGuard = await import("../../../shared/accessGuard.js");
+  const { db } = await import("../../../db/mysql.js");
+  return {
+    canAccessProcess: async (scope: any, pid: string, b: any) => accessGuard.hasProcessScope(scope.userId, pid, b, "wfm", "process_manager"),
+    userCanAccessProcess: async (u: string, pid: string, b: any) => accessGuard.hasProcessScope(u, pid, b, "wfm", "process_manager"),
+    canAccessEmployee: async () => false,
+    scopedProcessIdsForUser: async (u: string) => {
+      if (await accessGuard.hasRole(u, "admin", "hr")) return "unrestricted";
+      const [rows] = await (db as any).execute("SELECT scope_type, process_id FROM user_assignment_scope", [u]);
+      const scopes = rows as { scope_type: string; process_id: string | null }[];
+      if (scopes.some((s) => s.scope_type === "all")) return "unrestricted";
+      return scopes.map((s) => s.process_id).filter((id): id is string => !!id);
+    },
+  };
+});
+
 import { rosterCapacityController } from "../roster-capacity.controller.js";
 
 function mockReq(overrides: Record<string, unknown> = {}) {

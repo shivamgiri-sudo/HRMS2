@@ -8,6 +8,8 @@ import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { resolveWeekOffScopeDefault } from "../roster/weekoff-policy.service.js";
 import { triggerRosterPublishPending } from "../work-inbox/work-inbox.triggers.js";
 import { loadPlanOffdayPolicy, markWeekOff, stampPlanRows } from "./roster-offday-apply.js";
+import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate } from "./branch-scope.js";
 
 type AnyRow = Record<string, any>;
 
@@ -1493,9 +1495,14 @@ export const autoRosterSyncedService = {
     return { created };
   },
 
-  async listEvents(planId?: string, since?: string) {
+  async listEvents(planId?: string, since?: string, scope?: UserBusinessScope) {
     const conds: string[] = [];
     const params: unknown[] = [];
+    if (scope) {
+      // Owner ruling 2026-10-01: only events of plans in the caller's own branch / process scope.
+      const c = scopePredicate(scope, { branchId: "p.branch_id", processId: "p.process_id" });
+      if (c.sql !== "1=1") { conds.push(`plan_id IN (SELECT p.id FROM wfm_roster_plan p WHERE ${c.sql})`); params.push(...c.params); }
+    }
     if (planId) { conds.push("plan_id = ?"); params.push(planId); }
     if (since) { conds.push("created_at > ?"); params.push(since); }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";

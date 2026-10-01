@@ -4,6 +4,9 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { buildScopeWhereClause, getUserAssignmentScopes, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { canAccessEmployee as canAccessEmployeeInScope } from "./branch-scope.js";
 import { regularizationSchema } from "./wfm.validation.js";
 import { wfmService } from "./wfm.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -104,11 +107,14 @@ async function employeeTarget(employeeId: string) {
 }
 
 async function canAccessEmployee(userId: string, employeeId: string, allowSelf = true) {
-  if (await hasAnyRole(userId, "admin", "hr", "wfm", "ceo")) return true;
+  // Org-wide roles only (owner ruling 2026-10-01): hr / wfm used to bypass here and could submit,
+  // preview or batch regularizations for any branch. They now go through the scope checks below.
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return true;
   const target = await employeeTarget(employeeId);
   if (!target) return false;
   const callerEmp = await getEmployeeForUser(userId);
   if (allowSelf && callerEmp?.id === employeeId) return true;
+  if (await canAccessEmployeeInScope(await resolveUserBusinessScope(userId), employeeId)) return true;
   return hasScopedAccess(
     userId,
     WFM_VIEW_SCOPE_ROLES,

@@ -8,6 +8,8 @@ import { loadLobNames } from '../../shared/lobNames.js';
 import * as XLSX from 'xlsx';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
+import type { UserBusinessScope } from '../../shared/enterpriseScope.js';
+import { isOrgWide, allowedBranchIds, assignedProcessIds, rowInScope } from './branch-scope.js';
 import { analyzeHeaders } from './header-alias.service.js';
 import { normalizeAssignment, NormalizerConfig } from './assignment-normalizer.service.js';
 import { sqlLimitOffset } from '../../db/pagination.js';
@@ -634,6 +636,8 @@ export interface ImportBatchListItem {
 export async function listImportBatches(options: {
   status?: string[];
   limit?: number;
+  /** Non-org-wide caller (owner ruling 2026-10-01): only batches in their branch / process, or their own uploads. */
+  scope?: UserBusinessScope;
 }): Promise<ImportBatchListItem[]> {
   const statuses =
     options.status && options.status.length > 0
@@ -641,6 +645,24 @@ export async function listImportBatches(options: {
       : ['PARSING', 'PREVIEW', 'VALIDATING', 'READY'];
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const placeholders = statuses.map(() => '?').join(',');
+  const queryParams: unknown[] = [...statuses];
+  let scopeSql = '';
+  if (options.scope && !isOrgWide(options.scope)) {
+    const branches = allowedBranchIds(options.scope) ?? [];
+    const procs = assignedProcessIds(options.scope);
+    const ors: string[] = ['b.created_by = ?'];
+    queryParams.push(options.scope.userId);
+    if (branches.length) {
+      ors.push(`b.branch_id IN (${branches.map(() => '?').join(',')})`);
+      ors.push(`b.process_id IN (SELECT pm.id FROM process_master pm WHERE pm.branch_id IN (${branches.map(() => '?').join(',')}))`);
+      queryParams.push(...branches, ...branches);
+    }
+    if (procs.length) {
+      ors.push(`b.process_id IN (${procs.map(() => '?').join(',')})`);
+      queryParams.push(...procs);
+    }
+    scopeSql = ` AND (${ors.join(' OR ')})`;
+  }
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT
        b.id, b.status, b.file_name, b.import_mode,
@@ -654,10 +676,10 @@ export async function listImportBatches(options: {
      LEFT JOIN branch_master br ON br.id = b.branch_id
      LEFT JOIN process_master p ON p.id = b.process_id
      LEFT JOIN auth_user u ON u.id = b.created_by
-     WHERE b.status IN (${placeholders})
+     WHERE b.status IN (${placeholders})${scopeSql}
      ORDER BY b.created_at DESC
      LIMIT ${limit}`,
-    statuses
+    queryParams
   );
   return rows as unknown as ImportBatchListItem[];
 }
@@ -769,7 +791,7 @@ async function notifyEmployeesForImportBatch(batchId: number): Promise<number> {
 export async function commitImportBatch(
   batchId: number,
   committedBy: string,
-  options: { overrideWarnings?: boolean; cycleId?: string | null; committerIsSuperAdmin?: boolean }
+  options: { overrideWarnings?: boolean; cycleId?: string | null; committerIsSuperAdmin?: boolean; scope?: UserBusinessScope }
 ): Promise<CommitResult> {
   // Step 1: Fetch batch
   const [batchRows] = await db.execute<RowDataPacket[]>(
@@ -858,9 +880,20 @@ export async function commitImportBatch(
   const codeToScope = new Map<string, { processId: string | null; branchId: string | null }>();
   if (codes.length) {
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, employee_code, process_id, branch_id FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')})`,
+      `SELECT id, employee_code, process_id, branch_id${options.scope && !isOrgWide(options.scope) ? ', reporting_manager_id' : ''} FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')})`,
       codes
     );
+    // Owner ruling 2026-10-01: a spreadsheet may only roster employees inside the committer's own
+    // branch / assigned scope. Nothing is written when any row is outside it (fail closed).
+    if (options.scope && !isOrgWide(options.scope)) {
+      const outside = (empRows as RowDataPacket[]).filter((e) => !rowInScope(options.scope!, e as any));
+      if (outside.length > 0) {
+        throw Object.assign(
+          new Error(`Forbidden: ${outside.length} employee(s) in this batch are outside your branch / assigned scope`),
+          { statusCode: 403 },
+        );
+      }
+    }
     for (const e of empRows as RowDataPacket[]) {
       codeToId.set(String(e.employee_code), String(e.id));
       codeToScope.set(String(e.employee_code), {

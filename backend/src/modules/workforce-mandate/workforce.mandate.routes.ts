@@ -32,6 +32,7 @@ async function assertCanEditMandate(userId: string, target: { branchId?: string 
 }
 
 import { sumWfmMandate, syncProcessSeatsSafe } from "../process-pnl/seat-mandate-sync.service.js";
+import { branchScopeGuard } from "../wfm/branch-scope.js";
 const router = Router();
 
 // 30s in-memory cache of the (user-independent) capacity payload, per branch filter. Mandate
@@ -331,6 +332,9 @@ router.get(
     // Designation-based audience that no existing role can express - see migration 1689.
     "capacity_viewer",
   ),
+  // Owner ruling 2026-10-01: branchId may only narrow; non-org-wide callers are pinned to their branch.
+  // The cache key below includes the (possibly injected) branchId, so users never share a scoped payload.
+  branchScopeGuard(),
   h(async (req: AuthenticatedRequest & Request, res: Response) => {
     const { branchId } = req.query as { branchId?: string };
     const cacheKey = branchId ?? "__all__";

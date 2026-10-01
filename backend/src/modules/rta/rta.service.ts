@@ -1,6 +1,8 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate } from "../wfm/branch-scope.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -588,9 +590,13 @@ export const payrollReadinessService = {
     return { flagged, errors };
   },
 
-  async listFlags(filters: { periodStart?: string; status?: string; employeeId?: string; page: number; limit: number }) {
+  async listFlags(filters: { periodStart?: string; status?: string; employeeId?: string; page: number; limit: number }, scope?: UserBusinessScope) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
+    if (scope) {
+      const c = scopePredicate(scope, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" });
+      if (c.sql !== "1=1") { conds.push(`(${c.sql})`); params.push(...c.params); }
+    }
     if (filters.periodStart) { conds.push("period_start = ?"); params.push(filters.periodStart); }
     if (filters.status)      { conds.push("status = ?");       params.push(filters.status); }
     if (filters.employeeId)  { conds.push("employee_id = ?");  params.push(filters.employeeId); }
@@ -663,9 +669,14 @@ export const leaveImpactService = {
     return impacted;
   },
 
-  async listImpacts(filters: { fromDate?: string; toDate?: string; processId?: string; impactLevel?: string }) {
+  async listImpacts(filters: { fromDate?: string; toDate?: string; processId?: string; impactLevel?: string }, scope?: UserBusinessScope) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
+    if (scope) {
+      // Owner ruling 2026-10-01: only employees inside the caller's own branch / scope.
+      const c = scopePredicate(scope, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" });
+      if (c.sql !== "1=1") { conds.push(`(${c.sql})`); params.push(...c.params); }
+    }
     if (filters.fromDate)    { conds.push("lri.impact_date >= ?"); params.push(filters.fromDate); }
     if (filters.toDate)      { conds.push("lri.impact_date <= ?"); params.push(filters.toDate); }
     if (filters.impactLevel) { conds.push("lri.impact_level = ?"); params.push(filters.impactLevel); }

@@ -4,6 +4,7 @@ import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware
 import { requireRole } from "../../middleware/requireRole.js";
 import { breakManagementService } from "./break-management.service.js";
 import { resolveFullScope } from "../reporting/reporting.scope.js";
+import { branchScopeGuard, rosterOwnerGuard } from "../wfm/branch-scope.js";
 import { executeReport } from "../reporting/executors/index.js";
 import type { ExecFilters, ExecOptions } from "../reporting/executors/types.js";
 
@@ -13,6 +14,17 @@ const requireBreakAdmin = requireRole("admin", "super_admin", "wfm");
 
 breakManagementRouter.use(requireAuth);
 breakManagementRouter.use(requireRole("admin", "super_admin", "hr", "wfm", "manager", "process_manager", "team_leader", "ceo"));
+
+// Owner ruling 2026-10-01: branch_id / process_id (query or body) only NARROW the caller's own branch /
+// assigned scope (403 outside it); a caller who names none is pinned to their own branch. Org-wide roles
+// pass untouched. Kiosk (break desk) devices, settings and exceptions are therefore branch-limited too.
+breakManagementRouter.use(branchScopeGuard({
+  branchKeys: ["branch_id", "branchId"],
+  processKeys: ["process_id", "processId"],
+  processArrayKeys: ["allowed_process_ids"],
+  injectBranchKey: "branch_id",
+  injectProcessKey: "process_id",
+}));
 
 breakManagementRouter.get("/dashboard", h(async (req, res) => {
   const query = z.object({
@@ -81,7 +93,9 @@ breakManagementRouter.get("/settings", requireBreakAdmin, h(async (_req, res) =>
   return res.json({ success: true, data });
 }));
 
-breakManagementRouter.post("/settings", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
+breakManagementRouter.post("/settings", requireBreakAdmin, requireWriteAccess, branchScopeGuard({
+  branchKeys: ["branch_id"], processKeys: ["process_id"], inject: false, requireTarget: true,
+}), h(async (req: any, res) => {
   const body = z.object({
     id: z.string().optional(),
     branch_id: z.string().optional().nullable(),
@@ -150,7 +164,7 @@ breakManagementRouter.post("/kiosks", requireBreakAdmin, requireWriteAccess, h(a
   return res.status(201).json({ success: true, data, message: "Break desk ID created" });
 }));
 
-breakManagementRouter.put("/kiosks/:id", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
+breakManagementRouter.put("/kiosks/:id", requireBreakAdmin, requireWriteAccess, rosterOwnerGuard("break_kiosk_devices", "id"), h(async (req: any, res) => {
   const params = z.object({ id: z.string().min(1) }).parse(req.params);
   const body = z.object({
     kiosk_code: z.string().min(3).max(100),
@@ -166,7 +180,7 @@ breakManagementRouter.put("/kiosks/:id", requireBreakAdmin, requireWriteAccess, 
   return res.json({ success: true, data, message: "Break desk ID updated" });
 }));
 
-breakManagementRouter.post("/kiosks/:id/rotate-token", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
+breakManagementRouter.post("/kiosks/:id/rotate-token", requireBreakAdmin, requireWriteAccess, rosterOwnerGuard("break_kiosk_devices", "id"), h(async (req: any, res) => {
   const params = z.object({ id: z.string().min(1) }).parse(req.params);
   const body = z.object({
     token: z.string().min(12).max(128).optional(),
@@ -175,7 +189,7 @@ breakManagementRouter.post("/kiosks/:id/rotate-token", requireBreakAdmin, requir
   return res.json({ success: true, data, message: "Break desk token rotated" });
 }));
 
-breakManagementRouter.delete("/kiosks/:id", requireBreakAdmin, requireWriteAccess, h(async (req: any, res) => {
+breakManagementRouter.delete("/kiosks/:id", requireBreakAdmin, requireWriteAccess, rosterOwnerGuard("break_kiosk_devices", "id"), h(async (req: any, res) => {
   const params = z.object({ id: z.string().min(1) }).parse(req.params);
   const data = await breakManagementService.deleteKioskDevice(params.id, req.authUser.id, req);
   return res.json({ success: true, data, message: "Break desk ID deleted" });
@@ -185,6 +199,8 @@ breakManagementRouter.get("/exceptions", h(async (req, res) => {
   const query = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     limit: z.coerce.number().optional(),
+    branch_id: z.string().optional(),
+    process_id: z.string().optional(),
   }).parse(req.query);
   const data = await breakManagementService.getExceptions(query);
   return res.json({ success: true, data });

@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { getScope, isOrgWide, canAccessEmployee, employeeOwnerGuard, OUT_OF_SCOPE_MSG } from "../wfm/branch-scope.js";
 import { mobilityService } from "./mobility.service.js";
 
 const router = Router();
@@ -20,7 +21,9 @@ router.get("/transfers", h(async (req: AuthenticatedRequest, res: Response) => {
   const { status } = req.query as Record<string, string>;
 
   if (await hasRole(userId, "admin", "hr")) {
-    const data = await mobilityService.listTransfers({ status });
+    const callerScope = await getScope(req);
+    if (!callerScope) return res.status(401).json({ success: false, error: "Unauthorized" });
+    const data = await mobilityService.listTransfers({ status, scope: isOrgWide(callerScope) ? undefined : callerScope });
     return res.json({ success: true, data, total: data.length });
   }
 
@@ -35,6 +38,11 @@ router.post("/transfers", requireRole("admin", "hr"), h(async (req: Authenticate
   const { employee_id, transfer_type, from_value, to_value, effective_date, reason, new_reporting_manager_id } = req.body;
   if (!employee_id || !transfer_type || !to_value || !effective_date) {
     return res.status(400).json({ success: false, error: "Missing required fields" });
+  }
+  // hr is limited to its own branch / scope (owner ruling 2026-10-01): the employee being moved must be inside it.
+  const callerScope = await getScope(req);
+  if (!callerScope || !(await canAccessEmployee(callerScope, String(employee_id)))) {
+    return res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG });
   }
   // Reporting manager is mandatory for cost_centre transfers
   if (transfer_type === "cost_centre" && !new_reporting_manager_id) {
@@ -58,7 +66,7 @@ router.post("/transfers", requireRole("admin", "hr"), h(async (req: Authenticate
 }));
 
 // PATCH /transfers/:id — approve/reject (admin/hr)
-router.patch("/transfers/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.patch("/transfers/:id", requireRole("admin", "hr"), employeeOwnerGuard("transfer_record"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { action, remarks } = req.body as { action: "approved" | "rejected"; remarks?: string };
   if (!action || !["approved", "rejected"].includes(action)) {
     return res.status(400).json({ success: false, error: "action must be 'approved' or 'rejected'" });
@@ -80,7 +88,9 @@ router.get("/promotions", h(async (req: AuthenticatedRequest, res: Response) => 
   const { status } = req.query as Record<string, string>;
 
   if (await hasRole(userId, "admin", "hr")) {
-    const data = await mobilityService.listPromotions({ status });
+    const callerScope = await getScope(req);
+    if (!callerScope) return res.status(401).json({ success: false, error: "Unauthorized" });
+    const data = await mobilityService.listPromotions({ status, scope: isOrgWide(callerScope) ? undefined : callerScope });
     return res.json({ success: true, data, total: data.length });
   }
 
@@ -105,6 +115,10 @@ router.post("/promotions", requireRole("admin", "hr"), h(async (req: Authenticat
   if (!employee_id || !to_designation || !effective_date) {
     return res.status(400).json({ success: false, error: "employee_id, to_designation, and effective_date are required" });
   }
+  const callerScope = await getScope(req);
+  if (!callerScope || !(await canAccessEmployee(callerScope, String(employee_id)))) {
+    return res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG });
+  }
   const data = await mobilityService.createPromotion({
     employee_id,
     from_designation,
@@ -120,7 +134,7 @@ router.post("/promotions", requireRole("admin", "hr"), h(async (req: Authenticat
 }));
 
 // PATCH /promotions/:id — approve/reject (admin/hr)
-router.patch("/promotions/:id", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.patch("/promotions/:id", requireRole("admin", "hr"), employeeOwnerGuard("promotion_record"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { action, remarks } = req.body as { action: "approved" | "rejected"; remarks?: string };
   if (!action || !["approved", "rejected"].includes(action)) {
     return res.status(400).json({ success: false, error: "action must be 'approved' or 'rejected'" });

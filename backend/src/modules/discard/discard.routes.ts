@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { getScope, isOrgWide } from "../wfm/branch-scope.js";
 import { discardService, type DiscardActor } from "./discard.service.js";
 import {
   discardRequestSchema,
@@ -138,7 +139,9 @@ discardRouter.get("/history", ...discardGate, h(async (req, res) => {
       success: false, message: "Validation failed", errors: parsed.error.flatten().fieldErrors,
     });
   }
-  const result = await discardService.listDiscards(parsed.data);
+  const callerScope = await getScope(req);
+  if (!callerScope) return res.status(401).json({ success: false, message: "Unauthorized" });
+  const result = await discardService.listDiscards(parsed.data, isOrgWide(callerScope) ? undefined : callerScope);
   return res.json({
     success: true,
     data: result.data,

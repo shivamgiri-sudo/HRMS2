@@ -10,12 +10,23 @@ import type { Response } from "express";
 import { leaveController } from "./leave.controller.js";
 import { leaveService } from "./leave.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { getScope, isOrgWide, canAccessEmployee, rowInScope, OUT_OF_SCOPE_MSG } from "../wfm/branch-scope.js";
 
 export const leaveRouter = Router();
 leaveRouter.use(requireAuth);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+/**
+ * Owner ruling 2026-10-01: "privileged" (hr, manager, wfm, branch_head ...) no longer means "any
+ * employee". The caller's own record is always allowed; org-wide roles pass; everyone else needs the
+ * employee to be inside their own branch / assigned scope.
+ */
+async function employeeVisibleTo(req: AuthenticatedRequest, employeeId: string): Promise<boolean> {
+  const scope = await getScope(req);
+  return !!scope && (await canAccessEmployee(scope, employeeId));
+}
 
 async function isLeavePrivileged(userId: string): Promise<boolean> {
   return hasRole(userId, "super_admin", "admin", "hr", "manager", "payroll_head", "payroll_admin");
@@ -150,6 +161,8 @@ leaveRouter.get("/balance/:employeeId", h(async (req: AuthenticatedRequest, res:
     if (!callerEmp || callerEmp.id !== req.params.employeeId) {
       return res.status(403).json({ success: false, message: "Forbidden: you may view only your own leave balance" });
     }
+  } else if (!(await employeeVisibleTo(req, req.params.employeeId))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
   }
   return leaveController.getBalance(req, res);
 }));
@@ -184,6 +197,19 @@ leaveRouter.put("/holidays/:id/scope",            requireRole("admin", "hr", "su
 leaveRouter.post("/balance/seed", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = req.body as Array<{ employee_id: string; leave_type_id: string; year: number; allocated_days: number }>;
   if (!Array.isArray(rows)) return res.status(400).json({ error: "Array required" });
+  {
+    // hr may seed balances only for employees inside its own branch / scope; nothing is written if any
+    // row is outside it (fail closed).
+    const seedScope = await getScope(req);
+    if (!seedScope) return res.status(401).json({ error: "Unauthorized" });
+    if (!isOrgWide(seedScope)) {
+      for (const id of new Set(rows.map((r) => r?.employee_id).filter(Boolean))) {
+        if (!(await canAccessEmployee(seedScope, String(id)))) {
+          return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+        }
+      }
+    }
+  }
   const negativeBalanceWarnings: Array<{ employee_id: string; leave_type_id: string; year: number; allocated_days: number; used_days: number; adjusted_days: number; would_be_available: number }> = [];
   for (const row of rows) {
     if (!row.employee_id || !row.leave_type_id || !row.year || row.allocated_days === undefined) continue;
@@ -224,6 +250,8 @@ leaveRouter.get("/eligibility/:employeeId", h(async (req: AuthenticatedRequest, 
     if (!callerEmp || callerEmp.id !== employeeId) {
       return res.status(403).json({ success: false, message: "Forbidden: you may only view your own leave eligibility" });
     }
+  } else if (!(await employeeVisibleTo(req, employeeId))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
   }
   const [empRows] = await db.execute<RowDataPacket[]>(
     "SELECT gender FROM employees WHERE id = ? LIMIT 1", [employeeId]
@@ -284,9 +312,14 @@ leaveRouter.post("/admin/sync-used-days-from-db-bill", requireRole("admin", "hr"
   const ltMap: Record<string, string> = {};
   for (const lt of ltRows) ltMap[lt.leave_code] = lt.id;
 
-  const [empRows] = await db.execute<RowDataPacket[]>(`SELECT id, employee_code FROM employees WHERE active_status = 1`);
+  const [empRows] = await db.execute<RowDataPacket[]>(`SELECT id, employee_code, branch_id, process_id, reporting_manager_id FROM employees WHERE active_status = 1`);
   const empMap: Record<string, string> = {};
-  for (const e of empRows) empMap[e.employee_code] = e.id;
+  // hr: only employees inside its own branch / scope are synced (owner ruling 2026-10-01).
+  const syncScope = await getScope(req);
+  if (!syncScope) return res.status(401).json({ error: "Unauthorized" });
+  for (const e of empRows) {
+    if (isOrgWide(syncScope) || rowInScope(syncScope, e as any)) empMap[e.employee_code] = e.id;
+  }
 
   const cols = [
     { col: 'cl_used', code: 'CL' }, { col: 'el_used', code: 'EL' },

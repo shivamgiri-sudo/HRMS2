@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { hasProcessScope } from "../../shared/accessGuard.js";
+import { getScope, isOrgWide, branchScopeGuard, employeeFieldGuard, employeeOwnerGuard, rosterOwnerGuard } from "../wfm/branch-scope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   reconciliationService,
@@ -31,6 +32,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 rtaRouter.post(
   "/reconcile",
   requireRole("admin", "hr", "wfm", "process_manager"),
+  branchScopeGuard({ inject: false, requireTarget: true, branchNameKeys: ["branchName"], processNameKeys: ["processName"] }),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       date: z.string().regex(DATE_RE),
@@ -67,6 +69,7 @@ rtaRouter.post(
 rtaRouter.get(
   "/reconciliation",
   requireRole("admin", "hr", "wfm", "process_manager", "finance", "payroll"),
+  branchScopeGuard({ branchNameKeys: ["branchName"], processNameKeys: ["processName"] }), employeeFieldGuard("employeeId"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       fromDate:    z.string().regex(DATE_RE),
@@ -89,6 +92,7 @@ rtaRouter.get(
 rtaRouter.get(
   "/live-summary",
   requireRole("admin", "hr", "wfm", "process_manager", "team_leader", "assistant_manager", "manager"),
+  branchScopeGuard(),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       date: z.string().regex(DATE_RE),
@@ -107,6 +111,7 @@ rtaRouter.get(
 rtaRouter.get(
   "/shrinkage",
   requireRole("admin", "hr", "wfm", "process_manager", "finance"),
+  branchScopeGuard(),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       fromDate:  z.string().regex(DATE_RE),
@@ -124,6 +129,7 @@ rtaRouter.get(
 rtaRouter.post(
   "/shrinkage/snapshot",
   requireRole("admin", "hr", "wfm"),
+  branchScopeGuard({ inject: false, requireTarget: true }),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       date:      z.string().regex(DATE_RE),
@@ -142,6 +148,7 @@ rtaRouter.post(
 rtaRouter.get(
   "/alerts",
   requireRole("admin", "hr", "wfm", "process_manager", "team_leader", "assistant_manager"),
+  branchScopeGuard(), employeeFieldGuard("employeeId"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       fromDate:   z.string().regex(DATE_RE).optional(),
@@ -163,6 +170,7 @@ rtaRouter.get(
 rtaRouter.patch(
   "/alerts/:id/acknowledge",
   requireRole("admin", "hr", "wfm", "process_manager", "team_leader"),
+  rosterOwnerGuard("adherence_alert", "id"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     await alertService.acknowledgeAlert(req.params.id, req.authUser!.id);
     return res.json({ success: true, message: "Alert acknowledged" });
@@ -175,6 +183,7 @@ rtaRouter.patch(
 rtaRouter.post(
   "/leave-impact/:leaveRequestId",
   requireRole("admin", "hr", "wfm"),
+  employeeOwnerGuard("leave_request", "leaveRequestId"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const days = await leaveImpactService.calculateLeaveImpact(req.params.leaveRequestId);
     return res.json({ success: true, data: { days_impacted: days } });
@@ -192,7 +201,9 @@ rtaRouter.get(
       impactLevel: z.enum(["low", "medium", "high", "critical"]).optional(),
     });
     const filters = schema.parse(req.query);
-    const data = await leaveImpactService.listImpacts(filters);
+    const callerScope = await getScope(req);
+    if (!callerScope) return res.status(401).json({ success: false, message: "Unauthorized" });
+    const data = await leaveImpactService.listImpacts(filters, isOrgWide(callerScope) ? undefined : callerScope);
     return res.json({ success: true, data });
   })
 );
@@ -204,6 +215,7 @@ rtaRouter.get(
 rtaRouter.post(
   "/payroll-readiness/generate",
   requireRole("admin", "finance", "payroll"),
+  branchScopeGuard({ inject: false, requireTarget: true }),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       periodStart: z.string().regex(DATE_RE),
@@ -234,6 +246,7 @@ rtaRouter.post(
 rtaRouter.get(
   "/payroll-readiness",
   requireRole("admin", "finance", "payroll", "hr"),
+  employeeFieldGuard("employeeId"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const schema = z.object({
       periodStart: z.string().regex(DATE_RE).optional(),
@@ -243,7 +256,9 @@ rtaRouter.get(
       limit:       z.coerce.number().int().min(1).max(200).default(50),
     });
     const filters = schema.parse(req.query);
-    const data = await payrollReadinessService.listFlags(filters);
+    const callerScope = await getScope(req);
+    if (!callerScope) return res.status(401).json({ success: false, message: "Unauthorized" });
+    const data = await payrollReadinessService.listFlags(filters, isOrgWide(callerScope) ? undefined : callerScope);
     return res.json({ success: true, data });
   })
 );
@@ -255,7 +270,7 @@ rtaRouter.get(
 // Auth is handled by the router-level requireAuth middleware above.
 // EventSource cannot send custom headers, so authentication relies on the
 // session cookie that the browser sends automatically with withCredentials:true.
-rtaRouter.get("/live-stream", (req, res) => {
+rtaRouter.get("/live-stream", branchScopeGuard(), (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -311,7 +326,7 @@ rtaRouter.get("/live-stream", (req, res) => {
 // GET /api/rta/final-roster-state?processId=&date=
 // Returns per-employee RTA state from wfm_roster_assignment.
 // Only returns records with final_roster_status suitable for live tracking.
-rtaRouter.get("/final-roster-state", requireRole("admin", "wfm", "hr", "manager", "operations_manager"), h(async (req: any, res: any) => {
+rtaRouter.get("/final-roster-state", requireRole("admin", "wfm", "hr", "manager", "operations_manager"), branchScopeGuard(), h(async (req: any, res: any) => {
   const { processId, branchId, date } = req.query;
   if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: "date (YYYY-MM-DD) is required" });
 

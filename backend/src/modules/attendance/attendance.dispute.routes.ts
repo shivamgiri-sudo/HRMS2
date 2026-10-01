@@ -19,6 +19,8 @@ import {
   buildScopeWhereClause,
 } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { canAccessEmployee, scopePredicate } from "../wfm/branch-scope.js";
 import { wfmService } from "../wfm/wfm.service.js";
 import { resolveEffectiveApprover } from "../../shared/approvalEscalation.js";
 
@@ -144,7 +146,11 @@ async function getDisputeWithTarget(id: string): Promise<AttendanceDisputeRow | 
 /** Verify caller can read/act on a specific dispute. */
 async function canAccessDispute(userId: string, dispute: AttendanceDisputeRow, allowSelf = true): Promise<boolean> {
   // Super admin / admin / hr / wfm have full access
-  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "wfm", "ceo")) return true;
+  if (await hasAnyRole(userId, "admin", "super_admin", "ceo", "coo", "cfo")) return true;
+  // hr / wfm: only disputes of employees inside their own branch / scope (owner ruling 2026-10-01).
+  if (await hasAnyRole(userId, "hr", "wfm")) {
+    if (await canAccessEmployee(await resolveUserBusinessScope(userId), dispute.employee_id)) return true;
+  }
 
   // Payroll Head/Admin can access payroll-impact disputes only
   if (await hasAnyRole(userId, "payroll_head", "payroll_admin", "payroll", "finance")) {
@@ -174,8 +180,14 @@ async function canAccessDispute(userId: string, dispute: AttendanceDisputeRow, a
 
 /** Build scope-restricted WHERE clause for list queries. */
 async function buildDisputeListScope(userId: string): Promise<{ sql: string; params: unknown[] }> {
-  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "wfm", "ceo")) {
+  if (await hasAnyRole(userId, "admin", "super_admin", "ceo", "coo", "cfo")) {
     return { sql: "1=1", params: [] };
+  }
+  if (await hasAnyRole(userId, "hr", "wfm")) {
+    const own = scopePredicate(await resolveUserBusinessScope(userId), {
+      employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id",
+    });
+    return own;
   }
 
   // Payroll Head/Admin: only payroll-impact rows

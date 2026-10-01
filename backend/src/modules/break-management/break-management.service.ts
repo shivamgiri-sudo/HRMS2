@@ -2620,8 +2620,10 @@ export const breakManagementService = {
     return { id };
   },
 
-  async getExceptions(filters: { date?: string; limit?: number }) {
+  async getExceptions(filters: { date?: string; limit?: number; branch_id?: string; process_id?: string }) {
     const shiftDate = resolveShiftDate(filters.date ?? null);
+    const extraSql = `${filters.branch_id ? " AND bs.branch_id = ?" : ""}${filters.process_id ? " AND bs.process_id = ?" : ""}`;
+    const extraParams = [...(filters.branch_id ? [filters.branch_id] : []), ...(filters.process_id ? [filters.process_id] : [])];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
           bs.*,
@@ -2633,10 +2635,10 @@ export const breakManagementService = {
          LEFT JOIN branch_master bm ON bm.id = bs.branch_id
          LEFT JOIN process_master pm ON pm.id = bs.process_id
         WHERE bs.shift_date = ?
-          AND (bs.no_biometric_punch_flag = 1 OR bs.status = 'EXCEPTION')
+          AND (bs.no_biometric_punch_flag = 1 OR bs.status = 'EXCEPTION')${extraSql}
         ORDER BY bs.break_start_time DESC
         LIMIT ${safeLimit(filters.limit ?? 100, 100)}`,
-      [shiftDate],
+      [shiftDate, ...extraParams],
     );
     return { shift_date: shiftDate, rows };
   },

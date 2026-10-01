@@ -32,7 +32,7 @@ describe("wfm-ext coverage/snapshot scope check", () => {
 
   it("bypasses the check only for admin/hr, matching the read-path convention elsewhere in this file", () => {
     const branch = manualOverrideBranch();
-    expect(branch).toMatch(/hasRole\(userId, "admin", "hr"\)/);
+    expect(branch).toMatch(/hasRole\(userId, \.\.\.ORG_WIDE_EXEMPT_ROLES\)/);
   });
 
   it("rejects when process_id/branch_id validation fails, rather than falling through to the write", () => {

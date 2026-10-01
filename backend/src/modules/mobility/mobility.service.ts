@@ -1,6 +1,8 @@
 import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate } from "../wfm/branch-scope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordManagerChange, recordSupervisoryChange } from "../management/manager-attribution.service.js";
 
@@ -117,11 +119,14 @@ async function applyTransferOn(
 }
 
 interface TransferFilters {
+  /** Non-org-wide caller (owner ruling 2026-10-01): only employees inside their own branch / scope. */
+  scope?: UserBusinessScope;
   employee_id?: string;
   status?: string;
 }
 
 interface PromotionFilters {
+  scope?: UserBusinessScope;
   employee_id?: string;
   status?: string;
 }
@@ -163,6 +168,10 @@ export const mobilityService = {
     const params: unknown[] = [];
     if (filters.employee_id) { conds.push("t.employee_id = ?"); params.push(filters.employee_id); }
     if (filters.status)      { conds.push("t.status = ?");      params.push(filters.status); }
+    if (filters.scope) {
+      const c = scopePredicate(filters.scope, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" });
+      if (c.sql !== "1=1") { conds.push(`(${c.sql})`); params.push(...c.params); }
+    }
     const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT t.*, e.full_name AS employee_name, e.employee_code
@@ -575,6 +584,10 @@ export const mobilityService = {
     const params: unknown[] = [];
     if (filters.employee_id) { conds.push("p.employee_id = ?"); params.push(filters.employee_id); }
     if (filters.status)      { conds.push("p.status = ?");      params.push(filters.status); }
+    if (filters.scope) {
+      const c = scopePredicate(filters.scope, { employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id" });
+      if (c.sql !== "1=1") { conds.push(`(${c.sql})`); params.push(...c.params); }
+    }
     const where = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT p.*, e.full_name AS employee_name, e.employee_code

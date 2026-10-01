@@ -4,6 +4,9 @@ import { randomUUID } from "crypto";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasProcessScope, hasRole } from "../../shared/accessGuard.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { scopePredicate, userCanAccessProcess } from "../wfm/branch-scope.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 
 export const weekoffPreferenceRouter = Router();
@@ -58,12 +61,12 @@ async function weekoffReviewRole(userId: string, pref: RowDataPacket): Promise<"
   if (callerEmp?.id && (callerEmp.id === pref.reporting_manager_id || callerEmp.id === pref.manager_id)) {
     return "manager";
   }
-  const scopedWfm = await hasProcessScope(
+  const scopedWfm = (await hasProcessScope(
     userId,
     String(pref.process_id ?? ""),
     pref.branch_id as string | null,
     "wfm",
-  );
+  )) && (await userCanAccessProcess(userId, String(pref.process_id ?? ""), pref.branch_id as string | null));
   return scopedWfm ? "wfm" : null;
 }
 
@@ -154,13 +157,14 @@ weekoffPreferenceRouter.get("/weekoff-preferences", h(async (req, res) => {
     if (!processId) return res.status(400).json({ success: false, message: "processId is required" });
 
     // All-access roles: super_admin, ceo, payroll, finance
-    const isAllAccess = await hasRole(userId, "super_admin", "ceo", "payroll", "finance");
+    // Owner ruling 2026-10-01: org-wide = ORG_WIDE_EXEMPT_ROLES only; generic `payroll` is branch-scoped.
+    const isAllAccess = await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES);
     // Branch-scoped roles: admin, hr, wfm, branch_manager see their branch only
     // "team_leader" alongside the legacy "tl" alias -- hasRole() matches
     // role_key literally, no synonym expansion, and live data shows 9 real
     // accounts hold "team_leader" against only 2 holding "tl" (same gap
     // found and fixed in attendance-daily-scoped.routes.ts).
-    const isBranchScope = await hasRole(userId, "admin", "hr", "wfm", "branch_manager", "manager", "assistant_manager", "tl", "team_leader");
+    const isBranchScope = await hasRole(userId, "admin", "hr", "wfm", "payroll", "branch_manager", "manager", "assistant_manager", "tl", "team_leader");
     if (!isAllAccess && !isBranchScope) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
@@ -176,13 +180,17 @@ weekoffPreferenceRouter.get("/weekoff-preferences", h(async (req, res) => {
         { branchId: "e.branch_id", processId: "e.process_id" },
         { allowAdminBypass: false, allowCeoAllRead: false }
       );
-      if (scopeClause.sql) {
-        const cleaned = scopeClause.sql.replace(/^WHERE\s+/i, "").trim();
-        if (cleaned) {
-          where.push(`(${cleaned})`);
-          params.push(...scopeClause.params);
-        }
-      }
+      // Branch-level roles (hr / wfm / payroll ...) also always see their own branch.
+      const own = scopePredicate(await resolveUserBusinessScope(userId), {
+        branchId: "e.branch_id", processId: "e.process_id", employeeId: "e.id", managerEmployeeId: "e.reporting_manager_id",
+      });
+      const cleaned = scopeClause.sql ? scopeClause.sql.replace(/^WHERE\s+/i, "").trim() : "";
+      const ors: string[] = [];
+      const orParams: unknown[] = [];
+      if (cleaned && cleaned !== "1=0") { ors.push(`(${cleaned})`); orParams.push(...scopeClause.params); }
+      if (own.sql !== "1=0") { ors.push(`(${own.sql})`); orParams.push(...own.params); }
+      where.push(ors.length ? `(${ors.join(" OR ")})` : "1=0");
+      params.push(...orParams);
     }
   }
 

@@ -5,6 +5,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
+import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
+import { rowInScope, getScope, canAccessEmployee, OUT_OF_SCOPE_MSG } from "../wfm/branch-scope.js";
 import { leaveService } from "./leave.service.js";
 import { resolveEffectiveApprover } from "../../shared/approvalEscalation.js";
 import { leavePolicyService } from "./leave-policy.service.js";
@@ -65,7 +67,12 @@ export async function canReviewLeave(userId: string, requestId: string): Promise
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id && callerEmp.id === target.employee_id) return false;
 
-  if (await hasAnyRole(userId, "super_admin", "admin", "hr", "hr_admin", "payroll_hr")) return true;
+  if (await hasAnyRole(userId, "super_admin", "admin")) return true;
+  // hr / hr_admin / payroll_hr review leave only inside their own branch / assigned scope (owner ruling 2026-10-01).
+  if (await hasAnyRole(userId, "hr", "hr_admin", "payroll_hr")) {
+    const reviewerScope = await resolveUserBusinessScope(userId);
+    if (rowInScope(reviewerScope, { id: target.employee_id, branch_id: target.branch_id, process_id: target.process_id, reporting_manager_id: target.reporting_manager_id })) return true;
+  }
 
   // Branch Head escalation tier requires the configured escalation role — not
   // just "is this the caller's ordinary reporting manager", which is what the
@@ -164,6 +171,13 @@ leaveSecureRouter.patch("/requests/:id/cancel", h(async (req: any, res: any) => 
   const isOwn = callerEmp?.id === request.employee_id;
   const isPrivileged = await hasAnyRole(req.authUser!.id, "admin", "hr");
   if (!isOwn && !isPrivileged) return res.status(403).json({ success: false, message: "Forbidden" });
+  if (!isOwn) {
+    // hr may cancel only inside its own branch / scope; admin / super_admin are org-wide.
+    const cancelScope = await getScope(req);
+    if (!cancelScope || !(await canAccessEmployee(cancelScope, request.employee_id))) {
+      return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+    }
+  }
   if (!["pending", "approved", "pending_branch_head"].includes(request.status)) {
     return res.status(400).json({ success: false, message: `Cannot cancel a leave with status '${request.status}'` });
   }

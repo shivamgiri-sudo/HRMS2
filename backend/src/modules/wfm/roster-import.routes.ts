@@ -7,6 +7,7 @@ import multer from 'multer';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { readLobFilter } from '../../shared/lobFilter.js';
+import { getScope, isOrgWide, canAccessTarget, allowedBranchIds, branchScopeGuard, employeeParamGuard, OUT_OF_SCOPE_MSG } from './branch-scope.js';
 import {
   createImportBatch,
   getImportBatch,
@@ -38,12 +39,35 @@ export const rosterImportRouter = Router();
 // Apply auth to all routes
 rosterImportRouter.use(requireAuth);
 
+// Branch scoping (owner ruling 2026-10-01). Org-wide roles are untouched; wfm / managers only reach
+// batches of their own branch / process (or their own uploads) and employees inside their scope.
+rosterImportRouter.param('batchId', async (req: any, res: any, next: any, value: string) => {
+  try {
+    const scope = await getScope(req);
+    if (!scope) return res.status(401).json({ error: 'Unauthorized' });
+    if (isOrgWide(scope)) return next();
+    const id = parseInt(value, 10);
+    if (isNaN(id)) return next();
+    const { db } = await import('../../db/mysql.js');
+    const [rows] = await db.execute<any[]>(
+      'SELECT branch_id, process_id, created_by FROM wfm_roster_import_batch WHERE id = ? LIMIT 1', [id]);
+    const b = rows[0];
+    if (!b || String(b.created_by) === scope.userId) return next();
+    if (await canAccessTarget(scope, { branchId: b.branch_id, processId: b.process_id })) return next();
+    return res.status(403).json({ error: OUT_OF_SCOPE_MSG });
+  } catch (err) {
+    return next(err);
+  }
+});
+rosterImportRouter.param('employeeId', employeeParamGuard());
+
 // ── POST /api/wfm/roster-imports ──────────────────────────────────────────
 // Upload a roster spreadsheet and produce a PREVIEW batch
 rosterImportRouter.post(
   '/',
   requireRole(...WFM_ROLES),
   upload.single('file'),
+  branchScopeGuard({ inject: false }),
   async (req, res) => {
     try {
       if (!req.file) {
@@ -113,12 +137,20 @@ rosterImportRouter.post(
 rosterImportRouter.get(
   '/branches',
   requireRole(...WFM_ROLES),
-  async (_req, res) => {
+  async (req, res) => {
     try {
       const { db } = await import('../../db/mysql.js');
-      const [rows] = await db.execute(
-        `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`
-      );
+      const scope = await getScope(req as any);
+      if (!scope) { res.status(401).json({ error: 'Unauthorized' }); return; }
+      const allowed = allowedBranchIds(scope);
+      const [rows] = allowed === null
+        ? await db.execute(`SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`)
+        : allowed.length === 0
+          ? [[]]
+          : await db.execute(
+              `SELECT id, branch_name FROM branch_master WHERE active_status = 1 AND id IN (${allowed.map(() => '?').join(',')}) ORDER BY branch_name`,
+              allowed,
+            );
       res.json({ branches: rows });
     } catch (err: any) {
       console.error('[roster-import] GET branches error:', err);
@@ -141,7 +173,9 @@ rosterImportRouter.get(
         ? statusParam.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
         : undefined;
       const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : undefined;
-      const batches = await listImportBatches({ status, limit });
+      const callerScope = await getScope(req as any);
+      if (!callerScope) { res.status(401).json({ error: 'Unauthorized' }); return; }
+      const batches = await listImportBatches({ status, limit, scope: isOrgWide(callerScope) ? undefined : callerScope });
       res.json({ batches });
     } catch (err: any) {
       console.error('[roster-import] GET list error:', err);
@@ -234,10 +268,15 @@ rosterImportRouter.post(
         ? authUser.roles.includes('super_admin')
         : authUser?.role === 'super_admin';
       const { overrideWarnings, cycleId } = req.body;
-      const result = await commitImportBatch(batchId, committedBy, { overrideWarnings, cycleId, committerIsSuperAdmin });
+      const callerScope = await getScope(req as any);
+      if (!callerScope) { res.status(401).json({ success: false, error: 'Unauthorized' }); return; }
+      const result = await commitImportBatch(batchId, committedBy, {
+        overrideWarnings, cycleId, committerIsSuperAdmin,
+        scope: isOrgWide(callerScope) ? undefined : callerScope,
+      });
       res.json({ success: true, ...result });
     } catch (err) {
-      res.status(400).json({ success: false, error: err instanceof Error ? err.message : 'Commit failed' });
+      res.status((err as any)?.statusCode === 403 ? 403 : 400).json({ success: false, error: err instanceof Error ? err.message : 'Commit failed' });
     }
   }
 );
@@ -330,7 +369,7 @@ rosterImportRouter.get(
 // The roster as a table: one row per employee, dates across, with the context needed to read it
 // (reporting manager, process, branch, cost centre) and filters for branch / process / cost centre.
 // Pass includeAdherence=true for color-coded adherence status per cell (GREEN/AMBER/RED/BROWN).
-rosterImportRouter.get('/view/table', requireRole(...WFM_VIEW_ROLES), async (req, res) => {
+rosterImportRouter.get('/view/table', requireRole(...WFM_VIEW_ROLES), branchScopeGuard(), async (req, res) => {
   try {
     const { getRosterView } = await import('./roster-view.service.js');
     const q = req.query as Record<string, string | undefined>;
@@ -377,7 +416,7 @@ rosterImportRouter.get('/adherence-trend/:employeeId', requireRole(...WFM_VIEW_R
 // ── GET /api/wfm/roster-imports/status-summary ────────────────────────────
 // "Has the roster actually been published, and has anyone acknowledged it" — for a branch/process/
 // date-range scope. See roster-view.service.ts::getRosterStatusSummary for why this exists.
-rosterImportRouter.get('/status-summary', requireRole(...WFM_VIEW_ROLES), async (req, res) => {
+rosterImportRouter.get('/status-summary', requireRole(...WFM_VIEW_ROLES), branchScopeGuard(), async (req, res) => {
   try {
     const { getRosterStatusSummary } = await import('./roster-view.service.js');
     const q = req.query as Record<string, string | undefined>;
