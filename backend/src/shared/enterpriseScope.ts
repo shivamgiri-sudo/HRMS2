@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "../middleware/authMiddleware.js";
-import { ORG_WIDE_EXEMPT_ROLES } from "./scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES, USER_ROLES_WITH_DEPARTMENT_HEAD_SQL } from "./scopeAccess.js";
 
 export type EnterpriseUser = string | { id: string; email?: string | null } | AuthenticatedRequest["authUser"];
 
@@ -182,10 +182,8 @@ export async function resolveUserBusinessScope(user: EnterpriseUser): Promise<Us
   const userId = userIdFrom(user);
 
   const [[roleRows], [scopeRows], [employeeRows]] = await Promise.all([
-    db.execute<RowDataPacket[]>(
-      "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
-      [userId],
-    ),
+    // user_roles + the synthetic `department_head` role (heads of any active department are all-branch)
+    db.execute<RowDataPacket[]>(USER_ROLES_WITH_DEPARTMENT_HEAD_SQL, [userId, userId]),
     db.execute<RowDataPacket[]>(
       `SELECT role_key, scope_type, branch_id, process_id, lob_id, department_id, manager_employee_id, client_id
          FROM user_assignment_scope
