@@ -92,8 +92,11 @@ const candidateSnapshotSql = (whereSql: string, scoped = false) => `SELECT
        COALESCE(doc_stats.verified_documents, 0) AS verified_documents,
        GREATEST(COALESCE(doc_stats.total_documents, 0) - COALESCE(doc_stats.verified_documents, 0), 0) AS document_pending_count,
        CASE
-         WHEN COALESCE(bgv_checks.blocker_count, 0) > 0 THEN 'blocked'
-         WHEN COALESCE(bgv_checks.verified_count, 0) > 0 OR bgv.verification_status = 'verified' THEN 'verified'
+         WHEN COALESCE(bgv_checks.blocker_count, 0) > 0 OR bgr.overall_status IN ('refer','negative') THEN 'blocked'
+         -- candidate_bgv_report.overall_status is the live verdict (computeAndSaveScore rewrites it on
+         -- every check update); ats_bgv_verification is a legacy tracker that stays 'in_progress'.
+         WHEN bgr.overall_status = 'clear' OR COALESCE(bgv_checks.verified_count, 0) > 0 OR bgv.verification_status = 'verified' THEN 'verified'
+         WHEN bgr.overall_status = 'in_progress' THEN 'in_progress'
          ELSE COALESCE(bgv.verification_status, 'pending')
        END AS bgv_status,
        phr.id AS payroll_validation_id,
@@ -143,6 +146,7 @@ const candidateSnapshotSql = (whereSql: string, scoped = false) => `SELECT
         GROUP BY candidate_id
      ) bgv_checks ON bgv_checks.candidate_id = c.id
      LEFT JOIN ats_bgv_verification bgv ON bgv.candidate_id = c.id
+     LEFT JOIN candidate_bgv_report bgr ON bgr.candidate_id = c.id
      LEFT JOIN ats_payroll_hr_validation phr ON phr.candidate_id = c.id
      LEFT JOIN salary_exception_proposal sep ON sep.candidate_id = c.id
      LEFT JOIN ats_branch_head_approval bha ON bha.candidate_id = c.id
