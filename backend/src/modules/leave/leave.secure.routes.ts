@@ -50,6 +50,66 @@ async function leaveListScope(userId: string): Promise<{ sql: string; params: un
   return { sql: "1=0", params: [] };
 }
 
+export interface LeaveReviewTarget {
+  employee_id: string;
+  status: string;
+  leave_type_id?: string | null;
+  branch_id?: unknown;
+  process_id?: unknown;
+  reporting_manager_id?: unknown;
+}
+
+/**
+ * The single definition of "may this caller review this leave request".
+ *
+ * Built once per caller so a list of rows does not repeat the caller lookups (employee,
+ * roles, reviewer scope) per row, and caches the per-leave-type exception role and the
+ * per-employee effective approver. canReviewLeave() (one request, used by the review route and
+ * the Work Inbox dispatcher) and the list's can_review flag both go through this, so the page
+ * can only ever offer a button the server will accept.
+ */
+export async function makeLeaveReviewChecker(userId: string): Promise<(target: LeaveReviewTarget) => Promise<boolean>> {
+  const callerEmp = await getEmployeeForUser(userId);
+  const isSuper = await hasAnyRole(userId, "super_admin");
+  // admin / hr / hr_admin / payroll_hr review leave only inside their own branch / assigned scope
+  // (owner ruling 2026-10-01: admin is branch-scoped like hr; org-wide roles pass inside rowInScope).
+  const isScopedReviewer = !isSuper && (await hasAnyRole(userId, "admin", "hr", "hr_admin", "payroll_hr"));
+  const reviewerScope = isScopedReviewer ? await resolveUserBusinessScope(userId) : null;
+  const exceptionRoleByType = new Map<string, Promise<boolean>>();
+  const approverByEmployee = new Map<string, Promise<string | null>>();
+
+  return async (target) => {
+    // Self-approval block applies before any role check, including the privileged HR/admin
+    // bypass — an HR/admin employee submitting their own leave must not approve it themselves.
+    // (2026-08-20 audit: the privileged branch used to short-circuit before this check ran.)
+    if (callerEmp?.id && callerEmp.id === target.employee_id) return false;
+    if (isSuper) return true;
+    if (reviewerScope && rowInScope(reviewerScope, { id: target.employee_id, branch_id: target.branch_id, process_id: target.process_id, reporting_manager_id: target.reporting_manager_id } as any)) return true;
+
+    // Branch Head escalation tier requires the configured escalation role — not just "is this
+    // the caller's ordinary reporting manager", which the fallthrough below checks.
+    if (["pending_branch_head", "branch_head_approved", "branch_head_rejected"].includes(String(target.status))) {
+      const typeKey = String(target.leave_type_id ?? "");
+      let allowed = exceptionRoleByType.get(typeKey);
+      if (!allowed) {
+        allowed = leavePolicyService
+          .getExceptionApproverRole(target.leave_type_id ?? null)
+          .then((role) => hasAnyRole(userId, role));
+        exceptionRoleByType.set(typeKey, allowed);
+      }
+      return allowed;
+    }
+
+    let approver = approverByEmployee.get(target.employee_id);
+    if (!approver) {
+      approver = resolveEffectiveApprover(target.employee_id).then((r) => r.approverId ?? null);
+      approverByEmployee.set(target.employee_id, approver);
+    }
+    const approverId = await approver;
+    return Boolean(callerEmp?.id && approverId !== null && callerEmp.id === approverId);
+  };
+}
+
 // Exported for the Work Inbox derived-item approve/reject dispatcher (modules/inbox), which
 // needs the exact same row-scope + self-approval rule this route enforces — not a looser
 // or reimplemented copy of it.
@@ -57,35 +117,36 @@ export async function canReviewLeave(userId: string, requestId: string): Promise
   const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.employee_id, lr.status, lr.leave_type_id, e.branch_id, e.process_id, e.lob_id, e.department_id, e.reporting_manager_id, e.manager_id FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.id = ? LIMIT 1`, [requestId]);
   const target = rows[0] as any;
   if (!target) return false;
+  return (await makeLeaveReviewChecker(userId))(target);
+}
 
-  // Self-approval block applies before any role check, including the
-  // privileged HR/admin bypass below — an HR/admin employee submitting their
-  // own leave must not be able to approve/reject it themselves. (2026-08-20
-  // audit: the privileged branch used to short-circuit before this check ran
-  // at all, so it never applied to HR/admin, only to the ordinary
-  // reporting-manager path further down.)
-  const callerEmp = await getEmployeeForUser(userId);
-  if (callerEmp?.id && callerEmp.id === target.employee_id) return false;
+/** Statuses a reviewer can act on from the list. Everything else is history. */
+const REVIEWABLE_STATUSES = new Set(["pending", "pending_branch_head"]);
 
-  if (await hasAnyRole(userId, "super_admin")) return true;
-  // admin / hr / hr_admin / payroll_hr review leave only inside their own branch / assigned scope
-  // (owner ruling 2026-10-01: admin is branch-scoped like hr; org-wide roles pass inside rowInScope).
-  if (await hasAnyRole(userId, "admin", "hr", "hr_admin", "payroll_hr")) {
-    const reviewerScope = await resolveUserBusinessScope(userId);
-    if (rowInScope(reviewerScope, { id: target.employee_id, branch_id: target.branch_id, process_id: target.process_id, reporting_manager_id: target.reporting_manager_id })) return true;
+/**
+ * Adds `can_review` to each listed row. Only open requests are checked; the checker is created
+ * lazily so a list with nothing to review costs nothing extra. Lookups run in small batches.
+ */
+export async function annotateCanReview(userId: string, rows: any[]): Promise<void> {
+  const open = rows.filter((r) => REVIEWABLE_STATUSES.has(String(r.status)));
+  for (const r of rows) r.can_review = false;
+  if (open.length === 0) return;
+  const check = await makeLeaveReviewChecker(userId);
+  const BATCH = 10;
+  for (let i = 0; i < open.length; i += BATCH) {
+    await Promise.all(
+      open.slice(i, i + BATCH).map(async (r) => {
+        r.can_review = await check({
+          employee_id: r.employee_id,
+          status: r.status,
+          leave_type_id: r.leave_type_id,
+          branch_id: r.emp_branch_id,
+          process_id: r.emp_process_id,
+          reporting_manager_id: r.emp_reporting_manager_id,
+        });
+      }),
+    );
   }
-
-  // Branch Head escalation tier requires the configured escalation role — not
-  // just "is this the caller's ordinary reporting manager", which is what the
-  // fallthrough below checks and which every request used to go through
-  // identically regardless of status.
-  if (["pending_branch_head", "branch_head_approved", "branch_head_rejected"].includes(String(target.status))) {
-    const requiredRole = await leavePolicyService.getExceptionApproverRole(target.leave_type_id ?? null);
-    return hasAnyRole(userId, requiredRole);
-  }
-
-  const { approverId } = await resolveEffectiveApprover(target.employee_id);
-  return Boolean(callerEmp?.id && approverId !== null && callerEmp.id === approverId);
 }
 
 leaveSecureRouter.get("/requests", h(async (req: any, res: any) => {
@@ -120,7 +181,7 @@ leaveSecureRouter.get("/requests", h(async (req: any, res: any) => {
   if (req.query.year) { conds.push("YEAR(lr.from_date) = ?"); params.push(Number(req.query.year)); }
   const where = `WHERE ${conds.join(" AND ")}`;
   const fromSql = `FROM leave_request lr LEFT JOIN employees e ON e.id = lr.employee_id LEFT JOIN department_master dept ON dept.id = e.department_id LEFT JOIN branch_master bm ON bm.id = e.branch_id LEFT JOIN process_master pm ON pm.id = e.process_id LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id LEFT JOIN leave_approval_log approval ON approval.id = (SELECT latest.id FROM leave_approval_log latest WHERE latest.leave_request_id = lr.id ORDER BY latest.action_at DESC LIMIT 1) LEFT JOIN employees rev ON rev.user_id = approval.action_by`;
-  const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.*, COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name, e.first_name, e.last_name, e.employee_code, e.avatar_url, dept.dept_name AS department_name, bm.branch_name, pm.process_name, lt.leave_name AS leave_type_name, lt.leave_code, COALESCE(NULLIF(TRIM(rev.full_name), ''), TRIM(CONCAT(rev.first_name, ' ', COALESCE(rev.last_name, '')))) AS reviewer_name, approval.action_at AS reviewed_at, approval.remarks AS review_notes ${fromSql} ${where} ORDER BY lr.applied_at DESC LIMIT ${limit} OFFSET ${offset}`, params);
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.*, COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name, e.first_name, e.last_name, e.employee_code, e.avatar_url, e.branch_id AS emp_branch_id, e.process_id AS emp_process_id, e.reporting_manager_id AS emp_reporting_manager_id, dept.dept_name AS department_name, bm.branch_name, pm.process_name, lt.leave_name AS leave_type_name, lt.leave_code, COALESCE(NULLIF(TRIM(rev.full_name), ''), TRIM(CONCAT(rev.first_name, ' ', COALESCE(rev.last_name, '')))) AS reviewer_name, approval.action_at AS reviewed_at, approval.remarks AS review_notes ${fromSql} ${where} ORDER BY lr.applied_at DESC LIMIT ${limit} OFFSET ${offset}`, params);
   // The count only needs the two tables the WHERE can reference: lr (every filter above)
   // and e (every branch of leaveListScope). The display joins — department, branch,
   // process, leave type, latest-approval and reviewer — cannot change how many leave
@@ -139,6 +200,7 @@ leaveSecureRouter.get("/requests", h(async (req: any, res: any) => {
   // both ways) but it is one duplicate reviewer away from doing so.
   const countFromSql = `FROM leave_request lr LEFT JOIN employees e ON e.id = lr.employee_id`;
   const [countRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${countFromSql} ${where}`, params);
+  await annotateCanReview(req.authUser!.id, rows as any[]);
   return res.json({ success: true, data: rows, total: Number(countRows[0]?.total ?? 0), page, limit });
 }));
 
