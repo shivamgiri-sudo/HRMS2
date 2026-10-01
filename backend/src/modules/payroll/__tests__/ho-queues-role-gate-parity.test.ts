@@ -88,9 +88,10 @@ describe("payroll-more.routes.ts — Holiday Work admits wfm, matching HolidayWo
     expect(src).toMatch(/"\/holiday-work\/requests\/:id\/approve"[\s\S]{0,60}requireRole\("admin", "super_admin", "payroll", "payroll_head", "wfm"\)/);
   });
 
-  it("does NOT add wfm to the unrelated holiday-master cc/designation-mapping routes", () => {
-    const unrelated = [...src.matchAll(/requireRole\("admin", "super_admin", "payroll", "payroll_head"\)/g)];
-    expect(unrelated.length).toBe(2); // cc-mapping + designation-mapping, untouched by this fix
+  it("holiday-master cc/designation-mapping admit branch roles (branch-scoped in handler) but not plain wfm", () => {
+    const mapping = [...src.matchAll(/"\/holiday-master\/(?:cc|designation)-mapping", requireRole\(\.\.\.HOLIDAY_WRITE_ROLES, "payroll"\)/g)];
+    expect(mapping.length).toBe(2);
+    expect(src).toMatch(/HOLIDAY_WRITE_ROLES = \["admin", "super_admin", "payroll_head", "payroll_branch", "branch_wfm"\]/);
   });
 });
 

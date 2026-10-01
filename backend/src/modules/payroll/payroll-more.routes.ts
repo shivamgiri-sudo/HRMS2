@@ -3,6 +3,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
+import { resolveDashboardScope } from "../../shared/dashboardScope.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
@@ -497,7 +498,44 @@ payrollMoreRouter.post(
 
 // ─── Holiday Master ───────────────────────────────────────────────────────────
 
-payrollMoreRouter.get("/holiday-master", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
+// payroll_branch and branch_wfm maintain holidays for their own branch(es) only. Org-wide
+// roles (admin, super_admin, payroll_head, ...) resolve to ORG_ALL and stay unrestricted.
+// Everyone else is limited to holidays whose branch_id is in their assigned branches;
+// global holidays (branch_id NULL) are view-only for them.
+const HOLIDAY_WRITE_ROLES = ["admin", "super_admin", "payroll_head", "payroll_branch", "branch_wfm"] as const;
+
+async function holidayBranchScope(req: AuthenticatedRequest): Promise<{ unrestricted: boolean; branchIds: string[] }> {
+  const scope = await resolveDashboardScope(req.authUser!.id, req.authUser!.role ?? "");
+  if (scope.level === "ORG_ALL") return { unrestricted: true, branchIds: [] };
+  return { unrestricted: false, branchIds: scope.branchIds };
+}
+
+/** Returns an error message when the caller may not write to a holiday of `holidayBranchId`. */
+function holidayBranchDenied(scope: { unrestricted: boolean; branchIds: string[] }, holidayBranchId: string | null | undefined): string | null {
+  if (scope.unrestricted) return null;
+  if (!holidayBranchId) return "Only head office can change all-branch holidays";
+  if (!scope.branchIds.includes(holidayBranchId)) return "Holiday belongs to a branch outside your scope";
+  return null;
+}
+
+async function loadHolidayBranch(id: string): Promise<{ found: boolean; branchId: string | null }> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT branch_id FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
+  const row = (rows as any[])[0];
+  return { found: Boolean(row), branchId: row?.branch_id ?? null };
+}
+
+/** Sends 404/403 and returns null when the caller may not write to holiday `id`. */
+async function guardHolidayWrite(req: AuthenticatedRequest, res: Response, id: string) {
+  const scope = await holidayBranchScope(req);
+  const holiday = await loadHolidayBranch(id);
+  if (!holiday.found) { res.status(404).json({ success: false, message: "Holiday not found" }); return null; }
+  const denied = holidayBranchDenied(scope, holiday.branchId);
+  if (denied) { res.status(403).json({ success: false, message: denied }); return null; }
+  return { scope };
+}
+
+payrollMoreRouter.get("/holiday-master", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "branch_wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const scope = await holidayBranchScope(req);
   const { year, includeInactive } = req.query as { year?: string; includeInactive?: string };
   const params: unknown[] = [];
   let sql = `SELECT lhm.*,
@@ -517,12 +555,20 @@ payrollMoreRouter.get("/holiday-master", requireRole("admin", "super_admin", "fi
     sql += " AND lhm.active_status = 1";
   }
   if (year) { sql += " AND YEAR(lhm.holiday_date) = ?"; params.push(year); }
+  if (!scope.unrestricted) {
+    if (scope.branchIds.length === 0) {
+      sql += " AND lhm.branch_id IS NULL";
+    } else {
+      sql += ` AND (lhm.branch_id IS NULL OR lhm.branch_id IN (${scope.branchIds.map(() => "?").join(",")}))`;
+      params.push(...scope.branchIds);
+    }
+  }
   sql += " ORDER BY lhm.holiday_date ASC";
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return res.json({ success: true, data: rows });
 }));
 
-payrollMoreRouter.post("/holiday-master", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.post("/holiday-master", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { holiday_name, holiday_date, holiday_type, branch_id, active_status } = req.body as {
     holiday_name: string; holiday_date: string; holiday_type: string;
     branch_id?: string; active_status?: number;
@@ -530,6 +576,8 @@ payrollMoreRouter.post("/holiday-master", requireRole("admin", "super_admin", "p
   if (!holiday_name || !holiday_date || !holiday_type) {
     return res.status(400).json({ success: false, message: "holiday_name, holiday_date and holiday_type are required" });
   }
+  const denied = holidayBranchDenied(await holidayBranchScope(req), branch_id);
+  if (denied) return res.status(403).json({ success: false, message: denied });
   const { v4: uuidv4 } = await import("uuid");
   const id = uuidv4();
   await db.execute(
@@ -541,8 +589,10 @@ payrollMoreRouter.post("/holiday-master", requireRole("admin", "super_admin", "p
   return res.status(201).json({ success: true, data: rows[0] });
 }));
 
-payrollMoreRouter.put("/holiday-master/:id", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.put("/holiday-master/:id", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
+  const guard = await guardHolidayWrite(req, res, id);
+  if (!guard) return;
   const { holiday_name, holiday_date, holiday_type, branch_id, active_status } = req.body as {
     holiday_name?: string; holiday_date?: string; holiday_type?: string;
     branch_id?: string | null; active_status?: number;
@@ -555,6 +605,10 @@ payrollMoreRouter.put("/holiday-master/:id", requireRole("admin", "super_admin",
   if (branch_id !== undefined)     { sets.push("branch_id = ?");     params.push(branch_id); }
   if (active_status !== undefined) { sets.push("active_status = ?"); params.push(active_status); }
   if (sets.length === 0) return res.status(400).json({ success: false, message: "No fields to update" });
+  if (branch_id !== undefined) {
+    const moveDenied = holidayBranchDenied(guard.scope, branch_id);
+    if (moveDenied) return res.status(403).json({ success: false, message: moveDenied });
+  }
   params.push(id);
   await db.execute(`UPDATE leave_holiday_master SET ${sets.join(", ")} WHERE id = ?`, params);
   const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
@@ -562,8 +616,9 @@ payrollMoreRouter.put("/holiday-master/:id", requireRole("admin", "super_admin",
   return res.json({ success: true, data: rows[0] });
 }));
 
-payrollMoreRouter.patch("/holiday-master/:id/toggle", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.patch("/holiday-master/:id/toggle", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
+  if (!(await guardHolidayWrite(req, res, id))) return;
   const [rows] = await db.execute<RowDataPacket[]>("SELECT active_status FROM leave_holiday_master WHERE id = ? LIMIT 1", [id]);
   if (!(rows as any[]).length) return res.status(404).json({ success: false, message: "Holiday not found" });
   const newStatus = (rows[0] as any).active_status ? 0 : 1;
@@ -571,12 +626,24 @@ payrollMoreRouter.patch("/holiday-master/:id/toggle", requireRole("admin", "supe
   return res.json({ success: true, active_status: newStatus });
 }));
 
-payrollMoreRouter.post("/holiday-master/cc-mapping", requireRole("admin", "super_admin", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.post("/holiday-master/cc-mapping", requireRole(...HOLIDAY_WRITE_ROLES, "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { holiday_id, cost_centre_ids, branch_id, process_id, department_id } = req.body as {
     holiday_id: string; cost_centre_ids: string[];
     branch_id?: string; process_id?: string; department_id?: string;
   };
   if (!holiday_id || !Array.isArray(cost_centre_ids)) return res.status(400).json({ success: false, message: "holiday_id and cost_centre_ids required" });
+  const ccGuard = await guardHolidayWrite(req, res, holiday_id);
+  if (!ccGuard) return;
+  if (!ccGuard.scope.unrestricted && cost_centre_ids.length > 0) {
+    const [ccRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, branch_id FROM cost_centre_master WHERE id IN (${cost_centre_ids.map(() => "?").join(",")})`,
+      cost_centre_ids,
+    );
+    const outside = (ccRows as any[]).some((r) => !ccGuard.scope.branchIds.includes(r.branch_id));
+    if (outside || (ccRows as any[]).length !== new Set(cost_centre_ids).size) {
+      return res.status(403).json({ success: false, message: "Cost centre outside your branch scope" });
+    }
+  }
   await db.execute("DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?", [holiday_id]);
   const { v4: uuidv4 } = await import("uuid");
   for (const cc of cost_centre_ids) {
@@ -588,9 +655,10 @@ payrollMoreRouter.post("/holiday-master/cc-mapping", requireRole("admin", "super
   return res.json({ success: true });
 }));
 
-payrollMoreRouter.post("/holiday-master/designation-mapping", requireRole("admin", "super_admin", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.post("/holiday-master/designation-mapping", requireRole(...HOLIDAY_WRITE_ROLES, "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { holiday_id, designation_ids } = req.body as { holiday_id: string; designation_ids: string[] };
   if (!holiday_id || !Array.isArray(designation_ids)) return res.status(400).json({ success: false, message: "holiday_id and designation_ids required" });
+  if (!(await guardHolidayWrite(req, res, holiday_id))) return;
   await db.execute("DELETE FROM holiday_designation_mapping WHERE holiday_id = ?", [holiday_id]);
   for (const did of designation_ids) {
     const { v4: uuidv4 } = await import("uuid");
@@ -599,9 +667,10 @@ payrollMoreRouter.post("/holiday-master/designation-mapping", requireRole("admin
   return res.json({ success: true });
 }));
 
-payrollMoreRouter.delete("/holiday-master/:id", requireRole("super_admin", "admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.delete("/holiday-master/:id", requireRole(...HOLIDAY_WRITE_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   if (!id) return res.status(400).json({ success: false, message: "id required" });
+  if (!(await guardHolidayWrite(req, res, id))) return;
   await db.execute("DELETE FROM holiday_cost_centre_mapping WHERE holiday_id = ?", [id]);
   await db.execute("DELETE FROM holiday_designation_mapping WHERE holiday_id = ?", [id]);
   await db.execute("DELETE FROM leave_holiday_master WHERE id = ?", [id]);

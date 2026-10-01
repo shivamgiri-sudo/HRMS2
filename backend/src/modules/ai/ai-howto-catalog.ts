@@ -1229,7 +1229,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
       '3. Add or remove holidays — national, regional, and company-specific.',
     ],
     route: '/payroll/holiday-master',
-    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'payroll_head', 'payroll_branch'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-master)' },
+    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'payroll_head', 'payroll_branch', 'branch_wfm'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-master)' },
     status: 'verified',
     deniedExplanation: 'Your role does not have access to Holiday Master. This is for Payroll and Admin.',
   },

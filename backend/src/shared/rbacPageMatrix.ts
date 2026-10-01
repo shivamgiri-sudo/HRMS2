@@ -784,6 +784,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   branch_wfm: [
     "BUSINESS_COMMAND_CENTER",
+    "WFM_ROSTER", // RM Change Approvals (/wfm-manager-approvals), branch-scoped in rm-change.routes.ts
     "WFM_TEAM_ROSTER",
     "WFM_PROCESS_LOB_MAP",
     "WFM_ROSTER_OFFDAY_POLICY",

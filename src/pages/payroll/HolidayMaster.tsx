@@ -141,7 +141,7 @@ export default function HolidayMaster() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["holiday-master"] }); setDesRow(null); },
   });
 
-  const ALLOWED_ROLES = ["super_admin", "admin", "payroll_head", "payroll_branch"];
+  const ALLOWED_ROLES = ["super_admin", "admin", "payroll_head", "payroll_branch", "branch_wfm"];
   if (!roleKeys.some(r => ALLOWED_ROLES.includes(r))) {
     return <DashboardLayout><div className="p-8 text-red-600">Access denied.</div></DashboardLayout>;
   }
