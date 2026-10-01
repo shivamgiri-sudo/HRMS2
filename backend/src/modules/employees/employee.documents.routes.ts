@@ -10,7 +10,8 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { createHash } from "crypto";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { selfOrAdminHr } from "../../shared/accessGuard.js";
+import { selfOrAdminHr, hasRole } from "../../shared/accessGuard.js";
+import { docCategoryFor, isSelfServiceDocType } from "./employee-document-category.js";
 import { registerUpload } from "../document-vault/documentVault.service.js";
 
 // Use process.cwd() — resolves to backend/ in both dev and production
@@ -68,6 +69,17 @@ router.post("/:employeeId/upload", selfOrAdminHr("employeeId"), (req: any, res: 
   const documentName = (req.body?.document_name as string) || req.file.originalname;
   const fileUrl = `/api/files/employee-documents/${req.file.filename}`;
 
+  // An employee (anyone who is not admin/hr) uploading to their own record may only add
+  // the statutory documents ESI/bank registration needs. selfOrAdminHr has already
+  // guaranteed they are acting on their own employee id.
+  if (!(await hasRole(req.authUser!.id, "admin", "hr")) && !isSelfServiceDocType(documentType)) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(403).json({
+      success: false,
+      message: "You can upload only your PAN card, Aadhaar or bank passbook here. Other documents are added by HR.",
+    });
+  }
+
   // Vault inventory registration is MANDATORY — mirrors files.routes.ts's
   // upload route (SECURITY: no untracked files allowed on disk). Without this,
   // GET /api/files/employee-documents/:filename (what the frontend actually
@@ -103,8 +115,8 @@ router.post("/:employeeId/upload", selfOrAdminHr("employeeId"), (req: any, res: 
 
   const id = randomUUID();
   await db.execute(
-    "INSERT INTO employee_documents (id, employee_id, doc_type, doc_name, file_url, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)",
-    [id, employeeId, documentType, documentName, fileUrl, req.authUser!.id]
+    "INSERT INTO employee_documents (id, employee_id, doc_type, doc_category, doc_name, file_url, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [id, employeeId, documentType, docCategoryFor(documentType), documentName, fileUrl, req.authUser!.id]
   );
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at FROM employee_documents WHERE id = ? LIMIT 1",

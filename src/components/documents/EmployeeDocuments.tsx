@@ -24,7 +24,15 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+// Employees uploading to their own record may add only these (the backend enforces it too).
+const SELF_SERVICE_TYPES = [
+  { value: "pan_card", label: "PAN Card" },
+  { value: "aadhaar_card", label: "Aadhaar" },
+  { value: "bank_passbook", label: "Bank Passbook" },
+];
+
 const DOCUMENT_TYPES = [
+  ...SELF_SERVICE_TYPES,
   { value: "id_proof", label: "ID Proof" },
   { value: "resume", label: "Resume" },
   { value: "offer_letter", label: "Offer Letter" },
@@ -36,10 +44,14 @@ interface EmployeeDocumentsProps {
   employeeId: string;
   canUpload?: boolean;
   canDelete?: boolean;
+  /** Own-profile upload limited to PAN / Aadhaar / bank passbook (for non-HR employees). */
+  selfServiceUpload?: boolean;
 }
 
-export function EmployeeDocuments({ employeeId, canUpload = false, canDelete = false }: EmployeeDocumentsProps) {
-  const [selectedType, setSelectedType] = useState<string>("contract");
+export function EmployeeDocuments({ employeeId, canUpload = false, canDelete = false, selfServiceUpload = false }: EmployeeDocumentsProps) {
+  const showUpload = canUpload || selfServiceUpload;
+  const typeOptions = canUpload ? DOCUMENT_TYPES : SELF_SERVICE_TYPES;
+  const [selectedType, setSelectedType] = useState<string>(canUpload ? "contract" : "pan_card");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [viewingDocument, setViewingDocument] = useState<{
     id: string;
@@ -147,14 +159,14 @@ export function EmployeeDocuments({ employeeId, canUpload = false, canDelete = f
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {canUpload && !isReadOnly && (
+        {showUpload && !isReadOnly && (
           <div className="flex flex-col sm:flex-row gap-3">
             <Select value={selectedType} onValueChange={setSelectedType}>
               <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="Document type" />
               </SelectTrigger>
               <SelectContent>
-                {DOCUMENT_TYPES.map((type) => (
+                {typeOptions.map((type) => (
                   <SelectItem key={type.value} value={type.value}>
                     {type.label}
                   </SelectItem>

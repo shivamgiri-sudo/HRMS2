@@ -1248,6 +1248,7 @@ const Profile = () => {
                   employeeId={employee.id}
                   canUpload={isAdminOrHR}
                   canDelete={isAdminOrHR}
+                  selfServiceUpload={!isAdminOrHR}
                 />
               </TabsContent>
 
