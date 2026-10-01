@@ -205,16 +205,52 @@ async function loadCopyState(
   emp: EmployeeRow,
 ): Promise<CopyState> {
   let candidateId = emp.candidateId;
-  const [reviewRows] = await exec.execute<RowDataPacket[]>(
-    `SELECT id, status, candidate_id, package_effective_from
-       FROM employee_payroll_head_review WHERE employee_id = ? LIMIT 1`,
-    [emp.id],
-  );
-  const review = reviewRows[0];
+
+  // PERF: Execute independent queries in parallel instead of sequentially.
+  // Before: 5 sequential queries = 5x DB round-trip latency (e.g., 5ms each = 25ms minimum)
+  // After: 3-4 parallel batches = ~10-15ms total
+  const [
+    reviewRows,
+    aRows,
+    cRows,
+    salaryChangeResult,
+  ] = await Promise.all([
+    exec.execute<RowDataPacket[]>(
+      `SELECT id, status, candidate_id, package_effective_from
+         FROM employee_payroll_head_review WHERE employee_id = ? LIMIT 1`,
+      [emp.id],
+    ),
+    exec.execute<RowDataPacket[]>(
+      `SELECT id, effective_from, active_status FROM employee_salary_assignment
+        WHERE employee_id = ? ORDER BY effective_from DESC, created_at DESC`,
+      [emp.id],
+    ),
+    exec.execute<RowDataPacket[]>(
+      `SELECT id, effective_date FROM salary_component_assignments
+        WHERE employee_id = ? AND status = 'active' ORDER BY effective_date DESC LIMIT 1`,
+      [emp.id],
+    ),
+    (async () => {
+      try {
+        const [chg] = await exec.execute<RowDataPacket[]>(
+          `SELECT (EXISTS (SELECT 1 FROM employee_salary_change_log WHERE employee_id = ?)
+                OR EXISTS (SELECT 1 FROM salary_increment_request WHERE employee_id = ? AND status = 'implemented')) AS n`,
+          [emp.id, emp.id],
+        );
+        return { hasSalaryChange: Number(chg[0]?.n ?? 0) === 1 };
+      } catch (e) {
+        if ((e as { code?: string }).code !== "ER_NO_SUCH_TABLE") throw e;
+        return { hasSalaryChange: false };
+      }
+    })(),
+  ]);
+
+  const review = reviewRows[0][0];
   // employees.candidate_id is NULL for 107 of 209 reviewed employees; the review row always has it.
   if (!candidateId && review?.candidate_id)
     candidateId = String(review.candidate_id);
 
+  // Validation query depends on candidateId, so must run after review query
   let validationId: string | null = null;
   let validationDate: string | null = null;
   if (candidateId) {
@@ -229,45 +265,21 @@ async function loadCopyState(
     }
   }
 
-  const [aRows] = await exec.execute<RowDataPacket[]>(
-    `SELECT id, effective_from, active_status FROM employee_salary_assignment
-      WHERE employee_id = ? ORDER BY effective_from DESC, created_at DESC`,
-    [emp.id],
-  );
-  const [cRows] = await exec.execute<RowDataPacket[]>(
-    `SELECT id, effective_date FROM salary_component_assignments
-      WHERE employee_id = ? AND status = 'active' ORDER BY effective_date DESC LIMIT 1`,
-    [emp.id],
-  );
-  // A later date on the assignment is an increment, not a stale start date, when the employee has a
-  // salary change on record. Both tables exist in production; a missing one (a fresh environment)
-  // means "no changes", any other error propagates.
-  let hasSalaryChange = false;
-  try {
-    const [chg] = await exec.execute<RowDataPacket[]>(
-      `SELECT (EXISTS (SELECT 1 FROM employee_salary_change_log WHERE employee_id = ?)
-            OR EXISTS (SELECT 1 FROM salary_increment_request WHERE employee_id = ? AND status = 'implemented')) AS n`,
-      [emp.id, emp.id],
-    );
-    hasSalaryChange = Number(chg[0]?.n ?? 0) === 1;
-  } catch (e) {
-    if ((e as { code?: string }).code !== "ER_NO_SUCH_TABLE") throw e;
-  }
   return {
     validationId,
     validationDate,
-    hasSalaryChange,
+    hasSalaryChange: salaryChangeResult.hasSalaryChange,
     reviewId: review ? String(review.id) : null,
     reviewStatus: review ? String(review.status) : null,
     packageDate: review ? dayOf(review.package_effective_from) || null : null,
-    assignmentRows: aRows.map((a) => ({
+    assignmentRows: aRows[0].map((a: RowDataPacket) => ({
       id: String(a.id),
       effectiveFrom: dayOf(a.effective_from),
       active: Number(a.active_status) === 1,
     })),
-    activeComponentId: cRows[0] ? String(cRows[0].id) : null,
-    activeComponentDate: cRows[0]
-      ? dayOf(cRows[0].effective_date) || null
+    activeComponentId: cRows[0][0] ? String(cRows[0][0].id) : null,
+    activeComponentDate: cRows[0][0]
+      ? dayOf(cRows[0][0].effective_date) || null
       : null,
   };
 }
