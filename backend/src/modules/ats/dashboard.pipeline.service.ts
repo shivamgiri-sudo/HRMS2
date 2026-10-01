@@ -3,7 +3,7 @@ import { db } from '../../db/mysql.js';
 import { createSwrCache } from './dashboard.cache.js';
 import { BRANCH_EXPR, JOINED, LEAD, OFFERED, num, pct, q, safe } from './dashboard.overview.service.js';
 import { getJoinedInfo, joinedIdSql } from './dashboard.joined.js';
-import { branchDisplay, branchFilter, canonicalSourceSql, processDisplay, rawValues, recruiterNamer, reportingScope, sourceCode, sourceDisplay } from './dashboard.scope.js';
+import { branchDisplay, branchFilter, canonicalSourceSql, recruiterNameSql, processDisplay, rawValues, recruiterNamer, reportingScope, sourceCode, sourceDisplay } from './dashboard.scope.js';
 import { bucketEducation, bucketExperience } from './dashboard.insights.service.js';
 
 /** Slim, server-paged candidate list + drilldown for the ATS pipeline dashboard. Never SELECT * on this table. */
@@ -48,11 +48,11 @@ export function where(f: PipelineFilters, opts: { skipStatus?: boolean; raw?: Aw
   }
   if (f.source) { c.push(`${canonicalSourceSql('c.sourcing_channel')} = ?`); p.push(sourceCode(f.source)); }
   if (f.recruiter && opts.raw) {
-    if (f.recruiter === 'Unassigned') c.push("(c.recruiter_name IS NULL OR c.recruiter_name = '')");
+    if (f.recruiter === 'Unassigned') c.push(`${recruiterNameSql('c')} IS NULL`);
     else {
       const namer = recruiterNamer(opts.raw.recruiter);
       const vals = opts.raw.recruiter.filter((v) => namer(v) === f.recruiter);
-      if (vals.length) { c.push(`c.recruiter_name IN (${inSql(vals)})`); p.push(...vals); } else c.push('1=0');
+      if (vals.length) { c.push(`${recruiterNameSql('c')} IN (${inSql(vals)})`); p.push(...vals); } else c.push('1=0');
     }
   }
   if (f.gender) { if (f.gender === 'Unknown') c.push('c.gender IS NULL'); else { c.push('c.gender = ?'); p.push(f.gender); } }
@@ -111,7 +111,7 @@ async function compute(f: PipelineFilters) {
     q<RowDataPacket>(
       `SELECT c.id, c.candidate_code, c.q_token, c.full_name, c.mobile, c.email, c.status, c.current_stage AS stage,
               ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, 'c.$1')} AS branch, c.applied_for_process AS process,
-              c.sourcing_channel AS source, c.recruiter_name AS recruiter, c.experience, c.education, c.created_at, c.updated_at
+              c.sourcing_channel AS source, ${recruiterNameSql('c')} AS recruiter, c.experience, c.education, c.created_at, c.updated_at
        FROM ats_candidate c WHERE ${w.sql} ORDER BY c.created_at DESC LIMIT ${limit} OFFSET ${offset}`, w.params),
     q<{ n: number }>(`SELECT COUNT(*) n FROM ats_candidate c WHERE ${w.sql}`, w.params),
     safe('facets', () => q<{ status: string; stage: string; n: number }>(
@@ -143,7 +143,7 @@ async function computeDrill(f: PipelineFilters) {
   const w = where(f, { raw, joinedIds });
   const rows = await q<DrillRow>(
     `SELECT DATE_FORMAT(c.created_at,'%Y-%m-%d') d, ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, 'c.$1')} branch, c.applied_for_process process,
-            c.sourcing_channel source, c.recruiter_name recruiter, c.status, c.current_stage stage, DAYOFWEEK(c.created_at) dow, (${jsql.sql}) jn, COUNT(*) n
+            c.sourcing_channel source, ${recruiterNameSql('c')} recruiter, c.status, c.current_stage stage, DAYOFWEEK(c.created_at) dow, (${jsql.sql}) jn, COUNT(*) n
      FROM ats_candidate c WHERE ${w.sql} GROUP BY d, branch, process, source, recruiter, status, stage, dow, jn`, [...jsql.params, ...w.params]);
 
   const drillNamer = recruiterNamer(rows.map((r) => r.recruiter ?? ''));
@@ -217,7 +217,7 @@ export async function getCandidateJourney(id: string) {
   const one = async <T = RowDataPacket>(sql: string) => (await safe('journey', () => q<T>(sql, [id]), []))[0] ?? null;
   const [cand, logs, sub, offer, bgv, token] = await Promise.all([
     one(`SELECT id, candidate_code, q_token, full_name, mobile, email, gender, status, current_stage AS stage, applied_for_process AS process,
-                ${BRANCH_EXPR} AS branch, sourcing_channel AS source, recruiter_name AS recruiter, experience, education, created_at, updated_at
+                ${BRANCH_EXPR} AS branch, sourcing_channel AS source, ${recruiterNameSql()} AS recruiter, experience, education, created_at, updated_at
          FROM ats_candidate WHERE id = ?`),
     safe('logs', () => q<RowDataPacket>(`SELECT from_stage, to_stage, COALESCE(stage_date, created_at) AS at, remarks FROM ats_candidate_stage_log WHERE candidate_id = ? ORDER BY COALESCE(stage_date, created_at) ASC LIMIT 60`, [id]), []),
     one(`SELECT final_decision, walkin_end_stage, round1_result, round1_voc, skilltest_result, skilltest_typing, skilltest_ai, skilltest_voc, round2_result, round2_voc,

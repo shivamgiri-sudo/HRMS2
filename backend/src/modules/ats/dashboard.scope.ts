@@ -34,6 +34,16 @@ export const processDisplay = (raw: unknown): string => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(t) ? 'Unmapped' : canonicalRole(t);
 };
 
+/**
+ * The recruiter on a candidate, from whichever column holds it. `recruiter_name` is blank on some rows
+ * whose `recruiter_assigned_name` is filled (919 on production, 2026-10), so reading only the first
+ * reported them as Unassigned. NULL when both are blank — callers apply their own 'Unassigned' label.
+ */
+export function recruiterNameSql(alias = ''): string {
+  const p = alias ? `${alias}.` : '';
+  return `COALESCE(NULLIF(TRIM(${p}recruiter_name), ''), NULLIF(TRIM(${p}recruiter_assigned_name), ''))`;
+}
+
 /** Groups recruiter spellings (case, "· MAS12345" suffix, aliases) and picks one display name per person. */
 export function recruiterNamer(rawNames: readonly string[]): (raw: unknown) => string {
   const groups = new Map<string, string[]>();
@@ -50,7 +60,7 @@ let rawCache: { at: number; experience: string[]; education: string[]; recruiter
 export async function rawValues() {
   if (rawCache && Date.now() - rawCache.at < 3_600_000) return rawCache;
   const [raw] = await db.execute<RowDataPacket[]>(
-    `SELECT experience ex, education ed, recruiter_name rc, applied_for_process pr FROM ats_candidate WHERE ${reportingScope('ats_candidate')} GROUP BY ex, ed, rc, pr`);
+    `SELECT experience ex, education ed, ${recruiterNameSql()} rc, applied_for_process pr FROM ats_candidate WHERE ${reportingScope('ats_candidate')} GROUP BY ex, ed, rc, pr`);
   const rows = raw as unknown as { ex: string | null; ed: string | null; rc: string | null; pr: string | null }[];
   const uniq = (k: 'ex' | 'ed' | 'rc' | 'pr') => [...new Set(rows.map((r) => r[k]).filter((v): v is string => !!v))];
   rawCache = { at: Date.now(), experience: uniq('ex'), education: uniq('ed'), recruiter: uniq('rc'), process: uniq('pr') };

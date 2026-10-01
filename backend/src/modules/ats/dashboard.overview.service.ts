@@ -1,7 +1,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import { getJoinedInfo, joinedIdSql } from './dashboard.joined.js';
-import { branchDisplay, branchFilter, processDisplay, recruiterNamer, reportingScope, sourceDisplay } from './dashboard.scope.js';
+import { branchDisplay, branchFilter, processDisplay, recruiterNamer, recruiterNameSql, reportingScope, sourceDisplay } from './dashboard.scope.js';
 
 /**
  * ATS dashboard overview — server-side aggregates for /ats/dashboard.
@@ -114,7 +114,7 @@ async function compute(period: OverviewPeriod, branch: string) {
     // Recruiter / source / process / gender need columns the cube omits; engaged candidates only (~8k rows).
     safe('dims', () => q<{ ch: string; pr: string; rc: string; g: string; status: string; stage: string; jn: number; n: number }>(
       `SELECT sourcing_channel AS ch, applied_for_process AS pr,
-              COALESCE(NULLIF(recruiter_name,''),'Unassigned') AS rc, gender AS g, status, current_stage AS stage, (${jsql.sql}) AS jn, COUNT(*) AS n
+              COALESCE(${recruiterNameSql()},'Unassigned') AS rc, gender AS g, status, current_stage AS stage, (${jsql.sql}) AS jn, COUNT(*) AS n
        FROM ats_candidate WHERE active_status = 1 AND ${reportingScope('ats_candidate')} AND status <> ? ${win} ${brSql}
        GROUP BY ch, pr, rc, g, status, stage, jn`, [...jsql.params, LEAD, ...brArgs]), []),
     safe('heat', () => q<{ dow: number; hr: number; n: number }>(
