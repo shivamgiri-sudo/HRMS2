@@ -555,7 +555,11 @@ function MisPanel({ companyKey, companyLabel }: { companyKey: CompanyKey; compan
 }
 
 export default function ProcessPerformanceV2Page() {
-  const [company, setCompany] = useState<CompanyKey | null>(null);
+  // Deep link from the KPI Live Performance page: /performance/process-performance-v2?company=<key>
+  const [company, setCompany] = useState<CompanyKey | null>(() => {
+    const k = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search).get("company");
+    return COMPANIES.some((c) => c.key === k) ? (k as CompanyKey) : null;
+  });
   const [section, setSection] = useState<SectionKey | null>(null);
   // Config-driven processes (admin-registered APR table + mapping): no per-client code, one generic "category_template" dashboard.
   const [pdCompany, setPdCompany] = useState<ProcessConfigSummary | null>(null);

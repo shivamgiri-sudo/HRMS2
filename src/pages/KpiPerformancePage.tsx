@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, RefreshCw, ArrowDown, ArrowUp } from "lucide-react";
+import { Loader2, RefreshCw, ArrowDown, ArrowUp, ExternalLink } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -45,6 +46,13 @@ const FRESH_STYLE: Record<string, string> = {
   daily: "bg-slate-100 text-slate-700 border-slate-300", upload: "bg-amber-100 text-amber-800 border-amber-300",
 };
 const ALL = "__all__";
+
+/** Catalogue process key -> Process Performance V2 company key (only where V2 has dashboards for that process). */
+export const PPV2_COMPANY: Record<string, string> = {
+  bellavita: "bellavita", gnc: "gnc", neemans: "neemans", appreciate_health: "appreciate_health", housing_owner: "housing_owner",
+  housing_premium: "housing_premium", clovia: "clovia", birlanu: "birlanu", satya_retail: "satya_retail", lp_feedback: "lp_feedback",
+  lp_onboarding: "lp_onboarding", dalmia: "dalmia", du_bangladesh: "dubangladesh", viega: "viega", exicom: "exicom", sbi_card: "sbi_card",
+};
 
 export function formatValue(v: number | null, unit: string): string {
   if (v == null) return "—";
@@ -95,9 +103,18 @@ export default function KpiPerformancePage() {
             <h1 className="text-2xl font-semibold">KPI Live Performance</h1>
             <p className="text-sm text-muted-foreground mt-0.5">Real KPI values for your scope, with trends and breakdowns. Refreshes every minute.</p>
           </div>
-          <Button variant="outline" onClick={() => perf.refetch()} disabled={perf.isFetching} className="min-h-[44px]">
-            {perf.isFetching ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />} Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            {PPV2_COMPANY[activeKey] && (
+              <Button asChild variant="outline" className="min-h-[44px]">
+                <Link to={`/performance/process-performance-v2?company=${PPV2_COMPANY[activeKey]}`}>
+                  <ExternalLink className="h-4 w-4 mr-2" /> Full process dashboard
+                </Link>
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => perf.refetch()} disabled={perf.isFetching} className="min-h-[44px]">
+              {perf.isFetching ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />} Refresh
+            </Button>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-end gap-3">
