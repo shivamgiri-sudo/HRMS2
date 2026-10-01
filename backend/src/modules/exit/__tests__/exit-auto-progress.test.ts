@@ -49,9 +49,9 @@ describe("runExitAutoProgress", () => {
     const calls = updateExitStatus.mock.calls.map((c) => [c[0], c[1], c[3], c[4]]);
     expect(calls).toEqual([
       ["s1", "manager_review", "system", "submitted"],
+      ["d1", "exited", "system", "notice_serving"],
       ["r1", "accepted", "system", "manager_review"],
       ["a1", "notice_serving", "system", "accepted"],
-      ["d1", "exited", "system", "notice_serving"],
     ]);
   });
 
@@ -114,5 +114,21 @@ describe("runExitAutoProgress", () => {
     const selects = dbExecute.mock.calls.map((c) => String(c[0])).filter((q) => /^\s*SELECT/.test(q));
     expect(selects.length).toBeGreaterThanOrEqual(5);
     for (const q of selects) expect(q).toMatch(/exit_sub_type, 'resignation'\) = 'resignation'/);
+  });
+
+  it("never moves a backdated exit (LWD before the day it was filed): steps 2-4 all carry the guard", async () => {
+    await runExitAutoProgress();
+    const selects = dbExecute.mock.calls.map((c) => String(c[0])).filter((q) => /^\s*SELECT/.test(q));
+    const guarded = selects.filter((q) => /DATE\(COALESCE\(submitted_at, created_at\)\)/.test(q));
+    // accept, start-notice, confirm-LWD and exit selections; the submitted->review one needs none
+    expect(guarded.length).toBe(4);
+  });
+
+  it("an exit cannot go through several buckets in one run: exits are processed before notice is started", async () => {
+    rows.due = [{ id: "old-notice" }];
+    rows.accepted = [{ id: "new-accepted", has_confirmed: 0, proposed: "2026-09-14" }];
+    await runExitAutoProgress();
+    const order = updateExitStatus.mock.calls.map((c) => `${c[0]}:${c[1]}`);
+    expect(order).toEqual(["old-notice:exited", "new-accepted:notice_serving"]);
   });
 });

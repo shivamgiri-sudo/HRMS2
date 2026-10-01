@@ -40,6 +40,18 @@ export interface AutoProgressResult {
   skipped?: string;
 }
 
+/**
+ * A last working day earlier than the day the resignation was filed is a BACKDATED entry: the
+ * person has already stopped working and HR is recording it after the fact. The date drives
+ * payroll proration and the F&F, so it is HR's to confirm, not a formality. On 2026-10-01 the
+ * first run took three such exits (dates 2-16 days in the past) through accepted -> notice ->
+ * exited in a single pass and deactivated them; the other 13 pending exits were all backdated.
+ * Backdated exits are therefore never moved past manager_review automatically.
+ */
+const NOT_BACKDATED =
+  `(COALESCE(last_working_day_confirmed, last_working_day_proposed) IS NULL
+    OR COALESCE(last_working_day_confirmed, last_working_day_proposed) >= DATE(COALESCE(submitted_at, created_at)))`;
+
 async function move(
   id: string,
   from: string,
@@ -69,12 +81,29 @@ export async function runExitAutoProgress(): Promise<AutoProgressResult> {
       ? res.toManagerReview++ : res.failed++;
   }
 
+  // 4. notice_serving -> exited once the last working day has passed. Runs BEFORE the steps that
+  // create notice_serving rows, so an exit can never go accepted -> notice -> exited in one pass:
+  // a person always gets at least one cycle between buckets.
+  if (await isAutoExitAtLwd()) {
+    const [due] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM exit_request
+        WHERE status = 'notice_serving' AND last_working_day_confirmed < CURDATE()
+          AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'
+          AND ${NOT_BACKDATED}`,
+    );
+    for (const r of due) {
+      (await move(String(r.id), "notice_serving", "exited", "Auto: last working day passed"))
+        ? res.toExited++ : res.failed++;
+    }
+  }
+
   // 2. manager_review -> accepted after the SLA
   const hours = await autoAcceptAfterHours();
   const [review] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM exit_request
       WHERE status = 'manager_review' AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'
-        AND updated_at <= DATE_SUB(NOW(), INTERVAL ? HOUR)`,
+        AND updated_at <= DATE_SUB(NOW(), INTERVAL ? HOUR)
+        AND ${NOT_BACKDATED}`,
     [hours],
   );
   for (const r of review) {
@@ -88,7 +117,8 @@ export async function runExitAutoProgress(): Promise<AutoProgressResult> {
       `SELECT id,
               last_working_day_confirmed IS NOT NULL AS has_confirmed,
               DATE_FORMAT(last_working_day_proposed, '%Y-%m-%d') AS proposed
-         FROM exit_request WHERE status = 'accepted' AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'`,
+         FROM exit_request WHERE status = 'accepted' AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'
+           AND ${NOT_BACKDATED}`,
     );
     for (const r of accepted) {
       if (!r.has_confirmed && !r.proposed) { res.failed++; continue; }
@@ -105,7 +135,8 @@ export async function runExitAutoProgress(): Promise<AutoProgressResult> {
       `SELECT id FROM exit_request
         WHERE status = 'notice_serving' AND last_working_day_confirmed IS NULL
           AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'
-          AND (last_working_day_proposed IS NOT NULL OR (submitted_at IS NOT NULL AND notice_period_days > 0))`,
+          AND (last_working_day_proposed IS NOT NULL OR (submitted_at IS NOT NULL AND notice_period_days > 0))
+          AND ${NOT_BACKDATED}`,
     );
     for (const r of noLwd) {
       try {
@@ -133,17 +164,5 @@ export async function runExitAutoProgress(): Promise<AutoProgressResult> {
     }
   }
 
-  // 4. notice_serving -> exited once the last working day has passed
-  if (await isAutoExitAtLwd()) {
-    const [due] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM exit_request
-        WHERE status = 'notice_serving' AND last_working_day_confirmed < CURDATE()
-          AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'`,
-    );
-    for (const r of due) {
-      (await move(String(r.id), "notice_serving", "exited", "Auto: last working day passed"))
-        ? res.toExited++ : res.failed++;
-    }
-  }
   return res;
 }
