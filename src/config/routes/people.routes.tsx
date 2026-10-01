@@ -2,6 +2,7 @@ import { Route, Navigate } from "react-router-dom";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
@@ -74,10 +75,10 @@ export const peopleRouteElements = (
       } />
 
       {/* BGV status */}
-      <Route path="/employees/bgv-status" element={<ProtectedRoute><NativeEmployeeBGVStatus /></ProtectedRoute>} />
+      <Route path="/employees/bgv-status" element={<ProtectedRoute><DashboardLayout><NativeEmployeeBGVStatus /></DashboardLayout></ProtectedRoute>} />
       <Route path="/employees/bgv-status/:employeeId" element={
         <ProtectedRoute roles={['admin','hr','payroll','super_admin']}>
-          <NativeEmployeeBGVStatus />
+          <DashboardLayout><NativeEmployeeBGVStatus /></DashboardLayout>
         </ProtectedRoute>
       } />
 

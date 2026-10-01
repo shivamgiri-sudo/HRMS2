@@ -104,7 +104,7 @@ export const recruitmentRouteElements = (
       {/* Onboarding bridge */}
       <Route path="/ats/onboarding-bridge"    element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeATSOnboardingBridge /></Gate></ProtectedRoute>} />
       {/* Unified onboarding hub — /ats/onboarding dispatches to the active tab */}
-      <Route path="/ats/onboarding" element={<ProtectedRoute><NativeHROnboardingHub /></ProtectedRoute>} />
+      <Route path="/ats/onboarding" element={<ProtectedRoute><DashboardLayout><NativeHROnboardingHub /></DashboardLayout></ProtectedRoute>} />
       {/* CANONICAL onboarding requests: /ats/onboarding-requests */}
       <Route path="/ats/onboarding-requests"  element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_REQUESTS"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}
@@ -139,8 +139,8 @@ export const recruitmentRouteElements = (
       <Route path="/ats/bgv-enhanced" element={<Navigate to="/ats/bgv" replace />} />
       {/* /ats/bgv-report removed — NativeBGVReport was a redirect stub; canonical page is /ats/bgv */}
       <Route path="/ats/bgv-report"   element={<Navigate to="/ats/bgv" replace />} />
-      <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr','branch_hr','branch_head','branch_manager']}><NativeBGVReportView /></ProtectedRoute>} />
-      <Route path="/ats/bgv-api-monitor" element={<ProtectedRoute roles={['admin','hr','super_admin']}><NativeBGVAPIMonitor /></ProtectedRoute>} />
+      <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr','branch_hr','branch_head','branch_manager']}><DashboardLayout><NativeBGVReportView /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/ats/bgv-api-monitor" element={<ProtectedRoute roles={['admin','hr','super_admin']}><DashboardLayout><NativeBGVAPIMonitor /></DashboardLayout></ProtectedRoute>} />
       <Route path="/ats/reconciliation" element={<ProtectedRoute roles={['admin','super_admin','hr']}><DashboardLayout><NativeReconciliationDashboard /></DashboardLayout></ProtectedRoute>} />
 
       {/* Misc ATS */}

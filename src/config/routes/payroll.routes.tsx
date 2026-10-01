@@ -236,7 +236,7 @@ export const payrollRouteElements = (
           actual boundary. */}
       <Route path="/payroll/tds-certificate-part-a" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll','payroll_hr','finance']}><Gate pageCode="PAYROLL_TDS_PART_A"><TdsCertificatePartA /></Gate></ProtectedRoute>} />
       <Route path="/payroll/reimbursements"      element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee','branch_payroll','payroll','payroll_hr']}><Gate pageCode="PAYROLL_REIMBURSEMENTS"><ReimbursementManagement /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/ho-queues"           element={<ProtectedRoute roles={['super_admin','payroll_head','payroll','finance','hr','admin','payroll_hr']}><Gate pageCode="PAYROLL_HO_QUEUES"><NativePayrollHOQueues /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/ho-queues"           element={<ProtectedRoute roles={['super_admin','payroll_head','payroll','finance','hr','admin','payroll_hr']}><Gate pageCode="PAYROLL_HO_QUEUES"><DashboardLayout><NativePayrollHOQueues /></DashboardLayout></Gate></ProtectedRoute>} />
       <Route path="/payroll/salary-review"            element={<ProtectedRoute roles={['super_admin','payroll_head','admin','payroll_hr']}><Gate pageCode="PAYROLL_HEAD_SALARY_REVIEW_QUEUE"><PayrollHeadSalaryReviewQueue /></Gate></ProtectedRoute>} />
       {/* payroll_hr/branch_head/hr added per migration 1542: the rejection
           notification links straight here, and they need to reach it

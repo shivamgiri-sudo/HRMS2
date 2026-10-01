@@ -66,18 +66,18 @@ export const performanceRouteElements = (
       <Route path="/performance/command-center" element={<ProtectedRoute><Gate pageCode="WORKFORCE_COMMAND_CENTER"><UnifiedPerformanceCommandCenter /></Gate></ProtectedRoute>} />
 
       {/* Performance feedback */}
-      <Route path="/performance-feedback/my-reports"      element={<ProtectedRoute><NativePerformanceFeedbackMyReports /></ProtectedRoute>} />
-      <Route path="/performance-feedback/reports/:id"     element={<ProtectedRoute><NativePerformanceFeedbackReportDetail /></ProtectedRoute>} />
-      <Route path="/performance-feedback/development-plan" element={<ProtectedRoute><NativePerformanceFeedbackDevelopmentPlan /></ProtectedRoute>} />
-      <Route path="/performance-feedback/assignments"     element={<ProtectedRoute><NativePerformanceFeedbackAssignments /></ProtectedRoute>} />
-      <Route path="/performance-feedback/form/:id"        element={<ProtectedRoute><NativePerformanceFeedbackForm /></ProtectedRoute>} />
-      <Route path="/performance-feedback/team-reports"    element={<ProtectedRoute><NativePerformanceFeedbackTeamReports /></ProtectedRoute>} />
+      <Route path="/performance-feedback/my-reports"      element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackMyReports /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/reports/:id"     element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackReportDetail /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/development-plan" element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackDevelopmentPlan /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/assignments"     element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackAssignments /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/form/:id"        element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackForm /></DashboardLayout></ProtectedRoute>} />
+      <Route path="/performance-feedback/team-reports"    element={<ProtectedRoute><DashboardLayout><NativePerformanceFeedbackTeamReports /></DashboardLayout></ProtectedRoute>} />
 
       {/* Performance Hub */}
       <Route path="/performance-hub" element={<ProtectedRoute><Gate pageCode="PERFORMANCE_HUB"><PerformanceHub /></Gate></ProtectedRoute>} />
 
       {/* Performance Scorecard Command Center */}
-      <Route path="/performance-command-center" element={<ProtectedRoute><Gate pageCode="PERFORMANCE_SCORECARD_COMMAND_CENTER"><PerformanceCommandCenter /></Gate></ProtectedRoute>} />
+      <Route path="/performance-command-center" element={<ProtectedRoute><Gate pageCode="PERFORMANCE_SCORECARD_COMMAND_CENTER"><DashboardLayout><PerformanceCommandCenter /></DashboardLayout></Gate></ProtectedRoute>} />
 
       {/* Retired URLs kept resolvable.
           Both were removed from the ceo role on 31-Jul (rbacPageMatrix.ts) and deactivated
@@ -146,9 +146,9 @@ export const performanceRouteElements = (
       <Route path="/process-operations-demo" element={<ProcessOperationsDemoPage />} />
       <Route path="/kpi/performance" element={<ProtectedRoute><Gate pageCode="KPI_PERFORMANCE"><KpiPerformancePage /></Gate></ProtectedRoute>} />
       <Route path="/kpi/catalogue" element={<ProtectedRoute roles={['super_admin','admin','hr','qa','tq_head','process_manager','operations_manager','manager','branch_head','ceo','coo','wfm','branch_wfm']}><Gate pageCode="KPI_CONFIG"><KpiCataloguePage /></Gate></ProtectedRoute>} />
-      <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager','manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
-      <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head','branch_head','branch_qa','ceo','coo','manager']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
-      <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />
+      <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager','manager']}><Gate pageCode="KPI_CONFIG"><DashboardLayout><NativeProcessMetricConfig /></DashboardLayout></Gate></ProtectedRoute>} />
+      <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head','branch_head','branch_qa','ceo','coo','manager']}><Gate pageCode="QUALITY_DASHBOARD"><DashboardLayout><NativeQAFileAudit /></DashboardLayout></Gate></ProtectedRoute>} />
+      <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><DashboardLayout><NativeQAFormBuilder /></DashboardLayout></Gate></ProtectedRoute>} />
 
       {/* Operations — consolidated into one role-based drill-down page at /operations-dashboard. */}
       <Route path="/operations/dashboard" element={<Navigate to="/operations-dashboard" replace />} />

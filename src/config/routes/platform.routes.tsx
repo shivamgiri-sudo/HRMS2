@@ -235,12 +235,12 @@ export const platformRouteElements = (
       <Route path="/settings/access-control"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><SuperAdminAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin','branch_admin','it_head','payroll_head']}><Gate pageCode="MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />
-      <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin','branch_admin','payroll_head']}><Gate pageCode="SUPER_ADMIN_POLICY_ENGINE"><NativePolicyEngine /></Gate></ProtectedRoute>} />
+      <Route path="/super-admin/policy-engine"   element={<ProtectedRoute roles={['super_admin','branch_admin','payroll_head']}><Gate pageCode="SUPER_ADMIN_POLICY_ENGINE"><DashboardLayout><NativePolicyEngine /></DashboardLayout></Gate></ProtectedRoute>} />
       <Route path="/super-admin/company-feed-creators" element={<ProtectedRoute roles={['super_admin']}><NativeCompanyFeedCreatorAccess /></ProtectedRoute>} />
       <Route path="/super-admin/live-location"   element={<ProtectedRoute roles={['super_admin','branch_head','hr_admin','operations_manager','process_manager']}><LiveLocationMap /></ProtectedRoute>} />
 
       {/* AI / Copilot */}
-      <Route path="/settings/ai-providers"       element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />
+      <Route path="/settings/ai-providers"       element={<ProtectedRoute roles={['super_admin']}><DashboardLayout><AIProviderSettings /></DashboardLayout></ProtectedRoute>} />
       <Route path="/admin/mira-complaints"       element={<ProtectedRoute roles={['super_admin']}><MiraComplaintsPage /></ProtectedRoute>} />
       <Route path="/peopleos/copilot"            element={<ProtectedRoute roles={['super_admin','admin','hr','manager']}><DashboardLayout><PeopleOSCopilot /></DashboardLayout></ProtectedRoute>} />
 
