@@ -52,6 +52,9 @@ vi.mock("../src/shared/accessGuard.js", () => ({
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
   ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  // role lookup used by enterpriseScope (user_roles + the synthetic department_head role)
+  USER_ROLES_WITH_DEPARTMENT_HEAD_SQL: "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+  DEPARTMENT_HEAD_ROLES: [],
   hasOrgWideScope: vi.fn().mockResolvedValue(true),
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
