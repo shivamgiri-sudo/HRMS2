@@ -40,6 +40,13 @@ export const heatColor = (t: number, hue: "blue" | "red" | "green" = "blue") => 
 /** Metric heat table: rows are entities, columns are metrics, each column scaled on its own. Cells and row names can drill. */
 // `get` is declared with method syntax on purpose: method parameters are compared bivariantly, so a column written against a
 // narrower row type still fits a table whose rows carry extra fields.
+/**
+ * Where a value sits on the colour scale (0 pale .. 1 strong). A red column marks what is BAD when high (rejected %, no-show %, spend),
+ * so its strongest shade is always the highest value, whether or not the column is also "lower is better". For other hues, `invert`
+ * makes the lowest value the strongest.
+ */
+export const heatPosition = (t: number, col: { invert?: boolean; hue?: "blue" | "red" | "green" }) => (col.hue === "red" ? t : col.invert ? 1 - t : t);
+
 export interface HeatCol<R> { key: string; label: string; get(r: R): number; format?: (n: number) => string; invert?: boolean; hue?: "blue" | "red" | "green" }
 export function HeatTable<R extends { name: string }>({ rows, cols, onRow, onCell, max = 14 }: { rows: R[]; cols: HeatCol<R>[]; onRow?: (r: R) => void; onCell?: (r: R, c: HeatCol<R>) => void; max?: number }) {
   if (!rows.length) return <Empty />;
@@ -55,7 +62,7 @@ export function HeatTable<R extends { name: string }>({ rows, cols, onRow, onCel
               <td className="max-w-[14rem] px-3 py-1.5">{onRow ? <button onClick={() => onRow(r)} className="cursor-pointer truncate text-left font-medium hover:text-primary hover:underline">{r.name}</button> : <span className="font-medium">{r.name}</span>}</td>
               {cols.map((c, ci) => {
                 const v = c.get(r), { lo, hi } = scale[ci], t = hi === lo ? 0.4 : (v - lo) / (hi - lo);
-                const cell = <span className="cc-num block rounded-md px-1.5 py-1 text-center text-xs font-semibold" style={{ background: heatColor(c.invert ? 1 - t : t, c.hue ?? "blue") }}>{(c.format ?? fmt)(v)}</span>;
+                const cell = <span className="cc-num block rounded-md px-1.5 py-1 text-center text-xs font-semibold" style={{ background: heatColor(heatPosition(t, c), c.hue ?? "blue") }}>{(c.format ?? fmt)(v)}</span>;
                 return <td key={c.key} className="px-1.5 py-1">{onCell ? <button onClick={() => onCell(r, c)} aria-label={`${r.name} ${c.label}: ${(c.format ?? fmt)(v)}`} className="block w-full cursor-pointer rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">{cell}</button> : cell}</td>;
               })}
             </tr>

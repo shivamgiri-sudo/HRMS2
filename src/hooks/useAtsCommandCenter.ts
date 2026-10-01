@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import type { DrillFilters } from "./useAtsDashboards";
+import type { Bmi } from "@/components/ats/cc/bmi-helpers";
 
 /** Hooks for the Command Center endpoints added next to /api/ats/dashboard/drill (same filters, same row scope). */
 const opts = { placeholderData: keepPreviousData, staleTime: 60_000, refetchOnWindowFocus: false } as const;
@@ -23,3 +24,7 @@ export const useCohorts = (weeks: number, f: DrillFilters) =>
 export interface Leakage { generatedAt: string; stages: { key: string; label: string; n: number }[]; losses: { from: string; to: string; reason: string; n: number }[] }
 export const useLeakage = (f: DrillFilters) =>
   useQuery({ queryKey: ["ats-cc-leakage", f], ...opts, queryFn: async () => (await hrmsApi.get<{ data: Leakage }>(`/api/ats/dashboard/leakage?${qs(f)}`)).data });
+
+/** Benchmark board (demand, sourcing by channel, offers, direct spend by month). Readable by more roles than the aggregates, so errors are handled by the caller. */
+export const useBmi = (months = 6) =>
+  useQuery({ queryKey: ["ats-cc-bmi", months], ...opts, retry: 0, queryFn: async () => (await hrmsApi.get<{ ok: boolean; data: Bmi }>(`/api/ats/bmi-benchmark?months=${months}`)).data });

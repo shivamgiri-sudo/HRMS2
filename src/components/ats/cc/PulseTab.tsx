@@ -7,6 +7,7 @@ import { useCohorts, useStageDwell } from "@/hooks/useAtsCommandCenter";
 import { useDrillActions } from "@/components/ats/overview/drill";
 import { Empty, Gauge, V, fmt, tooltipStyle } from "@/components/ats/overview/viz";
 import { FlowViz, FunnelViz, Heatmap, SourceTreemap, TrendViz } from "@/components/ats/overview/charts";
+import { DemandSupplyCard } from "./DemandSupplyCard";
 import { humanizeStage } from "./stage-label";
 import { Card, ExportButton, FilterBar, HeatTable, InsightList, KpiCard, Section, downloadCsv, type InsightItem } from "./cc-kit";
 import { useCC } from "./cc-context";
@@ -148,6 +149,8 @@ export function PulseTab() {
           ) : <Empty text="No stage history in this window" />}
         </Card>
       </div>
+
+      <DemandSupplyCard i={9} />
 
       <div className="grid gap-4 lg:grid-cols-12">
         <Card className="lg:col-span-5" i={9} title="Candidate flow" hint="Where each registration ends up" icon={<Workflow className="h-4 w-4" />}>
