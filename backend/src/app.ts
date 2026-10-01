@@ -1092,6 +1092,7 @@ app.use("/api/mcnmeet", mcnmeetRouter);
 // Predictive attrition scoring, manager risk leaderboard, intervention recommendations,
 // attrition reason inference, employee 360 composite profile, WFM compliance analytics.
 import { predictiveAttritionRouter } from "./modules/analytics/predictive-attrition.routes.js";
+import { attritionHubRouter } from "./modules/analytics/attrition-hub.routes.js";
 import { attritionReasonInferenceRouter } from "./modules/analytics/attrition-reason-inference.routes.js";
 import { managerRiskRouter } from "./modules/analytics/manager-risk.routes.js";
 import { employee360Router as analyticsEmployee360Router } from "./modules/analytics/employee-360.routes.js";
@@ -1099,6 +1100,7 @@ import { interventionRecommendationRouter } from "./modules/analytics/interventi
 import { wfmComplianceAnalyticsRouter } from "./modules/wfm/wfm-compliance-analytics.routes.js";
 
 app.use("/api/analytics/predictive-attrition", predictiveAttritionRouter);
+app.use("/api/analytics/attrition-hub", attritionHubRouter);
 app.use(
   "/api/analytics/attrition-reason-inference",
   attritionReasonInferenceRouter,
