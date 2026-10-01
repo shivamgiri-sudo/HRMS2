@@ -35,6 +35,7 @@ import {
 } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
+import { AttritionPulseCard } from "@/components/analytics/attrition/AttritionPulseCard";
 import {
   AttendanceBreakdownPanel,
   LiveVsProcessedPanel,
@@ -155,6 +156,8 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
         { label: "Revenue Gap MTD", value: formatCurrency(revenueGap), helper: (revenueGapReason ?? (revenue === null ? "Revenue risk" : `Revenue ${formatCurrency(revenue)}`)) + (pnlAsOf ? ` · P&L as of ${pnlAsOf}` : ""), icon: IndianRupee, tone: "violet" },
         { label: "Certified Learners", value: certified, helper: "vs last 30 days", icon: BadgeCheck, tone: "amber" },
       ]} />
+
+      <AttritionPulseCard />
 
       <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-[1.45fr_0.55fr]">
         <div className="grid grid-cols-2 gap-0 overflow-hidden rounded-xl border border-[#e3e9f2] bg-white sm:grid-cols-4">

@@ -50,6 +50,7 @@ import {
   DocumentCompliancePanel,
 } from "./ReferenceSharedPanels";
 import { SuperAdminAnalyticsPanel } from "@/components/dashboard/superadmin/SuperAdminAnalyticsPanel";
+import { AttritionPulseCard } from "@/components/analytics/attrition/AttritionPulseCard";
 
 export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
@@ -98,6 +99,8 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
         { label: "Open Positions", value: openPositions, helper: "Across departments", icon: Network, tone: "blue" },
         { label: "System Uptime", value: uptime, helper: uptime === "—" ? "Source unavailable" : "Reported by system health", icon: Activity, tone: uptime === "—" ? "slate" : "green" },
       ]} />
+
+      <AttritionPulseCard />
 
       <div className="grid gap-4 xl:grid-cols-[0.82fr_0.78fr_0.78fr_1.22fr]">
         <ReferencePanel title="Attendance Overview">
