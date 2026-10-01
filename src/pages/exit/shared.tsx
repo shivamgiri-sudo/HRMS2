@@ -39,6 +39,7 @@ export type CenterData = {
   }>;
   reason_breakdown?: Array<{ reason: string; count: number }>;
   branch_breakdown?: Array<{ branch: string; count: number; rate: number }>;
+  aon_breakdown?: Array<{ bucket: string; voluntary: number; involuntary: number; count: number }>;
 };
 
 export type FullFinalCalc = {

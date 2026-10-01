@@ -162,7 +162,7 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
     scopeParams = clause.params;
   }
 
-  const [summary] = await db.execute<RowDataPacket[]>(
+  const summaryP = db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total,
        SUM(CASE WHEN er.status IN ('submitted','manager_review','hr_review','admin_review') THEN 1 ELSE 0 END) AS pending_review,
@@ -176,7 +176,7 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
     [...scopeParams],
   );
 
-  const [requests] = await db.execute<RowDataPacket[]>(
+  const requestsP = db.execute<RowDataPacket[]>(
     `SELECT er.*,
             CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
             e.employee_code,
@@ -223,7 +223,7 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
        JOIN employees e ON e.id = er.employee_id`;
   const clearanceWhere = bypass ? "" : `WHERE (${scopeWhere})`;
 
-  const [clearance] = await db.execute<RowDataPacket[]>(
+  const clearanceP = db.execute<RowDataPacket[]>(
     `SELECT ect.clearance_area, ect.status, COUNT(*) AS count
        FROM exit_clearance_task ect
        ${clearanceJoin}
@@ -234,7 +234,7 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
   );
 
   // Attrition trend (last 6 months)
-  const [attritionTrend] = await db.execute<RowDataPacket[]>(
+  const attritionTrendP = db.execute<RowDataPacket[]>(
     `SELECT
        DATE_FORMAT(er.created_at, '%Y-%m') AS month,
        SUM(CASE WHEN er.exit_type = 'voluntary' THEN 1 ELSE 0 END) AS voluntary,
@@ -275,7 +275,7 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
   );
 
   // Exit reason breakdown
-  const [reasonBreakdown] = await db.execute<RowDataPacket[]>(
+  const reasonBreakdownP = db.execute<RowDataPacket[]>(
     `SELECT
        COALESCE(er.exit_reason_category, 'other') AS reason,
        COUNT(*) AS count
@@ -291,7 +291,7 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
   );
 
   // Branch breakdown
-  const [branchBreakdown] = await db.execute<RowDataPacket[]>(
+  const branchBreakdownP = db.execute<RowDataPacket[]>(
     `SELECT
        COALESCE(b.branch_name, 'Unknown') AS branch,
        COUNT(*) AS count,
@@ -311,6 +311,33 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
     [...scopeParams],
   );
 
+
+  // AON (age on network) at exit: tenure bucket of each leaver, same 0-30/31-60/61-90/90+
+  // vocabulary as the AON & Attrition report. Derived at read time from date_of_joining.
+  const aonBreakdownP = db.execute<RowDataPacket[]>(
+    `SELECT
+       CASE
+         WHEN DATEDIFF(COALESCE(er.last_working_day_proposed, er.created_at), e.date_of_joining) <= 30 THEN '0-30'
+         WHEN DATEDIFF(COALESCE(er.last_working_day_proposed, er.created_at), e.date_of_joining) <= 60 THEN '31-60'
+         WHEN DATEDIFF(COALESCE(er.last_working_day_proposed, er.created_at), e.date_of_joining) <= 90 THEN '61-90'
+         ELSE '90+'
+       END AS bucket,
+       SUM(CASE WHEN er.exit_type = 'voluntary' THEN 1 ELSE 0 END) AS voluntary,
+       SUM(CASE WHEN er.exit_type = 'involuntary' THEN 1 ELSE 0 END) AS involuntary,
+       COUNT(*) AS count
+     FROM exit_request er
+     JOIN employees e ON e.id = er.employee_id
+     WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+       AND e.date_of_joining IS NOT NULL
+       AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+       AND (${scopeWhere})
+     GROUP BY bucket`,
+    [...scopeParams],
+  );
+
+  const [[summary], [requests], [clearance], [attritionTrend], [reasonBreakdown], [branchBreakdown], [aonBreakdown]] =
+    await Promise.all([summaryP, requestsP, clearanceP, attritionTrendP, reasonBreakdownP, branchBreakdownP, aonBreakdownP]);
+
   return {
     summary: summary[0] ?? {},
     requests,
@@ -318,6 +345,7 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
     attrition_trend: attritionTrend,
     reason_breakdown: reasonBreakdown,
     branch_breakdown: branchBreakdown,
+    aon_breakdown: aonBreakdown,
   };
 }
 

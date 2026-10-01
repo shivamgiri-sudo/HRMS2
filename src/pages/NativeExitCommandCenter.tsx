@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
+  Loader2,
   IndianRupee,
   Plus,
   RefreshCcw,
@@ -16,40 +19,59 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { RaiseExitDialog } from "@/components/exit/RaiseExitDialog";
 import { NOC_INITIATOR_EVIDENCE, type CenterData } from "./exit/shared";
-import { AnalyticsTab } from "./exit/AnalyticsTab";
-import { ExitTaskBoardTab } from "./exit/ExitTaskBoardTab";
-import { BulkActionsTab } from "./exit/BulkActionsTab";
-import { FfSettlementPanel } from "./exit/FfSettlementPanel";
+const AnalyticsTab = lazy(() => import("./exit/AnalyticsTab").then((m) => ({ default: m.AnalyticsTab })));
+const ExitTaskBoardTab = lazy(() => import("./exit/ExitTaskBoardTab").then((m) => ({ default: m.ExitTaskBoardTab })));
+const BulkActionsTab = lazy(() => import("./exit/BulkActionsTab").then((m) => ({ default: m.BulkActionsTab })));
+const FfSettlementPanel = lazy(() => import("./exit/FfSettlementPanel").then((m) => ({ default: m.FfSettlementPanel })));
 import { OverviewTab } from "./exit/OverviewTab";
-import { NoticePeriodTab } from "./exit/NoticePeriodTab";
+const AonAnalyticsView = lazy(() => import("@/components/reports/views/AonAnalyticsView"));
+
+const TabFallback = () => (
+  <div className="flex items-center justify-center py-16 text-slate-400" role="status">
+    <Loader2 className="h-5 w-5 animate-spin" />
+    <span className="ml-2 text-sm">Loading…</span>
+  </div>
+);
+
+const MAIN_TABS = ["overview", "task-board", "ff", "insights"] as const;
+const INSIGHT_TABS = ["analytics", "aon", "notice", "bulk"] as const;
+const NoticePeriodTab = lazy(() => import("./exit/NoticePeriodTab").then((m) => ({ default: m.NoticePeriodTab })));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
 export default function NativeExitCommandCenter() {
-  const [data, setData] = useState<CenterData | null>(null);
-  const [loading, setLoading] = useState(false);
   const { hasAnyRole } = useWorkforceAccess();
+  const qc = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const tabParam = params.get("tab") ?? "overview";
+  const tab = (MAIN_TABS as readonly string[]).includes(tabParam) ? tabParam : "overview";
+  const insightParam = params.get("insight") ?? "analytics";
+  const insight = (INSIGHT_TABS as readonly string[]).includes(insightParam) ? insightParam : "analytics";
+  const setTab = (value: string) =>
+    setParams((p) => { const n = new URLSearchParams(p); n.set("tab", value); return n; }, { replace: true });
+  const setInsight = (value: string) =>
+    setParams((p) => { const n = new URLSearchParams(p); n.set("insight", value); return n; }, { replace: true });
+
+  // Cached: revisiting the page paints instantly from cache and revalidates in the background.
+  const query = useQuery({
+    queryKey: ["exit-command-center"],
+    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: CenterData }>("/api/exit/command-center");
+      return res.data;
+    },
+  });
+  const data = query.data ?? null;
+  const loading = query.isLoading;
+  const refreshing = query.isFetching;
 
   // ── Create exit request ──────────────────────────────────────────────────
   const [showCreate, setShowCreate] = useState(false);
   const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await hrmsApi.get<{ success: boolean; data: CenterData }>(
-        "/api/exit/command-center",
-      );
-      setData(res.data);
-    } catch (err: any) {
-      console.error("Exit command center load failed:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+    await qc.invalidateQueries({ queryKey: ["exit-command-center"] });
+  }, [qc]);
 
   const handleStatusChange = async (
     id: string,
@@ -115,12 +137,12 @@ export default function NativeExitCommandCenter() {
               </Button>
               <Button
                 onClick={load}
-                disabled={loading}
+                disabled={refreshing}
                 variant="outline"
                 className="bg-white/10 border-white/30 text-white hover:bg-white/20 hover:text-white"
               >
                 <RefreshCcw
-                  className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`}
+                  className={`w-4 h-4 mr-2 ${refreshing ? "animate-spin" : ""}`}
                 />
                 Refresh
               </Button>
@@ -129,8 +151,15 @@ export default function NativeExitCommandCenter() {
         </div>
 
         {/* Tabs: four working areas; secondary tools live under Insights */}
-        <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList className="bg-white/95 border border-white/60 backdrop-blur-sm p-1 rounded-xl flex-wrap">
+        {query.isError && !data && (
+          <div role="alert" className="flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <span>Could not load exit data. This is a load failure, not zero exits.</span>
+            <Button size="sm" variant="outline" onClick={load}>Retry</Button>
+          </div>
+        )}
+
+        <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+          <TabsList className="sticky top-0 z-20 bg-white/95 border border-white/60 backdrop-blur-sm p-1 rounded-xl flex-wrap shadow-sm">
             {[
               { value: "overview", label: "Overview", icon: Users },
               {
@@ -163,21 +192,28 @@ export default function NativeExitCommandCenter() {
           </TabsContent>
 
           <TabsContent value="task-board">
-            <ExitTaskBoardTab
-              exitRequests={data?.requests ?? []}
-              loading={loading}
-            />
+            <Suspense fallback={<TabFallback />}>
+              <ExitTaskBoardTab
+                exitRequests={data?.requests ?? []}
+                loading={loading}
+              />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="ff">
-            <FfSettlementPanel exitRequests={data?.requests ?? []} />
+            <Suspense fallback={<TabFallback />}>
+              <FfSettlementPanel exitRequests={data?.requests ?? []} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="insights">
-            <Tabs defaultValue="analytics" className="space-y-4">
+            <Tabs value={insight} onValueChange={setInsight} className="space-y-4">
               <TabsList className="bg-slate-100 rounded-xl">
                 <TabsTrigger value="analytics" className="rounded-lg">
                   Analytics
+                </TabsTrigger>
+                <TabsTrigger value="aon" className="rounded-lg">
+                  AON &amp; Attrition
                 </TabsTrigger>
                 <TabsTrigger value="notice" className="rounded-lg">
                   Notice Period
@@ -186,18 +222,23 @@ export default function NativeExitCommandCenter() {
                   Bulk Actions
                 </TabsTrigger>
               </TabsList>
-              <TabsContent value="analytics">
-                <AnalyticsTab data={data} loading={loading} />
-              </TabsContent>
-              <TabsContent value="notice">
-                <NoticePeriodTab />
-              </TabsContent>
-              <TabsContent value="bulk">
-                <BulkActionsTab
-                  exitRequests={data?.requests ?? []}
-                  onRefresh={load}
-                />
-              </TabsContent>
+              <Suspense fallback={<TabFallback />}>
+                <TabsContent value="analytics">
+                  <AnalyticsTab data={data} loading={loading} />
+                </TabsContent>
+                <TabsContent value="aon">
+                  <AonAnalyticsView />
+                </TabsContent>
+                <TabsContent value="notice">
+                  <NoticePeriodTab />
+                </TabsContent>
+                <TabsContent value="bulk">
+                  <BulkActionsTab
+                    exitRequests={data?.requests ?? []}
+                    onRefresh={load}
+                  />
+                </TabsContent>
+              </Suspense>
             </Tabs>
           </TabsContent>
         </Tabs>

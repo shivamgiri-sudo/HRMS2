@@ -4,7 +4,9 @@
  */
 import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock, FileText, ShieldCheck, UserMinus } from "lucide-react";
+import { Search } from "lucide-react";
 import { AIInsightPanel } from "@/components/ai";
+import { ChartSkeleton, StatTile } from "@/components/analytics/analytics-kit";
 import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
 import {
   ExitStagePipeline,
@@ -14,7 +16,7 @@ import {
   type ExitStageKey,
 } from "@/components/exit/ExitStagePipeline";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
-import { exitTypeBadgeClass, KpiTile, NOC_ELIGIBLE_STATUSES, Pill, reasonLabel, statusFlow, type CenterData } from "./shared";
+import { exitTypeBadgeClass, NOC_ELIGIBLE_STATUSES, Pill, reasonLabel, statusFlow, type CenterData } from "./shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Overview Tab
@@ -37,6 +39,8 @@ export function OverviewTab({
 }) {
   const [stage, setStage] = useState<ExitStageKey | "all">("all");
   const [message, setMessage] = useState("");
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "voluntary" | "involuntary">("all");
   const [drawerExitId, setDrawerExitId] = useState<string | null>(null);
   const { hasAnyRole } = useWorkforceAccess();
 
@@ -71,11 +75,15 @@ export function OverviewTab({
   }
 
   const filtered = useMemo(() => {
-    const rows = data?.requests ?? [];
-    return stage === "all"
-      ? rows
-      : rows.filter((r) => exitStageOfRow(r) === stage);
-  }, [data, stage]);
+    const q = search.trim().toLowerCase();
+    return (data?.requests ?? []).filter((r) => {
+      if (stage !== "all" && exitStageOfRow(r) !== stage) return false;
+      if (typeFilter !== "all" && (r.exit_type ?? "").toLowerCase() !== typeFilter) return false;
+      if (!q) return true;
+      return [r.employee_name, r.employee_code, r.branch_name, r.process_name]
+        .some((v) => v?.toLowerCase().includes(q));
+    });
+  }, [data, stage, search, typeFilter]);
 
   const moveStatus = async (id: string, nextStatus: string) => {
     try {
@@ -118,44 +126,20 @@ export function OverviewTab({
 
   return (
     <div className="space-y-6">
-      {/* KPI Grid */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
-        <KpiTile
-          title="Total Exits"
-          value={Number(data?.summary?.total ?? 0)}
-          icon={<UserMinus className="w-5 h-5" />}
-          note="All exit records"
-          tone="slate"
-        />
-        <KpiTile
-          title="Pending Review"
-          value={Number(data?.summary?.pending_review ?? 0)}
-          icon={<Clock className="w-5 h-5" />}
-          note="Manager/HR/Admin"
-          tone="amber"
-        />
-        <KpiTile
-          title="Active Notice"
-          value={Number(data?.summary?.active_notice ?? 0)}
-          icon={<FileText className="w-5 h-5" />}
-          note="Accepted or serving"
-          tone="blue"
-        />
-        <KpiTile
-          title="Completed"
-          value={Number(data?.summary?.completed ?? 0)}
-          icon={<CheckCircle2 className="w-5 h-5" />}
-          note="Exit confirmed"
-          tone="green"
-        />
-        <KpiTile
-          title="Regrettable"
-          value={Number(data?.summary?.regrettable ?? 0)}
-          icon={<AlertTriangle className="w-5 h-5" />}
-          note="Retention attention"
-          tone="red"
-        />
-      </div>
+      {/* KPI strip: the pipeline below is the filter, tiles are the headline */}
+      {loading && !data ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          {[0, 1, 2, 3, 4].map((i) => <ChartSkeleton key={i} height={36} />)}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <StatTile label="Total exits" value={Number(data?.summary?.total ?? 0)} denominator="All exit records" icon={<UserMinus className="h-4 w-4" />} onClick={() => setStage("all")} />
+          <StatTile label="Pending review" value={Number(data?.summary?.pending_review ?? 0)} denominator="Manager / HR / Admin" intent="warning" icon={<Clock className="h-4 w-4" />} />
+          <StatTile label="Active notice" value={Number(data?.summary?.active_notice ?? 0)} denominator="Accepted or serving" icon={<FileText className="h-4 w-4" />} />
+          <StatTile label="Completed" value={Number(data?.summary?.completed ?? 0)} denominator="Exit confirmed" intent="good" icon={<CheckCircle2 className="h-4 w-4" />} />
+          <StatTile label="Regrettable" value={Number(data?.summary?.regrettable ?? 0)} denominator="Retention attention" intent="critical" icon={<AlertTriangle className="h-4 w-4" />} />
+        </div>
+      )}
 
       {/* AI Insight */}
       <AIInsightPanel
@@ -194,9 +178,39 @@ export function OverviewTab({
 
       {/* Journey Board */}
       <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm">
-        <div className="border-b p-5">
-          <h2 className="font-bold text-slate-800">Exit Journey Board</h2>
-          <p className="text-sm text-slate-500">{filtered.length} records</p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+          <div>
+            <h2 className="font-bold text-slate-800">Exit Journey Board</h2>
+            <p className="text-sm text-slate-500" aria-live="polite">
+              {filtered.length} of {data?.requests?.length ?? 0} records
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, code, branch…"
+                aria-label="Search exit records"
+                className="h-9 w-56 rounded-lg border border-slate-200 bg-white pl-8 pr-3 text-sm outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100"
+              />
+            </div>
+            <div className="flex gap-1 rounded-lg bg-slate-100 p-1" role="group" aria-label="Exit type">
+              {(["all", "voluntary", "involuntary"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTypeFilter(t)}
+                  aria-pressed={typeFilter === t}
+                  className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-semibold capitalize transition-colors ${typeFilter === t ? "bg-white text-rose-700 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1150px] text-sm">
@@ -340,7 +354,11 @@ export function OverviewTab({
         </div>
         {!filtered.length && (
           <div className="p-10 text-center text-sm text-slate-500">
-            No exit records found.
+            {loading && !data
+              ? "Loading exit records…"
+              : search || typeFilter !== "all" || stage !== "all"
+                ? "No records match these filters."
+                : "No exit records found."}
           </div>
         )}
       </div>
