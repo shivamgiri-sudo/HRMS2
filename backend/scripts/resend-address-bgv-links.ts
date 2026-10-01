@@ -30,9 +30,10 @@ const apply = process.argv.includes("--apply");
 const limitArg = process.argv.indexOf("--limit");
 const limit = limitArg > -1 ? Math.max(1, Number(process.argv[limitArg + 1]) || 0) : Infinity;
 const EXPIRY_DAYS = 7;
-// Local DB time at which the 7-day expiry went live (2026-10-01 13:54 UTC = 19:24 IST). Links created
-// after this already carry 7 days and were emailed by the normal flow.
-const CUTOFF = "2026-10-01 19:20:00";
+// Local DB time (IST) before which links were still issued with the old 72-hour expiry. Checked against
+// production on 2026-10-01: the last 72h link was created at 16:43-17:15 and every link from 17:41 on
+// already carries 168 hours and was emailed correctly by the normal flow, so the cut sits between them.
+const CUTOFF = "2026-10-01 17:30:00";
 
 async function main() {
   // The mailer reports { ok: true } even when it silently skips for missing SMTP credentials, so a
