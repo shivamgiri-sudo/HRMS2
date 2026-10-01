@@ -1,0 +1,51 @@
+name: Ops db_bill Process Reconcile (manual)
+
+# Compares db_bill (legacy billing master, read-only) with HRMS employee -> process assignment.
+#   discover : read-only report of db_bill Process / ClientName / CostCenter groups and how those employees sit in HRMS.
+# workflow_dispatch only. db_bill is never written; the discover mode writes nothing anywhere.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "discover = read-only report"
+        required: true
+        default: discover
+        type: choice
+        options:
+          - discover
+
+concurrency:
+  group: ops-db-bill-reconcile-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: db_bill reconcile (${{ inputs.mode }})
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found"; exit 1; }
+          npx tsx scripts/db-bill-process-discovery.ts
