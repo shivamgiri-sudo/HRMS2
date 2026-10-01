@@ -66,6 +66,7 @@ import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startHelpdeskSlaCron } from "./modules/helpdesk/helpdesk-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
+import { startOpsNudgeScheduler } from "./modules/ops-control-tower/ops-nudge.cron.js";
 import { startAtsDailyReportScheduler } from "./modules/ats/ats-daily-report.cron.js";
 import { startBranchActivityReportScheduler } from "./modules/ats/branch-activity-report/scheduler.js";
 import { startBranchHealthReportScheduler } from "./modules/branch-health-report/scheduler.js";
@@ -325,6 +326,8 @@ function startServer() {
         if (process.env.ATS_DAILY_REPORT_ENABLED === "true") {
           startAtsDailyReportScheduler();
         }
+        // No-op unless OPS_AUTO_NUDGE_ENABLED=true; also a no-op per run until WhatsApp is configured.
+        startOpsNudgeScheduler();
         // No-op unless ATS_BRANCH_ACTIVITY_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
         startBranchActivityReportScheduler();
         // No-op unless BRANCH_HEALTH_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).

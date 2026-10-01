@@ -93,7 +93,7 @@ export interface JoiningBlock {
   grandBuckets: Record<JoinBucket, number>;
 }
 
-async function allBranches(): Promise<BranchRef[]> {
+export async function allBranches(): Promise<BranchRef[]> {
   const rows = await query<RowDataPacket>(
     "branches",
     `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,

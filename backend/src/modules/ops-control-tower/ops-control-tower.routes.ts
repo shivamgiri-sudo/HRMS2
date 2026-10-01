@@ -23,6 +23,14 @@ import {
   getAdminProvisioningPendingDetail,
   getWfmProvisioningPendingDetail,
 } from "./ops-control-tower.service.js";
+import {
+  employeeBranchId,
+  enrichDetailRows,
+  nudgeBranchPending,
+  nudgeEmployee,
+  whatsappConfigured,
+} from "./ops-nudge.service.js";
+import { isNudgeableIssue } from "./ops-nudge.logic.js";
 
 const VIEW_ROLES = [
   "super_admin",
@@ -33,6 +41,16 @@ const VIEW_ROLES = [
   "branch_head",
   "operations_manager",
   "wfm",
+  "payroll_head",
+];
+// Sending a WhatsApp to a joiner is outward-facing: narrower than the view list (wfm / ceo view only).
+const NUDGE_ROLES = [
+  "super_admin",
+  "admin",
+  "hr",
+  "hr_admin",
+  "branch_head",
+  "operations_manager",
   "payroll_head",
 ];
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -134,9 +152,68 @@ opsControlTowerRouter.get(
         res.status(403).json({ error: "Forbidden: this branch is outside your branch / assigned scope" });
         return;
       }
-      res.json({ rows: await loader(branchId) });
+      const rows = await enrichDetailRows(block, (await loader(branchId)) as Array<Record<string, unknown> & { employeeId: string }>);
+      res.json({
+        rows,
+        nudge: { supported: isNudgeableIssue(block), whatsappConfigured: isNudgeableIssue(block) ? whatsappConfigured() : false },
+      });
     } catch (err) {
       fail(res, err, "load the detail list");
     }
   },
 );
+
+// POST /api/ops-control-tower/nudge { employeeId, issue } — "Notify" one joiner on WhatsApp.
+opsControlTowerRouter.post("/nudge", requireRole(...NUDGE_ROLES), async (req, res) => {
+  try {
+    const { employeeId, issue } = req.body ?? {};
+    if (typeof employeeId !== "string" || !ID_PATTERN.test(employeeId)) {
+      res.status(400).json({ error: "employeeId must be a valid id" });
+      return;
+    }
+    if (typeof issue !== "string" || !isNudgeableIssue(issue)) {
+      res.status(400).json({ error: "issue is not nudgeable" });
+      return;
+    }
+    const branchId = await employeeBranchId(employeeId);
+    if (branchId === null) {
+      res.status(404).json({ error: "Employee not found" });
+      return;
+    }
+    const allowed = await allowedBranchIds(req);
+    if (allowed !== null && !allowed.has(branchId)) {
+      res.status(403).json({ error: "Forbidden: this employee is outside your branch / assigned scope" });
+      return;
+    }
+    res.json(await nudgeEmployee({ employeeId, issue, trigger: "manual", actorId: (req as any).authUser?.id ?? null }));
+  } catch (err) {
+    fail(res, err, "send the nudge");
+  }
+});
+
+// POST /api/ops-control-tower/nudge/bulk { branchId, issue } — "Notify all" pending joiners in a branch.
+// The list is built server-side from the same loader the drawer uses; ids are never taken from the client.
+opsControlTowerRouter.post("/nudge/bulk", requireRole(...NUDGE_ROLES), async (req, res) => {
+  try {
+    const { branchId, issue } = req.body ?? {};
+    if (typeof branchId !== "string" || !ID_PATTERN.test(branchId)) {
+      res.status(400).json({ error: "branchId must be a valid id" });
+      return;
+    }
+    if (typeof issue !== "string" || !isNudgeableIssue(issue)) {
+      res.status(400).json({ error: "issue is not nudgeable" });
+      return;
+    }
+    const allowed = await allowedBranchIds(req);
+    if (allowed !== null && !allowed.has(branchId)) {
+      res.status(403).json({ error: "Forbidden: this branch is outside your branch / assigned scope" });
+      return;
+    }
+    const results = await nudgeBranchPending({ branchId, issue, actorId: (req as any).authUser?.id ?? null });
+    const tally: Record<string, number> = {};
+    for (const r of results) tally[r.status] = (tally[r.status] ?? 0) + 1;
+    res.json({ results, tally });
+  } catch (err) {
+    fail(res, err, "send the bulk nudge");
+  }
+});

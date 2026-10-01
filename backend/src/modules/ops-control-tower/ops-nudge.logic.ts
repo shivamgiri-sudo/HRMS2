@@ -1,0 +1,58 @@
+// Pure rules for Ops Control Tower joiner nudges (no DB, no clock — `nowMs` is always passed in).
+
+export const NUDGEABLE_ISSUES = [
+  'account-details-missing',
+  'penny-drop-missing',
+  'digilocker-pending',
+  'esign-pending',
+  'appointment-letter',
+  'bgv-pending',
+] as const;
+export type NudgeableIssue = (typeof NUDGEABLE_ISSUES)[number];
+
+export function isNudgeableIssue(v: string): v is NudgeableIssue {
+  return (NUDGEABLE_ISSUES as readonly string[]).includes(v);
+}
+
+export const NUDGE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+export type AgeingBucket = '0-2' | '3-7' | '8+';
+
+export function ageingBucket(daysOpen: number): AgeingBucket {
+  if (daysOpen >= 8) return '8+';
+  if (daysOpen >= 3) return '3-7';
+  return '0-2';
+}
+
+/** Cooldown keyed on the last *successful* send only — failed/unconfigured attempts never block a retry. */
+export function cooldownState(
+  lastSentMs: number | null,
+  nowMs: number,
+): { due: boolean; nextEligibleMs: number } {
+  if (lastSentMs === null) return { due: true, nextEligibleMs: nowMs };
+  const nextEligibleMs = lastSentMs + NUDGE_COOLDOWN_MS;
+  return { due: nowMs >= nextEligibleMs, nextEligibleMs };
+}
+
+const TASK_TEXT: Record<NudgeableIssue, string> = {
+  'account-details-missing': 'add your bank account details',
+  'penny-drop-missing': 'complete your bank account verification',
+  'digilocker-pending': 'complete your DigiLocker verification',
+  'esign-pending': 'e-sign your joining documents',
+  'appointment-letter': 'e-sign your appointment letter',
+  'bgv-pending': 'complete your background verification',
+};
+
+export function buildNudgeMessage(
+  issue: NudgeableIssue,
+  ctx: { name: string; daysOpen: number; link: string | null },
+): string {
+  const lines = [
+    `Hi ${ctx.name},`,
+    '',
+    `Your joining formalities are still pending. Please ${TASK_TEXT[issue]} at the earliest.`,
+  ];
+  if (ctx.link) lines.push('', `Continue here: ${ctx.link}`);
+  lines.push('', '— MAS Callnet HR');
+  return lines.join('\n');
+}

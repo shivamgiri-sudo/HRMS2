@@ -30,6 +30,9 @@
     "mcnmeet_meeting_event",
     "mcnmeet_meeting_invitee"
   ],
+  "modules/ops-control-tower/ops-nudge.service.ts": [
+    "ops_nudge_log"
+  ],
   "modules/org-chart/org-chart.validation.ts": [
     "org_chart_data_issue"
   ],

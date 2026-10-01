@@ -13,7 +13,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { OpsDetailDrawer, type Selected } from "./OpsDetailDrawer";
+import { OpsAnalyticsPanel } from "./OpsAnalyticsPanel";
 import { countSeverity, formatDate, formatDateTime, SEVERITY_CLASS } from "./opsControlTowerFormat";
 import {
   JOIN_BUCKETS,
@@ -32,13 +33,6 @@ const REFRESH_MS = 120_000;
 
 function todayISO(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-}
-
-interface Selected {
-  block: DetailBlockKey;
-  branchId: string;
-  branchName: string;
-  title: string;
 }
 
 // ── Shared table shell ───────────────────────────────────────────────────────────────────────
@@ -183,61 +177,6 @@ function SummaryTile({ label, n, sub, onClick }: { label: string; n: number; sub
   );
 }
 
-// ── Drawer ────────────────────────────────────────────────────────────────────────────────────
-function rowLabel(block: DetailBlockKey, row: DetailRow): { days: number; note: string } {
-  switch (block) {
-    case "attendance-mismatch": { const r = row as import("./opsControlTowerTypes").AttendanceMismatchDetailRow; return { days: r.daysOpen, note: r.issueType.replace(/_/g, " ") }; }
-    case "fnf-pending": { const r = row as import("./opsControlTowerTypes").FnfDetailRow; return { days: r.daysOpen, note: `${r.status} · ₹${r.netPayable.toLocaleString("en-IN")}` }; }
-    case "noc-pending": { const r = row as import("./opsControlTowerTypes").NocDetailRow; return { days: r.daysOpen, note: r.status.replace(/_/g, " ") }; }
-    case "esign-pending": { const r = row as import("./opsControlTowerTypes").SlaDetailRow; return { days: r.daysOverdue, note: `Day 3 was ${formatDate(r.dueDateMs)}` }; }
-    case "appointment-letter": { const r = row as import("./opsControlTowerTypes").SlaDetailRow; return { days: r.daysOverdue, note: `Day 7 was ${formatDate(r.dueDateMs)}` }; }
-    default: { const r = row as import("./opsControlTowerTypes").OnboardingDetailRow; return { days: r.daysOpen, note: r.status.replace(/_/g, " ") }; }
-  }
-}
-
-function DetailDrawer({ selected, onClose }: { selected: Selected | null; onClose: () => void }) {
-  const query = useQuery({
-    queryKey: ["ops-control-tower-detail", selected?.block, selected?.branchId],
-    enabled: selected !== null,
-    queryFn: () => hrmsApi.get<{ rows: DetailRow[] }>(`${BASE}/${selected!.block}/${selected!.branchId}`),
-  });
-  return (
-    <Sheet open={selected !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className="w-full max-w-2xl overflow-y-auto sm:max-w-2xl">
-        <SheetHeader className="pr-10">
-          <SheetTitle>{selected ? `${selected.title} — ${selected.branchName}` : ""}</SheetTitle>
-          <SheetDescription>{query.data ? `${query.data.rows.length} record${query.data.rows.length === 1 ? "" : "s"}` : "Loading…"}</SheetDescription>
-        </SheetHeader>
-        {query.isLoading && <p className="mt-6 text-sm text-slate-500">Loading…</p>}
-        {query.isError && <p className="mt-6 text-sm text-red-600">{query.error instanceof Error ? query.error.message : "Could not load this list."}</p>}
-        {query.data && (
-          <ul className="mt-4 space-y-2">
-            {query.data.rows.map((row, i) => {
-              const base = row as { employeeId: string; employeeCode: string; employeeName: string };
-              const { days, note } = rowLabel(selected!.block, row);
-              return (
-                <li key={base.employeeId ?? i} className="flex items-center justify-between gap-3 rounded-md border p-2.5">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">{base.employeeName || "—"}</div>
-                    <div className="font-mono text-xs text-slate-500">{base.employeeCode}</div>
-                    <div className="text-xs text-slate-500">{note}</div>
-                  </div>
-                  {Number.isFinite(days) && (
-                    <span className={`whitespace-nowrap rounded px-2 py-0.5 font-mono text-xs font-semibold ${days > 2 ? "bg-red-50 text-red-700" : days > 0 ? "bg-orange-50 text-orange-700" : "bg-emerald-50 text-emerald-700"}`}>
-                      {days}d
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-            {query.data.rows.length === 0 && <p className="text-sm text-slate-400">No records.</p>}
-          </ul>
-        )}
-      </SheetContent>
-    </Sheet>
-  );
-}
-
 // ── Page ──────────────────────────────────────────────────────────────────────────────────────
 export default function OpsControlTowerPage() {
   const [date, setDate] = useState(() => todayISO());
@@ -332,6 +271,8 @@ export default function OpsControlTowerPage() {
               <SummaryTile label="WFM provisioning pending" n={data.wfmProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("wfm-prov")?.scrollIntoView({ behavior: "smooth" })} />
             </div>
 
+            <OpsAnalyticsPanel data={data} onOpen={openSimple} />
+
             <MismatchSection block={data.attendanceMismatch} onOpen={openMismatch} />
             <RosterDateSection block={data.rosterUploaded} />
             <JoiningSection block={data.joining} />
@@ -342,7 +283,7 @@ export default function OpsControlTowerPage() {
           </>
         )}
       </div>
-      <DetailDrawer selected={selected} onClose={() => setSelected(null)} />
+      <OpsDetailDrawer selected={selected} onClose={() => setSelected(null)} />
     </DashboardLayout>
   );
 }
