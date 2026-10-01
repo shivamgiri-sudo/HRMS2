@@ -99,6 +99,12 @@ describe("persistStructuredFields — bgv_result", () => {
     vi.doMock("../../../middleware/requireRole.js", () => ({
       requireRole: () => (_req: any, _res: any, next: any) => next(),
     }));
+    // Caller is an admin here: this test is about bgv_result validation, not branch scope
+    // (assertTaskInScope short-circuits for admin and must not consume the mocked db rows).
+    vi.doMock("../../../shared/accessGuard.js", () => ({
+      hasRole: vi.fn().mockResolvedValue(true),
+      getEmployeeForUser: vi.fn().mockResolvedValue(null),
+    }));
     vi.doMock("../task-completion-handlers.service.js", () => ({
       dispatchTaskCompletion: vi.fn().mockResolvedValue(undefined),
       OFFICIAL_EMAIL_REGEX: /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/,

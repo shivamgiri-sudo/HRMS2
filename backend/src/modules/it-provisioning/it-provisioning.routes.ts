@@ -34,7 +34,39 @@ const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catc
 // this is one of only two endpoints that dashboard calls — so both IT head accounts saw a
 // page with nothing on it at all. wfm/hr/branch_admin stay: they use provisioning outside
 // the dashboard.
-const PROVISIONING_ROLES = ['admin', 'wfm', 'hr', 'branch_admin', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')];
+// branch_wfm / branch_head open the WFM Alignment queue; they are BRANCH_ALL roles, so the list
+// endpoints and assertTaskInScope() below confine them to their own branch(es).
+const PROVISIONING_ROLES = ['admin', 'wfm', 'hr', 'branch_admin', 'branch_wfm', 'branch_head', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')];
+
+/**
+ * Write/read-by-id guard. List endpoints already narrow by scope; the by-id endpoints did not,
+ * so any caller admitted by PROVISIONING_ROLES could act on a task in any branch by id.
+ * Admin/super_admin and ORG_ALL callers pass; everyone else must own the task employee's
+ * branch (and process, when the scope carries process ids) — same AND rule as the list query.
+ */
+async function assertTaskInScope(req: AuthenticatedRequest, taskId: string): Promise<void> {
+  const userId = req.authUser!.id;
+  if (await hasRole(userId, 'admin', 'super_admin')) return;
+  const forbidden = () => Object.assign(new Error('Provisioning request is outside your branch scope'), { statusCode: 403 });
+  let scope;
+  try {
+    const roleContext = await getUserRoleContext(userId);
+    scope = await resolveDashboardScope(userId, roleContext.primaryRole);
+  } catch {
+    throw forbidden();
+  }
+  if (scope.level === 'ORG_ALL') return;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.branch_id, e.process_id FROM it_provisioning_request ipr
+       JOIN employees e ON e.id = ipr.employee_id WHERE ipr.id = ? LIMIT 1`,
+    [taskId],
+  );
+  const emp = (rows as RowDataPacket[])[0];
+  if (!emp) throw Object.assign(new Error('Provisioning request not found'), { statusCode: 404 });
+  if (scope.branchIds.length && !scope.branchIds.includes(String(emp.branch_id))) throw forbidden();
+  if (scope.processIds.length && !scope.processIds.includes(String(emp.process_id))) throw forbidden();
+  if (!scope.branchIds.length && !scope.processIds.length) throw forbidden();
+}
 
 // Multer for AD log evidence uploads — stored under uploads/provisioning-evidence/
 const EVIDENCE_UPLOAD_DIR = path.resolve(process.cwd(), 'uploads', 'provisioning-evidence');
@@ -332,7 +364,7 @@ router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: Authen
   if (!isAdmin) {
     // Scoped: functional roles see their own assigned queue by default.
     const isIT       = await hasRole(userId, 'it');
-    const isWFM      = await hasRole(userId, 'wfm');
+    const isWFM      = await hasRole(userId, 'wfm', 'branch_wfm');
     const isBranchAdmin = await hasRole(userId, 'branch_admin');
 
     if (isIT) filters.assignedRole = 'it';
@@ -374,7 +406,7 @@ router.get(['/tasks', '/tasks/my'], requireRole(...PROVISIONING_ROLES), h(async 
   if (!isAdmin) {
     if (!filters.assignedRole) {
       if (await hasRole(userId, 'it')) filters.assignedRole = 'it';
-      else if (await hasRole(userId, 'wfm')) filters.assignedRole = 'wfm';
+      else if (await hasRole(userId, 'wfm', 'branch_wfm')) filters.assignedRole = 'wfm';
       else if (await hasRole(userId, 'branch_admin')) filters.assignedRole = 'admin';
     }
 
@@ -396,12 +428,14 @@ router.get(['/tasks', '/tasks/my'], requireRole(...PROVISIONING_ROLES), h(async 
 
 // ── GET /api/it-provisioning/requests/:id ─────────────────────────────────────
 router.get('/requests/:id', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
   const data = await getProvisioningRequest(req.params.id);
   return res.json({ success: true, data });
 }));
 
 // ── PATCH /api/it-provisioning/requests/:id/action ───────────────────────────
 router.patch('/requests/:id/action', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
   const { evidence_note } = req.body as { evidence_note?: string };
   await actionProvisioningRequest({
     requestId:    req.params.id,
@@ -413,6 +447,7 @@ router.patch('/requests/:id/action', requireRole(...PROVISIONING_ROLES), h(async
 }));
 
 router.patch('/tasks/:id', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
   const note = req.body.evidence_note ?? req.body.remarks ?? null;
   if (note) {
     await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: String(note) });
@@ -424,6 +459,7 @@ router.patch('/tasks/:id', requireRole(...PROVISIONING_ROLES), h(async (req: Aut
 }));
 
 router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
   const taskId = req.params.id;
   const actorUserId = req.authUser!.id;
   const body = req.body as Record<string, unknown>;
@@ -522,12 +558,14 @@ router.patch('/requests/:id/waive', requireRole(...PROVISIONING_ROLES), h(async 
 }));
 
 router.post('/tasks/:id/waive', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
   await waiveProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: req.body.evidence_note ?? req.body.reason ?? '' });
   const data = await getProvisioningRequest(req.params.id);
   return res.json({ success: true, data });
 }));
 
 router.post('/tasks/:id/block', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
   const reason = String(req.body.reason ?? req.body.evidence_note ?? '').trim();
   if (!reason) return res.status(400).json({ success: false, message: 'reason required' });
   await actionProvisioningRequest({ requestId: req.params.id, actionedBy: req.authUser!.id, evidenceNote: `BLOCKED: ${reason}` });
@@ -573,6 +611,7 @@ router.post('/requests/:id/confirm', requireRole('admin', 'hr'), h(async (req: A
 
 // ── GET /api/it-provisioning/tasks/:id/candidate-report ──────────────────────
 router.get('/tasks/:id/candidate-report', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  await assertTaskInScope(req, req.params.id);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        ipr.id AS task_id, ipr.task_code, ipr.status, ipr.locked,

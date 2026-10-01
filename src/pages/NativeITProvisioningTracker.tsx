@@ -37,7 +37,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { WfmLobField } from "@/components/wfm/WfmLobField";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { useProcesses } from "@/hooks/useOrgMasters";
+import { useProcesses, useBranches } from "@/hooks/useOrgMasters";
 import { ExitClearanceQueue } from "@/components/exit/ExitClearanceQueue";
 import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
 import type { ClearanceOwnerRole } from "@/lib/exitClearance";
@@ -734,6 +734,10 @@ export default function NativeITProvisioningTracker() {
   const [typeFilter, setTypeFilter]     = useState("all");
   const [roleFilter]     = useState(preset?.role ?? "all");
   const [taskFilter, setTaskFilter]     = useState(preset?.taskCode ?? "all");
+  // Branch filter: the API already confines scoped roles (branch WFM / branch head / ...) to their
+  // own branches and rejects out-of-scope ids, so this only narrows within what the caller may see.
+  const [branchFilter, setBranchFilter] = useState("all");
+  const branchesQuery = useBranches();
   const [searchQuery, setSearchQuery]   = useState("");
   const [page, setPage]                 = useState(1);
   const LIMIT = 50;
@@ -875,6 +879,7 @@ export default function NativeITProvisioningTracker() {
     ...(typeFilter   !== "all" && { request_type: typeFilter }),
     ...(roleFilter   !== "all" && { assigned_role: roleFilter }),
     ...(taskFilter   !== "all" && { task_code: taskFilter }),
+    ...(branchFilter !== "all" && { branch_id: branchFilter }),
     ...(FRESH_START_PATHS.includes(location.pathname) && { created_from: FRESH_START_CUTOVER }),
     page, limit: LIMIT,
   };
@@ -1341,6 +1346,18 @@ export default function NativeITProvisioningTracker() {
                   <SelectItem value="all">All Types</SelectItem>
                   <SelectItem value="join">Join</SelectItem>
                   <SelectItem value="exit">Exit</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-[190px]">
+              <Label htmlFor="filter-branch" className="sr-only">Filter by branch</Label>
+              <Select value={branchFilter} onValueChange={(v) => { setBranchFilter(v); setPage(1); }}>
+                <SelectTrigger id="filter-branch" className="min-h-[44px]"><SelectValue placeholder="Branch" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Branches</SelectItem>
+                  {(branchesQuery.data ?? []).map((b: { id: string; branch_name: string }) => (
+                    <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

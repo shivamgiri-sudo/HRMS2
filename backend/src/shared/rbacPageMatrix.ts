@@ -695,6 +695,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "TEAM_KPI_SCORECARD",
   ],
   branch_head: [
+    "PROVISIONING_WFM_ALIGNMENT", // WFM Alignment queue, branch-scoped in it-provisioning.routes.ts
     // Merged /wfm/roster-command-center console — Team Roster, Analytics, Compliance,
     // Shift Effectiveness tabs.
     "WFM_ROSTER_TEAM_ROSTER", "WFM_ROSTER_ANALYTICS", "WFM_ROSTER_COMPLIANCE",
@@ -783,6 +784,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "SALARY_CERTIFICATE",
   ],
   branch_wfm: [
+    "PROVISIONING_WFM_ALIGNMENT", // WFM Alignment queue, branch-scoped in it-provisioning.routes.ts
     "BUSINESS_COMMAND_CENTER",
     "WFM_ROSTER", // RM Change Approvals (/wfm-manager-approvals), branch-scoped in rm-change.routes.ts
     "WFM_TEAM_ROSTER",
