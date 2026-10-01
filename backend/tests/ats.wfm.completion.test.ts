@@ -312,8 +312,9 @@ describe("POST /api/wfm-ext/coverage/snapshot", () => {
     expect(r.status).toBe(403);
   });
 
-  it("creates snapshot for admin with calculated shrinkage", async () => {
-    const auth = mockAdmin();
+  it("creates snapshot for super_admin with calculated shrinkage", async () => {
+    // Manual snapshot without process/branch is org-wide only; plain admin is branch-scoped (policy 2026-10-01).
+    const auth = authAs("u-super", ["super_admin"]);
     const r = await request(app).post("/api/wfm-ext/coverage/snapshot").set(auth)
       .send({ snapshot_date: "2026-06-01", planned_headcount: 100, actual_headcount: 85, absent_count: 10, leave_count: 5 });
     expect(r.status).toBe(200);

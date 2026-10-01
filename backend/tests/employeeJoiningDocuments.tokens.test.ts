@@ -34,6 +34,7 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin"]),
   isOrgWideUser: vi.fn().mockResolvedValue(true),
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin"],
 }));
 
 import { db } from "../src/db/mysql.js";

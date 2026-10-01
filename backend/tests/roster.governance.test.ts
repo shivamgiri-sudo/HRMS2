@@ -64,8 +64,14 @@ import { supabaseAuthClient } from "../src/db/supabaseAdmin.js";
 import { getEmployeeForUser, hasProcessScope, hasRole } from "../src/shared/accessGuard.js";
 import { rosterGovernanceService as service } from "../src/modules/roster/roster.governance.service.js";
 import { authService } from "../src/modules/auth/auth.service.js";
+import { db } from "../src/db/mysql.js";
 import { invalidateAuthContextCache } from "../src/middleware/authMiddleware.js";
 
+const mockDbExecute = db.execute as ReturnType<typeof vi.fn>;
+/** Org-wide behaviour (isOrgWideUser) reads user_roles; plain admin is branch-scoped (owner policy 2026-10-01). */
+const actAs = (...roles: string[]) =>
+  mockDbExecute.mockImplementation(async (sql: unknown) =>
+    /FROM user_roles/i.test(String(sql)) ? [roles.map((r) => ({ role_key: r })), []] : [[], []]);
 const authUser = supabaseAuthClient.auth.getUser as ReturnType<typeof vi.fn>;
 const mockVerify = authService.verifyAccessToken as ReturnType<typeof vi.fn>;
 const isRole = hasRole as ReturnType<typeof vi.fn>;
@@ -87,6 +93,8 @@ beforeEach(() => {
   // test asserting a denial cannot inherit a previous test's granted roles.
   invalidateAuthContextCache("user-1");
   mockVerify.mockReturnValue({ id: "user-1", email: "user-1@test.com" });
+  mockDbExecute.mockReset();
+  mockDbExecute.mockResolvedValue([[], []]);
   isRole.mockResolvedValue(false);
   inScope.mockResolvedValue(false);
   employeeForUser.mockResolvedValue(null);
@@ -129,8 +137,8 @@ describe("weekly roster ownership", () => {
     expect(svc.createCycle).not.toHaveBeenCalled();
   });
 
-  it("allows admin override without a process-scope record", async () => {
-    isRole.mockResolvedValue(true);
+  it("allows super_admin override without a process-scope record", async () => {
+    actAs("super_admin");
     svc.createCycle.mockResolvedValue(cycle);
     const result = await request(app).post("/api/roster-gov/cycles").set(AUTH).send({ process_id: "process-1", week_start_date: "2026-06-01", week_end_date: "2026-06-07" });
     expect(result.status).toBe(201);
@@ -192,7 +200,7 @@ describe("employee self-service and safe client publishing data", () => {
   });
 
   it("exposes only aggregate published roster data to authorised internal publisher views", async () => {
-    isRole.mockResolvedValue(true);
+    actAs("super_admin");
     svc.getPortalAggregate.mockResolvedValue([{ cycle_id: "cycle-1", process_id: "process-1", required_hc: 10, rostered_hc: 9, coverage_pct: 90 }]);
     const result = await request(app).get("/api/roster-gov/portal-aggregate?process_id=process-1&week_start_date=2026-06-01").set(AUTH);
     expect(result.status).toBe(200);

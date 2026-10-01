@@ -274,7 +274,9 @@ describe("WFM audit: POST /api/wfm-ext/roster/conflicts/:id/resolve", () => {
 
 describe("WFM audit: POST /api/wfm-ext/coverage/snapshot", () => {
   it("writes a sensitive_action_log entry when upserting a coverage snapshot", async () => {
-    mockAdmin();
+    // Manual (planned_headcount) snapshots with no process/branch are org-wide only; plain admin is
+    // branch-scoped (owner policy 2026-10-01), so the caller here is super_admin.
+    mockDb([], "super_admin");
 
     const r = await request(app)
       .post("/api/wfm-ext/coverage/snapshot")

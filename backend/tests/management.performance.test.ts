@@ -77,6 +77,8 @@ beforeEach(() => {
 });
 
 const mockAdmin = () => authAs("u-admin", ["admin"]);
+// plain admin is branch-scoped (owner policy 2026-10-01); org-wide ("sees all") behaviour is exercised as super_admin.
+const mockOrgWide = () => authAs("u-super", ["super_admin"]);
 const mockEmployeeRole = () => authAs("u-emp", ["employee"]);
 const mockManager = () => authAs("u-mgr", ["manager"]);
 /** Employee whose user maps to a specific employee record (first SELECT). */
@@ -90,7 +92,7 @@ function mockEmployee(empId: string) {
 
 describe("GET /api/management/team-kpi", () => {
   it("returns 200 for admin with kpi rows", async () => {
-    const auth = mockAdmin();
+    const auth = mockOrgWide();
     // resolveTeamScope hasRole check — admin is a wide role
     // getTeamKpiSummary db.execute
     selectRows([
@@ -115,7 +117,7 @@ describe("GET /api/management/team-kpi", () => {
 describe("GET /api/management/coaching", () => {
   it("returns 200 for admin and sees all sessions", async () => {
     // admin sees all sessions
-    const auth = mockAdmin();
+    const auth = mockOrgWide();
     // hasRole call: SELECT role_key FROM user_roles
     // listCoachingSessions db.execute
     selectRows([
@@ -189,7 +191,7 @@ describe("POST /api/management/coaching", () => {
 
 describe("GET /api/management/alerts", () => {
   it("returns 200 for admin with alert rows", async () => {
-    const auth = mockAdmin();
+    const auth = mockOrgWide();
     // resolveTeamScope hasRole check — admin is a wide role
     // listAlerts db.execute
     selectRows([
@@ -238,7 +240,7 @@ describe("POST /api/management/alerts/:id/acknowledge", () => {
 
 describe("GET /api/management/dashboard", () => {
   it("returns a live operational summary for admin", async () => {
-    const auth = mockAdmin();
+    const auth = mockOrgWide();
     // resolveTeamScope hasRole check — admin is a wide role
     selectRows([{ headcount: 100, exits_30d: 5 }]);
     selectRows([{ pending_leaves: 3 }]);
