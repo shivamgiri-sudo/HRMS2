@@ -295,4 +295,4 @@ CREATE TABLE IF NOT EXISTS funnel_employee_performance (
   INDEX idx_emp_perf_employee (employee_id),
   INDEX idx_emp_perf_process (process_type),
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci; -- explicit: a bare DEFAULT CHARSET falls back to utf8mb4_0900_ai_ci, which MySQL 8 rejects against employees.id (errno 3780)
