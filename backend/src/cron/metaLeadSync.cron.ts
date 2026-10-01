@@ -1,7 +1,7 @@
 /**
  * Meta Lead Sync — Scheduled Job
  *
- * Every 30 minutes:
+ * Every 2 hours:
  *   1. Pulls new leads from Meta Graph API for all active campaigns (dedup-safe).
  *   2. Triggers WhatsApp + Email outreach for any qualified lead imported in the
  *      last sync window that has not yet been notified.
@@ -22,7 +22,7 @@ import { reconcileDeliveryStatuses } from "../modules/meta-campaign/meta-message
 
 let scheduler: NodeJS.Timeout | undefined;
 let runInFlight = false;
-const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours (webhook real-time sync is off; this pull is the only intake)
 
 // Never notify leads older than this: the Sep-20 backlog (1,906 leads) was handled through a
 // separate channel. Within the floor, a rolling window (not process-start time) means a backend
@@ -191,7 +191,7 @@ function scheduleNext(): void {
 
 export function startMetaLeadSyncScheduler(): void {
   if (scheduler) return;
-  console.log(`[meta-sync] 30-min Meta lead sync scheduler starting (notifying leads created >= ${notifyWindowStart().toISOString()}, rolling 48h)`);
+  console.log(`[meta-sync] 2-hour Meta lead sync scheduler starting (notifying leads created >= ${notifyWindowStart().toISOString()}, rolling 48h)`);
   runMetaLeadSync();
 }
 
