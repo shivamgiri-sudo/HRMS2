@@ -25,11 +25,19 @@ describe("org-chart scopes", () => {
     expect(ctx.defaultScope).toBe("branch");
     await expect(assertScopeAccess("u", "company")).rejects.toMatchObject({ statusCode: 403 });
   });
-  it("admin / ceo keep the company scope", async () => {
-    for (const r of ["admin", "ceo", "super_admin"]) {
+  it("ceo / super_admin keep the company scope", async () => {
+    for (const r of ["ceo", "super_admin"]) {
       mockUser([r]);
       expect((await resolveUserOrgContext("u")).availableScopes.map((s) => s.scopeType)).toContain("company");
     }
+  });
+  it("admin is branch-scoped like hr: no company scope, own branch only (owner ruling 2026-10-01)", async () => {
+    mockUser(["admin"]);
+    const ctx = await resolveUserOrgContext("u");
+    expect(ctx.availableScopes.map((s) => s.scopeType)).not.toContain("company");
+    expect(ctx.availableScopes.map((s) => s.scopeType)).toContain("branch");
+    await expect(assertScopeAccess("u", "company")).rejects.toMatchObject({ statusCode: 403 });
+    expect(buildScopeWhereClause(ctx, "branch", { branchId: "other" }).sql).toContain("1=0");
   });
   it("a foreign ?branch_id cannot widen the branch scope for hr (fails closed)", async () => {
     mockUser(["hr"]);
@@ -40,7 +48,7 @@ describe("org-chart scopes", () => {
     expect(own.params).toContain("b1");
   });
   it("org-wide callers may filter any branch", async () => {
-    mockUser(["admin"]);
+    mockUser(["super_admin"]);
     const ctx = await resolveUserOrgContext("u");
     const w = buildScopeWhereClause(ctx, "branch", { branchId: "other" });
     expect(w.params).toContain("other");

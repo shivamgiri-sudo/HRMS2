@@ -50,9 +50,14 @@ describe("ijp.service scope", () => {
     expect(sql).toContain("p.branch_id = ?");
     expect(params.filter((p: unknown) => p === "branch-A").length).toBe(5);
     dbExecute.mockClear();
-    resolveScope.mockResolvedValue(scope({ roles: ["admin"] }));
+    resolveScope.mockResolvedValue(scope({ roles: ["super_admin"] }));
     await getIjpStats("u1");
     expect(dbExecute.mock.calls[0][0]).toContain("1=1");
+    // admin is branch-scoped too (owner ruling 2026-10-01)
+    dbExecute.mockClear();
+    resolveScope.mockResolvedValue(scope({ roles: ["admin"] }));
+    await getIjpStats("u1");
+    expect(dbExecute.mock.calls[0][0]).toContain("p.branch_id = ?");
   });
 
   it("resolvePostingBranchForCreate: hr can only create in its own branch; org-wide is free", async () => {

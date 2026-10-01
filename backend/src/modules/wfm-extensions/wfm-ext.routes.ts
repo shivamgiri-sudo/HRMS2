@@ -135,11 +135,21 @@ router.post("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) 
   if (!(await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES))) {
     // Owner ruling 2026-10-01: both employees of a swap must be inside the caller's branch / scope.
     const callerScope = await resolveUserBusinessScope(userId);
-    for (const id of [requester, target]) {
-      if (!(await canAccessEmployee(callerScope, String(id)))) {
-        return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
-      }
+    if (!(await canAccessEmployee(callerScope, String(requester)))) {
+      return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
     }
+    // The counterpart must be in scope too. A plain employee's scope is only themselves, so an employee
+    // swapping their OWN shift with a colleague (the counterpart still has to accept) is allowed when the
+    // colleague works in the same branch; a colleague from another branch is refused.
+    let targetOk = await canAccessEmployee(callerScope, String(target));
+    if (!targetOk && callerScope.employeeId && String(requester) === callerScope.employeeId && callerScope.branchId) {
+      const [peer] = await db.execute<import("mysql2").RowDataPacket[]>(
+        "SELECT 1 FROM employees WHERE id = ? AND branch_id = ? AND active_status = 1 LIMIT 1",
+        [String(target), callerScope.branchId],
+      );
+      targetOk = (peer as import("mysql2").RowDataPacket[]).length > 0;
+    }
+    if (!targetOk) return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
   }
   const data = await rosterSwapService.create({ requester_emp_id: requester, swap_with_emp_id: target, swap_date: swapDate, reason: req.body.reason });
   res.status(201).json({ success: true, data });

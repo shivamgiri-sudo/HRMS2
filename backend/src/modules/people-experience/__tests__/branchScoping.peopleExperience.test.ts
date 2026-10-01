@@ -25,8 +25,15 @@ describe("people-experience scope", () => {
     expect(cond.sql).toMatch(/e\.branch_id = \?/);
     expect(cond.params).toContain("b1");
   });
-  it("admin and ceo stay global (1 = 1)", async () => {
-    for (const r of ["admin", "ceo", "super_admin"]) {
+  it("admin is branch-scoped like hr, and still manages grievances (owner ruling 2026-10-01)", async () => {
+    state.roles = ["admin"];
+    const s = await scope.resolvePeopleExperienceScope(req);
+    expect(s.kind).toBe("branch");
+    expect(s.canManageGrievances).toBe(true);
+    expect(scope.buildEmployeeScopeCondition(s, "e").sql).toMatch(/e\.branch_id = \?/);
+  });
+  it("ceo and super_admin stay global (1 = 1)", async () => {
+    for (const r of ["ceo", "super_admin"]) {
       state.roles = [r];
       const s = await scope.resolvePeopleExperienceScope(req);
       expect(s.kind).toBe("global");

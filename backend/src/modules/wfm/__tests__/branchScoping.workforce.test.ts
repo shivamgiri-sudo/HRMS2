@@ -27,7 +27,10 @@ const hr = (over: Record<string, unknown> = {}) => ({
   processId: null, lobId: null, departmentId: null, isSuperAdmin: false, isAdmin: false, isHr: true,
   isPayroll: false, isFinance: false, assignments: [], ...over,
 });
-const admin = () => hr({ roles: ["admin"], isAdmin: true, isHr: false });
+// Org-wide = ORG_WIDE_EXEMPT_ROLES (super_admin/ceo/coo/cfo/payroll_head/finance_head/accounts_head/finance).
+// `admin` is branch-scoped too (owner ruling 2026-10-01), see the admin test below.
+const admin = () => hr({ roles: ["super_admin"], isSuperAdmin: true, isHr: false });
+const branchAdmin = () => hr({ roles: ["admin"], isAdmin: true, isHr: false });
 
 function app(mw: any, path = "/x") {
   const a = express();
@@ -44,6 +47,10 @@ describe("branchScopeGuard", () => {
     resolveScope.mockResolvedValue(admin());
     const res = await request(app(branchScopeGuard())).get("/x?branchId=branch-z");
     expect(res.status).toBe(200);
+  });
+  it("admin is branch-scoped: another branch is refused", async () => {
+    resolveScope.mockResolvedValue(branchAdmin());
+    expect((await request(app(branchScopeGuard())).get("/x?branchId=branch-z")).status).toBe(403);
   });
   it("hr asking another branch is refused (client filter does not widen)", async () => {
     resolveScope.mockResolvedValue(hr());
@@ -107,6 +114,7 @@ describe("predicates", () => {
   it("org-wide gets the literal 1=1 (unfiltered SQL untouched)", () => {
     expect(scopePredicate(admin() as any, { branchId: "e.branch_id" })).toEqual({ sql: "1=1", params: [] });
     expect(isOrgWide(admin() as any)).toBe(true);
+    expect(isOrgWide(branchAdmin() as any)).toBe(false);
   });
   it("hr gets its own branch only", () => {
     const p = scopePredicate(hr() as any, { branchId: "e.branch_id" });

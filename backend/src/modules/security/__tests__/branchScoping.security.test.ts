@@ -33,8 +33,14 @@ describe("security centre scoping", () => {
     const u = dbExecute.mock.calls.find(([s]) => /FROM auth_user/.test(s))!;
     expect(u[0]).toMatch(/WHERE id IN \(SELECT e\.user_id/);
   });
-  it("admin and the DPO are unrestricted", async () => {
-    for (const r of ["admin", "dpo"]) {
+  it("admin is scoped like hr (owner ruling 2026-10-01)", async () => {
+    state.roles = ["admin"];
+    await request(app()).get("/api/security-center/events");
+    const [sql] = dbExecute.mock.calls.find(([q]) => /SELECT \* FROM security_audit_event/.test(q))!;
+    expect(sql).toMatch(/actor_user_id IN/);
+  });
+  it("org-wide roles and the DPO are unrestricted", async () => {
+    for (const r of ["super_admin", "dpo"]) {
       state.roles = [r]; dbExecute.mockClear();
       await request(app()).get("/api/security-center/events");
       const [sql] = dbExecute.mock.calls.find(([q]) => /SELECT \* FROM security_audit_event/.test(q))!;

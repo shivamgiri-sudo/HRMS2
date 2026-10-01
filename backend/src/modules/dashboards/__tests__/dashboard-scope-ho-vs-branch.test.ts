@@ -126,14 +126,21 @@ describe("head office vs branch scope", () => {
     }
   });
 
-  it("gives an ambiguous role the whole org only on an explicit all grant", async () => {
+  it("gives the whole org only to an org-wide role on an explicit all grant; hr falls back to its own branch", async () => {
+    // Owner ruling 2026-10-01: hr is branch-scoped even with a scope_type='all' row. Only the
+    // ORG_WIDE_EXEMPT_ROLES (super_admin/ceo/coo/cfo/payroll_head/finance_head/accounts_head/finance)
+    // honour an 'all' grant.
     withRoles(["employee", "hr"]);
     wireDb([row({ scope_type: "all", branch_id: null })]);
+    const hr = await resolveDashboardScope("user-ho-hr", "hr");
+    expect(hr.level, "an 'all' grant no longer opens the org for hr").toBe("BRANCH_ALL");
+    expect(hr.branchIds).toEqual(["branch-own-office"]);
 
-    const scope = await resolveDashboardScope("user-ho-hr", "hr");
-
-    expect(scope.level, "an explicit scope_type='all' row is how head office is declared").toBe("ORG_ALL");
-    expect(scope.branchIds).toEqual([]);
+    withRoles(["employee", "finance"]);
+    wireDb([row({ role_key: "finance", scope_type: "all", branch_id: null })]);
+    const fin = await resolveDashboardScope("user-ho-finance", "finance");
+    expect(fin.level, "an explicit scope_type='all' row is how head office is declared").toBe("ORG_ALL");
+    expect(fin.branchIds).toEqual([]);
   });
 
   it("refuses rather than guessing when there is no assignment and no branch", async () => {
@@ -154,13 +161,16 @@ describe("head office vs branch scope", () => {
     );
   });
 
-  it("treats an explicit scope_type='all' row as head office", async () => {
+  it("treats an explicit scope_type='all' row as head office only for org-wide roles", async () => {
+    withRoles(["employee", "payroll_head"]);
+    wireDb([row({ role_key: "payroll_head", scope_type: "all", branch_id: null })]);
+    expect((await resolveDashboardScope("user-ho-explicit", "payroll_head")).level).toBe("ORG_ALL");
+
     withRoles(["employee", "hr"]);
     wireDb([row({ scope_type: "all", branch_id: null })]);
-
-    const scope = await resolveDashboardScope("user-ho-explicit", "hr");
-
-    expect(scope.level).toBe("ORG_ALL");
+    const hr = await resolveDashboardScope("user-hr-explicit", "hr");
+    expect(hr.level).toBe("BRANCH_ALL");
+    expect(hr.branchIds).toEqual(["branch-own-office"]);
   });
 
   it("does not let a higher-priority org-wide role override a branch head's assignment", async () => {
@@ -237,8 +247,11 @@ describe("head office vs branch scope", () => {
 
     const scope = await resolveDashboardScope("user-naresh", "payroll");
 
-    expect(scope.level, "an 'all' grant keyed by an alias role must still be honoured").toBe("ORG_ALL");
-    expect(scope.branchIds).toEqual([]);
+    // payroll_admin / payroll_hr normalise to `payroll`, which is not org-wide (owner ruling 2026-10-01):
+    // the alias-keyed 'all' rows are still recognised as grants (no config error, no narrowing to some
+    // other assigned branch) and resolve to the caller's own branch.
+    expect(scope.level, "an 'all' grant keyed by an alias role is recognised but downgraded to own branch").toBe("BRANCH_ALL");
+    expect(scope.branchIds).toEqual(["branch-own-office"]);
   });
 
   it("still honours an alias-keyed NARROWING row", async () => {

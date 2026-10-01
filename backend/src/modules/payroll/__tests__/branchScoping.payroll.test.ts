@@ -61,12 +61,20 @@ const req = { authUser: { id: "u1" } };
 describe("payroll-branch-scope helpers", () => {
   it("org-wide roles are unrestricted", async () => {
     const h = await import("../payroll-branch-scope.js");
-    for (const role of ["payroll_head", "finance", "admin", "super_admin"]) {
+    for (const role of ["payroll_head", "finance", "super_admin", "ceo"]) {
       sc.roles = [role];
       expect(await h.visibleBranchIdsFor(req)).toBeNull();
       expect((await h.employeeScopeFor(req)).sql).toBe("1=1");
       expect((await h.narrowBranch(req, "any-branch")).ok).toBe(true);
     }
+  });
+
+  it("admin is branch-scoped, not org-wide (owner ruling 2026-10-01)", async () => {
+    const h = await import("../payroll-branch-scope.js");
+    sc.roles = ["admin"]; sc.ownBranch = "A";
+    expect(await h.visibleBranchIdsFor(req)).not.toBeNull();
+    expect((await h.employeeScopeFor(req)).sql).not.toBe("1=1");
+    expect((await h.narrowBranch(req, "B")).ok).toBe(false);
   });
 
   it("hr is limited to its assigned branch and cannot widen with a browser branch id", async () => {

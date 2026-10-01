@@ -6,6 +6,21 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
 vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+// Branch scoping (owner ruling 2026-10-01): these tests are about route behaviour, so the caller is an
+// org-wide role (super_admin). The real scope helpers still run on top of this resolved scope.
+vi.mock("../src/shared/enterpriseScope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/shared/enterpriseScope.js")>();
+  return {
+    ...actual,
+    // canViewEmployee resolves the scope internally (not through the mocked export); an org-wide caller sees everyone.
+    canViewEmployee: vi.fn().mockResolvedValue(true),
+    resolveUserBusinessScope: vi.fn().mockResolvedValue({
+      userId: "user-1", roles: ["super_admin"], employeeId: null, employeeCode: null, branchId: null,
+      processId: null, lobId: null, departmentId: null, isSuperAdmin: true, isAdmin: false, isHr: false,
+      isPayroll: false, isFinance: false, assignments: [],
+    }),
+  };
+});
 vi.mock("../src/modules/payroll/payroll.service.js", () => ({
   payrollService: {
     listStructures: vi.fn(),
@@ -30,6 +45,8 @@ vi.mock("../src/middleware/requireRole.js", () => ({
   requireRole: (..._roles: string[]) => (_req: any, _res: any, next: any) => next(),
 }));
 vi.mock("../src/shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  hasOrgWideScope: vi.fn().mockResolvedValue(true),
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),

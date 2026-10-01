@@ -129,13 +129,29 @@ describe("authorizeDocumentAccess owner bypass", () => {
   it("org-wide roles and the DPO are never branch-checked", async () => {
     canViewEmployee.mockResolvedValue(false);
     findByStoredFilename.mockResolvedValue(PII_ITEM);
-    for (const role of ["admin", "super_admin", "ceo", "dpo"]) {
+    for (const role of ["super_admin", "ceo", "dpo"]) {
       const result = await authorizeDocumentAccess({
         actorUserId: "u", actorRole: role, storedFilename: "abc.pdf", action: "view",
       });
       expect(`${role}: ${result.allowed} ${result.reasonCode}`).toBe(`${role}: true ALLOWED`);
     }
     expect(canViewEmployee).not.toHaveBeenCalled();
+  });
+
+  it("admin is branch-checked like hr (no longer org-wide, owner ruling 2026-10-01)", async () => {
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    canViewEmployee.mockResolvedValue(false);
+    const refused = await authorizeDocumentAccess({
+      actorUserId: "some-admin-user", actorRole: "admin", storedFilename: "abc.pdf", action: "view",
+    });
+    expect(refused.allowed).toBe(false);
+    expect(refused.reasonCode).toBe("OUTSIDE_BRANCH_SCOPE");
+    expect(canViewEmployee).toHaveBeenCalledWith({ id: "some-admin-user" }, EMPLOYEE_ID);
+    canViewEmployee.mockResolvedValue(true);
+    const allowed = await authorizeDocumentAccess({
+      actorUserId: "some-admin-user", actorRole: "admin", storedFilename: "abc.pdf", action: "view",
+    });
+    expect(allowed.allowed).toBe(true);
   });
 
   it("a canViewEmployee failure fails closed", async () => {

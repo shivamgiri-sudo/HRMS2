@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-/** /api/access users / branches / processes / roles-of-user: hr is limited to its own branch; admin is org-wide. */
+/** /api/access users / branches / processes / roles-of-user: hr and admin are limited to their own branch; only the ORG_WIDE_EXEMPT_ROLES (super_admin, ceo, ...) are org-wide. */
 const { execute, canViewEmployee, resolveScope, buildCond } = vi.hoisted(() => ({
   execute: vi.fn(), canViewEmployee: vi.fn(),
   resolveScope: vi.fn(), buildCond: vi.fn(),
@@ -23,7 +23,8 @@ const { accessRouter } = await import("../access.routes.js");
 const app = () => { const a = express(); a.use(express.json()); a.use("/api/access", accessRouter); return a; };
 
 const hrScope = { roles: ["hr"], branchId: "b1", assignments: [{ scopeType: "branch", branchId: "b3" }, { scopeType: "all", branchId: null }] };
-const adminScope = { roles: ["admin"], branchId: "b1", assignments: [] };
+const adminScope = { roles: ["super_admin"], branchId: "b1", assignments: [] }; // org-wide caller
+const branchAdminScope = { ...hrScope, roles: ["admin"] }; // admin is branch-scoped since 2026-10-01
 const sqlCalls = (re: RegExp) => execute.mock.calls.filter((c) => re.test(String(c[0])));
 
 beforeEach(() => {
@@ -40,12 +41,24 @@ describe("GET /users", () => {
     expect(rowsSql).toMatch(/e\.id IS NOT NULL AND \(e\.branch_id = \?\)/);
     expect(rowsSql).toMatch(/e\.user_id IS NULL AND e\.active_status = 1 .*AND \(e\.branch_id = \?\)/s);
   });
-  it("admin: no scope predicate", async () => {
+  it("org-wide (super_admin): no scope predicate", async () => {
     resolveScope.mockResolvedValue(adminScope);
     await request(app()).get("/api/access/users?search=ab");
     const rowsSql = String(sqlCalls(/AS combined/).find((c) => !/COUNT/.test(String(c[0])))![0]);
     expect(rowsSql).not.toMatch(/e\.branch_id = \?/);
     expect(buildCond).not.toHaveBeenCalled();
+  });
+});
+
+describe("admin is branch-scoped like hr", () => {
+  it("users carry the scope predicate, branches are limited, a foreign branchId is 403", async () => {
+    resolveScope.mockResolvedValue(branchAdminScope);
+    await request(app()).get("/api/access/users?search=ab");
+    const rowsSql = String(sqlCalls(/AS combined/).find((c) => !/COUNT/.test(String(c[0])))![0]);
+    expect(rowsSql).toMatch(/e\.id IS NOT NULL AND \(e\.branch_id = \?\)/);
+    await request(app()).get("/api/access/branches");
+    expect(String(sqlCalls(/FROM branch_master/)[0][0])).toMatch(/AND id IN \(\?,\?\)/);
+    expect((await request(app()).get("/api/access/processes?branchId=b9")).status).toBe(403);
   });
 });
 
@@ -56,7 +69,7 @@ describe("GET /branches and /processes", () => {
     expect(String(c[0])).toMatch(/AND id IN \(\?,\?\)/);
     expect(c[1]).toEqual(["b1", "b3"]);
   });
-  it("admin sees all branches", async () => {
+  it("org-wide (super_admin) sees all branches", async () => {
     resolveScope.mockResolvedValue(adminScope);
     await request(app()).get("/api/access/branches");
     expect(String(sqlCalls(/FROM branch_master/)[0][0])).not.toMatch(/id IN/);
@@ -76,7 +89,7 @@ describe("GET /branches and /processes", () => {
     expect(String(c[0])).toMatch(/e\.branch_id IN \(\?,\?\)/);
     expect(c[1]).toEqual(["b1", "b3"]);
   });
-  it("admin may pass any branchId to processes", async () => {
+  it("org-wide (super_admin) may pass any branchId to processes", async () => {
     resolveScope.mockResolvedValue(adminScope);
     expect((await request(app()).get("/api/access/processes?branchId=b9")).status).toBe(200);
   });
@@ -92,7 +105,7 @@ describe("GET /roles/user/:userId", () => {
     canViewEmployee.mockResolvedValue(false);
     expect((await request(app()).get("/api/access/roles/user/u-caller")).status).toBe(200);
   });
-  it("admin is unrestricted", async () => {
+  it("org-wide (super_admin) is unrestricted", async () => {
     resolveScope.mockResolvedValue(adminScope);
     expect((await request(app()).get("/api/access/roles/user/u-other")).status).toBe(200);
     expect(canViewEmployee).not.toHaveBeenCalled();

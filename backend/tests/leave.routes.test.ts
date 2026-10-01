@@ -35,6 +35,7 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
   getUserRoles: vi.fn().mockResolvedValue([{ role_key: "admin" }]),
   hasRole: vi.fn().mockResolvedValue(true),
   buildScopeWhereClause: vi.fn().mockReturnValue({ where: "", params: [] }),
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
   AccessDeniedError: class AccessDeniedError extends Error {},
   BadRequestAccessError: class BadRequestAccessError extends Error {},
 }));
@@ -70,6 +71,22 @@ const fakeHoliday = { id: "hol-1", holiday_name: "Diwali", holiday_date: "2026-1
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetUser.mockResolvedValue({ data: { user: { id: "user-1", email: "admin@mcn.com" } }, error: null });
+  // admin is branch-scoped (owner policy 2026-10-01): the demo admin below is an admin whose own branch is
+  // branch-1, so scope-guarded routes admit employees of branch-1 only. Matched on SQL, not call order.
+  mockExecute.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (/FROM user_roles/i.test(text)) return [[{ role_key: "admin" }], []];
+    if (/FROM user_assignment_scope/i.test(text)) {
+      return [[{ role_key: "admin", scope_type: "branch", branch_id: "branch-1" }], []];
+    }
+    if (/FROM employees\s+WHERE user_id/i.test(text)) {
+      return [[{ id: "caller-emp", employee_code: "ADM001", branch_id: "branch-1" }], []];
+    }
+    if (/FROM employees\s+WHERE id/i.test(text)) {
+      return [[{ id: "emp-1", branch_id: "branch-1", process_id: "proc-1", reporting_manager_id: null }], []];
+    }
+    return [[], []];
+  });
 });
 
 describe("GET /api/leave/types", () => {

@@ -39,6 +39,21 @@ vi.mock("../src/middleware/requireRole.js", () => ({
   },
 }));
 
+// getScope() (wfm/branch-scope) resolves the caller's business scope from the database; derive it from
+// the fake user's roles instead so org-wide vs branch-scoped callers are distinguishable.
+vi.mock("../src/shared/enterpriseScope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/shared/enterpriseScope.js")>();
+  return {
+    ...actual,
+    resolveUserBusinessScope: vi.fn(async (user: { id: string }) => ({
+      userId: user.id, employeeId: "emp-u1", employeeCode: "E1", branchId: "br-1", processId: null, lobId: null,
+      departmentId: null, roles: [...currentRoles.value], isSuperAdmin: currentRoles.value.includes("super_admin"),
+      isAdmin: currentRoles.value.includes("admin"), isHr: currentRoles.value.includes("hr"),
+      isPayroll: false, isFinance: false, assignments: [],
+    })),
+  };
+});
+
 vi.mock("../src/modules/discard/discard.service.js", () => ({
   discardService: { previewLeave, previewRegularization, discardLeave, discardRegularization, listDiscards },
 }));
@@ -182,8 +197,20 @@ describe("GET /api/discard/history", () => {
     listDiscards.mockResolvedValue({ data: [], total: 0, page: 1, limit: 25 });
     const res = await request(makeApp()).get("/api/discard/history");
     expect(res.status).toBe(200);
-    expect(listDiscards).toHaveBeenCalledWith(expect.objectContaining({ page: 1, limit: 25 }));
+    // Org-wide caller (super_admin): the service gets no branch scope.
+    expect(listDiscards).toHaveBeenCalledWith(expect.objectContaining({ page: 1, limit: 25 }), undefined);
     expect(res.body.meta).toEqual({ total: 0, page: 1, limit: 25 });
+  });
+
+  it("passes the caller's branch scope to the service for a non-org-wide role", async () => {
+    currentRoles.value = ["wfm"];
+    listDiscards.mockResolvedValue({ data: [], total: 0, page: 1, limit: 25 });
+    const res = await request(makeApp()).get("/api/discard/history");
+    expect(res.status).toBe(200);
+    expect(listDiscards).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, limit: 25 }),
+      expect.objectContaining({ branchId: "br-1", roles: ["wfm"] }),
+    );
   });
 
   it("rejects an out-of-range limit rather than silently clamping", async () => {

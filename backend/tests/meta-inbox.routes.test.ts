@@ -80,9 +80,14 @@ describe('thread access is branch-scoped', () => {
     expect(res.status).toBe(200);
   });
 
-  it('lets an all-branch role open any branch', async () => {
-    const res = await request(app).get('/api/meta/leads/lead-delhi/messages').set(auth('admin'));
+  it('lets an all-branch (org-wide) role open any branch', async () => {
+    const res = await request(app).get('/api/meta/leads/lead-delhi/messages').set(auth('super_admin'));
     expect(res.status).toBe(200);
+  });
+
+  it("admin is branch-scoped (owner policy 2026-10-01): refused on another branch's thread", async () => {
+    const res = await request(app).get('/api/meta/leads/lead-delhi/messages').set(auth('admin'));
+    expect(res.status).toBe(403);
   });
 
   it("refuses mark-read on another branch's thread", async () => {

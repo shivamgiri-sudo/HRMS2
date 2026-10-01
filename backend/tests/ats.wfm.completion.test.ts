@@ -96,8 +96,10 @@ beforeEach(() => {
 const sel = (rows?: unknown[]): Array<[RegExp, unknown[]]> =>
   rows ? [[/^\s*SELECT/i, rows]] : [];
 
-const mockAdmin     = (rows?: unknown[]) => authAs("u-admin", ["admin"], sel(rows));
-const mockHr        = (rows?: unknown[]) => authAs("u-hr", ["hr"], sel(rows));
+const mockAdmin     = (rows?: unknown[]) => authAs("u-admin", ["admin"], [...OWN_BRANCH, ...sel(rows)]);
+// hr / admin are branch-scoped (owner policy 2026-10-01): give them an own branch so in-branch rows are reachable.
+const OWN_BRANCH: Array<[RegExp, unknown[]]> = [[/FROM employees WHERE user_id/i, [{ id: "emp-own", branch_id: "b-1" }]]];
+const mockHr        = (rows?: unknown[]) => authAs("u-hr", ["hr"], [...OWN_BRANCH, ...sel(rows)]);
 const mockRecruiter = (rows?: unknown[]) => authAs("u-recr", ["recruiter"], sel(rows));
 const mockEmployee  = (rows?: unknown[]) => authAs("u-emp", ["employee"], sel(rows));
 const mockManager   = (rows?: unknown[]) => authAs("u-mgr", ["manager"], sel(rows));
@@ -122,13 +124,22 @@ describe("POST /api/ats-ext/requisitions", () => {
   it("creates requisition for hr with audit", async () => {
     const auth = mockHr([{ id: "r-new", req_code: "MR-NEW", status: "draft" }]);
     const r = await request(app).post("/api/ats-ext/requisitions").set(auth)
-      .send({ requested_count: 5, priority: "high", reason: "Expansion" });
+      .send({ requested_count: 5, priority: "high", reason: "Expansion", branch_id: "b-1" });
     expect(r.status).toBe(201);
     const auditCall = mockExecute.mock.calls.find(// eslint-disable-next-line @typescript-eslint/no-explicit-any
     ([sql]: any) =>
       typeof sql === "string" && sql.includes("sensitive_action_log")
     );
     expect(auditCall).toBeDefined();
+  });
+});
+
+describe("POST /api/ats-ext/requisitions branch scope", () => {
+  it("refuses hr creating a requisition for another branch", async () => {
+    const auth = mockHr();
+    const r = await request(app).post("/api/ats-ext/requisitions").set(auth)
+      .send({ requested_count: 5, priority: "high", reason: "Expansion", branch_id: "b-other" });
+    expect(r.status).toBe(403);
   });
 });
 
@@ -139,10 +150,17 @@ describe("POST /api/ats-ext/requisitions/:id/approve", () => {
     expect(r.status).toBe(403);
   });
 
-  it("approves for admin and writes audit", async () => {
-    const auth = mockAdmin();
+  it("approves for admin (own branch) and writes audit", async () => {
+    // admin is branch-scoped: the requisition must belong to the admin's own branch.
+    const auth = authAs("u-admin", ["admin"], [...OWN_BRANCH, [/FROM manpower_requisition/i, [{ branch_id: "b-1" }]]]);
     const r = await request(app).post("/api/ats-ext/requisitions/r-1/approve").set(auth);
     expect(r.status).toBe(200);
+  });
+
+  it("refuses admin approving another branch's requisition", async () => {
+    const auth = authAs("u-admin", ["admin"], [...OWN_BRANCH, [/FROM manpower_requisition/i, [{ branch_id: "b-other" }]]]);
+    const r = await request(app).post("/api/ats-ext/requisitions/r-1/approve").set(auth);
+    expect(r.status).toBe(403);
   });
 });
 
@@ -223,12 +241,22 @@ describe("GET /api/ats-ext/analytics/stages", () => {
 describe("POST /api/wfm-ext/roster/swaps", () => {
   it("creates swap request as employee own record", async () => {
     const auth = authAs("u-emp", ["employee"], [
-      [/FROM employees/i, [{ id: "emp-1", employee_code: "E001" }]],
+      [/FROM employees/i, [{ id: "emp-1", employee_code: "E001", branch_id: "b-1" }]],
       [/swap/i, [{ id: "sw-1", status: "pending" }]],
     ]);
     const r = await request(app).post("/api/wfm-ext/roster/swaps").set(auth)
       .send({ swap_with_emp_id: "emp-2", swap_date: "2026-06-10" });
     expect(r.status).toBe(201);
+  });
+
+  it("refuses an employee swapping with a colleague from another branch", async () => {
+    const auth = authAs("u-emp", ["employee"], [
+      [/AND branch_id = \? AND active_status/i, []], // counterpart is not in the requester's branch
+      [/FROM employees/i, [{ id: "emp-1", employee_code: "E001", branch_id: "b-1" }]],
+    ]);
+    const r = await request(app).post("/api/wfm-ext/roster/swaps").set(auth)
+      .send({ swap_with_emp_id: "emp-9", swap_date: "2026-06-10" });
+    expect(r.status).toBe(403);
   });
 
   it("returns 400 without required fields", async () => {

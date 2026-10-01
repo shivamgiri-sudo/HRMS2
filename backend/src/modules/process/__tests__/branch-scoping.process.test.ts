@@ -2,7 +2,7 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-/** Process writes (configuration, edit, status, create): hr is limited to its own branch; admin is org-wide. */
+/** Process writes (configuration, edit, status, create): hr and admin are limited to their own branch; only org-wide roles are unrestricted. */
 const { execute, resolveScope, saveConfiguration, update, create, updateStatus } = vi.hoisted(() => ({
   execute: vi.fn(), resolveScope: vi.fn(),
   saveConfiguration: vi.fn(async (_req: any, res: any) => res.json({ ok: true })),
@@ -58,8 +58,14 @@ describe("process writes", () => {
     resolveScope.mockResolvedValue({ roles: ["hr"], branchId: null, assignments: [] });
     expect((await request(app()).post("/api/processes").send({})).status).toBe(403);
   });
-  it("admin is unrestricted", async () => {
-    resolveScope.mockResolvedValue({ roles: ["admin"], branchId: null, assignments: [] });
+  it("admin is branch-scoped like hr (owner ruling 2026-10-01)", async () => {
+    resolveScope.mockResolvedValue({ roles: ["admin"], branchId: "b1", assignments: [] });
+    expect((await request(app()).put("/api/processes/p-other/configuration").send({ values: {} })).status).toBe(403);
+    expect((await request(app()).put("/api/processes/p-own/configuration").send({ values: {} })).status).toBe(200);
+    expect((await request(app()).post("/api/processes").send({ branchName: "Mumbai" })).status).toBe(403);
+  });
+  it("org-wide roles (super_admin) are unrestricted", async () => {
+    resolveScope.mockResolvedValue({ roles: ["super_admin"], branchId: null, assignments: [] });
     expect((await request(app()).put("/api/processes/p-other/configuration").send({ values: {} })).status).toBe(200);
     expect((await request(app()).post("/api/processes").send({ branchName: "Mumbai" })).status).toBe(200);
   });

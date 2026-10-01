@@ -39,6 +39,10 @@ const mockBuildScopeWhereClause = vi.fn().mockResolvedValue({ sql: "1=1", params
 const mockHasAnyRole = vi.fn().mockResolvedValue(false);
 
 vi.mock("../src/shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  // The send-token actor is an hr user: branch-scoped under the 2026-10-01 owner policy (not org-wide).
+  getUserRoleKeys: vi.fn().mockResolvedValue(["hr"]),
+  getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
   hasScopedAccess: mockHasScopedAccess,
   hasAnyRole: mockHasAnyRole,
   buildScopeWhereClause: mockBuildScopeWhereClause,
@@ -295,17 +299,21 @@ describe("POST /api/ats/onboarding/send-token/:id — row-scope via hasScopedAcc
     );
   });
 
-  it("TC-S9-09b: asks whether the actor is in the HR department, by the exact role list", async () => {
+  it("TC-S9-09b: an HR-department actor is branch-scoped - the old hasAnyRole org-wide bypass is gone", async () => {
     mockExecute.mockResolvedValueOnce([[{ applied_for_branch: "b99", applied_for_process: "p77" }]]);
-    await request(app).post("/api/ats/onboarding/send-token/cand-1").send({});
-    expect(mockHasAnyRole).toHaveBeenCalledWith(
-      "user-hr-1", "hr", "hr_admin", "hr_branch", "hr_head", "ho_hr", "recruitment_hr",
-    );
+    mockHasScopedAccess.mockResolvedValue(false);
+    const res = await request(app).post("/api/ats/onboarding/send-token/cand-1").send({});
+    // hr with no branch / scope row sees nothing (fails closed) and hasScopedAccess has no row for it either.
+    expect(res.status).toBe(403);
+    expect(mockHasAnyRole).not.toHaveBeenCalled();
   });
 
-  it("TC-S9-09c: an HR-department actor resends org-wide, without a scope row", async () => {
-    mockExecute.mockResolvedValueOnce([[{ applied_for_branch: "b99", applied_for_process: "p77" }]]);
-    mockHasAnyRole.mockResolvedValueOnce(true);
+  it("TC-S9-09c: an HR-department actor resends for a candidate inside its own branch, without a scope row", async () => {
+    mockExecute
+      .mockResolvedValueOnce([[{ applied_for_branch: "b99", applied_for_process: "p77" }]]) // getCandidate
+      .mockResolvedValueOnce([[{ branch_id: "b99" }]]) // own employees.branch_id
+      .mockResolvedValueOnce([[{ branch_name: "Branch 99", branch_code: "B99" }]]) // branch_master
+      .mockResolvedValueOnce([[{ 1: 1 }]]); // canAccessCandidate existence probe
     mockHasScopedAccess.mockResolvedValue(false);
     const res = await request(app).post("/api/ats/onboarding/send-token/cand-1").send({});
     expect(res.status).toBe(200);

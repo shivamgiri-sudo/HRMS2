@@ -227,7 +227,7 @@ export async function getDataQualityReport(
   }
 
   // Branch scoping: hr (not org-wide) is pinned to its own branch; a foreign ?branch_id is refused.
-  if (!ctx.isOrgWide && !ctx.isSuperAdmin && !ctx.isAdmin) {
+  if (!ctx.isOrgWide && !ctx.isSuperAdmin) {
     if (!ctx.branchId || (scopeFilter?.branchId && scopeFilter.branchId !== ctx.branchId)) {
       const err = new Error("Forbidden: data quality is limited to your own branch") as Error & { statusCode?: number };
       err.statusCode = 403;
@@ -242,8 +242,8 @@ export async function getDataQualityReport(
  * Check if user can access a specific employee.
  */
 async function canAccessEmployee(ctx: UserOrgContext, employeeId: string): Promise<boolean> {
-  // Org-wide roles (super_admin, admin, ceo ...) can see all. hr is branch-scoped (owner ruling 2026-10-01).
-  if (ctx.isOrgWide || ctx.isSuperAdmin || ctx.isAdmin || ctx.isCeo) {
+  // Org-wide roles (super_admin, ceo ...) can see all. hr and admin are branch-scoped (owner ruling 2026-10-01).
+  if (ctx.isOrgWide || ctx.isSuperAdmin || ctx.isCeo) {
     return true;
   }
 
@@ -262,8 +262,8 @@ async function canAccessEmployee(ctx: UserOrgContext, employeeId: string): Promi
 
   const emp = rows[0] as any;
 
-  // Branch head / hr: same branch
-  if ((ctx.isBranchHead || ctx.isHr) && ctx.branchId && ctx.branchId === emp.branch_id) {
+  // Branch head / hr / admin: same branch
+  if ((ctx.isBranchHead || ctx.isHr || ctx.isAdmin) && ctx.branchId && ctx.branchId === emp.branch_id) {
     return true;
   }
 

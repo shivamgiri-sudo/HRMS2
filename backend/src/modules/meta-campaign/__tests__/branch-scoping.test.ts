@@ -60,10 +60,10 @@ async function app() {
 beforeEach(() => { vi.clearAllMocks(); caller.roles = ["hr"]; });
 
 describe("meta-access", () => {
-  it("hr, manager and management are no longer all-branch; the org-wide exempt roles are", async () => {
+  it("hr, manager and management and admin are no longer all-branch; the org-wide exempt roles are", async () => {
     const { hasAllBranchAccess } = await import("../meta-access.js");
-    for (const r of ["hr", "manager", "management", "branch_head", "recruiter"]) expect(hasAllBranchAccess([r])).toBe(false);
-    for (const r of ["super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"]) {
+    for (const r of ["hr", "manager", "management", "branch_head", "recruiter", "admin"]) expect(hasAllBranchAccess([r])).toBe(false);
+    for (const r of ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"]) {
       expect(hasAllBranchAccess([r])).toBe(true);
     }
   });

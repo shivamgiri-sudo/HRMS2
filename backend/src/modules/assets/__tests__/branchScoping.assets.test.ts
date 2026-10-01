@@ -50,9 +50,16 @@ describe("assets branch scoping", () => {
     expect(scope.params).toContain("b1");
   });
   it("org-wide roles get no predicate", async () => {
-    scopeState.roles = ["admin"];
+    scopeState.roles = ["super_admin"];
     await request(app()).get("/api/assets-mgmt");
     expect((assetsService.list as any).mock.calls[0][1].sql).toBe("1=1");
+  });
+  it("admin is branch-scoped like hr (owner ruling 2026-10-01)", async () => {
+    scopeState.roles = ["admin"];
+    await request(app()).get("/api/assets-mgmt");
+    const scope = (assetsService.list as any).mock.calls[0][1];
+    expect(scope.sql).toMatch(/a\.branch_id IN \(\?\)/);
+    expect(scope.params).toContain("b1");
   });
   it("asset in another branch: detail, history, update, assign, return, service, delete are 403", async () => {
     const a = app();

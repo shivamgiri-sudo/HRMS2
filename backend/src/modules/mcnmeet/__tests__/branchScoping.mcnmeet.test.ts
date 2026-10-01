@@ -46,10 +46,16 @@ describe("mcnmeet scoping", () => {
     expect(scope.params).toContain("u1");
   });
   it("org-wide roles are unrestricted", async () => {
-    scopeState.roles = ["admin"];
+    scopeState.roles = ["super_admin"];
     await request(app()).get("/api/mcnmeet/meetings");
     expect((listMeetings.mock.calls[0] as any)[1].sql).toBe("1=1");
     expect((await request(app()).get("/api/mcnmeet/meetings/m-other")).status).toBe(200);
+  });
+  it("admin is scoped like hr (owner ruling 2026-10-01)", async () => {
+    scopeState.roles = ["admin"];
+    await request(app()).get("/api/mcnmeet/meetings");
+    expect((listMeetings.mock.calls[0] as any)[1].sql).toMatch(/m\.created_by = \?/);
+    expect((await request(app()).get("/api/mcnmeet/meetings/m-other")).status).toBe(403);
   });
   it("a meeting outside the scope is 403 for detail, patch, cancel, attendance, calendar", async () => {
     const a = app();

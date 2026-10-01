@@ -2285,8 +2285,8 @@ export async function getAttemptCandidateId(attemptId: string): Promise<string |
 export async function getAssessmentDashboard(scope?: AtsBranchScope) {
   await ensureReady();
   // Aggregates are limited to attempts of candidates inside the caller's scope (org-wide => unfiltered).
-  const sc = scope ? buildCandidateScopeSql(scope, "sc") : { sql: "1=1", params: [] as unknown[] };
-  const scoped = `candidate_id IN (SELECT sc.id FROM ats_candidate sc WHERE ${sc.sql})`;
+  const candScope = scope ? buildCandidateScopeSql(scope, "sc") : { sql: "1=1", params: [] as unknown[] };
+  const scoped = `candidate_id IN (SELECT sc.id FROM ats_candidate sc WHERE ${candScope.sql})`;
   // The two aggregates are independent reads — issued together.
   const [metrics, byProcess] = await Promise.all([
     rows<RowDataPacket>(
@@ -2303,7 +2303,7 @@ export async function getAssessmentDashboard(scope?: AtsBranchScope) {
        ROUND(100 * SUM(result = 'pass') / NULLIF(SUM(result IN ('pass','fail')), 0), 2) AS pass_rate
      FROM ats_candidate_assessment
      WHERE ${scoped}`,
-    sc.params,
+    candScope.params,
   ),
     rows<RowDataPacket>(
     db,
@@ -2316,7 +2316,7 @@ export async function getAssessmentDashboard(scope?: AtsBranchScope) {
      WHERE a.${scoped}
      GROUP BY t.process_key, t.role_key
      ORDER BY t.process_key, t.role_key`,
-    sc.params,
+    candScope.params,
   ),
   ]);
   return { metrics: metrics[0] ?? {}, byProcess };

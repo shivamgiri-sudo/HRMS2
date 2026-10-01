@@ -98,9 +98,32 @@ function mockEmployee(empId: string) {
   mockExecute.mockResolvedValueOnce([[{ id: empId, employee_code: "E001" }], []]);
 }
 
+/**
+ * Branch scoping (owner policy 2026-10-01): hr and admin are branch-scoped, so a guarded route first runs
+ * resolveUserBusinessScope (three parallel reads: user_roles, user_assignment_scope, the caller's employee row)
+ * and, for a target employee, one employees read. Queued in that order, after the requireRole role read.
+ */
+function mockCallerScope(roleKey: string, branchId: string | null = "br-1") {
+  mockExecute.mockResolvedValueOnce([[{ role_key: roleKey }], []]);
+  mockExecute.mockResolvedValueOnce([[branchId ? { role_key: roleKey, scope_type: "branch", branch_id: branchId } : undefined].filter(Boolean), []]);
+  mockExecute.mockResolvedValueOnce([[{ id: "caller-emp", employee_code: "C001", branch_id: branchId }], []]);
+}
+/** assetParamGuard: asset exists, then assetScopeSql (resolveCallerBranchScope + employeeRowScope), then the in-scope check. */
+function mockAssetGuard(roleKey = "hr") {
+  mockExecute.mockResolvedValueOnce([[{ id: "a-1" }], []]);
+  mockCallerScope(roleKey);
+  mockCallerScope(roleKey);
+  mockExecute.mockResolvedValueOnce([[{ ok: 1 }], []]);
+}
+function mockTargetEmployee(id: string, branchId: string | null = "br-1") {
+  mockExecute.mockResolvedValueOnce([[{ id, branch_id: branchId }], []]);
+}
+
 describe("GET /api/lifecycle/employees/:id/lifecycle", () => {
   it("returns 200 for admin", async () => {
     mockAdmin();
+    mockCallerScope("admin");
+    mockTargetEmployee("emp-1");
     mockExecute.mockResolvedValueOnce([[{ id: "ev-1", event_type: "confirmation" }], []]);
     const r = await request(app).get("/api/lifecycle/employees/emp-1/lifecycle").set(ADMIN_AUTH);
     expect(r.status).toBe(200);
@@ -127,6 +150,8 @@ describe("POST /api/lifecycle/employees/:id/lifecycle", () => {
   });
   it("creates lifecycle event for hr", async () => {
     mockHr();
+    mockCallerScope("hr");
+    mockTargetEmployee("emp-1");
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
@@ -146,6 +171,9 @@ describe("POST /api/lifecycle/documents/:id/verify", () => {
   });
   it("verifies document for hr and writes audit", async () => {
     mockHr();
+    mockExecute.mockResolvedValueOnce([[{ employee_id: "emp-1" }], []]);
+    mockCallerScope("hr");
+    mockTargetEmployee("emp-1");
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     const r = await request(app).post("/api/lifecycle/documents/doc-1/verify").set(HR_AUTH)
@@ -179,7 +207,11 @@ describe("POST /api/assets-mgmt/:id/assign", () => {
     expect(r.status).toBe(403);
   });
   it("assigns asset for hr and writes audit", async () => {
+    // router.param("id") runs assetParamGuard BEFORE the route's requireRole, so the guard reads come first.
+    mockAssetGuard();
     mockHr();
+    mockCallerScope("hr");
+    mockTargetEmployee("emp-1");
     // assetsService.assign now closes the old assignment, inserts the new one and flips
     // asset_master inside ONE transaction on a pooled connection, so those statements go
     // through conn.execute rather than db.execute.
@@ -214,6 +246,8 @@ describe("POST /api/assets-mgmt/:id/assign", () => {
 
 describe("POST /api/assets-mgmt/:id/return", () => {
   it("marks asset as returned for hr", async () => {
+    // router.param("id") runs assetParamGuard BEFORE the route's requireRole, so the guard reads come first.
+    mockAssetGuard();
     mockHr();
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
@@ -297,6 +331,8 @@ describe("GET /api/letters/templates", () => {
 describe("POST /api/letters/generate", () => {
   it("generates letter with employee data interpolated", async () => {
     mockAdmin();
+    mockCallerScope("admin");
+    mockTargetEmployee("emp-1");
     mockExecute.mockResolvedValueOnce([[{ id: "tpl-1", template_code: "OFFER_LETTER", letter_type: "offer", body_template: "Dear {{full_name}}, join as {{designation}}." }], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "emp-1", employee_code: "EMP001", full_name: "Amit Kumar", first_name: "Amit", last_name: "Kumar", designation_name: "Agent", date_of_joining: "2026-06-01" }], []]);
     // Salary now resolves through resolveAppointmentLetterSalary, which walks

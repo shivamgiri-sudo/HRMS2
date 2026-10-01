@@ -76,9 +76,11 @@ describe("job-requisition :branch endpoints", () => {
 describe("job-requisition-hr-scope", () => {
   it("coo/cfo/finance etc. are org-wide, hr and a non-exempt 'all' scope row are not", async () => {
     const { isOrgWideRoleSet } = await import("../job-requisition-hr-scope.js");
-    for (const r of ["super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"]) {
+    for (const r of ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"]) {
       expect(isOrgWideRoleSet([r])).toBe(true);
     }
     expect(isOrgWideRoleSet(["hr"])).toBe(false);
+    // admin is branch-scoped too (ORG_WIDE_EXEMPT_ROLES no longer lists it)
+    expect(isOrgWideRoleSet(["admin"])).toBe(false);
   });
 });

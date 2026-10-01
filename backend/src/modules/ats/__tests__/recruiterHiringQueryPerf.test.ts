@@ -101,7 +101,9 @@ describe("getHiringDashboard", () => {
       if (String(sql).includes("COUNT(*) AS total_records")) throw new Error("summary failed");
       throw new Error("breakdown failed");
     });
-    await expect(svc.getHiringDashboard("u1", "admin", {})).rejects.toThrow("summary failed");
+    // super_admin is org-wide (admin is branch-scoped now and would run the branch lookup first, which this
+    // mock rejects with "breakdown failed" before the summary is ever issued).
+    await expect(svc.getHiringDashboard("u1", "super_admin", {})).rejects.toThrow("summary failed");
   });
 });
 

@@ -29,6 +29,16 @@ vi.mock("../src/shared/accessGuard.js", () => ({
   // remains intact; roster endpoints under test do not rely on this guard.
   selfOrAdminHr: vi.fn(() => (_req: unknown, _res: unknown, next: () => void) => next()),
 }));
+// Branch scoping (owner ruling 2026-10-01): a role/process mapping alone is no longer enough, the process must also
+// sit inside the caller's own branch / assigned scope. Faithful stand-in for the DB-backed check: only
+// "process-1" is inside the caller's branch.
+vi.mock("../src/modules/wfm/branch-scope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/modules/wfm/branch-scope.js")>();
+  return {
+    ...actual,
+    userCanAccessProcess: vi.fn(async (_userId: string, processId: string) => processId === "process-1"),
+  };
+});
 vi.mock("../src/modules/roster/roster.governance.service.js", () => ({
   rosterGovernanceService: {
     listShiftTemplates: vi.fn(),
@@ -108,6 +118,15 @@ describe("weekly roster ownership", () => {
     expect((await request(app).post("/api/roster-gov/cycles/cycle-1/status").set(AUTH).send({ status: "published" })).status).toBe(403);
     expect(svc.createCycle).not.toHaveBeenCalled();
     expect(svc.advanceCycleStatus).not.toHaveBeenCalled();
+  });
+
+  it("denies a mapped Process Manager when the process is outside their own branch scope", async () => {
+    inScope.mockResolvedValue(true);
+    const result = await request(app).post("/api/roster-gov/cycles").set(AUTH).send({
+      process_id: "process-other-branch", branch_id: "branch-2", week_start_date: "2026-06-01", week_end_date: "2026-06-07",
+    });
+    expect(result.status).toBe(403);
+    expect(svc.createCycle).not.toHaveBeenCalled();
   });
 
   it("allows admin override without a process-scope record", async () => {

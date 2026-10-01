@@ -53,7 +53,7 @@ export async function resolvePeopleExperienceScope(req: AuthenticatedRequest): P
     };
   }
 
-  if (roles.includes("branch_head") || roles.includes("hr")) {
+  if (roles.includes("branch_head") || roles.includes("hr") || roles.includes("admin")) {
     let ownBranchId: string | null = null;
     if (employee?.id) {
       const [rows] = await db.execute<RowDataPacket[]>("SELECT branch_id FROM employees WHERE id = ? LIMIT 1", [employee.id]);
@@ -122,8 +122,8 @@ export function buildEmployeeScopeCondition(scope: PeopleExperienceScope, alias 
     params.push(scope.employeeId);
   }
 
-  // hr: its own branch (fails closed with no branch).
-  if (scope.kind === "branch" && scope.roles.includes("hr") && scope.ownBranchId) {
+  // hr / admin: its own branch (fails closed with no branch).
+  if (scope.kind === "branch" && (scope.roles.includes("hr") || scope.roles.includes("admin")) && scope.ownBranchId) {
     clauses.push(`${alias}.branch_id = ?`);
     params.push(scope.ownBranchId);
   }

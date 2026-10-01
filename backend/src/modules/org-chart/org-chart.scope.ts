@@ -112,7 +112,7 @@ export async function resolveUserOrgContext(userId: string): Promise<UserOrgCont
   }
 
   // 3. process (available for process_manager, wfm, or full-access roles)
-  if (processId && (isProcessManager || isWfm || isOrgWide || isHr)) {
+  if (processId && (isProcessManager || isWfm || isOrgWide || isHr || isAdmin)) {
     const processCount = await getScopeCount("process", processId);
     availableScopes.push({
       scopeType: "process",
@@ -125,7 +125,7 @@ export async function resolveUserOrgContext(userId: string): Promise<UserOrgCont
   }
 
   // 4. branch (available for branch_head or full-access roles)
-  if (branchId && (isBranchHead || isOrgWide || isHr)) {
+  if (branchId && (isBranchHead || isOrgWide || isHr || isAdmin)) {
     const branchCount = await getScopeCount("branch", branchId);
     availableScopes.push({
       scopeType: "branch",
