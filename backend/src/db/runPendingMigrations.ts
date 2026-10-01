@@ -1255,6 +1255,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1985_sbi_merge_duplicate_process.sql", // Registered 2026-10-01, at the owner's request. Retires the duplicate "SBI Card Collections" process (never deleted) and gives the real "SBI Credit Cards" process (cost centre + staff) the code SBI_CARD, so the dashboard, uploaders and KPI metrics follow it. Guarded, idempotent, reversible, tiny tables only.
   "migrations/1986_branch_wfm_rm_change_approvals_page_access.sql", // Registered 2026-10-01. Grants branch_wfm WFM_ROSTER (RM Change Approvals, branch-scoped by the API). INSERT IGNORE, additive.
   "migrations/1987_branch_wfm_head_wfm_alignment_page_access.sql", // Registered 2026-10-01. Grants branch_wfm and branch_head PROVISIONING_WFM_ALIGNMENT (branch-scoped by the API). INSERT IGNORE, additive.
+  "migrations/1988_branch_wfm_payroll_branch_holiday_work_page_access.sql", // Registered 2026-10-01. PAYROLL_HOLIDAY_WORK for branch_wfm + payroll_branch (branch-scoped by the API). INSERT IGNORE, additive.
 ];
 
 export type MigrationHealth = {

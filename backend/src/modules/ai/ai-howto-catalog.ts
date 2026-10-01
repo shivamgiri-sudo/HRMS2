@@ -1215,7 +1215,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
       '4. Submit — your manager/WFM will approve the comp-off or OT.',
     ],
     route: '/payroll/holiday-work',
-    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'wfm', 'payroll_head', 'payroll_branch'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-work)' },
+    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'wfm', 'branch_wfm', 'payroll_head', 'payroll_branch'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-work)' },
     status: 'verified',
     deniedExplanation: 'Your role does not have access to Holiday Work management.',
   },

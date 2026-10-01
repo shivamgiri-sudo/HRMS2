@@ -36,7 +36,7 @@ const STAGE_LABELS: Record<string, string> = {
   pending: "Pending", approved: "Approved",
 };
 
-const REQUEST_ROLES = ["wfm", "admin", "super_admin", "payroll_head", "payroll_branch"];
+const REQUEST_ROLES = ["wfm", "branch_wfm", "admin", "super_admin", "payroll_head", "payroll_branch"];
 const APPROVAL_ROLES = ["wfm", "payroll_head", "payroll_branch", "admin", "super_admin"];
 
 // ── Submit Request Tab ────────────────────────────────────────────────────────
@@ -400,6 +400,7 @@ function ApprovalsTab() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function HolidayWork() {
+  const { roleKeys } = useWorkforceAccess();
   return (
     <DashboardLayout>
       <div className="p-6 max-w-7xl mx-auto space-y-5">
@@ -410,7 +411,7 @@ export default function HolidayWork() {
         <Tabs defaultValue="submit">
           <TabsList className="mb-4">
             <TabsTrigger value="submit">Submit Request</TabsTrigger>
-            <TabsTrigger value="approvals">Approvals Queue</TabsTrigger>
+            {APPROVAL_ROLES.some(r => roleKeys.includes(r)) && <TabsTrigger value="approvals">Approvals Queue</TabsTrigger>}
           </TabsList>
           <TabsContent value="submit"><SubmitTab /></TabsContent>
           <TabsContent value="approvals"><ApprovalsTab /></TabsContent>

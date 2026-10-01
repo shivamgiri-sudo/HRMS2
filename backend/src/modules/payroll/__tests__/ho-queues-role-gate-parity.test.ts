@@ -77,15 +77,15 @@ describe("payroll-more.routes.ts — Holiday Work admits wfm, matching HolidayWo
   const src = read("payroll-more.routes.ts");
 
   it("GET /holiday-work/requests accepts wfm", () => {
-    expect(src).toMatch(/"\/holiday-work\/requests"[\s\S]{0,60}requireRole\("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "wfm"\)/);
+    expect(src).toMatch(/"\/holiday-work\/requests"[\s\S]{0,60}requireRole\("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "wfm", "branch_wfm"\)/);
   });
 
   it("POST /holiday-work/requests accepts wfm", () => {
-    expect(src).toMatch(/"\/holiday-work\/requests"[\s\S]{0,60}requireRole\("admin", "super_admin", "payroll", "payroll_head", "wfm"\)/);
+    expect(src).toMatch(/"\/holiday-work\/requests"[\s\S]{0,60}requireRole\("admin", "super_admin", "payroll", "payroll_head", "wfm", "payroll_branch", "branch_wfm"\)/);
   });
 
   it("PATCH /holiday-work/requests/:id/approve accepts wfm", () => {
-    expect(src).toMatch(/"\/holiday-work\/requests\/:id\/approve"[\s\S]{0,60}requireRole\("admin", "super_admin", "payroll", "payroll_head", "wfm"\)/);
+    expect(src).toMatch(/"\/holiday-work\/requests\/:id\/approve"[\s\S]{0,60}requireRole\("admin", "super_admin", "payroll", "payroll_head", "wfm", "payroll_branch"\)/);
   });
 
   it("holiday-master cc/designation-mapping admit branch roles (branch-scoped in handler) but not plain wfm", () => {
