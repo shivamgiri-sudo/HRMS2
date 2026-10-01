@@ -472,6 +472,32 @@ export default function NativeJoiningControlRoom() {
   };
 
   useEffect(() => { loadQueue(); }, []);
+
+  // Background refresh so BGV / readiness changes made by automation show up without HR reloading.
+  // Silent (no busy flag, no error banner) and paused while the tab is hidden. The open candidate's
+  // detail is only reloaded when its BGV or employee-code state actually changed, because a detail
+  // reload re-seeds the edit forms.
+  const queueRef = React.useRef<QueueRow[]>([]);
+  queueRef.current = queue;
+  useEffect(() => {
+    const id = window.setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/ats/joining-control-room/queue?search=${encodeURIComponent(search)}`);
+        const next = res.data || [];
+        const sel = selectedIdRef.current;
+        const before = queueRef.current.find((r) => r.candidate_id === sel);
+        const after = next.find((r) => r.candidate_id === sel);
+        setQueue(next);
+        if (before && after && (before.bgv_status !== after.bgv_status || before.employee_code !== after.employee_code)) {
+          void loadDetail(sel as string);
+        }
+      } catch {
+        // transient — the next tick retries
+      }
+    }, 30000);
+    return () => window.clearInterval(id);
+  }, [search]);
   useEffect(() => {
     if (selectedId) {
       esignRecheckFiredFor.current = null; // reset so the new candidate gets a fresh check
