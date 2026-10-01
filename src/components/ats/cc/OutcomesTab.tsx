@@ -12,6 +12,7 @@ import { periodFrom } from "@/components/ats/overview/shell";
 import { BarRows, Empty, V, fmt, tooltipStyle } from "@/components/ats/overview/viz";
 import { Card, ExportButton, FilterBar, HeatTable, InsightList, KpiCard, Section, Waterfall, downloadCsv, type HeatCol } from "./cc-kit";
 import { useCC } from "./cc-context";
+import { humanizeStage } from "./stage-label";
 import { avgOfferedSalary, buildOutcomeFindings, buildReasonProcessMatrix, calibrateInterviewers, type ReasonRow, fastDecisionShare, inr, leakageOutcome, monthEnd, monthLabel, rateRows, topDropoff } from "./outcomes-helpers";
 
 const tick = { fontSize: 11, fill: "hsl(var(--muted-foreground))" };
@@ -39,6 +40,7 @@ export function OutcomesTab() {
   const from = periodFrom(cc.period);
   const base = useMemo<DrillFilters>(() => ({ from, branch: cc.branch || undefined }), [from, cc.branch]);
   const leak = useLeakage(base);
+  const stepLabel = (key: string) => leak.data?.stages.find((x) => x.key === key)?.label ?? humanizeStage(key);
   const cohorts = useCohorts(12, { branch: cc.branch || undefined });
   const go = (crumb: string, extra: DrillFilters = {}) => drill.openDrill(crumb, { ...base, ...extra });
 
@@ -83,7 +85,7 @@ export function OutcomesTab() {
         <KpiCard i={2} label="Top rejection reason" value={top?.share ?? 0} suffix="%" sub={top?.reason ?? "No rejections recorded"} icon={<UserX className="h-4 w-4" />} color={V.orange} onClick={top ? () => go(`Reason: ${top.reason}`, { voc: top.reason }) : undefined} />
         <KpiCard i={3} label="Avg offered salary" value={Math.round(avgOffer)} sub={avgOffer ? `${inr(avgOffer)} per month · ${fmt(d.salary.reduce((a, s) => a + s.n, 0))} offers` : "No numeric offers"} icon={<Banknote className="h-4 w-4" />} color={V.violet} onClick={() => go("Offered", { outcome: "offered" })} />
         <KpiCard i={4} label="Offer approval" value={o?.kpis.offerApprovalRate ?? 0} suffix="%" sub={`${fmt(o?.kpis.offersTotal ?? 0)} offers raised`} icon={<FileCheck2 className="h-4 w-4" />} color={V.yellow} onClick={() => go("Offered", { outcome: "offered" })} />
-        <KpiCard i={5} label="BGV clear" value={o?.kpis.bgvClearRate ?? 0} suffix="%" sub={`${fmt(bgvTotal)} checks · ${o?.kpis.bgvFlagRate ?? 0}% flagged`} icon={<ShieldCheck className="h-4 w-4" />} color={V.aqua} onClick={() => go("Joined", { outcome: "joined" })} />
+        <KpiCard i={5} label="BGV flagged" value={o?.kpis.bgvFlagRate ?? 0} suffix="%" deltaInvert sub={`${fmt(bgvTotal)} checks need review or came back negative`} icon={<ShieldCheck className="h-4 w-4" />} color={V.aqua} onClick={() => go("Joined", { outcome: "joined" })} />
       </div>
 
       <Card i={1} title="What the data says" hint="Written findings from this period · click one to drill" icon={<Lightbulb className="h-4 w-4" />}>
@@ -128,12 +130,12 @@ export function OutcomesTab() {
             ) : <Empty text="No offers in this window" />}
           </Card>
           <Card i={6} className="lg:col-span-6" title="Why they dropped" hint="Largest losses with the recorded reason"
-            right={lossRows.length > 0 && <ExportButton onClick={() => downloadCsv("ats-offer-leakage.csv", ["From", "To", "Reason", "Candidates"], lossRows.map((l) => [l.from, l.to, l.reason, l.n]))} />}>
+            right={lossRows.length > 0 && <ExportButton onClick={() => downloadCsv("ats-offer-leakage.csv", ["From", "To", "Reason", "Candidates"], lossRows.map((l) => [stepLabel(l.from), stepLabel(l.to), l.reason, l.n]))} />}>
             {leak.isLoading ? <Skel /> : lossRows.length ? (
               <div className="overflow-x-auto rounded-xl border"><table className="w-full text-sm">
                 <thead className="bg-muted/50 text-left text-xs text-muted-foreground"><tr><th className="px-3 py-2 font-medium">Step</th><th className="px-2 py-2 font-medium">Reason</th><th className="px-3 py-2 text-right font-medium">Lost</th></tr></thead>
                 <tbody>{lossRows.map((l, i) => (
-                  <tr key={i} className="border-t"><td className="px-3 py-1.5 text-xs text-muted-foreground">{l.from} to {l.to}</td>
+                  <tr key={i} className="border-t"><td className="px-3 py-1.5 text-xs text-muted-foreground">{stepLabel(l.from)} to {stepLabel(l.to)}</td>
                     <td className="px-2 py-1.5"><button onClick={() => go(`${l.reason} · ${l.from}`, { outcome: leakageOutcome(l.from) })} className="cursor-pointer text-left font-medium hover:text-primary hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">{l.reason}</button></td>
                     <td className="cc-num px-3 py-1.5 text-right font-semibold">{fmt(l.n)}</td></tr>))}</tbody></table></div>
             ) : <Empty text="No recorded losses" />}

@@ -71,7 +71,7 @@ export function PulseTab() {
             <Gauge value={k.selected.rate ?? 0} color={V.aqua} label="Selection rate" sub="of registered" />
             <Gauge value={100 - k.noShowRate} color={V.blue} label="Show-up rate" sub={`${k.noShowRate}% no-show`} />
             <Gauge value={k.offerApprovalRate} color={V.violet} label="Offers approved" sub={`${fmt(k.offersTotal)} offers`} />
-            <Gauge value={100 - k.bgvFlagRate} color={V.yellow} label="BGV clear" sub={`${k.bgvClearRate}% cleared`} />
+            <Gauge value={100 - k.bgvFlagRate} color={V.yellow} label="BGV not flagged" sub={`${k.bgvFlagRate}% flagged`} />
             <Gauge value={d.queue.today ? Math.round(((d.queue.today - d.queue.slaBreach) / d.queue.today) * 100) : 100} color={V.orange} label="Queue SLA met" sub={`${d.queue.slaBreach} breaches`} />
           </div>
           <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 border-t pt-3 text-xs text-muted-foreground">

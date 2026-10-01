@@ -64,3 +64,11 @@ describe("leakageOutcome with the real /dashboard/leakage step keys", () => {
     for (const [key, outcome] of Object.entries(want)) expect(leakageOutcome(key, "")).toBe(outcome);
   });
 });
+
+describe("month-on-month finding ignores the month in progress", () => {
+  it("does not compare a full month with the first days of the current one", () => {
+    const now = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(0, 7);
+    const d = { monthly: [{ month: "2000-01", registered: 100, selected: 30, rejected: 50, noShow: 5, selRate: 30 }, { month: now, registered: 3, selected: 0, rejected: 1, noShow: 0, selRate: 0 }], rounds: [], rejectionReasons: [], interviewers: [], decisionSpeed: [], experience: [], education: [], shift: [], skill: [], salary: [], ctcBands: [], ageBands: [], rewalkins: 0 } as never;
+    expect(buildOutcomeFindings({ insights: d }).some((f) => f.title.includes("month on month"))).toBe(false);
+  });
+});

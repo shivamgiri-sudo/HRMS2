@@ -155,7 +155,9 @@ export function buildOutcomeFindings({ insights: d, dropoff = [], leakage, matri
     if (s && s.gap >= 8) out.push({ tone: "info", title: `By ${label}, "${s.best.name}" converts ${s.best.selRate}% and "${s.worst.name}" ${s.worst.selRate}%`, body: `A ${s.gap}-point gap.`, drill: { crumb: `${label}: ${s.best.name}`, extra: { [key]: s.best.name } as DrillFilters } });
   }
 
-  const m = d.monthly;
+  // The month still in progress has a few days of data; comparing it with a full month is misleading.
+  const nowMonth = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(0, 7);
+  const m = d.monthly.filter((x) => String(x.month).slice(0, 7) !== nowMonth);
   if (m.length >= 2) {
     const a = m[m.length - 2], b = m[m.length - 1], ch = round1(b.selRate - a.selRate);
     if (Math.abs(ch) >= 2) out.push({ tone: ch > 0 ? "good" : "warn", title: `Selection rate ${ch > 0 ? "up" : "down"} ${Math.abs(ch)} pts month on month`, body: `${a.selRate}% in ${monthLabel(a.month)}, ${b.selRate}% in ${monthLabel(b.month)}.` });

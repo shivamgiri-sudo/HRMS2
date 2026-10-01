@@ -101,8 +101,10 @@ export function recruiterFindings(r: RecruiterStats, peer: RecruiterStats, minHa
 }
 
 /** Share of a month series: latest month against the one before, for source momentum. */
-export function momentum(trend: Record<string, number | string>[], names: string[]) {
-  const last2 = trend.slice(-2);
+export function momentum(trend: Record<string, number | string>[], names: string[], nowMonth = currentMonthIst()) {
+  // The month still in progress is a few days of data; comparing it with a full month always reads as a collapse.
+  const done = trend.filter((row) => String(row.month ?? "").slice(0, 7) !== nowMonth);
+  const last2 = done.slice(-2);
   if (last2.length < 2) return [];
   return names.map((name) => {
     const prev = Number(last2[0][name] ?? 0), last = Number(last2[1][name] ?? 0);
@@ -117,3 +119,14 @@ export function poolRows(raw: unknown): PoolRow[] {
   const s = (v: unknown) => (v == null ? "" : String(v));
   return raw.map((r: Record<string, unknown>) => ({ id: s(r.CandidateID), name: s(r.FullName), branch: s(r.Branch), quality: s(r._candidateQualityLabel), reason: s(r._reusableReason) }));
 }
+
+/** YYYY-MM of today in India time (the app's calendar). */
+export function currentMonthIst(now = new Date()): string {
+  return now.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }).slice(0, 7);
+}
+
+/** Roles that arrive as raw database ids carry no readable name, so they are left out of name lists. */
+export const isRawId = (label: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(label ?? "").trim());
+
+/** Candidates nobody owns are a data gap, not a recruiter: they are reported beside the leaderboard, never ranked in it. */
+export const isUnowned = (name: string) => ["Unspecified", "Unmapped", "Unassigned"].includes(name);

@@ -51,7 +51,7 @@ export function TodayStrip() {
   const k = data.kpis, q = data.queue;
   return (
     <div className="relative mt-5 flex flex-wrap gap-3" aria-label="Today at a glance">
-      <HeroStat label="Registered today" value={<CountUp value={k.registered.value} />} sub={k.registered.delta != null ? `${k.registered.delta > 0 ? "+" : ""}${k.registered.delta}% vs yesterday` : undefined} />
+      <HeroStat label="Registered today" value={<CountUp value={k.registered.value} />} sub={k.registered.value > 0 && k.registered.delta != null ? `${k.registered.delta > 0 ? "+" : ""}${k.registered.delta}% vs yesterday` : "none yet today"} />
       <HeroStat label="Selected today" value={<CountUp value={k.selected.value} />} tone="good" sub={`${k.selected.rate ?? 0}% of registered`} />
       <HeroStat label="Waiting now" value={<CountUp value={q.active} />} sub={`avg wait ${q.avgWaitMin} min`} />
       <HeroStat label="SLA breaches" value={<CountUp value={q.slaBreach} />} tone={q.slaBreach > 0 ? "bad" : "default"} sub={`${q.slaMinutes}-minute SLA`} />

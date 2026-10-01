@@ -50,3 +50,26 @@ describe("sourcing-helpers", () => {
     expect(poolRows([{ CandidateID: "C1", FullName: "A" }])[0]).toMatchObject({ id: "C1", name: "A", branch: "" });
   });
 });
+
+describe("real-data guards (found on production)", () => {
+  const trend = [{ month: "2026-08", A: 100 }, { month: "2026-09", A: 120 }, { month: "2026-10", A: 3 }];
+
+  it("momentum leaves out the month still in progress", async () => {
+    const { momentum } = await import("../sourcing-helpers");
+    const m = momentum(trend, ["A"], "2026-10");
+    expect(m[0]).toMatchObject({ prev: 100, last: 120, change: 20 });
+  });
+
+  it("momentum still compares the last two months once a month is complete", async () => {
+    const { momentum } = await import("../sourcing-helpers");
+    expect(momentum(trend, ["A"], "2026-11")[0]).toMatchObject({ prev: 120, last: 3 });
+  });
+
+  it("recognises raw database ids and unowned recruiter buckets", async () => {
+    const { isRawId, isUnowned } = await import("../sourcing-helpers");
+    expect(isRawId("04f4f313-67ba-11f1-adb1-00155d0ab410")).toBe(true);
+    expect(isRawId("Inbound Agent")).toBe(false);
+    expect(["Unassigned", "Unspecified", "Unmapped"].every(isUnowned)).toBe(true);
+    expect(isUnowned("KHUSHI MISHRA")).toBe(false);
+  });
+});

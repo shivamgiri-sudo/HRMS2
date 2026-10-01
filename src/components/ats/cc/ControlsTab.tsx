@@ -154,9 +154,11 @@ function Health() {
   const canRun = hasAnyRole("admin", "hr");
   const [confirmRepair, setConfirmRepair] = useState(false);
   const [running, setRunning] = useState<Job | "report" | null>(null);
+  // The health endpoint runs ~40 database checks and takes a minute or more on production, so it starts on request, not on tab open.
+  const [started, setStarted] = useState(false);
 
   const health = useQuery({
-    queryKey: ["ats-cc-health"], retry: false, staleTime: 30_000, refetchOnWindowFocus: false,
+    queryKey: ["ats-cc-health"], enabled: started, retry: false, staleTime: 5 * 60_000, refetchOnWindowFocus: false,
     queryFn: async () => (await hrmsApi.get<{ data: HealthRes }>("/api/ats-full-parity/health")).data,
   });
   const run = useMutation({
@@ -181,6 +183,19 @@ function Health() {
   const score = healthScore(checks), tone = scoreTone(score);
   const failed = checks.filter((c) => !c.ok);
   const jobBtn = "inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-xl border bg-card px-3 text-sm font-semibold transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 " + focus;
+
+  if (!started) {
+    return (
+      <Card i={0}>
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary" aria-hidden><ShieldCheck className="h-5 w-5" /></span>
+          <h3 className="text-sm font-semibold">Check data and delivery health</h3>
+          <p className="max-w-md text-xs text-muted-foreground">Runs about 40 checks across candidate records, SLA, email delivery and required tables. It takes a minute or two, so it only starts when you ask.</p>
+          <button onClick={() => setStarted(true)} className={`${jobBtn} mt-1`}><ShieldCheck className="h-3.5 w-3.5" />Run health checks</button>
+        </div>
+      </Card>
+    );
+  }
 
   if (health.isError) {
     const err = health.error, forbidden = isForbidden(getHrmsApiErrorStatus(err), (err as Error)?.message);
@@ -219,7 +234,12 @@ function Health() {
         {checks.length > 0 && <span className="ml-auto"><ExportButton onClick={() => downloadCsv("ats-health.csv", ["Category", "Check", "Status", "Count", "Detail"], checks.map((c) => [c.type ?? "", c.name ?? "", c.ok ? "pass" : "fail", c.count ?? "", c.detail ?? ""]))} /></span>}
       </div>
 
-      {health.isLoading ? <div className="space-y-4"><Skeleton className="h-48 rounded-2xl" /><Skeleton className="h-64 rounded-2xl" /></div> : (
+      {health.isLoading ? (
+        <div className="space-y-4" role="status" aria-live="polite">
+          <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />Running the checks. This usually takes a minute or two.</p>
+          <Skeleton className="h-48 rounded-2xl" /><Skeleton className="h-64 rounded-2xl" />
+        </div>
+      ) : (
         <>
           <div className="grid gap-4 lg:grid-cols-12">
             <Card className="lg:col-span-7" i={0} title="Overall health" hint="Passing checks as a share of all checks run" icon={<Activity className="h-4 w-4" />}>

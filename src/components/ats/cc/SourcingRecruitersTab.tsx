@@ -12,7 +12,7 @@ import { BarRows, Empty, RateBar, V, fmt, tooltipStyle } from "@/components/ats/
 import { SourceTreemap } from "@/components/ats/overview/charts";
 import { Card, ExportButton, FilterBar, HeatTable, InsightList, KpiCard, RadarCompare, Section, Waterfall, downloadCsv, type InsightItem } from "./cc-kit";
 import { useCC } from "./cc-context";
-import { RADAR_AXES, bestSource, momentum, peerMedian, pct, poolRows, radarValues, rankRecruiters, recruiterFindings, statsFromKpis, toStats } from "./sourcing-helpers";
+import { RADAR_AXES, bestSource, isRawId, isUnowned, momentum, peerMedian, pct, poolRows, radarValues, rankRecruiters, recruiterFindings, statsFromKpis, toStats } from "./sourcing-helpers";
 
 const tick = { fontSize: 11, fill: "hsl(var(--muted-foreground))" };
 const SERIES = [V.blue, V.aqua, V.orange, V.violet, V.yellow];
@@ -54,7 +54,7 @@ export function SourcingRecruitersTab() {
   const recruiterNames = useMemo(() => Array.from(new Set([...(o?.recruiters ?? []).map((r) => r.name), ...(cc.recruiter ? [cc.recruiter] : [])])).filter((n) => n && n !== "Unspecified" && n !== "Unmapped"), [o, cc.recruiter]);
   const board = useMemo(() => {
     const rows = peer.data?.splits.recruiter?.length ? peer.data.splits.recruiter.map(toStats) : (o?.recruiters ?? []).map((r) => toStats({ ...r, total: r.total }));
-    return rankRecruiters(rows.filter((r) => r.name !== "Unspecified" && r.name !== "Unmapped"));
+    return rankRecruiters(rows.filter((r) => !isUnowned(r.name)));
   }, [peer.data, o]);
   const peers = useMemo(() => peerMedian(board), [board]);
   const me = slice.data && picked ? statsFromKpis(picked, slice.data.kpis) : null;
@@ -171,7 +171,7 @@ export function SourcingRecruitersTab() {
             {tth.data ? <>
               <div className="mb-3 grid grid-cols-3 gap-2 text-center">{([["Average", tth.data.overall_avg_days], ["Fastest", tth.data.fastest_hire_days], ["Slowest", tth.data.slowest_hire_days]] as const).map(([l, v]) => <div key={l} className="rounded-xl bg-muted/50 p-2"><div className="cc-num text-lg font-semibold">{v == null ? "–" : `${v}d`}</div><div className="text-[11px] text-muted-foreground">{l}</div></div>)}</div>
               <div className="grid gap-4 sm:grid-cols-2">
-                <div><div className="mb-1.5 text-xs font-medium text-muted-foreground">By role</div><BarRows rows={tth.data.by_role.slice(0, 5).map((r) => ({ label: r.role, value: r.avg_days }))} color={V.violet} format={(n) => `${n}d`} /></div>
+                <div><div className="mb-1.5 text-xs font-medium text-muted-foreground">By role</div><BarRows rows={tth.data.by_role.filter((r) => !isRawId(r.role)).slice(0, 5).map((r) => ({ label: r.role, value: r.avg_days }))} color={V.violet} format={(n) => `${n}d`} /></div>
                 <div><div className="mb-1.5 text-xs font-medium text-muted-foreground">By source</div><BarRows rows={tth.data.by_source.slice(0, 5).map((r) => ({ label: r.source, value: r.avg_days }))} color={V.aqua} format={(n) => `${n}d`} onSelect={(n) => go(`Source: ${n}`, { source: n, outcome: "joined" })} /></div>
               </div></> : <Empty text={tth.isLoading ? "Loading" : "Not available"} />}
           </Card>

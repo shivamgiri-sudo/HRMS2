@@ -207,10 +207,10 @@ export function Waterfall({ steps, onStep }: { steps: { key: string; label: stri
   return (
     <ol className="space-y-1.5">
       {steps.map((s, i) => {
-        const prev = i ? steps[i - 1].n : s.n, lost = Math.max(0, prev - s.n), keep = prev ? Math.round((s.n / prev) * 100) : 100;
+        const prev = i ? steps[i - 1].n : s.n, lost = Math.max(0, prev - s.n), keep = prev ? Math.round((s.n / prev) * 100) : null;
         const row = (
           <div className="w-full text-left">
-            <div className="mb-1 flex items-baseline justify-between gap-2 text-sm"><span className="font-medium">{s.label}</span><span className="cc-num text-muted-foreground">{fmt(s.n)}{i > 0 && <span className="ml-2 text-[11px]">{keep}% kept{lost > 0 && <span className="text-red-600 dark:text-red-300"> · −{fmt(lost)}</span>}</span>}</span></div>
+            <div className="mb-1 flex items-baseline justify-between gap-2 text-sm"><span className="font-medium">{s.label}</span><span className="cc-num text-muted-foreground">{fmt(s.n)}{i > 0 && keep != null && <span className="ml-2 text-[11px]">{keep}% kept{lost > 0 && <span className="text-red-600 dark:text-red-300"> · −{fmt(lost)}</span>}</span>}</span></div>
             <div className="relative h-3 overflow-hidden rounded-full" style={{ background: "var(--v-track)" }}>
               <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${(prev / top) * 100}%`, background: "color-mix(in srgb, var(--v-orange) 28%, transparent)" }} />
               <div className="absolute inset-y-0 left-0 rounded-full transition-[width] duration-500" style={{ width: `${(s.n / top) * 100}%`, background: "linear-gradient(90deg,var(--v-blue),var(--v-violet))" }} />
