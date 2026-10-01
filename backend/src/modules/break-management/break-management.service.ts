@@ -8,6 +8,7 @@ import { emailService } from "../communication/email.service.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { assessAggregatePunches } from "../wfm/cosec-punch-interpretation.service.js";
 import { getRealTimePunchesToday } from "../wfm/attendance-realtime-ncosec.service.js";
+import { buildAppLink } from "../../shared/appLink.js";
 
 /**
  * Business-rule rejection carrying an HTTP status.
@@ -900,6 +901,8 @@ async function sendBreakAlertIfNeeded(sessionId: string) {
               <p><strong>Biometric punch-in:</strong> ${session.biometric_punch_in_time ?? "—"}</p>
               <p><strong>Biometric punch-out:</strong> ${session.biometric_punch_out_time ?? "—"}</p>
               <p><strong>Kiosk/source:</strong> Break Management Desk</p>
+              <p style="margin:16px 0 4px"><a href="${buildAppLink("/break-session-log")}" style="display:inline-block;background:#145da0;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600">Open break session log</a></p>
+              <p style="font-size:12px;color:#64748b;margin:4px 0">Or copy this link: ${buildAppLink("/break-session-log")}</p>
               <p style="margin-top:16px;color:#475569">This is an automated alert from HRMS2 Break Management.</p>
             </div>
           `,

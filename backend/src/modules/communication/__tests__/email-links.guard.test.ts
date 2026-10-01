@@ -55,6 +55,12 @@ describe('outbound email links', () => {
     'services/ats-notification.helper.ts',
     'modules/bulk-upload/bulk-approval-notify.service.ts',
     'modules/payroll/pendency/pendency.service.ts',
+    'modules/break-management/break-management.service.ts',
+    'modules/privacy/dpdp-breach-sla.cron.ts',
+    'cron/dbbill-migration-report.cron.ts',
+    'modules/ats/offer-letter.service.ts',
+    'modules/wfm/roster-intelligence.cron.ts',
+    'workers/report-email-delivery.worker.ts',
   ])('%s builds its email links with buildAppLink', (file) => {
     expect(readFileSync(join(SRC, file), 'utf8')).toContain('buildAppLink');
   });
