@@ -4,17 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Two additions built for the Salary Review Queue "sectioned summary cards" feature:
  *
  * 1. getQueue() — for status='pending_review' only, batch-enriches each row with a `summary`
- *    object (offered/final/bgv/bank), reusing the real getEmployeeBgvStatus/buildBankReadinessReport
+ *    object (offered/final/bgv/bank), reusing the real getEmployeeBgvStatus/buildBankReadinessForEmployees
  *    resolvers rather than a second, drift-prone implementation. Approved/Rejected skip this
  *    entirely (always-small tab only, per the design note in the source).
  * 2. approve() — previously notified only the Branch Head/Payroll HR with just "Monthly CTC: ₹X".
  *    Now also notifies the employee themselves, and both audiences get the full salary breakup.
  */
 
-const { execute, getEmployeeBgvStatus, buildBankReadinessReport, createItem, hasAnyRole, buildScopeWhereClause } = vi.hoisted(() => ({
+const { execute, getEmployeeBgvStatus, buildBankReadinessForEmployees, createItem, hasAnyRole, buildScopeWhereClause } = vi.hoisted(() => ({
   execute: vi.fn(),
   getEmployeeBgvStatus: vi.fn(),
-  buildBankReadinessReport: vi.fn(),
+  buildBankReadinessForEmployees: vi.fn(),
   createItem: vi.fn().mockResolvedValue(undefined),
   // Default: caller is payroll_head/admin/super_admin — full access, no scoping applied. Tests
   // for the payroll_hr/branch_head scoped path override this per-test.
@@ -24,7 +24,7 @@ const { execute, getEmployeeBgvStatus, buildBankReadinessReport, createItem, has
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../employees/employee-bgv.service.js", () => ({ getEmployeeBgvStatus }));
-vi.mock("../../payroll/bank-payment-readiness.service.js", () => ({ buildBankReadinessReport }));
+vi.mock("../../payroll/bank-payment-readiness.service.js", () => ({ buildBankReadinessForEmployees }));
 vi.mock("../../payroll-masters/payrollMasters.service.js", () => ({ createPackage: vi.fn(), getPackageById: vi.fn() }));
 vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem } }));
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole, buildScopeWhereClause }));
@@ -40,7 +40,7 @@ import { getQueue, approve } from "../payroll-head-review.service.js";
 
 describe("getQueue() summary enrichment", () => {
   beforeEach(() => {
-    execute.mockReset(); getEmployeeBgvStatus.mockReset(); buildBankReadinessReport.mockReset();
+    execute.mockReset(); getEmployeeBgvStatus.mockReset(); buildBankReadinessForEmployees.mockReset();
     hasAnyRole.mockReset().mockResolvedValue(true);
     buildScopeWhereClause.mockReset().mockResolvedValue({ sql: "1=1", params: [] });
   });
@@ -53,7 +53,7 @@ describe("getQueue() summary enrichment", () => {
       },
     ]]);
     getEmployeeBgvStatus.mockResolvedValueOnce({ overall_status: "clear" });
-    buildBankReadinessReport.mockResolvedValueOnce({ rows: [{ employee_id: "e1", payable: true }] });
+    buildBankReadinessForEmployees.mockResolvedValueOnce({ rows: [{ employee_id: "e1", payable: true }] });
 
     const rows = await getQueue({ status: "pending_review" }, "caller-1") as any[];
 
@@ -69,7 +69,9 @@ describe("getQueue() summary enrichment", () => {
       bank: { employee_id: "e1", payable: true, penny_drop: null },
     });
     // Bank report computed once for the whole batch, not once per row.
-    expect(buildBankReadinessReport).toHaveBeenCalledTimes(1);
+    expect(buildBankReadinessForEmployees).toHaveBeenCalledTimes(1);
+    // Only the rows on screen, never the org-wide report.
+    expect(buildBankReadinessForEmployees.mock.calls[0][0]).toEqual(expect.arrayContaining(["e1"]));
   });
 
   it("carries a penny-drop confirmation through without touching the classification", async () => {
@@ -90,7 +92,7 @@ describe("getQueue() summary enrichment", () => {
       ]]);
     getEmployeeBgvStatus.mockResolvedValueOnce({ overall_status: "clear" });
     // The classifier still says not payable — a new hire has no payment history.
-    buildBankReadinessReport.mockResolvedValueOnce({
+    buildBankReadinessForEmployees.mockResolvedValueOnce({
       rows: [{ employee_id: "e1", payable: false, readiness_class: "BLOCKED" }],
     });
 
@@ -118,7 +120,7 @@ describe("getQueue() summary enrichment", () => {
       ]])
       .mockResolvedValueOnce([[]]); // fetchPennyDropByEmployee
     getEmployeeBgvStatus.mockResolvedValueOnce({ overall_status: "clear" });
-    buildBankReadinessReport.mockResolvedValueOnce({ rows: [{ employee_id: "e2", payable: true }] });
+    buildBankReadinessForEmployees.mockResolvedValueOnce({ rows: [{ employee_id: "e2", payable: true }] });
 
     const rows = await getQueue({ status: "approved" }, "caller-1") as any[];
 
@@ -135,7 +137,7 @@ describe("getQueue() summary enrichment", () => {
       .mockResolvedValueOnce([many])
       .mockResolvedValueOnce([[]]);
     getEmployeeBgvStatus.mockResolvedValue({ overall_status: "clear" });
-    buildBankReadinessReport.mockResolvedValueOnce({ rows: [] });
+    buildBankReadinessForEmployees.mockResolvedValueOnce({ rows: [] });
 
     const rows = await getQueue({ status: "approved" }, "caller-1") as any[];
 
@@ -168,23 +170,34 @@ describe("approve() notification", () => {
   beforeEach(() => { execute.mockReset(); createItem.mockClear(); });
 
   it("notifies the employee in addition to Branch Head/Payroll HR, with the full breakup", async () => {
-    execute
-      .mockResolvedValueOnce([[{ id: "review-1", status: "pending_review", package_accepted: 1 }]]) // getReviewRow
-      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE status='approved'
-      .mockResolvedValueOnce(undefined) // audit insert
-      .mockResolvedValueOnce(undefined) // writeHistory insert
-      .mockResolvedValueOnce([[]]) // resolveRejectionNotifyTargets
-      .mockResolvedValueOnce([[{ // empRows: employee + breakup
-        full_name: "Jane Doe", employee_code: "E123", user_id: "user-emp-1",
-        ctc_annual: 600000, basic: 20000, hra: 8000, conveyance: 1600, special_allowance: 2000,
-        gross: 31600, net_in_hand: 28000, ctc: 45000,
-      }]])
-      .mockResolvedValueOnce([[{ id: "review-1", status: "approved" }]]); // final getReviewRow
+    // Notifications now run after approve() returns, so the queries are answered by what they
+    // ask for rather than by position, and the test waits for the background work to settle.
+    let reviewReads = 0;
+    execute.mockImplementation(async (sql: string) => {
+      if (/FROM employee_payroll_head_review WHERE employee_id/.test(sql)) {
+        reviewReads++;
+        return [[reviewReads === 1
+          ? { id: "review-1", status: "pending_review", package_accepted: 1 }
+          : { id: "review-1", status: "approved" }]];
+      }
+      if (/UPDATE employee_payroll_head_review SET status = 'approved'/.test(sql)) return [{ affectedRows: 1 }];
+      if (/sca\.net_estimate AS net_in_hand/.test(sql)) {
+        return [[{
+          full_name: "Jane Doe", employee_code: "E123", user_id: "user-emp-1",
+          ctc_annual: 600000, basic: 20000, hra: 8000, conveyance: 1600, special_allowance: 2000,
+          gross: 31600, net_in_hand: 28000, ctc: 45000,
+        }]];
+      }
+      return [[]];
+    });
 
-    await approve("e1", "actor-1");
+    const result = await approve("e1", "actor-1");
+    expect(result.review).toEqual({ id: "review-1", status: "approved" });
+    await vi.waitFor(() => {
+      expect(createItem.mock.calls.some(([arg]) => arg.user_id === "user-emp-1")).toBe(true);
+    });
 
     const employeeNotify = createItem.mock.calls.find(([arg]) => arg.user_id === "user-emp-1");
-    expect(employeeNotify).toBeTruthy();
     expect(employeeNotify![0].type).toBe("payroll_head_review_approved_employee");
     expect(employeeNotify![0].description).toContain("Basic: ₹20,000");
     expect(employeeNotify![0].description).toContain("CTC (monthly): ₹45,000");

@@ -57,14 +57,22 @@ import { approve } from "../payroll-head-review.service.js";
 
 /** The seven queries approve() issues, in order, for a clean pending_review -> approved run. */
 function primeApprovableReview() {
-  execute
-    .mockResolvedValueOnce([[{ id: "review-1", status: "pending_review", package_accepted: 1 }]]) // getReviewRow
-    .mockResolvedValueOnce([{ affectedRows: 1 }])                                                 // UPDATE -> approved
-    .mockResolvedValueOnce(undefined)                                                             // audit
-    .mockResolvedValueOnce(undefined)                                                             // writeHistory
-    .mockResolvedValueOnce([[]])                                                                  // notify targets
-    .mockResolvedValueOnce([[{ full_name: "Jane Doe", employee_code: "E123", user_id: "user-emp-1", ctc_annual: 600000 }]])
-    .mockResolvedValueOnce([[{ id: "review-1", status: "approved" }]]);                           // final getReviewRow
+  // Routed by query, not by position: approval notifications run after approve() returns, so
+  // their queries interleave with the final review read.
+  let reviewReads = 0;
+  execute.mockImplementation(async (sql: string) => {
+    if (/FROM employee_payroll_head_review WHERE employee_id/.test(sql)) {
+      reviewReads++;
+      return [[reviewReads === 1
+        ? { id: "review-1", status: "pending_review", package_accepted: 1 }
+        : { id: "review-1", status: "approved" }]];
+    }
+    if (/UPDATE employee_payroll_head_review SET status = 'approved'/.test(sql)) return [{ affectedRows: 1 }];
+    if (/sca\.net_estimate AS net_in_hand/.test(sql)) {
+      return [[{ full_name: "Jane Doe", employee_code: "E123", user_id: "user-emp-1", ctc_annual: 600000 }]];
+    }
+    return [[]];
+  });
 }
 
 /**
