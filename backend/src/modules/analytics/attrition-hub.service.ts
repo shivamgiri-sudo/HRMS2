@@ -16,6 +16,7 @@ import {
   type FactorGroup, type Reason, type Tier,
 } from "./attrition-model.js";
 import { addDays, loadSnapshot, setQualityListener, today, type SnapshotPerson } from "./attrition-hub.data.js";
+import { normaliseLeavingReason } from "./leaving-reason.js";
 
 export const TIERS: Tier[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const MIN_TIER_SAMPLE = 30;
@@ -173,6 +174,24 @@ async function saveModelSnapshot(m: Model) {
       [m.auc == null ? null : Math.round(m.auc * 10000) / 10000, m.baseRatePct, m.population, m.leavers, JSON.stringify(m.calibration)] as never[]);
   } catch (err) { console.error("[attrition-hub] model snapshot not saved:", err instanceof Error ? err.message : err); }
 }
+/** The last calibration we saved, so a restart never leaves the page without one while today's test re-runs. */
+export async function loadSnapshotModel(): Promise<Model | null> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(snapshot_date, '%Y-%m-%d') AS d, auc, base_rate_pct, population, leavers, calibration_json
+         FROM attrition_model_snapshot ORDER BY snapshot_date DESC LIMIT 1`);
+    const r = rows[0];
+    if (!r) return null;
+    const calibration = JSON.parse(String(r.calibration_json ?? "[]")) as Model["calibration"];
+    if (!calibration.length) return null;
+    return {
+      computedAt: String(r.d), cohortDates: [], population: Number(r.population), leavers: Number(r.leavers), baseRatePct: Number(r.base_rate_pct),
+      auc: r.auc == null ? null : Number(r.auc), gain: [], calibration, drivers: [], history: [],
+      limits: [`Showing the calibration saved on ${r.d} while today's test refreshes in the background.`],
+    };
+  } catch { return null; }
+}
+
 export async function loadModelHistory(): Promise<Model["history"]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -237,6 +256,7 @@ export async function scopedPopulation(viewer: Viewer) {
 
 /* ── exits dataset (scoped), shared by overview / insights / alerts ── */
 export interface ExitRow {
+  reasonSource?: "exit_record" | "legacy" | null;
   id: string; code?: string; name?: string; joinDate: string; exitDate: string; tenureDays: number; source: string | null;
   branchId: string | null; branch: string | null; processId: string | null; process: string | null;
   managerId: string | null; manager: string | null; designationId: string | null; designation: string | null;
@@ -251,6 +271,8 @@ export interface EmpEvent {
   branchId: string | null; branch: string | null; processId: string | null; process: string | null;
   managerId: string | null; manager: string | null; designationId: string | null; designation: string | null;
   reason: string | null; exitType: string | null;
+  /** where the reason came from: the exit record, the legacy HRMS leaving reason (db_bill), or nowhere */
+  reasonSource?: "exit_record" | "legacy" | null;
 }
 export interface NoticeExit { employeeId: string; branchId: string | null; branch: string | null; processId: string | null; process: string | null; lwd: string }
 export interface PlannedJoiner { branchId: string | null; branch: string | null; processId: string | null; process: string | null }
@@ -275,6 +297,29 @@ export async function loadExits(viewer: Viewer, sinceDays = 400): Promise<ExitsD
   p.catch(() => exitsCache.delete(key));
   if (exitsCache.size > 200) for (const k of exitsCache.keys()) { if (Date.now() - exitsCache.get(k)!.at >= EXITS_TTL) exitsCache.delete(k); }
   return p;
+}
+
+/**
+ * The legacy HRMS leaving reason (employee_legacy_meta.left_reason, backfilled from db_bill's LeftReason).
+ * Used only for people who left and have no reason on an exit record: 2,499 of the 2,500 last-12-month
+ * exits with none had one here. Read in id chunks instead of joined so a collation difference between the
+ * two tables can never break the page.
+ */
+async function loadLegacyLeavingReasons(ids: string[]): Promise<Map<string, { category: string; exitType: "voluntary" | "involuntary" | null }>> {
+  const out = new Map<string, { category: string; exitType: "voluntary" | "involuntary" | null }>();
+  try {
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_id, left_reason FROM employee_legacy_meta
+          WHERE left_reason IS NOT NULL AND TRIM(left_reason) <> '' AND employee_id IN (${chunk.map(() => "?").join(",")})`, chunk as never[]);
+      for (const r of rows) {
+        const n = normaliseLeavingReason(String(r.left_reason));
+        if (n && !out.has(String(r.employee_id))) out.set(String(r.employee_id), n);
+      }
+    }
+  } catch (err) { console.error("[attrition-hub] legacy leaving reasons unavailable:", err instanceof Error ? err.message : err); }
+  return out;
 }
 
 async function queryExits(sql: string, params: unknown[], sinceDays: number): Promise<ExitsData> {
@@ -310,6 +355,7 @@ async function queryExits(sql: string, params: unknown[], sinceDays: number): Pr
     [...params, since] as never[],
   );
   console.log(`[attrition-hub] exits loaded: ${rows.length} rows in ${Date.now() - t0} ms`);
+  const legacy = await loadLegacyLeavingReasons(rows.filter((r) => r.exit_date && !r.reason).map((r) => String(r.id)));
   const exits: ExitRow[] = [];
   const headcountEvents: EmpEvent[] = [];
   for (const r of rows) {
@@ -321,8 +367,12 @@ async function queryExits(sql: string, params: unknown[], sinceDays: number): Pr
       join, exit, source: r.source ?? null,
       branchId: r.branch_id ?? null, branch: r.branch_name ?? null, processId: r.process_id ?? null, process: r.process_name ?? null,
       managerId: r.reporting_manager_id ?? null, manager: r.manager_name ?? null, designationId: r.designation_id ?? null, designation: r.designation_name ?? null,
-      reason: r.reason ?? null, exitType: r.exit_type ?? null,
+      reason: r.reason ?? null, exitType: r.exit_type ?? null, reasonSource: r.reason ? "exit_record" : null,
     };
+    if (exit && !ev.reason) {
+      const l = legacy.get(ev.id);
+      if (l) { ev.reason = l.category; ev.reasonSource = "legacy"; if (!ev.exitType && l.exitType) ev.exitType = l.exitType; }
+    }
     headcountEvents.push(ev);
     if (!exit) continue;
     const tenureDays = Math.round((new Date(`${exit}T00:00:00`).getTime() - new Date(`${join}T00:00:00`).getTime()) / 86_400_000);
@@ -330,7 +380,7 @@ async function queryExits(sql: string, params: unknown[], sinceDays: number): Pr
       id: ev.id, code: ev.code, name: ev.name, joinDate: join, exitDate: exit, tenureDays, source: ev.source,
       branchId: ev.branchId, branch: ev.branch, processId: ev.processId, process: ev.process,
       managerId: ev.managerId, manager: ev.manager, designationId: ev.designationId, designation: ev.designation,
-      reason: ev.reason, exitType: ev.exitType,
+      reason: ev.reason, exitType: ev.exitType, reasonSource: ev.reasonSource,
     });
   }
 

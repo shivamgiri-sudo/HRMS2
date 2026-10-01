@@ -132,6 +132,7 @@ export function buildInsights(a: { asOf: string; people: ScoredPerson[]; exits: 
     tenureAtExit,
     reasons: [...reasonCount.entries()].map(([reason, n]) => ({ reason, exits: n })).sort((x, y) => y.exits - x.exits).slice(0, 12),
     reasonCoveragePct: e12.length ? r1((recorded / e12.length) * 100) : null,
+    reasonSources: { exitRecord: e12.filter((e) => e.reason && (e as { reasonSource?: string }).reasonSource !== "legacy").length, legacy: e12.filter((e) => (e as { reasonSource?: string }).reasonSource === "legacy").length, none: e12.length - recorded },
     exitType: {
       voluntary: e12.filter((e) => t(e.exitType) === "voluntary").length,
       involuntary: e12.filter((e) => t(e.exitType) === "involuntary").length,
@@ -298,6 +299,15 @@ export function buildAlerts(a: { asOf: string; people: ScoredPerson[]; exits: Ex
     if (t.high >= 3 && t.high / t.n >= 0.25 && !out.some((o) => o.id === `hotspot-manager-${id}`))
       out.push({ id: `team-risk-${id}`, severity: "warning", category: "manager", title: `${t.label}'s team has ${t.high} people at high risk`,
         detail: `${Math.round((t.high / t.n) * 100)}% of a team of ${t.n}. Worth a conversation with the manager about workload and handling.`, employeeCount: t.high, link: { managerId: id } });
+  }
+
+  // Half of all exits being absconding is the single biggest finding in the reason data; say it once, plainly.
+  const e90r = exits.filter((e) => inWindow(e.exitDate, addDays(asOf, -90), asOf));
+  const abs90 = e90r.filter((e) => /abscond/i.test(e.reason ?? "")).length;
+  if (e90r.length >= 20 && abs90 / e90r.length >= 0.25) {
+    out.push({ id: "absconding-share", severity: abs90 / e90r.length >= 0.4 ? "critical" : "warning", category: "absence", title: `${r1((abs90 / e90r.length) * 100)}% of the last 90 days' exits were absconding`,
+      detail: `${abs90} of ${e90r.length} leavers stopped coming without notice. Catching the absent-streak list early is the main lever on attrition.`,
+      metric: { label: "Absconding exits, 90 days", value: String(abs90) }, employeeCount: abs90 });
   }
 
   const inNotice = people.filter((p) => p.inNotice).length;

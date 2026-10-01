@@ -633,7 +633,7 @@ function Overview({ from, to, branchId, designationId, headlineRate }: { from: s
             : []),
           {
             label: "Exit reason",
-            detail: "Not captured in this system — under 1% of leavers have one recorded. Bulk reason-capture for pending exits would close this gap; see the Attrition Deep Dive tab's own reason-capture figure for the exact rate in your current date range. This view shows what kind of joiner leaves and when, never why.",
+            detail: "Taken from the exit record where one exists, otherwise from the legacy HRMS leaving reason (db_bill). See the Attrition Deep Dive tab for the exact rate in your current date range.",
           },
         ]}
       />
@@ -1140,8 +1140,8 @@ function DeepDive({ from, to, branchId, designationId }: { from: string; to: str
           {
             label: "Exit reason",
             detail: reasonCaptured
-              ? `${num(reasonCaptured.withReason)} of ${num(reasonCaptured.totalExits)} exits in this window have a reason recorded (${pct(reasonCaptured.pct ?? 0)}). Exit reason is not captured by any live workflow, so this view answers what kind of joiner leaves and when — not why.`
-              : "Exit reason is not captured by any live workflow.",
+              ? `${num(reasonCaptured.withReason)} of ${num(reasonCaptured.totalExits)} exits in this window have a reason recorded (${pct(reasonCaptured.pct ?? 0)}). Where an exit record has no reason, the legacy HRMS leaving reason (from db_bill) is used.`
+              : "Exit reason comes from the exit record, or the legacy HRMS leaving reason (db_bill) where there is none.",
           },
           ...(dimension === "process"
             ? [{ label: "Process coverage", detail: "process_id is populated on roughly 10% of exits, so most rows in this slice will read UNASSIGNED. Branch and cost centre are near-complete by comparison." }]

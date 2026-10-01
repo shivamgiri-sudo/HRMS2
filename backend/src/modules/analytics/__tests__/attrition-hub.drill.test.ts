@@ -6,7 +6,7 @@ vi.mock("../../../shared/accessGuard.js", () => ({ getEmployeeForUser: vi.fn() }
 vi.mock("../../../shared/reportingSpan.js", () => ({ spanClauseFor: vi.fn() }));
 
 import { scoreFeatures, type Features } from "../attrition-model.js";
-import { buildInsights } from "../attrition-hub.builders.js";
+import { buildAlerts, buildInsights } from "../attrition-hub.builders.js";
 import { buildBatches, buildDrill, buildOutlook, buildPulse, buildScorecard } from "../attrition-hub.drill.js";
 import { validateFollowup } from "../attrition-hub.followups.js";
 import type { EmpEvent, Model, ScoredPerson } from "../attrition-hub.service.js";
@@ -181,6 +181,27 @@ describe("buildInsights additions", () => {
       .map((p, i) => ({ id: `r${i}`, joinDate: ymd(ASOF, -200), exitDate: ymd(ASOF, -10), tenureDays: 190, source: null, processId: null, process: null, managerId: null, manager: null, designationId: null, designation: null, exitType: null, ...p }));
     const ins = buildInsights({ asOf: ASOF, people: [], exits, events: [] });
     expect(ins.reasonByBranch.map((r) => [r.label, r.pct])).toEqual([["Delhi", 0], ["Noida", 83.3]]);
+  });
+});
+
+describe("legacy reasons in the insights and alerts", () => {
+  const mk = (reason: string | null, source: "exit_record" | "legacy" | null) => ev({ daysAgo: 300, stayed: 250, reason, ...(source ? { reasonSource: source } : {}) } as Partial<EmpEvent>);
+  it("counts where each reason came from and raises one absconding alert when it dominates", () => {
+    const events = [...[...Array(30)].map(() => mk("absconding", "legacy")), ...[...Array(10)].map(() => mk("better_opportunity", "exit_record")), ...[...Array(5)].map(() => mk(null, null))];
+    const exits = events.map((e) => ({ id: e.id, joinDate: e.join, exitDate: ymd(ASOF, -30), tenureDays: 250, source: e.source, branchId: e.branchId, branch: e.branch, processId: e.processId, process: e.process, managerId: e.managerId, manager: e.manager, designationId: e.designationId, designation: e.designation, reason: e.reason, exitType: e.exitType, reasonSource: (e as { reasonSource?: "exit_record" | "legacy" | null }).reasonSource ?? null }));
+    const ins = buildInsights({ asOf: ASOF, people: [], exits, events });
+    expect(ins.reasonSources).toEqual({ exitRecord: 10, legacy: 30, none: 5 });
+    expect(ins.reasonCoveragePct).toBe(88.9);
+    expect(ins.reasons[0]).toMatchObject({ reason: "absconding", exits: 30 });
+    const al = buildAlerts({ asOf: ASOF, people: [], exits, events, model, degraded: [] });
+    const a = al.alerts.find((x) => x.id === "absconding-share")!;
+    expect(a.severity).toBe("critical");
+    expect(a.title).toMatch(/66\.7%/);
+  });
+  it("no absconding alert when exits are few or the share is small", () => {
+    const events = [...[...Array(30)].map(() => mk("better_opportunity", "exit_record")), ...[...Array(4)].map(() => mk("absconding", "legacy"))];
+    const exits = events.map((e) => ({ id: e.id, joinDate: e.join, exitDate: ymd(ASOF, -30), tenureDays: 250, source: e.source, branchId: e.branchId, branch: e.branch, processId: e.processId, process: e.process, managerId: e.managerId, manager: e.manager, designationId: e.designationId, designation: e.designation, reason: e.reason, exitType: e.exitType }));
+    expect(buildAlerts({ asOf: ASOF, people: [], exits, events, model, degraded: [] }).alerts.some((x) => x.id === "absconding-share")).toBe(false);
   });
 });
 

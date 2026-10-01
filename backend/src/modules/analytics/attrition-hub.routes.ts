@@ -11,7 +11,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { hasRole } from "../../shared/accessGuard.js";
 import { hasDirectReports } from "../../shared/reportingSpan.js";
 import { FACTOR_GROUP_ORDER, type FactorGroup } from "./attrition-model.js";
-import { getModel, getPopulation, loadExits, loadModelHistory, scopedPopulation } from "./attrition-hub.service.js";
+import { getModel, getPopulation, loadExits, loadModelHistory, loadSnapshotModel, scopedPopulation } from "./attrition-hub.service.js";
 import { loadFirstPresence } from "./attrition-hub.data.js";
 import { addFollowup, followupEffect, latestFollowups, listFollowups, validateFollowup } from "./attrition-hub.followups.js";
 import { buildBatches, buildDrill, buildOutlook, buildPulse, buildScorecard, type DrillFilters } from "./attrition-hub.drill.js";
@@ -35,11 +35,16 @@ attritionHubRouter.use(async (req: Request, res: Response, next: NextFunction) =
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) => fn(req as AuthenticatedRequest, res).catch(next);
 
-/** The calibration model, if it is ready within a few seconds; never blocks the page on a cold start. */
-async function modelIfReady(ms = 8_000): Promise<Model | null> {
+/**
+ * The calibration model. A restart leaves the live test (about 25 s of queries) cold, so rather than make the
+ * page wait or report a failure, fall back to the last saved calibration while the live one finishes.
+ */
+async function modelIfReady(ms = 10_000): Promise<Model | null> {
   try {
-    return await Promise.race([getModel(), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
-  } catch { return null; }
+    const live = await Promise.race([getModel(), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+    if (live) return live;
+  } catch { /* fall through to the saved one */ }
+  return loadSnapshotModel();
 }
 
 const viewer = (req: AuthenticatedRequest) => ({ id: req.authUser!.id });

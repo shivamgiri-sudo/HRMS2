@@ -53,7 +53,8 @@ export interface HubInsights {
   hotspots: Record<HotspotDimension, Hotspot[]>;           // each sorted worst first, max 12
   tenureAtExit: { bucket: string; exits: number }[];       // 0-30, 31-60, 61-90, 91-180, 181-365, 1-2y, 2y+  (last 12 months)
   reasons: { reason: string; exits: number }[];            // includes "Not recorded"
-  reasonCoveragePct: number | null;                        // share of exits with a recorded reason
+  reasonCoveragePct: number | null;                        // share of exits with a recorded reason (exit record or legacy HRMS leaving reason)
+  reasonSources: { exitRecord: number; legacy: number; none: number };   // where those reasons came from, last 12 months
   exitType: { voluntary: number; involuntary: number; unknown: number };
   monthlyBySource: { source: string; exits: number; joiners: number; earlyExitRatePct: number | null }[]; // source of hire, last 12 months
   reasonByBranch: { id: string | null; label: string; exits: number; recorded: number; pct: number | null }[]; // exits in last 12 months with a recorded reason, worst capture first
@@ -158,6 +159,7 @@ export interface DrillRow {
   lastFollowup?: { kind: FollowupKind; outcome: FollowupOutcome; at: string } | null;
   // people who left
   exitDate?: string | null; tenureDays?: number | null; reason?: string | null; exitType?: string | null;
+  reasonSource?: "exit_record" | "legacy" | null;      // where the reason came from
 }
 /** GET /drill */
 export interface HubDrill {

@@ -193,6 +193,13 @@ export default function InsightsTab() {
                 Only <strong className="tabular-nums">{d.reasonCoveragePct === null ? "an unknown share" : pct(d.reasonCoveragePct)}</strong> of exits have a recorded reason, so this chart shows what was written down, not why everyone left. Treat it as indicative only.
               </p>
             )}
+            {d.reasonSources && d.reasonSources.legacy > 0 && (
+              <p className="text-[11px] leading-snug text-slate-500">
+                <span className="tabular-nums font-semibold text-slate-700">{num(d.reasonSources.exitRecord)}</span> from exit records,{" "}
+                <span className="tabular-nums font-semibold text-slate-700">{num(d.reasonSources.legacy)}</span> from the legacy HRMS leaving reason (db_bill),{" "}
+                <span className="tabular-nums font-semibold text-slate-700">{num(d.reasonSources.none)}</span> with none.
+              </p>
+            )}
             {reasons.length === 0 ? <EmptyState label="No reasons recorded" height={120} /> : (
               <div className="[&_.recharts-bar-rectangle]:cursor-pointer" role="img" aria-label={`Exit reasons: ${reasons.map(r => `${r.reason} ${r.exits}`).join(", ")}`}>
                 <ResponsiveContainer width="100%" height={Math.max(160, reasons.length * 28)}>

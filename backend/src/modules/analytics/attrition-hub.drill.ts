@@ -77,7 +77,7 @@ export function buildDrill(a: { asOf: string; filters: DrillFilters; people: Sco
     return {
       employeeId: e.id, code: e.code, name: e.name, designation: e.designation, process: e.process, branch: e.branch, manager: e.manager,
       branchId: e.branchId, processId: e.processId, managerId: e.managerId, joinDate: e.join,
-      aonDays: tenureDays ?? Math.max(0, diff(e.join, asOf)), status, exitDate: e.exit, tenureDays, reason: e.reason, exitType: e.exitType,
+      aonDays: tenureDays ?? Math.max(0, diff(e.join, asOf)), status, exitDate: e.exit, tenureDays, reason: e.reason, exitType: e.exitType, reasonSource: e.reasonSource ?? null,
     };
   };
 
