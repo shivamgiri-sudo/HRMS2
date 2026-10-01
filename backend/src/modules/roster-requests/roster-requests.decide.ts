@@ -29,7 +29,7 @@ import {
   type WeekoffReviewResult,
 } from "../wfm/weekoff-review.service.js";
 import { resolveDispute as defaultResolveDispute } from "../roster/dispute-resolution.service.js";
-import { computeImpact as defaultComputeImpact } from "./roster-requests.impact.js";
+import { computeImpact as defaultComputeImpact, type ImpactCandidate } from "./roster-requests.impact.js";
 import { logDecision as defaultLogDecision } from "./roster-requests.decision-log.js";
 import { notifyRosterRequest as defaultNotify } from "./roster-requests.notify.js";
 import {
@@ -61,7 +61,7 @@ export interface DecideActor {
 
 export interface DecideDeps {
   db: Exec;
-  computeImpact: (kind: RequestKind, id: string) => Promise<ImpactResult>;
+  computeImpact: (kind: RequestKind, id: string, candidate?: ImpactCandidate) => Promise<ImpactResult>;
   logDecision: typeof defaultLogDecision;
   notifyRosterRequest: typeof defaultNotify;
   hasRole: (userId: string, ...roles: string[]) => Promise<boolean>;
@@ -74,7 +74,7 @@ export interface DecideDeps {
 
 const defaultDeps: DecideDeps = {
   db: defaultDb as any,
-  computeImpact: (kind, id) => defaultComputeImpact(kind, id),
+  computeImpact: (kind, id, candidate) => defaultComputeImpact(kind, id, undefined, candidate),
   logDecision: defaultLogDecision,
   notifyRosterRequest: defaultNotify,
   hasRole: defaultHasRole,
@@ -158,11 +158,15 @@ export async function decideRosterRequest(
   const subject = await assertStillPending(kind, id, action, d);
 
   // 2) impact + blocker gate (reject / escalate are never blocked)
-  const impact = await d.computeImpact(kind, id);
+  // A dispute approve that moves the employee to a new shift is judged on that NEW shift.
+  const newShiftTemplateId = kind === "dispute" && action === "approve" ? input.newShiftTemplateId || undefined : undefined;
+  const impact = newShiftTemplateId
+    ? await d.computeImpact(kind, id, { shiftTemplateId: newShiftTemplateId })
+    : await d.computeImpact(kind, id);
   if (action === "approve" || action === "realign") {
-    // A swap with a rest-override reason goes to the swap service, which applies its own override
-    // policy (permission + REST_POLICY_MISSING); every other blocker, and every other kind, stops here.
-    const blocking = kind === "swap" && restOverrideReason
+    // A swap or dispute with a rest-override reason goes to its service, which applies the same
+    // override policy (canOverride + REST_POLICY_MISSING); every other blocker stops here.
+    const blocking = (kind === "swap" || kind === "dispute") && restOverrideReason
       ? impact.blockers.filter((b) => !isRestBlocker(b))
       : impact.blockers;
     if (blocking.length) throw httpError(409, `Cannot ${action}: ${blocking.join("; ")}`, { impact });
@@ -208,7 +212,8 @@ export async function decideRosterRequest(
       assignmentId: id,
       userId: actor.userId,
       resolution: reason,
-      newShiftTemplateId: action === "approve" ? input.newShiftTemplateId || undefined : undefined,
+      newShiftTemplateId,
+      restOverrideReason: restOverrideReason || undefined,
       req: actor.req,
     });
     await logAfterCommit(result);

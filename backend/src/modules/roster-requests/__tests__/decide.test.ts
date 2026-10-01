@@ -254,6 +254,35 @@ describe("decideRosterRequest — dispute", () => {
     expect(d.resolveDispute).toHaveBeenCalledTimes(1);
   });
 
+  it("approve with a new shift computes impact for that candidate shift", async () => {
+    const { d } = deps();
+    await decideRosterRequest("dispute", "d1", { action: "approve", reason: "fixed", newShiftTemplateId: "t-new" }, actor, d);
+    expect(d.computeImpact).toHaveBeenCalledWith("dispute", "d1", { shiftTemplateId: "t-new" });
+  });
+
+  it("reject (or approve without a shift) computes impact for the current shift", async () => {
+    const { d } = deps();
+    await decideRosterRequest("dispute", "d1", { action: "reject", reason: "stays", newShiftTemplateId: "t-new" }, actor, d);
+    await decideRosterRequest("dispute", "d1", { action: "approve", reason: "ack" }, actor, d);
+    for (const call of (d.computeImpact as any).mock.calls) expect(call).toEqual(["dispute", "d1"]);
+  });
+
+  it("a rest-override reason lets a rest blocker through to the dispute service", async () => {
+    const { d } = deps({}, ["Insufficient rest: 600min vs 660min required"]);
+    await decideRosterRequest("dispute", "d1", { action: "approve", reason: "r", newShiftTemplateId: "t-new", restOverrideReason: "cover" }, actor, d);
+    expect(d.resolveDispute).toHaveBeenCalledWith(expect.objectContaining({ restOverrideReason: "cover", newShiftTemplateId: "t-new" }));
+  });
+
+  it("logs the bridge outcome (mirrored, rtaResynced, warnings) in the decision's after snapshot", async () => {
+    const { d } = deps({
+      resolveDispute: vi.fn(async () => ({ assignmentId: "d1", shiftTemplateId: "t-new", mirrored: false, rtaResynced: true, warnings: ["no live roster row to mirror"] })) as any,
+    });
+    await decideRosterRequest("dispute", "d1", { action: "approve", reason: "fixed", newShiftTemplateId: "t-new" }, actor, d);
+    expect(d.logDecision).toHaveBeenCalledWith(expect.objectContaining({
+      after: expect.objectContaining({ mirrored: false, rtaResynced: true, warnings: ["no live roster row to mirror"] }),
+    }), d.db);
+  });
+
   it("409s on an already-resolved dispute", async () => {
     const { d } = deps({
       db: { execute: vi.fn(async () => [[{ employee_id: "e1", roster_date: "2026-10-05", acknowledgement_status: "acknowledged", dispute_resolved_at: "2026-10-01" }], []]) },

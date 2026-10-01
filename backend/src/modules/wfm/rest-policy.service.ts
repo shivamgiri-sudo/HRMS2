@@ -483,7 +483,7 @@ export interface RestOverrideInput {
   actualRestMinutes: number;
   requiredRestMinutes: number;
   policyId: string | null;
-  source: "weekly_generation" | "manual_assignment" | "bulk_upload" | "shift_swap";
+  source: "weekly_generation" | "manual_assignment" | "bulk_upload" | "shift_swap" | "dispute_resolution";
   reason: string;
   requestedBy: string;
   approvedBy: string;

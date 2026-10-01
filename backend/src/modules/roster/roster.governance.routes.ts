@@ -596,13 +596,16 @@ router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Res
 // dispute-resolution.service.ts (shared with the Roster Requests hub); a refusal carries the exact
 // status and JSON body this handler always sent and is replayed unchanged.
 router.post("/assignments/:id/resolve-dispute", h(async (req: AuthenticatedRequest, res: Response) => {
-  const { dispute_resolution, new_shift_template_id } = req.body;
+  const { dispute_resolution, new_shift_template_id, rest_override_reason } = req.body;
   try {
+    // The service's { mirrored, rtaResynced, warnings } are deliberately NOT added to this
+    // response: the legacy contract stays { success: true, message: "Dispute resolved" }.
     await resolveDispute({
       assignmentId: req.params.id,
       userId: req.authUser!.id,
       resolution: dispute_resolution,
       newShiftTemplateId: new_shift_template_id,
+      restOverrideReason: rest_override_reason,
       req,
       canOwn: (processId, branchId) => canOwnRoster(req, processId, branchId),
     });

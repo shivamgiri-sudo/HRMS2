@@ -74,13 +74,42 @@ async function loadAssignment(kind: RequestKind, id: string, d: ImpactDeps) {
   return (rows as RowDataPacket[])[0] ?? null;
 }
 
-export async function computeImpact(kind: RequestKind, id: string, deps: ImpactDeps = defaultDeps): Promise<ImpactResult> {
+/** A proposed outcome to evaluate instead of the current one (e.g. a dispute approve with a new shift). */
+export interface ImpactCandidate {
+  shiftTemplateId?: string | null;
+}
+
+export async function computeImpact(
+  kind: RequestKind,
+  id: string,
+  deps: ImpactDeps = defaultDeps,
+  candidate?: ImpactCandidate,
+): Promise<ImpactResult> {
   const a: any = await loadAssignment(kind, id, deps);
   if (!a) throw notFound("Roster request not found");
 
   const date = day(a.roster_date);
   const blockers: string[] = [];
   const warnings: string[] = [];
+
+  // Candidate shift: rest is evaluated for the shift the decision would PUT in place, not the
+  // current one (a dispute approve that moves the employee to a new shift).
+  if (candidate?.shiftTemplateId && candidate.shiftTemplateId !== a.shift_template_id) {
+    const [tpl] = await deps.db.execute(
+      "SELECT id, shift_name, start_time, end_time FROM wfm_shift_template WHERE id = ? LIMIT 1",
+      [candidate.shiftTemplateId]);
+    const t = (tpl as RowDataPacket[])[0];
+    if (!t) {
+      blockers.push("Shift template not found");
+      a.start_time = null;
+      a.end_time = null;
+    } else {
+      a.shift_template_id = t.id;
+      a.shift_name = t.shift_name ?? null;
+      a.start_time = t.start_time ?? null;
+      a.end_time = t.end_time ?? null;
+    }
+  }
 
   // The lock guard takes a wfm_roster_assignment id, so only weekoff_rejection can use it directly.
   let locked = false;

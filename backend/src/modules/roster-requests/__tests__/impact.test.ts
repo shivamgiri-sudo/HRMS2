@@ -103,4 +103,44 @@ describe("computeImpact (other kinds)", () => {
     expect(r.sameDayHeadcount).toBeNull();
     expect(r.locked).toBe(false);
   });
+  it("dispute with a candidate shift rest-checks the candidate's times, not the current shift's", async () => {
+    const d = deps({
+      db: {
+        execute: vi.fn(async (sql: string) => {
+          if (sql.includes("FROM roster_daily_assignment")) return [[{ ...baseAssign, id: "d1", process_name: null }], []];
+          if (sql.includes("FROM wfm_shift_template")) return [[{ id: "t-new", shift_name: "Late", start_time: "22:00:00", end_time: "07:00:00" }], []];
+          return [[], []];
+        }),
+      },
+      validateMinimumRest: vi.fn(async () => ({ ok: false, reason: "INSUFFICIENT_REST", actualRestMinutes: 120, requiredRestMinutes: 660 })),
+    });
+    const r = await computeImpact("dispute", "d1", d as any, { shiftTemplateId: "t-new" });
+    expect(d.validateMinimumRest).toHaveBeenCalledWith(expect.objectContaining({ employeeId: "e1" }), { startTime: "22:00:00", endTime: "07:00:00" }, null);
+    expect(r.blockers.join(" ")).toMatch(/Insufficient rest/);
+  });
+  it("dispute with an unknown candidate shift is blocked and skips the rest check", async () => {
+    const d = deps({
+      db: {
+        execute: vi.fn(async (sql: string) => {
+          if (sql.includes("FROM roster_daily_assignment")) return [[{ ...baseAssign, id: "d1", process_name: null }], []];
+          return [[], []];
+        }),
+      },
+    });
+    const r = await computeImpact("dispute", "d1", d as any, { shiftTemplateId: "nope" });
+    expect(r.blockers).toContain("Shift template not found");
+    expect(d.validateMinimumRest).not.toHaveBeenCalled();
+  });
+  it("dispute without a candidate still rest-checks the existing shift", async () => {
+    const d = deps({
+      db: {
+        execute: vi.fn(async (sql: string) => {
+          if (sql.includes("FROM roster_daily_assignment")) return [[{ ...baseAssign, id: "d1", process_name: null }], []];
+          return [[], []];
+        }),
+      },
+    });
+    await computeImpact("dispute", "d1", d as any);
+    expect(d.validateMinimumRest).toHaveBeenCalledWith(expect.anything(), { startTime: "09:00:00", endTime: "18:00:00" }, null);
+  });
 });
