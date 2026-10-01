@@ -2,12 +2,17 @@
  * Re-sends the address-BGV email to candidates who were sent the original 72-hour link and have not
  * completed it, now with a 7-day window and the de-duplicated current-address text.
  *
- * It keeps the SAME token (so a link already in their inbox keeps working) and does not add an
- * attempt row, so no attempt out of the allowed 3 is used up. For each candidate it:
- *   - sets expires_at to now + 7 days and status back to 'pending' (also revives an expired link),
- *   - refreshes declared_address from the profile's CURRENT address (never the permanent one),
- *   - emails the link again.
- * Skipped: already submitted/decided, address already passed, no email, no current address.
+ * Selects the latest attempt of every candidate whose link was ISSUED before the 7-day rule went
+ * live (CUTOFF below), is still unsubmitted/undecided, and whose address is not already verified.
+ * It keeps the SAME token (so a link already in their inbox keeps working) and adds no attempt row,
+ * so no attempt out of the allowed 3 is used up. For each candidate it:
+ *   1. emails the link again with a 7-day expiry and the current-address text (never permanent),
+ *   2. ONLY IF that email was actually sent, sets expires_at = now + 7 days, status 'pending', and
+ *      refreshes declared_address. A skipped/failed send (e.g. SMTP not configured on the machine
+ *      running this) leaves the row untouched and is reported as a failure, not as a success.
+ * Run it where SMTP is configured (the production host / the Ops Scripts workflow). Running it twice
+ * emails the same people twice.
+ * Skipped: no email, no current address, address already verified.
  *
  * Dry-run by default; nothing is written or sent without --apply.
  *   npx tsx scripts/resend-address-bgv-links.ts                 # list who would be re-sent
@@ -19,13 +24,22 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { buildPresentAddress, MAX_ATTEMPTS } from "../src/modules/ats/bgv-address-verification.routes.js";
 import { sendAddressBgvLinkEmail } from "../src/modules/ats/ats.email.service.js";
+import { env } from "../src/config/env.js";
 
 const apply = process.argv.includes("--apply");
 const limitArg = process.argv.indexOf("--limit");
 const limit = limitArg > -1 ? Math.max(1, Number(process.argv[limitArg + 1]) || 0) : Infinity;
 const EXPIRY_DAYS = 7;
+// Local DB time at which the 7-day expiry went live (2026-10-01 13:54 UTC = 19:24 IST). Links created
+// after this already carry 7 days and were emailed by the normal flow.
+const CUTOFF = "2026-10-01 19:20:00";
 
 async function main() {
+  // The mailer reports { ok: true } even when it silently skips for missing SMTP credentials, so a
+  // misconfigured machine would look like a clean run. Refuse to apply anywhere that cannot send.
+  if (apply && (!env.SMTP_USER || !env.SMTP_PASS)) {
+    throw new Error("SMTP is not configured on this machine — refusing --apply. Run it on the production host (Ops Scripts workflow).");
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT v.id, v.candidate_id, v.token, v.attempt_number, v.status, v.expires_at,
             c.full_name, c.email,
@@ -36,17 +50,18 @@ async function main() {
        JOIN ats_candidate c ON c.id = v.candidate_id
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = v.candidate_id
        LEFT JOIN candidate_bgv_report r ON r.candidate_id = v.candidate_id
-      WHERE TIMESTAMPDIFF(HOUR, v.created_at, v.expires_at) <= 72
+      WHERE v.created_at < ?
         AND v.submitted_at IS NULL
         AND v.hr_decision IS NULL
         AND v.status IN ('pending', 'expired')
         -- the latest attempt per candidate only
         AND v.attempt_number = (SELECT MAX(v2.attempt_number) FROM candidate_bgv_address_verification v2 WHERE v2.candidate_id = v.candidate_id)
       ORDER BY v.created_at`,
+    [CUTOFF],
   );
 
   const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
-  let done = 0, skipped = 0;
+  let done = 0, skipped = 0, failed = 0;
   for (const row of rows) {
     if (done >= limit) break;
     const who = `${row.full_name} <${row.email}>`;
@@ -60,11 +75,7 @@ async function main() {
     done++;
     if (!apply) continue;
 
-    await db.execute(
-      `UPDATE candidate_bgv_address_verification SET expires_at = ?, status = 'pending', declared_address = ? WHERE id = ?`,
-      [expiresAt, address, row.id],
-    );
-    const res = await sendAddressBgvLinkEmail({
+    const sent = await sendAddressBgvLinkEmail({
       candidateId: String(row.candidate_id),
       to: String(row.email),
       candidateName: String(row.full_name ?? "Candidate"),
@@ -74,9 +85,18 @@ async function main() {
       maxAttempts: MAX_ATTEMPTS,
       expiresAt,
     });
-    if (!(res as { ok?: boolean; success?: boolean })?.ok && !(res as { success?: boolean })?.success) console.log(`  -> email result: ${JSON.stringify(res)}`);
+    if (!sent?.ok) {
+      failed++;
+      done--;
+      console.log(`  FAILED ${who}: email not sent (${sent?.error ?? "unknown"}) — row left unchanged`);
+      continue;
+    }
+    await db.execute(
+      `UPDATE candidate_bgv_address_verification SET expires_at = ?, status = 'pending', declared_address = ? WHERE id = ?`,
+      [expiresAt, address, row.id],
+    );
   }
-  console.log(`\n${done} ${apply ? "re-sent" : "would be re-sent (dry run — add --apply)"}; ${skipped} skipped; ${rows.length} candidate(s) matched the 72-hour filter.`);
+  console.log(`\n${done} ${apply ? "re-sent" : "would be re-sent (dry run — add --apply)"}; ${skipped} skipped; ${failed} FAILED to send; ${rows.length} candidate(s) matched.`);
 }
 
 main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });

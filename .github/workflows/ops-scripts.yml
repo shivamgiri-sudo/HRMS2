@@ -49,6 +49,7 @@ on:
           - ats-candidate-future-date-repair
           - privacy-encryption-verify
           - bank-account-encrypt-backfill
+          - resend-address-bgv-links
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -155,6 +156,12 @@ jobs:
               # --dry-run. Getting this backwards would encrypt 2,238 rows unasked.
               FLAG=""; [ "$MODE" = "dry-run" ] && FLAG="--dry-run"
               npx tsx scripts/bank-account-encrypt-backfill.ts $FLAG
+              ;;
+            resend-address-bgv-links)
+              # Dry-runs unless given --apply. APPLY EMAILS CANDIDATES, so it refuses to run on a
+              # host without SMTP credentials (the mailer would otherwise skip silently).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/resend-address-bgv-links.ts $FLAG
               ;;
             privacy-encryption-verify)
               # Read-only in both modes — it decrypts and compares, it never writes. Listed here
