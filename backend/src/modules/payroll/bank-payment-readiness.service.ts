@@ -810,13 +810,90 @@ async function cachedVerificationMonth(): Promise<string | null> {
   return month;
 }
 
+// db_bill is a remote MySQL 5.5 behind a 5-connection pool with no query timeout, shared by
+// every module that reads it. salary_data has no index this lookup can use, so each credit query
+// is a scan. Opening a few employees on the review page — each open also refreshes the queue —
+// stacked those scans behind the 5 connections, and the page sat waiting on them ("stuck after
+// 4 checks"). Credits for an employee code are therefore remembered for 10 minutes (a salary
+// credit does not change between clicks), codes already being fetched are not fetched twice,
+// and a lookup slower than CREDIT_LOOKUP_TIMEOUT_MS degrades to "unverifiable" for that call
+// instead of holding the page.
+type Credit = { account: string; confirmed: boolean };
+const CREDIT_TTL_MS = 10 * 60 * 1000;
+const CREDIT_LOOKUP_TIMEOUT_MS = 4000;
+const creditCache = new Map<string, { credit: Credit | null; month: string; at: number }>();
+const creditInFlight = new Map<string, Promise<void>>();
+
+/** Credits for these codes in this verification month (same rules as loadCreditedAccounts). */
+async function queryCreditsFor(month: string, codes: string[]): Promise<Map<string, Credit>> {
+  const credits = new Map<string, Credit>();
+  const inList = codes.map(() => "?").join(",");
+  const [rows, confirmedRows] = await Promise.all([
+    billQuery<CreditRow>(
+      `SELECT EmpCode, AcNo, SalaryReceiveStatus
+         FROM salary_data
+        WHERE SalDate = ?
+          AND EmpCode IN (${inList})
+          AND AcNo IS NOT NULL AND TRIM(AcNo) <> ''`,
+      [month, ...codes],
+    ),
+    billQuery<RowDataPacket & { EmpCode: string; AcNo: string }>(
+      `SELECT DISTINCT EmpCode, AcNo
+         FROM salary_data
+        WHERE SalaryReceiveStatus = 'YES'
+          AND EmpCode IN (${inList})
+          AND AcNo IS NOT NULL AND TRIM(AcNo) <> ''`,
+      codes,
+    ),
+  ]);
+  const everConfirmed = new Set<string>();
+  for (const r of confirmedRows) {
+    const k = String(r.EmpCode ?? "").trim().toUpperCase();
+    if (!k) continue;
+    everConfirmed.add(`${k}|${normaliseAccount(r.AcNo)}`);
+  }
+  for (const r of rows) {
+    const key = String(r.EmpCode ?? "").trim().toUpperCase();
+    if (!key) continue;
+    const account = normaliseAccount(r.AcNo);
+    credits.set(key, {
+      account,
+      confirmed:
+        String(r.SalaryReceiveStatus ?? "").toUpperCase() === "YES" ||
+        everConfirmed.has(`${key}|${account}`),
+    });
+  }
+  for (const compound of everConfirmed) {
+    const sep = compound.lastIndexOf("|");
+    const k = compound.slice(0, sep);
+    const account = compound.slice(sep + 1);
+    if (!credits.has(k)) credits.set(k, { account, confirmed: true });
+  }
+  return credits;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`db_bill credit lookup exceeded ${ms}ms`)), ms);
+    t.unref?.();
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
+/** Tests only: forget remembered verification month and credits. */
+export function resetBankReadinessCachesForTests(): void {
+  verificationMonthCache = null;
+  creditCache.clear();
+  creditInFlight.clear();
+}
+
 async function loadCreditedAccountsFor(employeeCodes: string[]): Promise<{
   source: VerificationSource;
-  credits: Map<string, { account: string; confirmed: boolean }>;
+  credits: Map<string, Credit>;
 }> {
-  const credits = new Map<string, { account: string; confirmed: boolean }>();
+  const credits = new Map<string, Credit>();
   try {
-    const month = await cachedVerificationMonth();
+    const month = await withTimeout(cachedVerificationMonth(), CREDIT_LOOKUP_TIMEOUT_MS);
     if (!month) {
       return {
         source: {
@@ -829,51 +906,27 @@ async function loadCreditedAccountsFor(employeeCodes: string[]): Promise<{
       };
     }
     const codes = [...new Set(employeeCodes.map((c) => String(c ?? "").trim()).filter(Boolean))];
-    if (!codes.length) {
-      return { source: { available: true, month, confirmed_credits: 0, error: null }, credits };
-    }
-    const inList = codes.map(() => "?").join(",");
-    const [rows, confirmedRows] = await Promise.all([
-      billQuery<CreditRow>(
-        `SELECT EmpCode, AcNo, SalaryReceiveStatus
-           FROM salary_data
-          WHERE SalDate = ?
-            AND EmpCode IN (${inList})
-            AND AcNo IS NOT NULL AND TRIM(AcNo) <> ''`,
-        [month, ...codes],
-      ),
-      billQuery<RowDataPacket & { EmpCode: string; AcNo: string }>(
-        `SELECT DISTINCT EmpCode, AcNo
-           FROM salary_data
-          WHERE SalaryReceiveStatus = 'YES'
-            AND EmpCode IN (${inList})
-            AND AcNo IS NOT NULL AND TRIM(AcNo) <> ''`,
-        codes,
-      ),
-    ]);
-    // From here on, the same rules as loadCreditedAccounts (see its comments).
-    const everConfirmed = new Set<string>();
-    for (const r of confirmedRows) {
-      const k = String(r.EmpCode ?? "").trim().toUpperCase();
-      if (!k) continue;
-      everConfirmed.add(`${k}|${normaliseAccount(r.AcNo)}`);
-    }
-    for (const r of rows) {
-      const key = String(r.EmpCode ?? "").trim().toUpperCase();
-      if (!key) continue;
-      const account = normaliseAccount(r.AcNo);
-      credits.set(key, {
-        account,
-        confirmed:
-          String(r.SalaryReceiveStatus ?? "").toUpperCase() === "YES" ||
-          everConfirmed.has(`${key}|${account}`),
+    const keyOf = (c: string) => c.toUpperCase();
+    const fresh = (c: string) => {
+      const hit = creditCache.get(keyOf(c));
+      return !!hit && hit.month === month && Date.now() - hit.at < CREDIT_TTL_MS;
+    };
+
+    const missing = codes.filter((c) => !fresh(c) && !creditInFlight.has(keyOf(c)));
+    if (missing.length) {
+      const fetch = queryCreditsFor(month, missing).then((found) => {
+        const at = Date.now();
+        for (const c of missing) creditCache.set(keyOf(c), { credit: found.get(keyOf(c)) ?? null, month, at });
       });
+      const settled = fetch.finally(() => { for (const c of missing) creditInFlight.delete(keyOf(c)); });
+      for (const c of missing) creditInFlight.set(keyOf(c), settled);
     }
-    for (const compound of everConfirmed) {
-      const sep = compound.lastIndexOf("|");
-      const k = compound.slice(0, sep);
-      const account = compound.slice(sep + 1);
-      if (!credits.has(k)) credits.set(k, { account, confirmed: true });
+    const waits = [...new Set(codes.map((c) => creditInFlight.get(keyOf(c))).filter(Boolean))] as Promise<void>[];
+    await withTimeout(Promise.all(waits), CREDIT_LOOKUP_TIMEOUT_MS);
+
+    for (const c of codes) {
+      const hit = creditCache.get(keyOf(c));
+      if (hit?.credit) credits.set(keyOf(c), hit.credit);
     }
     return {
       source: {

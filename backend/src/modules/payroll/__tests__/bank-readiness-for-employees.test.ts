@@ -15,7 +15,11 @@ const { query, billQuery } = vi.hoisted(() => ({ query: vi.fn(), billQuery: vi.f
 vi.mock("../../../db/mysql.js", () => ({ db: { query, execute: query } }));
 vi.mock("../../../db/billDb.js", () => ({ billQuery }));
 
-import { buildBankReadinessReport, buildBankReadinessForEmployees } from "../bank-payment-readiness.service.js";
+import {
+  buildBankReadinessReport,
+  buildBankReadinessForEmployees,
+  resetBankReadinessCachesForTests,
+} from "../bank-payment-readiness.service.js";
 
 type Emp = { id: string; code: string; account: string | null };
 const EMPLOYEES: Emp[] = [
@@ -57,6 +61,7 @@ function employeeRow(e: Emp) {
 }
 
 beforeEach(() => {
+  resetBankReadinessCachesForTests();
   query.mockReset();
   billQuery.mockReset();
   query.mockImplementation(async (sql: string, params?: unknown[]) => {
@@ -119,5 +124,30 @@ describe("buildBankReadinessForEmployees", () => {
     expect(scoped.rows).toEqual([]);
     expect(query).not.toHaveBeenCalled();
     expect(billQuery).not.toHaveBeenCalled();
+  });
+  it("remembers credits, so reopening the same employees does not go back to db_bill", async () => {
+    const first = await buildBankReadinessForEmployees(["e3", "e4"]);
+    const callsAfterFirst = billQuery.mock.calls.length;
+    const second = await buildBankReadinessForEmployees(["e3", "e4"]);
+    expect(billQuery.mock.calls.length).toBe(callsAfterFirst);
+    expect(second.rows).toEqual(first.rows);
+  });
+
+  it("degrades to unverifiable instead of waiting on a slow db_bill", async () => {
+    vi.useFakeTimers();
+    try {
+      billQuery.mockImplementation(async (sql: string) => {
+        if (/GROUP BY SalDate/.test(sql)) return [{ SalDate: MONTH, n: 2 }];
+        return new Promise(() => {}); // never answers
+      });
+      const pending = buildBankReadinessForEmployees(["e3"]);
+      await vi.advanceTimersByTimeAsync(5000);
+      const scoped = await pending;
+      expect(scoped.verification_source.available).toBe(false);
+      expect(scoped.verification_source.error).toMatch(/exceeded/);
+      expect(scoped.rows).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
