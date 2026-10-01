@@ -100,12 +100,16 @@ export function allowedBranchIds(scope: UserBusinessScope): string[] | null {
     if ((a.scopeType === "branch" || a.scopeType === "branch_process") && a.branchId) set.add(a.branchId);
     if (a.scopeType === "all" && scope.branchId) set.add(scope.branchId);
   }
+  // Own-branch clamp (owner ruling 2026-10-01): assignment rows never reach past the branch on the
+  // caller's own employee record. No own branch (account not linked to an employee): rows decide.
+  if (scope.branchId) return [...set].filter((id) => id === scope.branchId);
   return [...set];
 }
 
 export async function canAccessBranch(scope: UserBusinessScope, branchId: string | null | undefined): Promise<boolean> {
   if (isOrgWide(scope)) return true;
   if (!branchId) return false;
+  if (scope.branchId && branchId !== scope.branchId) return false;
   const allowed = allowedBranchIds(scope) ?? [];
   if (allowed.includes(branchId)) return true;
   const procIds = assignedProcessIds(scope);
@@ -124,6 +128,15 @@ export async function canAccessProcess(
 ): Promise<boolean> {
   if (isOrgWide(scope)) return true;
   if (!processId) return false;
+  // Own-branch clamp: a process the caller is assigned to is only theirs inside their own branch.
+  if (scope.branchId) {
+    if (branchId && branchId !== scope.branchId) return false;
+    if (!branchId) {
+      const [prow] = await db.execute<RowDataPacket[]>("SELECT branch_id FROM process_master WHERE id = ? LIMIT 1", [processId]);
+      const pb = (prow as RowDataPacket[])[0]?.branch_id;
+      if (pb && String(pb) !== scope.branchId) return false;
+    }
+  }
   if (assignedProcessIds(scope).includes(processId)) return true;
   if (branchId && (await canAccessBranch(scope, branchId))) return true;
   const allowed = allowedBranchIds(scope) ?? [];

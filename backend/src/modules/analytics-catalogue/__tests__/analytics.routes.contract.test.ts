@@ -25,6 +25,7 @@ vi.mock("../../../shared/scopeAccess.js", () => ({
   buildScopeWhereClause: (...a: unknown[]) => scopeClause(...a),
   hasAnyRole: async (_id: string, ...roles: string[]) => roles.includes(actor.role),
   hasOrgWideScope: (...a: unknown[]) => orgWide(...a),
+  isOrgWideUser: async () => ["super_admin", "ceo"].includes(actor.role),
 }));
 
 import { analyticsCatalogueRouter } from "../analytics.routes.js";

@@ -34,6 +34,7 @@ vi.mock('../leave.service.js', () => ({ leaveService: { reviewRequest: mocks.rev
 vi.mock('../../../shared/accessGuard.js', () => ({ getEmployeeForUser: mocks.getEmployeeForUser }));
 vi.mock('../../../shared/scopeAccess.js', () => ({
   hasAnyRole: mocks.hasAnyRole,
+  isOrgWideUser: (id: string) => mocks.hasAnyRole(id, 'super_admin', 'admin'),
   buildScopeWhereClause: vi.fn(async () => ({ sql: '1=1', params: [] })),
 }));
 vi.mock('../../../shared/approvalEscalation.js', () => ({

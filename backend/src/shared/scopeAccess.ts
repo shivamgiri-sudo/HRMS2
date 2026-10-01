@@ -77,6 +77,15 @@ export const USER_ROLES_WITH_DEPARTMENT_HEAD_SQL = `SELECT role_key FROM user_ro
        JOIN employees de ON de.id = d.dept_head_employee_id
       WHERE de.user_id = ? AND de.active_status = 1 AND d.active_status = 1`;
 
+/**
+ * True for super_admin and the org-wide exempt roles; false for everyone else, admin included.
+ * Use this - not hasAnyRole(..., "admin") - when a data check means "may see every branch".
+ */
+export async function isOrgWideUser(userId: string): Promise<boolean> {
+  if (await hasAnyRole(userId, "super_admin")) return true;
+  return holdsOrgWideExemptRole(userId);
+}
+
 async function holdsOrgWideExemptRole(userId: string): Promise<boolean> {
   const roles = await getUserRoleKeys(userId);
   return roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r));

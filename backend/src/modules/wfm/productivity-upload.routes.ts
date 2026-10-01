@@ -107,6 +107,8 @@ function isOrgWideUploader(scope: UserBusinessScope): boolean {
 
 function isBranchInUploaderScope(scope: UserBusinessScope, branchId: string): boolean {
   if (isOrgWideUploader(scope)) return true;
+  // Own-branch clamp: never past the branch on the uploader's own employee record.
+  if (scope.branchId && branchId !== scope.branchId) return false;
   // Truthiness, not `!== null`: a partially-built scope object can carry undefined rather than
   // null, and an empty-string id must never match either.
   return scope.assignments.some((a) =>
@@ -126,6 +128,7 @@ function isProcessInUploaderScope(
   processId: string,
 ): boolean {
   if (isOrgWideUploader(scope)) return true;
+  if (scope.branchId && branchId !== scope.branchId) return false;
   return scope.assignments.some((a) => {
     if (a.scopeType === 'all') return !!scope.branchId && scope.branchId === branchId;
     if (a.processId) return a.processId === processId;

@@ -28,6 +28,7 @@ vi.mock("../src/middleware/requireRole.js", () => ({
 vi.mock("../src/shared/scopeAccess.js", () => ({
   hasScopedAccess: vi.fn().mockResolvedValue(true),
   hasAnyRole: vi.fn().mockResolvedValue(true),
+  isOrgWideUser: vi.fn().mockResolvedValue(true),
   getUserRoleKeys: vi.fn().mockResolvedValue(["admin", "hr"]),
   getUserAssignmentScopes: vi.fn().mockResolvedValue([]),
   getRosterPlanScope: vi.fn().mockResolvedValue({ branchId: null, processId: null }),

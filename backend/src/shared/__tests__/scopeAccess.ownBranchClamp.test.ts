@@ -10,7 +10,7 @@ vi.mock("../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 vi.mock("../demoAuth.js", () => ({ demoRoleForUserId: () => null }));
 vi.mock("../requestContext.js", () => ({ memoizeForRequest: (_k: string, fn: () => unknown) => fn() }));
 
-const { buildScopeWhereClause, hasScopedAccess } = await import("../scopeAccess.js");
+const { buildScopeWhereClause, hasScopedAccess, isOrgWideUser } = await import("../scopeAccess.js");
 
 const OWN = "branch-own";
 const OTHER = "branch-other";
@@ -69,4 +69,14 @@ describe("hasScopedAccess own-branch clamp", () => {
     asUser({ roles: ["finance"], ownBranch: OWN, scopes: [{ role_key: "finance", scope_type: "all" }] });
     await expect(hasScopedAccess("u", ["finance"], { branchId: OTHER })).resolves.toBe(true);
   });
+});
+
+describe("isOrgWideUser", () => {
+  it.each([["super_admin", true], ["ceo", true], ["finance", true], ["admin", false], ["hr", false], ["manager", false]])(
+    "%s -> %s",
+    async (role, expected) => {
+      asUser({ roles: [role as string], ownBranch: OWN });
+      await expect(isOrgWideUser("u")).resolves.toBe(expected);
+    },
+  );
 });

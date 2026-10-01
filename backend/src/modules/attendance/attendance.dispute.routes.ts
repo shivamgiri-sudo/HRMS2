@@ -17,6 +17,7 @@ import {
   hasAnyRole,
   hasScopedAccess,
   buildScopeWhereClause,
+  isOrgWideUser,
 } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";

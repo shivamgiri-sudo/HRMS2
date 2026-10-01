@@ -4,7 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole, isOrgWideUser } from "../../shared/scopeAccess.js";
 import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 import { rowInScope, getScope, canAccessEmployee, OUT_OF_SCOPE_MSG } from "../wfm/branch-scope.js";
 import { leaveService } from "./leave.service.js";

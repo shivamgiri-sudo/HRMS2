@@ -14,7 +14,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole, isOrgWideUser } from "../../shared/scopeAccess.js";
 import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 import {
   createJoiningDocumentEsignRequest,
