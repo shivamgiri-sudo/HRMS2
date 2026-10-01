@@ -1251,6 +1251,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1962_budget_topup_cancel.sql", // Registered 2026-09-30. Lets the raiser withdraw a budget top-up request: widens finance_budget_topup_request.status ENUM with 'cancelled' and adds nullable cancelled_by/cancelled_at/cancellation_reason. Amount edits (allowed only while status=submitted) need no schema. Additive, information_schema-guarded, re-runnable.
   "migrations/1970_process_dashboard_alerts.sql", // Registered 2026-09-30. Process Dashboard alerts + digests: process_dashboard_alert_rule / _alert_event / _digest. Three new tables only, idempotent, no backfill.
   "migrations/1971_process_sales_outbound_source_config.sql", // Registered 2026-09-30. process_sales_source_config + process_outbound_source_config (order/CDR source mapping for the data-driven Sales and Outbound dashboard tabs). Additive: two new tables only, no foreign key to process_master (avoids the metadata-lock wait that broke 1952/1970 at startup). Renumbered from 1961, which was already taken.
+  "migrations/1985_sbi_merge_duplicate_process.sql", // Registered 2026-10-01, at the owner's request. Retires the duplicate "SBI Card Collections" process (never deleted) and gives the real "SBI Credit Cards" process (cost centre + staff) the code SBI_CARD, so the dashboard, uploaders and KPI metrics follow it. Guarded, idempotent, reversible, tiny tables only.
 ];
 
 export type MigrationHealth = {
