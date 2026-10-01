@@ -584,7 +584,7 @@ router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Res
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rda.id, rda.cycle_id, rda.employee_id, rda.roster_date,
             rda.shift_template_id, rda.is_week_off, rda.acknowledgement_status,
-            rda.dispute_reason, rda.dispute_resolved_at, rda.dispute_resolution,
+            rda.dispute_reason, rda.dispute_resolved_at, rda.dispute_resolution, rda.updated_at,
             e.employee_code, e.first_name, e.last_name, e.lob_id,
             wrc.process_id, wrc.week_start_date, wrc.week_end_date,
             wst.shift_name, wst.start_time, wst.end_time
