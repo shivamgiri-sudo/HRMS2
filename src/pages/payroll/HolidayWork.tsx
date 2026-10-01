@@ -62,10 +62,19 @@ function SubmitTab() {
     queryKey: ["holiday-work-policies"],
     queryFn: () => hrmsApi.get<any>("/api/payroll/holiday-work/policies").then((d: any) => Array.isArray(d) ? d : d.data ?? []),
   });
-  const { data: branches = [] } = useQuery({
+  // Branches the caller may raise requests for (null = all). Server enforces the same rule on POST.
+  const { data: allowedBranchIds } = useQuery<string[] | null>({
+    queryKey: ["holiday-work-my-branches"],
+    queryFn: () => hrmsApi.get<any>("/api/payroll/holiday-work/my-branches").then((d: any) => (d?.data ?? null)),
+  });
+  const { data: allBranches = [] } = useQuery({
     queryKey: ["org-branches"],
     queryFn: () => hrmsApi.get<any>("/api/org/branches").then((d: any) => Array.isArray(d) ? d : d.data ?? []),
   });
+  const branchesLimited = Array.isArray(allowedBranchIds);
+  const branches = branchesLimited
+    ? (allBranches as any[]).filter((b: any) => allowedBranchIds!.includes(b.id))
+    : (allBranches as any[]);
   const { data: processes = [] } = useQuery({
     queryKey: ["org-processes"],
     queryFn: () => hrmsApi.get<any>("/api/org/processes").then((d: any) => Array.isArray(d) ? d : d.data ?? []),
@@ -120,7 +129,7 @@ function SubmitTab() {
           <div className="space-y-1">
             <label className="text-sm font-medium">Branch</label>
             <select className="w-full border rounded-lg px-3 py-2 text-sm bg-background" value={form.branch_id} onChange={e => sel("branch_id", e.target.value)}>
-              <option value="">All branches</option>
+              <option value="">{branchesLimited ? "Select branch" : "All branches"}</option>
               {(branches as any[]).map((b: any) => <option key={b.id} value={b.id}>{b.branch_name ?? b.name}</option>)}
             </select>
           </div>

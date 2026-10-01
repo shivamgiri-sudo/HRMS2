@@ -13,6 +13,7 @@ import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculat
 import { payslipService } from "./payslip.service.js";
 import { computeForm16Data } from "./form16-data.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { scopeFor, visibleBranchIdsFor } from "./payroll-branch-scope.js";
 
 const QUEUE_REASON_LIST_MAX = 500;
 
@@ -695,6 +696,9 @@ payrollMoreRouter.get("/holiday-work/requests", requireRole("admin", "super_admi
   const params: unknown[] = [];
   if (status) { conds.push("hwr.status = ?"); params.push(status); }
   if (month)  { conds.push("DATE_FORMAT(hwr.request_month, '%Y-%m') = ?"); params.push(month); }
+  // Branch scoping: only requests raised for a branch / process inside the caller's scope.
+  const hwScope = await scopeFor(req, { branchId: "hwr.branch_id", processId: "hwr.process_id" });
+  conds.push(`(${hwScope.sql})`); params.push(...hwScope.params);
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT hwr.*,
@@ -719,6 +723,13 @@ payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_adm
     request_reason?: string; remarks?: string;
   };
   if (!holiday_id || !payout_policy_id) return res.status(400).json({ success: false, message: "holiday_id and payout_policy_id required" });
+  {
+    // The branch comes from the browser: it must be one the caller is allowed to act for.
+    const visible = await visibleBranchIdsFor(req);
+    if (visible && (!branch_id || !visible.has(String(branch_id)))) {
+      return res.status(403).json({ success: false, message: "Forbidden: you may only raise holiday-work requests for a branch inside your assigned scope" });
+    }
+  }
   const month = request_month ?? new Date().toISOString().slice(0, 7) + "-01";
   const { v4: uuidv4 } = await import("uuid");
   const id = uuidv4();
@@ -737,8 +748,16 @@ payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_adm
   return res.status(201).json({ success: true, data: rows[0] });
 }));
 
+// Branch ids the caller may raise holiday-work requests for (null = every branch). The request
+// form uses this to limit its Branch dropdown; the POST handler still enforces it server-side.
+payrollMoreRouter.get("/holiday-work/my-branches", requireRole("admin", "super_admin", "payroll", "payroll_head", "payroll_branch", "wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const visible = await visibleBranchIdsFor(req);
+  return res.json({ success: true, data: visible ? Array.from(visible) : null });
+}));
+
 payrollMoreRouter.get("/holiday-work/requests/:id", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
+  const detailScope = await scopeFor(req, { branchId: "hwr.branch_id", processId: "hwr.process_id" });
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT hwr.*,
             lhm.holiday_name, lhm.holiday_type,
@@ -752,9 +771,9 @@ payrollMoreRouter.get("/holiday-work/requests/:id", requireRole("admin", "super_
        LEFT JOIN employees e ON e.id = hwr.requested_by
        LEFT JOIN branch_master bm ON bm.id = hwr.branch_id
        LEFT JOIN process_master pm ON pm.id = hwr.process_id
-      WHERE hwr.id = ?
+      WHERE hwr.id = ? AND (${detailScope.sql})
       LIMIT 1`,
-    [id]
+    [id, ...detailScope.params]
   );
   if (!rows[0]) return res.status(404).json({ success: false, message: "Not found" });
   const [designations] = await db.execute<RowDataPacket[]>(
@@ -780,7 +799,12 @@ payrollMoreRouter.patch("/holiday-work/requests/:id/approve", requireRole("admin
   const { id } = req.params;
   const { action, remarks } = req.body as { action: "approve" | "reject"; remarks?: string };
   if (!["approve", "reject"].includes(action)) return res.status(400).json({ success: false, message: "action must be approve or reject" });
-  const [existing] = await db.execute<RowDataPacket[]>("SELECT status FROM holiday_work_request WHERE id = ? LIMIT 1", [id]);
+  const apScope = await scopeFor(req, { branchId: "hwr.branch_id", processId: "hwr.process_id" });
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT hwr.status FROM holiday_work_request hwr WHERE hwr.id = ? AND (${apScope.sql}) LIMIT 1`, [id, ...apScope.params]);
+  if (apScope.sql !== "1=1" && !existing[0]) {
+    return res.status(403).json({ success: false, message: "Forbidden: this request is outside your branch / assigned scope" });
+  }
   const fromStatus = (existing[0] as any)?.status ?? "";
   const newStatus = action === "approve" ? "payroll_head_approved" : "rejected";
   await db.execute("UPDATE holiday_work_request SET status = ? WHERE id = ?", [newStatus, id]);
