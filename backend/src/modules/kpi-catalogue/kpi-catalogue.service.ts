@@ -36,6 +36,8 @@ export async function syncSeed(processes: CatalogueProcessDef[] = SEED_PROCESSES
   const roleRows: Array<[string, string, string, string, number]> = [];
 
   for (const proc of processes) {
+    // Keep every row of the process (including rows mirrored from KPI Studio) on the same code list and name.
+    await db.execute(`UPDATE kpi_catalogue SET process_codes = ?, process_name = ? WHERE process_key = ?`, [json(proc.processCodes), proc.processName, proc.processKey]);
     for (const kpi of proc.kpis) {
       const [existing] = await db.execute<RowDataPacket[]>(
         `SELECT id, seeded FROM kpi_catalogue WHERE process_key = ? AND metric_key = ? LIMIT 1`,

@@ -41,6 +41,17 @@ export interface KpiPerformance {
 /** Catalogue KPIs computed straight from attendance_daily_record (real, scoped, daily). */
 const DIRECT_ATTENDANCE_KEYS = new Set(["wf_login_hours", "wf_late_login_pct"]);
 
+/** Union of process_codes JSON values (strings or arrays), de-duplicated, order preserved. */
+export function unionCodes(values: unknown[]): string[] {
+  const out: string[] = [];
+  for (const v of values) {
+    let arr: unknown = v;
+    if (typeof v === "string") { try { arr = JSON.parse(v); } catch { arr = []; } }
+    if (Array.isArray(arr)) for (const c of arr) { const code = String(c ?? "").trim(); if (code && !out.includes(code)) out.push(code); }
+  }
+  return out;
+}
+
 const istToday = () => new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
 const inList = (n: number) => Array.from({ length: n }, () => "?").join(",");
 
@@ -65,10 +76,11 @@ export async function getProcessPerformance(processKey: string, o: PerformanceOp
   const scopeSql = buildScopeWhereEmployees(scope, "e");
 
   // Process restriction from the catalogue row's process codes.
-  const [codeRows] = await db.execute<Row[]>(`SELECT process_name, process_codes FROM kpi_catalogue WHERE process_key = ? LIMIT 1`, [processKey]);
+  // Union over every catalogue row of the process: rows mirrored from KPI Studio can carry an older, narrower code list than the seed.
+  const [codeRows] = await db.execute<Row[]>(`SELECT process_name, process_codes, seeded FROM kpi_catalogue WHERE process_key = ? ORDER BY seeded DESC`, [processKey]);
   const head = (codeRows as Row[])[0];
   if (!head) return null;
-  const codes: string[] = typeof head.process_codes === "string" ? JSON.parse(head.process_codes) : (head.process_codes ?? []);
+  const codes: string[] = unionCodes((codeRows as Row[]).map((r) => r.process_codes));
   let processIds: string[] = [];
   if (processKey !== "_global" && codes.length) {
     const [pm] = await db.execute<Row[]>(`SELECT id FROM process_master WHERE process_code IN (${inList(codes.length)})`, codes as never[]);
