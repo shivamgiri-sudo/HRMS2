@@ -38,55 +38,58 @@ for (const r of cols) (byTable.get(r.t) ?? byTable.set(r.t, []).get(r.t)).push(`
 out(`\n== tables with exit/reason-like columns (${byTable.size}) ==`);
 for (const [t, cs] of byTable) out(t.padEnd(32), cs.join(", ").slice(0, 400));
 
-// 2. employee_master: the table HRMS already syncs from
-const em = await sel(bill, "SHOW COLUMNS FROM employee_master");
-out(`\n== employee_master has ${em.length} columns ==`);
-out(em.map((x) => `${x.Field}:${x.Type}`).join(", ").slice(0, 3000));
-
-const candidates = em.filter((x) => /reason|resign|leav|separat|abscond|terminat|remark/i.test(x.Field) && !/date|dt$/i.test(x.Field) && /char|text|int|enum/i.test(x.Type));
-out(`\n== candidate reason columns in employee_master: ${candidates.map((c) => c.Field).join(", ") || "none"} ==`);
-const [{ n: total }] = await sel(bill, "SELECT COUNT(*) n FROM employee_master");
-out(`employee_master rows: ${total}`);
-const statusCol = em.find((x) => x.Field === "Status") ? "Status" : null;
-if (statusCol) {
-  const st = await sel(bill, "SELECT `Status` s, COUNT(*) n FROM employee_master GROUP BY `Status` ORDER BY n DESC LIMIT 10");
-  out("Status values:", st.map((r) => `${r.s}=${r.n}`).join(", "));
-}
-const leftOk = em.find((x) => x.Field === "LeftDate") ? "LeftDate" : (em.find((x) => x.Field === "DOL") ? "DOL" : null);
-
-for (const c of candidates) {
-  const f = c.Field;
-  const [s] = await sel(bill, `SELECT COUNT(*) total, SUM(\`${f}\` IS NOT NULL AND TRIM(CAST(\`${f}\` AS CHAR)) <> '' AND TRIM(CAST(\`${f}\` AS CHAR)) <> '0') nonempty,
-      COUNT(DISTINCT \`${f}\`) distinct_n, MAX(CHAR_LENGTH(CAST(\`${f}\` AS CHAR))) maxlen, AVG(CHAR_LENGTH(CAST(\`${f}\` AS CHAR))) avglen FROM employee_master`);
-  out(`\n-- ${f} (${c.Type}): non-empty ${s.nonempty} of ${s.total}, ${s.distinct_n} distinct, avg length ${Number(s.avglen || 0).toFixed(1)}, max ${s.maxlen}`);
-  if (leftOk) {
-    const [l] = await sel(bill, `SELECT COUNT(*) leavers, SUM(\`${f}\` IS NOT NULL AND TRIM(CAST(\`${f}\` AS CHAR)) <> '' AND TRIM(CAST(\`${f}\` AS CHAR)) <> '0') with_reason
-        FROM employee_master WHERE \`${leftOk}\` IS NOT NULL AND CAST(\`${leftOk}\` AS CHAR) NOT LIKE '0000%'`);
-    out(`   among people with a ${leftOk}: ${l.leavers}, of whom ${l.with_reason} have this filled`);
+// 2. The leaving columns of the legacy employee tables (masjclrentry is the live one, keyed by EmpCode)
+const REASON_COLS = ["left_type", "LeftReason", "ReasonofLeaving"];
+const filled = (f) => `(\`${f}\` IS NOT NULL AND TRIM(CAST(\`${f}\` AS CHAR)) <> '' AND TRIM(CAST(\`${f}\` AS CHAR)) <> '0')`;
+const MIN_SHOW = 5; // a value is only listed when at least this many people share it
+async function describe(table) {
+  let have;
+  try { have = (await sel(bill, `SHOW COLUMNS FROM \`${table}\``)).map((x) => x.Field); } catch { out(`\n(table ${table} not readable)`); return null; }
+  const cols = REASON_COLS.filter((c) => have.includes(c));
+  const dol = have.includes("DOL") ? "DOL" : null;
+  const [t] = await sel(bill, `SELECT COUNT(*) n FROM \`${table}\``);
+  const [le] = dol ? await sel(bill, `SELECT COUNT(*) n FROM \`${table}\` WHERE \`${dol}\` IS NOT NULL AND CAST(\`${dol}\` AS CHAR) NOT LIKE '0000%'`) : [{ n: "n/a" }];
+  out(`\n== ${table}: ${t.n} rows, ${le.n} with a DOL (date of leaving); reason columns present: ${cols.join(", ") || "none"} ==`);
+  for (const f of cols) {
+    const [s] = await sel(bill, `SELECT SUM(${filled(f)}) nonempty, COUNT(DISTINCT \`${f}\`) d, AVG(CHAR_LENGTH(CAST(\`${f}\` AS CHAR))) avglen FROM \`${table}\``);
+    const [l] = dol ? await sel(bill, `SELECT COUNT(*) leavers, SUM(${filled(f)}) filled FROM \`${table}\` WHERE \`${dol}\` IS NOT NULL AND CAST(\`${dol}\` AS CHAR) NOT LIKE '0000%'`) : [{}];
+    out(`-- ${f}: ${s.nonempty} filled, ${s.d} distinct values, avg length ${Number(s.avglen || 0).toFixed(1)}${dol ? `; among people with a DOL: ${l.filled} of ${l.leavers} filled` : ""}`);
+    const top = await sel(bill, `SELECT LEFT(TRIM(CAST(\`${f}\` AS CHAR)), 45) v, COUNT(*) n FROM \`${table}\` WHERE ${filled(f)} GROUP BY v HAVING n >= ${MIN_SHOW} ORDER BY n DESC LIMIT 30`);
+    out("   values shared by 5+ people:", top.map((r) => `${r.v} (${r.n})`).join("; ") || "none");
   }
-  if (Number(s.distinct_n) <= 80 && Number(s.maxlen || 0) <= 60) {
-    const top = await sel(bill, `SELECT CAST(\`${f}\` AS CHAR) v, COUNT(*) n FROM employee_master WHERE \`${f}\` IS NOT NULL AND TRIM(CAST(\`${f}\` AS CHAR)) <> '' GROUP BY v ORDER BY n DESC LIMIT 25`);
-    out("   values:", top.map((r) => `${r.v} (${r.n})`).join("; "));
-  } else out("   (free text or too many values - not listed)");
+  return { cols, dol };
 }
+const meta = {};
+for (const t of ["masjclrentry", "his_masjclrentry", "NewJclrMaster"]) meta[t] = await describe(t);
 
 // 3. How many of HRMS's exits with no recorded reason could db_bill fill?
-const noReason = await sel(hrms, `SELECT e.employee_code code
+const noReason = await sel(hrms, `SELECT e.employee_code code, DATE_FORMAT(e.date_of_exit, '%Y-%m-%d') dx
     FROM employees e
     LEFT JOIN (SELECT er.employee_id, MAX(COALESCE(NULLIF(TRIM(er.exit_reason_category),''), NULLIF(TRIM(er.resignation_reason),''))) reason
                  FROM exit_request er GROUP BY er.employee_id) x ON x.employee_id = e.id
    WHERE e.date_of_exit IS NOT NULL AND e.date_of_exit >= e.date_of_joining AND e.date_of_exit > DATE_SUB(CURDATE(), INTERVAL 365 DAY)
      AND x.reason IS NULL`);
 out(`\n== HRMS exits in the last 12 months with no recorded reason: ${noReason.length} ==`);
-const codes = noReason.map((r) => String(r.code).trim()).filter(Boolean);
-for (const c of candidates) {
-  let found = 0, filled = 0;
+const sample = noReason.slice(0, 5).map((r) => String(r.code)); out("sample of HRMS codes (format check):", sample.join(", "));
+const codes = noReason.map((r) => String(r.code).trim().toUpperCase()).filter(Boolean);
+const dxByCode = new Map(noReason.map((r) => [String(r.code).trim().toUpperCase(), r.dx]));
+for (const table of ["masjclrentry", "his_masjclrentry", "NewJclrMaster"]) {
+  const m = meta[table]; if (!m || !m.cols.length) continue;
+  let found = 0, anyFilled = 0, dateAgrees = 0; const perCol = Object.fromEntries(m.cols.map((c) => [c, 0])); const vals = new Map();
   for (let i = 0; i < codes.length; i += 400) {
     const chunk = codes.slice(i, i + 400);
-    const rows = await sel(bill, `SELECT COUNT(*) found, SUM(\`${c.Field}\` IS NOT NULL AND TRIM(CAST(\`${c.Field}\` AS CHAR)) <> '' AND TRIM(CAST(\`${c.Field}\` AS CHAR)) <> '0') filled
-        FROM employee_master WHERE EmpCode IN (${chunk.map(() => "?").join(",")})`, chunk);
-    found += Number(rows[0].found); filled += Number(rows[0].filled || 0);
+    const sel2 = m.cols.map((c) => `\`${c}\` AS \`c_${c}\``).join(", ");
+    const rows = await sel(bill, `SELECT UPPER(TRIM(EmpCode)) code, ${m.dol ? `DATE_FORMAT(\`${m.dol}\`, '%Y-%m-%d') dol,` : ""} ${sel2} FROM \`${table}\` WHERE UPPER(TRIM(EmpCode)) IN (${chunk.map(() => "?").join(",")})`, chunk);
+    const seen = new Set();
+    for (const r of rows) {
+      if (seen.has(r.code)) continue; seen.add(r.code); found++;
+      let any = false;
+      for (const c of m.cols) { const v = r[`c_${c}`]; if (v != null && String(v).trim() !== "" && String(v).trim() !== "0") { perCol[c]++; any = true; if (c !== "left_type") vals.set(String(v).trim().slice(0, 45), (vals.get(String(v).trim().slice(0, 45)) ?? 0) + 1); } }
+      if (any) anyFilled++;
+      if (m.dol && r.dol && dxByCode.get(r.code)) { const dd = Math.abs((new Date(r.dol) - new Date(dxByCode.get(r.code))) / 86400000); if (dd <= 7) dateAgrees++; }
+    }
   }
-  out(`   via employee_master.${c.Field}: matched ${found} of ${codes.length} by employee code; ${filled} of those have a value`);
+  out(`\n   ${table}: matched ${found} of ${codes.length} by employee code; at least one reason filled for ${anyFilled}; ${Object.entries(perCol).map(([c, n]) => `${c}=${n}`).join(", ")}; leaving date within 7 days of HRMS date_of_exit for ${dateAgrees}`);
+  out("   most common reasons among the matched (5+ people):", [...vals.entries()].filter(([, n]) => n >= MIN_SHOW).sort((a, b) => b[1] - a[1]).slice(0, 25).map(([v, n]) => `${v} (${n})`).join("; ") || "none");
 }
 await bill.end(); await hrms.end();
