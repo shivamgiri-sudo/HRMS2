@@ -1,4 +1,5 @@
 import { LobBadge } from "@/components/wfm/LobBadge";
+import { RaiseExitButton } from "@/components/exit/RaiseExitButton";
 import { Lock, Pencil } from "lucide-react";
 import ShiftChoiceOptions from "./ShiftChoiceOptions";
 import type { GridResponse, GridRow } from "@/hooks/useTeamRoster";
@@ -148,6 +149,7 @@ export default function TeamRosterGrid(props: TeamRosterGridProps) {
                 <div className="font-semibold text-slate-800">{row.name}</div>
                 <div className="text-[11px] text-slate-500">{[row.code, row.processName].filter(Boolean).join(" - ")}</div>
                 <LobBadge name={row.lobName} />
+                <div className="mt-1"><RaiseExitButton employee={{ id: row.employeeId, name: row.name, code: row.code, process: row.processName }} /></div>
                 {onFillRow && <FillSelect label={`Fill all empty days for ${row.name}`} options={shiftOptionsFor(templates, row.processId)} onPick={(c) => onFillRow(row, c)} />}
               </th>
               {data.dates.map((d) => (

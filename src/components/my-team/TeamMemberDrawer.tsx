@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { RaiseExitButton } from "@/components/exit/RaiseExitButton";
 import {
   Activity, AlertTriangle, BadgeCheck, CalendarDays, ClipboardList,
   Headphones, ShieldAlert, Star, TrendingDown, TrendingUp,
@@ -207,6 +208,21 @@ export default function TeamMemberDrawer({ employeeId, employeeName, open, onOpe
             )}
             {data && <span className="ml-auto">Last {data.window_days} days</span>}
           </div>
+          {employeeId && (
+            <div className="pt-1">
+              <RaiseExitButton
+                employee={{
+                  id: employeeId,
+                  name: emp?.full_name ?? employeeName ?? "Team member",
+                  code: emp?.employee_code,
+                  branch: emp?.branch_name,
+                  process: emp?.process_name,
+                  department: emp?.department_name,
+                  reportingManager: emp?.reporting_manager_name,
+                }}
+              />
+            </div>
+          )}
         </SheetHeader>
 
         <div className="space-y-5 px-6 py-5">

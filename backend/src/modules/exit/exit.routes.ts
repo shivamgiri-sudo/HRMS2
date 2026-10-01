@@ -8,7 +8,8 @@ import { computeFfPreview } from "./ff-compute.service.js";
 import { getExitAnalyticsSummary } from "./exit-analytics.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
-import { isInReportingSpan } from "../../shared/reportingSpan.js";
+import { hasDirectReports, isInReportingSpan } from "../../shared/reportingSpan.js";
+import { resolveEmployeeRef } from "./resolveEmployeeRef.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { narrowDashboardScope, resolveDashboardScope } from "../../shared/dashboardScope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -28,6 +29,12 @@ import { transitionExitStatus } from "./exit.service.js";
 
 export const exitRouter = Router();
 exitRouter.use(requireAuth);
+
+/** canViewEmployee, plus the reporting span (a TL / AM may raise an exit for their team). */
+async function canTouchEmployee(userId: string, employeeId: string): Promise<boolean> {
+  if (await canViewEmployee({ id: userId }, employeeId)) return true;
+  return isInReportingSpan(userId, employeeId);
+}
 
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
@@ -75,17 +82,34 @@ exitRouter.get(
 
 exitRouter.post("/", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const isPrivileged = await hasRole(userId, "admin", "hr", "manager");
+  const isHr = await hasRole(userId, "admin", "hr");
+  const emp = await getEmployeeForUser(userId);
+
+  // Who is the exit for? A caller naming someone other than themselves is acting on another
+  // record; anyone else is raising their own exit.
+  const named = req.body?.employeeId ?? req.body?.employee_id ?? req.body?.employeeCode ?? req.body?.employee_code;
+  const targetId = named
+    ? await resolveEmployeeRef(req.body?.employeeId ?? req.body?.employee_id, req.body?.employeeCode ?? req.body?.employee_code)
+    : null;
+  const actingOnOther = !!targetId && targetId !== emp?.id;
 
   // Who is raising this, recorded from the caller's own roles rather than from the body.
-  // A non-privileged caller can only ever raise their own exit (enforced immediately below),
-  // so 'employee' is a fact for them. A privileged caller is acting on someone else's record.
-  (req as unknown as { exitInitiatedBy?: string }).exitInitiatedBy = !isPrivileged
-    ? "employee"
-    : (await hasRole(userId, "admin", "hr")) ? "hr" : "manager";
+  let initiatedBy: "employee" | "manager" | "hr" = "employee";
+  if (isHr) {
+    initiatedBy = "hr";
+  } else if (actingOnOther) {
+    // Reporting managers hold only the plain employee role as often as a manager role, so
+    // the test is the reporting line, not a role list: the target must be in the caller's
+    // own scope / span (TL: team, AM: each TL's team). Same guard the rest of the exit module uses.
+    const managesPeople = (await hasRole(userId, "manager")) || (await hasDirectReports(userId));
+    if (!managesPeople || !(await canTouchEmployee(userId, targetId!))) {
+      return res.status(403).json({ success: false, message: "Forbidden: this employee is not in your team" });
+    }
+    initiatedBy = "manager";
+  }
+  (req as unknown as { exitInitiatedBy?: string }).exitInitiatedBy = initiatedBy;
 
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(userId);
+  if (!isHr && !actingOnOther) {
     if (!emp) {
       return res.status(403).json({ success: false, message: "Forbidden: no employee record linked to your account" });
     }
