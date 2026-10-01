@@ -1212,33 +1212,25 @@ async function syncBgvReport(candidateId: string, providerKey: string): Promise<
     `SELECT status FROM candidate_bgv_check WHERE candidate_id = ?`,
     [candidateId]
   );
-
   const statuses = (checks as any[]).map(c => c.status);
-  const allVerified = statuses.length > 0 && statuses.every(s => s === 'verified');
-  const anyFailed = statuses.some(s => s === 'failed');
-  const anyManualReview = statuses.some(s => s === 'manual_review');
 
-  const overallStatus = allVerified ? 'clear'
-    : anyFailed ? 'negative'
-    : anyManualReview ? 'refer'
-    : 'in_progress';
-
-  const score = allVerified ? 100 : anyFailed ? 0 : 50;
-
+  // Only the bookkeeping fields are written here. overall_status / bgv_score used to be set from a
+  // crude rule (any manual_review => 'refer', any failed => 'negative'), which put every candidate
+  // whose masked PAN went to manual review into 'refer' — a hard, non-forceable appointment-letter
+  // blocker — and disagreed with the per-category verdict computeAndSaveScore maintains on every
+  // later check update. The verdict now comes from computeAndSaveScore alone, so manual_review
+  // counts as "in progress" and only a real mismatch/failure is adverse.
   await db.execute(
     `INSERT INTO candidate_bgv_report (id, candidate_id, overall_status, bgv_score, is_auto_approved, hr_remarks)
-     VALUES (?, ?, ?, ?, 0, ?)
+     VALUES (?, ?, 'pending', 0, 0, ?)
      ON DUPLICATE KEY UPDATE
-       overall_status = VALUES(overall_status),
-       bgv_score = VALUES(bgv_score),
        is_auto_approved = 0,
        hr_remarks = VALUES(hr_remarks),
        updated_at = NOW()`,
-    [
-      randomUUID(), candidateId, overallStatus, score,
-      `BGV checks via ${providerKey} — ${statuses.join(', ')}`,
-    ]
+    [randomUUID(), candidateId, `BGV checks via ${providerKey} — ${statuses.join(', ')}`]
   );
+  const { computeAndSaveScore } = await import("./bgv-verification.service.js");
+  await computeAndSaveScore(candidateId);
 }
 
 export async function validateOnboardingToken(token: string) {
