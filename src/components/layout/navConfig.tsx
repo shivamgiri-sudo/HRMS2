@@ -247,7 +247,6 @@ export const navGroups: NavGroup[] = [
         label: "Live Monitoring", href: "/wfm/live-tracker", icon: ic(Activity), pageCode: "WFM_LIVE_TRACKER", description: "Live tracking",
         children: [
           { label: "WFM Tracker",           href: "/wfm/live-tracker",          icon: ic(Clock),     pageCode: "WFM_LIVE_TRACKER", description: "Live" },
-          { label: "RTA Board",             href: "/rta-board",                 icon: ic(Activity),  pageCode: "RTA_BOARD",        description: "RTA" },
           // Exceptions, Mismatch, Billing and COSEC Monitoring merged into one tabbed
           // console (Task 6 of the WFM attendance-page merge). pageCode is the broadest of
           // the three grants the four sibling entries used to carry — the console's own

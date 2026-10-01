@@ -264,6 +264,7 @@ describe("application shell routing contracts", () => {
       "/wfm-roster",
       "/wfm/adherence-command-center",
       "/wfm/agent-attendance-view",
+      "/rta-board", // retired screen kept mounted so old bookmarks, Mira how-to links and TL access land on a "moved" notice
       "/wfm/break-desk-devices",
 
       // ── Added 2026-08-28. Each route below was checked for inbound links from a
