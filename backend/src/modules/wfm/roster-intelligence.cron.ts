@@ -16,6 +16,8 @@ import {
 import { emailService } from '../communication/email.service.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { buildAppLink } from '../../shared/appLink.js';
+import { withActionLink } from '../communication/notification.links.js';
 
 const ENABLED = process.env.ROSTER_INTELLIGENCE_CRON !== 'false';
 
@@ -90,7 +92,7 @@ async function runManagerDailyDigest(): Promise<void> {
       }
 
       try {
-        const html = formatManagerDigestEmail(digest);
+        const html = withActionLink(formatManagerDigestEmail(digest), undefined, buildAppLink('/my-team')).html;
         await emailService.send({
           to: digest.managerEmail,
           subject: `Team Attendance Summary — ${digest.date}`,
@@ -196,7 +198,7 @@ async function runUnplannedAbsenceAlerts(): Promise<void> {
       if (alertedManagers.has(managerId)) continue;
 
       try {
-        const html = formatUnplannedAlertEmail(data.name ?? 'Manager', data.alerts);
+        const html = withActionLink(formatUnplannedAlertEmail(data.name ?? 'Manager', data.alerts), undefined, buildAppLink('/my-team')).html;
         await emailService.send({
           to: data.email,
           subject: `Alert: ${data.alerts.length} Team Member(s) Not Punched In`,

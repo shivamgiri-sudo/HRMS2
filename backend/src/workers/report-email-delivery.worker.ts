@@ -5,6 +5,8 @@ import { emailService } from '../modules/communication/email.service.js';
 import { withWorkerLock, registerTimer, unregisterTimer } from './worker-utils.js';
 import { resolveStoragePath } from '../modules/reporting/report-file-storage.js';
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from '../modules/reporting/report-audit.service.js';
+import { buildAppLink } from '../shared/appLink.js';
+import { withActionLink } from '../modules/communication/notification.links.js';
 
 const WORKER_NAME = 'report-email-delivery';
 const INTERVAL_MS = 30_000;
@@ -258,6 +260,7 @@ async function processOneDelivery(): Promise<void> {
     rowCount: req.generated_row_count ?? 0,
     retentionDays,
   });
+  const htmlWithLink = withActionLink(html, undefined, buildAppLink('/reports', { view: 'requests' })).html;
 
   await recordReportAuditEvent({
     reportRequestId: requestId!,
@@ -276,7 +279,7 @@ async function processOneDelivery(): Promise<void> {
     const result = await emailService.send({
       to: req.official_email,
       subject: emailSubject,
-      html,
+      html: htmlWithLink,
       attachments: [{
         filename: req.original_filename ?? `${req.request_reference}.xlsx`,
         path: storagePath,
