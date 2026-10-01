@@ -199,7 +199,7 @@ async function syncAddressBgvCheck(
 // ── Core initiation logic (used by HR route and auto-send) ───────────────────
 export interface AddressBgvInitResult {
   sent: boolean;
-  skippedReason?: "max_attempts" | "no_address" | "no_email";
+  skippedReason?: "max_attempts" | "no_address" | "no_email" | "already_sent";
   token?: string;
   link?: string;
   expiresAt?: Date;
@@ -210,13 +210,18 @@ export interface AddressBgvInitResult {
 
 export async function initiateAddressBgvForCandidate(
   candidateId: string,
-  opts: { forceUnblock?: boolean; unblockerId?: string | null } = {},
+  opts: { forceUnblock?: boolean; unblockerId?: string | null; onlyIfNone?: boolean } = {},
 ): Promise<AddressBgvInitResult> {
   const [countRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM candidate_bgv_address_verification WHERE candidate_id = ?`,
     [candidateId],
   );
   const attemptCount = Number((countRows[0] as RowDataPacket).cnt);
+
+  // Idempotent auto paths (approval, profile submit, sweep) must never mint a second link.
+  if (opts.onlyIfNone && attemptCount > 0) {
+    return { sent: false, skippedReason: "already_sent" };
+  }
 
   if (attemptCount >= MAX_ATTEMPTS && !opts.forceUnblock) {
     return { sent: false, skippedReason: "max_attempts" };
@@ -292,6 +297,47 @@ export async function initiateAddressBgvForCandidate(
     attemptNumber: nextAttempt,
     geoResolved: geo !== null,
   };
+}
+
+/**
+ * Auto-send, with the outcome logged. The approval-time trigger used to be
+ * `void initiate(...).catch(() => {})`, so a skip (no address yet, no email) or a failure left no
+ * trace and nothing ever retried it. Safe to call repeatedly: onlyIfNone makes it a no-op once a
+ * link exists. Never throws.
+ */
+export async function autoSendAddressBgvLink(candidateId: string, trigger: string): Promise<void> {
+  try {
+    const r = await initiateAddressBgvForCandidate(candidateId, { onlyIfNone: true });
+    if (r.sent) console.log(`[address-bgv] link sent candidate=${candidateId} trigger=${trigger}`);
+    else if (r.skippedReason !== "already_sent") {
+      console.warn(`[address-bgv] link NOT sent candidate=${candidateId} trigger=${trigger} reason=${r.skippedReason}`);
+    }
+  } catch (err) {
+    console.error(`[address-bgv] auto-send failed candidate=${candidateId} trigger=${trigger}:`, err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * Catch-up for candidates who passed approval (or submitted their profile) but never got a link —
+ * typically because the address was not filled in yet when approval fired. Only rows that can
+ * actually be sent (address + email present) and are recent are selected, so permanently
+ * unsendable rows cannot starve the batch and old candidates are never emailed out of the blue.
+ */
+export async function sweepMissingAddressBgvLinks(limit = 5): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id
+       FROM ats_candidate c
+       JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+      WHERE (c.current_stage = 'offer_approved' OR c.profile_submitted_at IS NOT NULL)
+        AND COALESCE(c.profile_submitted_at, c.updated_at) >= NOW() - INTERVAL 14 DAY
+        AND c.email IS NOT NULL AND TRIM(c.email) <> ''
+        AND COALESCE(NULLIF(TRIM(p.present_address), ''), NULLIF(TRIM(p.present_address_line1), '')) IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification v WHERE v.candidate_id = c.id)
+      ORDER BY c.updated_at DESC
+      LIMIT ${Math.max(1, Math.min(50, Math.trunc(limit)))}`,
+  );
+  for (const row of rows) await autoSendAddressBgvLink(String(row.id), "sweep");
+  return rows.length;
 }
 
 // ── HR: initiate ──────────────────────────────────────────────────────────────

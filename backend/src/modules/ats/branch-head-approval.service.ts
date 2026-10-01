@@ -8,7 +8,7 @@ import { RowDataPacket } from "mysql2/promise";
 import { sendSelectedEmail, sendRejectedEmail } from "./ats.email.service.js";
 import { approveOffer, rejectOffer } from "./ats.onboarding.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
-import { initiateAddressBgvForCandidate } from "./bgv-address-verification.routes.js";
+import { autoSendAddressBgvLink } from "./bgv-address-verification.routes.js";
 
 /**
  * Branch Head Approval Service
@@ -273,7 +273,7 @@ export async function processBranchHeadApproval(input: ApprovalInput): Promise<{
         : null;
 
       // Auto-send BGV address verification link to candidate
-      void initiateAddressBgvForCandidate(approval.candidate_id as string).catch(() => {});
+      void autoSendAddressBgvLink(approval.candidate_id as string, "branch-head-approval");
 
       // Fire-and-forget: send approval email after transaction commits
       if (!approval.offer_id && approval.email) {

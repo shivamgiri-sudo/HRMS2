@@ -24,6 +24,7 @@ import { startMolecularEmailSyncWorker, stopMolecularEmailSyncWorker } from "./m
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
 import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
 import { startDeadKitRedispatchWorker, stopDeadKitRedispatchWorker } from "./esign-dead-kit-redispatch.worker.js";
+import { startAddressBgvLinkSweepWorker, stopAddressBgvLinkSweepWorker } from "./address-bgv-link-sweep.worker.js";
 import { startMcnmeetCron, stopMcnmeetCron } from "../modules/mcnmeet/mcnmeet.cron.js";
 import { startSocialFeedCron } from "../modules/social-feed/social-feed.cron.js";
 import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from "../modules/engagement/tenure.cron.js";
@@ -378,6 +379,14 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     },
   },
   {
+    // Sends the address-BGV link to approved candidates who never got one.
+    name: "address-bgv-link-sweep",
+    start: () => {
+      startAddressBgvLinkSweepWorker();
+      return Promise.resolve();
+    },
+  },
+  {
     name: "dpdp-breach-sla",
     start: () => { startBreachSlaCron(); return Promise.resolve(); },
   },
@@ -594,6 +603,7 @@ function shutdown(): void {
   stopMcnmeetCron();
   stopEsignReconciliationWorker();
   stopDeadKitRedispatchWorker();
+  stopAddressBgvLinkSweepWorker();
   stopTenureBadgeScheduler();
   stopCelebrationScheduler();
   stopFestivalGreetingScheduler();

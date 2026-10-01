@@ -2174,6 +2174,11 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
     [candidateId]
   );
 
+  // Address is now on file: send the address-BGV link if approval-time send skipped for lack of one.
+  import("./bgv-address-verification.routes.js")
+    .then(({ autoSendAddressBgvLink }) => autoSendAddressBgvLink(candidateId, "profile-submitted"))
+    .catch(() => undefined);
+
   // Trigger real BGV checks asynchronously — fire-and-forget after submission commits
   // Uses configured provider (befisc_luckpay / infinity_ai / digio) from org_settings
   // Failures are logged and visible in BGV review queue — do NOT throw here
