@@ -11,7 +11,6 @@ import { wfmService } from "./wfm.service.js";
 import { getLiveTracker } from "./liveTracker.service.js";
 import { rosterPreferenceService } from "./roster-preference.service.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import { checkAssignmentDateNotLocked } from "../roster/roster-lock-guard.js";
 import {
   HALF_DAY_STATUS,
   LEAVE_STATUSES,
@@ -22,7 +21,14 @@ import {
   statusList,
 } from "../../shared/attendanceStatus.js";
 import { planningRuleService } from "./planningRule.service.js";
-import { notifyWeekoffDecision } from "../roster-requests/roster-requests.notify.js";
+import {
+  realignWeekoff,
+  forceApproveWeekoff,
+  escalateWeekoff,
+  rejectWeekoffRequest,
+  isWeekoffReviewError,
+  advanceCycleIfFullyAcknowledged,
+} from "./weekoff-review.service.js";
 import { slotRequirementService } from "./slotRequirement.service.js";
 import { restPolicyConfigService } from "./rest-policy-config.service.js";
 import { weekoffDayRuleService } from "./weekoffDayRule.service.js";
@@ -874,367 +880,32 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
   return res.json({ success: true, data: await withLobNames(rows as any[], "employee_lob_id") });
 }));
 
-/**
- * Blocks the ordinary manager-override roster actions (realign/force-approve/
- * escalate/reject-request) once attendance for that assignment's date has
- * been locked for payroll. payroll-governance.service.ts's freezeAttendance()
- * sets attendance_daily_record.is_locked = 1 at the Attendance Locked /
- * Payroll Input Ready lifecycle step — until then these endpoints behave
- * exactly as before. Past that lock, editing the roster date through this
- * path would silently rewrite a day payroll has already consumed; that now
- * requires a separate, explicitly-authorized correction/reopen workflow
- * instead of the normal override. (Part A.3, 2026-08-13 business-decision
- * sign-off — additive guard only, no existing successful-path behavior for
- * unlocked dates is changed.)
- *
- * Round 2 (2026-08-13): the query itself now lives in the shared
- * roster-lock-guard.ts module (checkAssignmentDateNotLocked) so other
- * roster-write paths — e.g. wfm-ext.service.ts's shift-swap apply — enforce
- * the identical invariant via the same function rather than a second copy of
- * this query. This wrapper is unchanged in signature/behavior; the 12
- * existing tests in wfm.routes.test.ts (locked→409 / unlocked→200 /
- * reason-still-required→400, per endpoint) pass unchanged against it.
- */
-async function assertRosterDateNotLocked(
-  dbConn: (typeof import("../../db/mysql.js"))["db"],
-  assignmentId: string
-): Promise<{ blocked: true; error: string } | { blocked: false }> {
-  return checkAssignmentDateNotLocked(dbConn, assignmentId);
-}
+// The four manager-review overrides (realign / force-approve / escalate / reject-request) live in
+// weekoff-review.service.ts so the Roster Requests hub applies the same decision through the same
+// code. Each handler is a thin wrapper: a refusal from the service carries the exact status and
+// JSON body these handlers always sent, and is replayed unchanged.
+type WeekoffReviewFn = typeof realignWeekoff;
+const weekoffReviewHandler = (fn: WeekoffReviewFn) => h(async (req: any, res: any) => {
+  try {
+    const result = await fn({ assignmentId: req.params.assignmentId, userId: req.authUser!.id, body: req.body ?? {}, req });
+    return res.json({ success: true, message: result.message });
+  } catch (err) {
+    if (isWeekoffReviewError(err)) return res.status(err.statusCode).json(err.body);
+    throw err;
+  }
+});
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/realign
-wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), h(async (req: any, res: any) => {
-  const { assignmentId } = req.params;
-  const { new_roster_date, new_shift_template_id, reason } = req.body;
-  if (!reason) return res.status(400).json({ error: "reason is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-
-  // Verify manager scope before mutation
-  const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) return res.status(403).json({ error: "No employee record" });
-    const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT 1 FROM wfm_roster_assignment wra
-        JOIN employees e ON e.id = wra.employee_id
-        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
-        -- inner join discards the row before the OR below is ever evaluated and the
-        -- reporting-manager branch can never match — a manager was refused on their own
-        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
-        -- NULL, so the scope branch is unchanged: this restores the manager path only.
-        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
-       WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
-         SELECT 1 FROM user_assignment_scope ups
-          WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
-       )) LIMIT 1`,
-      [assignmentId, emp.id, req.authUser!.id]
-    );
-    if (!(scopeCheck as RowDataPacket[])[0]) {
-      return res.status(403).json({ error: "Not authorized to act on this employee" });
-    }
-  }
-
-  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
-  if (lockCheck.blocked) {
-    return res.status(409).json({ error: lockCheck.error });
-  }
-
-  // Round 2 (2026-08-13) minimum-rest audit finding: realign can move an
-  // employee onto a different shift_template_id, which can violate minimum
-  // rest against their neighboring shifts just as surely as any other
-  // roster write — but unlike manual assignment/bulk-upload, this endpoint
-  // never called into rest-policy.service.ts at all. Only checked when a
-  // new shift is actually being set (a pure date move with no shift change
-  // carries the assignment's already-validated times, unchanged). Blocking-
-  // only, no override support here yet — matches bulk-upload's posture,
-  // the more conservative of the two existing behaviors in this codebase.
-  if (new_shift_template_id) {
-    // process_id/branch_id joined in here too (not just employee_id) — without
-    // it, a process- or branch-scoped rest policy could never resolve on this
-    // endpoint, silently falling back to organization-only. Every other Area 2
-    // write path passes these; this one didn't originally.
-    const [assignRows] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT wra.employee_id, wra.roster_date, e.process_id, e.branch_id
-         FROM wfm_roster_assignment wra
-         JOIN employees e ON e.id = wra.employee_id
-        WHERE wra.id = ? LIMIT 1`,
-      [assignmentId]
-    );
-    const assignRow = (assignRows as RowDataPacket[])[0];
-    if (assignRow) {
-      const [shiftRows] = await dbConn.execute<RowDataPacket[]>(
-        `SELECT start_time, end_time FROM wfm_shift_template WHERE id = ? LIMIT 1`,
-        [new_shift_template_id]
-      );
-      const shift = (shiftRows as RowDataPacket[])[0];
-      if (shift?.start_time && shift?.end_time) {
-        const effectiveDate = new_roster_date ? String(new_roster_date).slice(0, 10) : String(assignRow.roster_date).slice(0, 10);
-        const { validateMinimumRest, isRestPolicyFeatureActive } = await import("./rest-policy.service.js");
-        if (await isRestPolicyFeatureActive(dbConn)) {
-          const restResult = await validateMinimumRest(
-            { employeeId: String(assignRow.employee_id), processId: assignRow.process_id ?? null, branchId: assignRow.branch_id ?? null, forDate: effectiveDate },
-            { startTime: String(shift.start_time).slice(0, 5), endTime: String(shift.end_time).slice(0, 5) },
-            assignmentId,
-            dbConn
-          );
-          if (!restResult.ok) {
-            return res.status(409).json({
-              error: restResult.reason === "REST_POLICY_MISSING"
-                ? "No minimum-rest policy is configured for this employee/process/branch/organization — cannot verify this realignment is safe."
-                : `Realigning to this shift leaves only ${restResult.actualRestMinutes} minute(s) of rest against the ${restResult.against} shift (minimum required: ${restResult.requiredRestMinutes}).`,
-              reason: restResult.reason,
-            });
-          }
-        }
-      }
-    }
-  }
-
-  const updates: string[] = [
-    "final_roster_status = 'realigned_by_manager'",
-    "manager_action_status = 'realigned'",
-    "manager_action_by = ?",
-    "manager_action_at = NOW()",
-    "manager_action_reason = ?",
-  ];
-  const vals: unknown[] = [req.authUser!.id, reason];
-
-  if (new_roster_date) { updates.push("roster_date = ?"); vals.push(new_roster_date); }
-  if (new_shift_template_id) { updates.push("shift_template_id = ?"); vals.push(new_shift_template_id); }
-  vals.push(assignmentId);
-
-  // State change and audit row are one transaction: a failure between them would otherwise commit
-  // the realignment and lose the record of who made it. See inManagerDecisionTx.
-  await inManagerDecisionTx(async (tx) => {
-  await tx.execute(`UPDATE wfm_roster_assignment SET ${updates.join(", ")} WHERE id = ?`, vals);
-
-  // Write audit row
-  await tx.execute(
-    `INSERT INTO roster_decision_audit
-       (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
-        override_by, override_reason, override_at, acted_by_role, old_value_json, new_value_json)
-     SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
-            'manager_realigned', 'manager_realign_action', ?, ?, NOW(), 'manager',
-            JSON_OBJECT('status','pending_manager_action'),
-            JSON_OBJECT('status','realigned_by_manager','new_roster_date',?,'new_shift_template_id',?)
-       FROM wfm_roster_assignment WHERE id = ?`,
-    [req.authUser!.id, reason, new_roster_date ?? null, new_shift_template_id ?? null, assignmentId]
-  );
-  });
-
-  // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
-  // published -> acknowledged check the employee path runs must happen here too. Without
-  // it a week whose final holdout was settled by a manager, rather than by the employee
-  // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
-  // this: 'escalated_to_hr' is still awaiting a human.
-  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  await notifyWeekoffDecision(dbConn, assignmentId, "Week-off request adjusted", (date) => `Your week-off request for ${date} was adjusted by your manager${new_roster_date ? ` (new date: ${String(new_roster_date).slice(0, 10)})` : ""}.`);
-  return res.json({ success: true, message: "Assignment realigned" });
-}));
+wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), weekoffReviewHandler(realignWeekoff));
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/force-approve
-wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), h(async (req: any, res: any) => {
-  const { assignmentId } = req.params;
-  const { reason } = req.body;
-  if (!reason) return res.status(400).json({ error: "reason is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-
-  // Verify manager scope before mutation
-  const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) return res.status(403).json({ error: "No employee record" });
-    const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT 1 FROM wfm_roster_assignment wra
-        JOIN employees e ON e.id = wra.employee_id
-        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
-        -- inner join discards the row before the OR below is ever evaluated and the
-        -- reporting-manager branch can never match — a manager was refused on their own
-        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
-        -- NULL, so the scope branch is unchanged: this restores the manager path only.
-        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
-       WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
-         SELECT 1 FROM user_assignment_scope ups
-          WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
-       )) LIMIT 1`,
-      [assignmentId, emp.id, req.authUser!.id]
-    );
-    if (!(scopeCheck as RowDataPacket[])[0]) {
-      return res.status(403).json({ error: "Not authorized to act on this employee" });
-    }
-  }
-
-  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
-  if (lockCheck.blocked) {
-    return res.status(409).json({ error: lockCheck.error });
-  }
-
-  // State change and audit row are one transaction — see inManagerDecisionTx.
-  await inManagerDecisionTx(async (tx) => {
-    await tx.execute(
-      `UPDATE wfm_roster_assignment
-          SET final_roster_status = 'force_approved_by_manager',
-              manager_action_status = 'force_approved',
-              manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
-        WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
-
-    await tx.execute(
-      `INSERT INTO roster_decision_audit
-         (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
-          override_by, override_reason, override_at, acted_by_role)
-       SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
-              'force_approved', 'manager_force_approve', ?, ?, NOW(), 'manager'
-         FROM wfm_roster_assignment WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
-  });
-
-  // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
-  // published -> acknowledged check the employee path runs must happen here too. Without
-  // it a week whose final holdout was settled by a manager, rather than by the employee
-  // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
-  // this: 'escalated_to_hr' is still awaiting a human.
-  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  await notifyWeekoffDecision(dbConn, assignmentId, "Week-off request approved", (date) => `Your week-off request for ${date} was approved.`);
-  return res.json({ success: true, message: "Assignment force-approved" });
-}));
+wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), weekoffReviewHandler(forceApproveWeekoff));
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/escalate
-wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), h(async (req: any, res: any) => {
-  const { assignmentId } = req.params;
-  const { reason } = req.body;
-  if (!reason) return res.status(400).json({ error: "reason is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-
-  // Verify manager scope before mutation
-  const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) return res.status(403).json({ error: "No employee record" });
-    const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT 1 FROM wfm_roster_assignment wra
-        JOIN employees e ON e.id = wra.employee_id
-        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
-        -- inner join discards the row before the OR below is ever evaluated and the
-        -- reporting-manager branch can never match — a manager was refused on their own
-        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
-        -- NULL, so the scope branch is unchanged: this restores the manager path only.
-        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
-       WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
-         SELECT 1 FROM user_assignment_scope ups
-          WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
-       )) LIMIT 1`,
-      [assignmentId, emp.id, req.authUser!.id]
-    );
-    if (!(scopeCheck as RowDataPacket[])[0]) {
-      return res.status(403).json({ error: "Not authorized to act on this employee" });
-    }
-  }
-
-  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
-  if (lockCheck.blocked) {
-    return res.status(409).json({ error: lockCheck.error });
-  }
-
-  // State change and audit row are one transaction — see inManagerDecisionTx.
-  await inManagerDecisionTx(async (tx) => {
-    await tx.execute(
-      `UPDATE wfm_roster_assignment
-          SET final_roster_status = 'escalated_to_hr',
-              manager_action_status = 'escalated',
-              manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
-        WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
-
-    await tx.execute(
-      `INSERT INTO roster_decision_audit
-         (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
-          override_by, override_reason, override_at, acted_by_role)
-       SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
-              'escalated_to_hr', 'manager_escalate', ?, ?, NOW(), 'manager'
-         FROM wfm_roster_assignment WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
-  });
-
-  return res.json({ success: true, message: "Escalated to HR/WFM" });
-}));
+wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), weekoffReviewHandler(escalateWeekoff));
 
 // POST /api/wfm/manager/weekoff-review/:assignmentId/reject-request
-wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), h(async (req: any, res: any) => {
-  const { assignmentId } = req.params;
-  const { reason } = req.body;
-  if (!reason) return res.status(400).json({ error: "reason is required" });
-  const { db: dbConn } = await import("../../db/mysql.js");
-  const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
-
-  // Verify manager scope before mutation
-  const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
-  if (!isPrivileged) {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp) return res.status(403).json({ error: "No employee record" });
-    const [scopeCheck] = await dbConn.execute<RowDataPacket[]>(
-      `SELECT 1 FROM wfm_roster_assignment wra
-        JOIN employees e ON e.id = wra.employee_id
-        -- LEFT, not INNER: 333,762 of 413,386 roster rows carry process_name NULL, so an
-        -- inner join discards the row before the OR below is ever evaluated and the
-        -- reporting-manager branch can never match — a manager was refused on their own
-        -- direct report. pm.id is then NULL, and ups.process_id = pm.id cannot match a
-        -- NULL, so the scope branch is unchanged: this restores the manager path only.
-        LEFT JOIN process_master pm ON pm.process_name = wra.process_name
-       WHERE wra.id = ? AND (e.reporting_manager_id = ? OR EXISTS (
-         SELECT 1 FROM user_assignment_scope ups
-          WHERE ups.user_id = ? AND ups.process_id = pm.id AND ups.active_status = 1
-       )) LIMIT 1`,
-      [assignmentId, emp.id, req.authUser!.id]
-    );
-    if (!(scopeCheck as RowDataPacket[])[0]) {
-      return res.status(403).json({ error: "Not authorized to act on this employee" });
-    }
-  }
-
-  const lockCheck = await assertRosterDateNotLocked(dbConn, assignmentId);
-  if (lockCheck.blocked) {
-    return res.status(409).json({ error: lockCheck.error });
-  }
-
-  // State change and audit row are one transaction — see inManagerDecisionTx.
-  await inManagerDecisionTx(async (tx) => {
-    await tx.execute(
-      `UPDATE wfm_roster_assignment
-          SET final_roster_status = 'manager_rejected_employee_request',
-              manager_action_status = 'rejected_request',
-              manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
-        WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
-
-    await tx.execute(
-      `INSERT INTO roster_decision_audit
-         (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
-          override_by, override_reason, override_at, acted_by_role)
-       SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
-              'manager_rejected_request', 'manager_reject_employee_request', ?, ?, NOW(), 'manager'
-         FROM wfm_roster_assignment WHERE id = ?`,
-      [req.authUser!.id, reason, assignmentId]
-    );
-  });
-
-  // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
-  // published -> acknowledged check the employee path runs must happen here too. Without
-  // it a week whose final holdout was settled by a manager, rather than by the employee
-  // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
-  // this: 'escalated_to_hr' is still awaiting a human.
-  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
-  await notifyWeekoffDecision(dbConn, assignmentId, "Week-off request declined", (date) => `Your week-off request for ${date} was declined; your original assignment is retained.`);
-  return res.json({ success: true, message: "Employee request rejected — original assignment retained" });
-}));
+wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), employeeOwnerGuard("wfm_roster_assignment", "assignmentId"), weekoffReviewHandler(rejectWeekoffRequest));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EMPLOYEE SELF-SERVICE  /api/wfm/my-weekoff
@@ -1272,87 +943,6 @@ async function closeRosterAckInboxItem(
   } catch {
     // Non-fatal: the employee's answer is already recorded, and a stale inbox row is far
     // less harmful than failing their acknowledgement because the inbox table misbehaved.
-  }
-}
-
-/**
- * Run a manager decision's state change and its audit row as ONE transaction.
- *
- * The four manager-review actions each perform two writes: an UPDATE that records the decision on
- * the assignment, and an INSERT into roster_decision_audit that records who made it and why. They
- * ran unwrapped, so a failure between them committed the first and lost the second — observed for
- * real on 2026-08-20, when the audit INSERT died on a foreign key and left an assignment at
- * 'force_approved_by_manager' with no audit row at all. A decision existing with no record of who
- * took it is exactly what CLAUDE.md rule 8 forbids.
- *
- * The publish route already does this correctly; these four were the outliers.
- *
- * The pool is shared by ~45 workers and a single unreleased connection has previously starved all
- * of them for 16 days, so release() is in a finally and runs on every path. rollback() is
- * additionally guarded: if the connection died mid-transaction the rollback itself can throw, and
- * that must not replace the original error, which is the one worth reporting.
- */
-async function inManagerDecisionTx<T>(
-  fn: (tx: {
-    execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]>;
-  }) => Promise<T>
-): Promise<T> {
-  const { db } = await import("../../db/mysql.js");
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-    const result = await fn(conn as never);
-    await conn.commit();
-    return result;
-  } catch (err) {
-    await conn.rollback().catch(() => {});
-    throw err;
-  } finally {
-    conn.release();
-  }
-}
-
-/**
- * Advance a cycle from 'published' to 'acknowledged' once nobody is left to answer.
- *
- * VALID_TRANSITIONS (roster.governance.service.ts) allows published -> acknowledged, and
- * acknowledged -> active is the gateway to the rest of the lifecycle — active, attendance_locked,
- * payroll_input_ready. Nothing ever performed this transition, so a fully acknowledged week sat at
- * 'published' forever and the lifecycle stalled one step after publish. Verified end to end
- * against production 2026-08-20: all seven assignments reached 'acknowledged' and the cycle was
- * still 'published'.
- *
- * The NOT EXISTS covers every state that is still waiting on a human, not just employee
- * acknowledgement: a rejection moves an assignment to 'pending_manager_action' (and possibly on to
- * 'escalated_to_hr'), and a week with an unresolved rejection is not acknowledged. So one holdout
- * correctly keeps the whole cycle open rather than letting it advance around them.
- *
- * Guarded on status = 'published' so this can only ever perform that one legal transition — it
- * cannot regress a cycle that has already moved on, which is the failure the publish route's own
- * POST_PUBLISH_STATUSES check exists to prevent.
- */
-async function advanceCycleIfFullyAcknowledged(
-  dbConn: { execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]> },
-  assignmentId: string
-): Promise<void> {
-  try {
-    await dbConn.execute(
-      `UPDATE weekly_roster_cycle c
-          SET c.status = 'acknowledged', c.updated_at = NOW()
-        WHERE c.id = (SELECT a.cycle_id FROM wfm_roster_assignment a WHERE a.id = ?)
-          AND c.status = 'published'
-          AND NOT EXISTS (
-              SELECT 1 FROM wfm_roster_assignment p
-               WHERE p.cycle_id = c.id
-                 AND p.final_roster_status IN
-                     ('pending_employee_ack', 'pending_manager_action', 'escalated_to_hr'))`,
-      [assignmentId]
-    );
-  } catch (err) {
-    // Non-fatal for the same reason closeRosterAckInboxItem is: the employee's answer is already
-    // committed, and refusing it because the cycle header did not move would be worse. Logged
-    // rather than swallowed, so a cycle stuck at 'published' is diagnosable instead of silent.
-    console.error("[roster] failed to advance cycle to acknowledged", { assignmentId, err });
   }
 }
 

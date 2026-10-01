@@ -11,7 +11,8 @@ describe("decision paths notify affected employees", () => {
     expect(s).toMatch(/notifyRosterRequest\(\s*\{\s*employeeIds: \[[^\]]*requester_emp_id[^\]]*swap_with_emp_id/s);
   });
   it("week-off realign, force-approve and reject-request notify", () => {
-    const s = read("../../wfm/wfm.routes.ts");
+    // The handlers delegate to weekoff-review.service.ts, which owns the notify calls.
+    const s = read("../../wfm/weekoff-review.service.ts");
     expect(s).toContain("import { notifyWeekoffDecision }");
     expect((s.match(/notifyWeekoffDecision\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
   });
