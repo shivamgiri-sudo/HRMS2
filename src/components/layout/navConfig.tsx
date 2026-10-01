@@ -473,6 +473,7 @@ export const navGroups: NavGroup[] = [
   {
     title: "Support",
     items: [
+      { label: "HRMS Guide",     href: "/guide",                             icon: ic(BookOpen),    description: "How to do everything, by role" },
       { label: "Helpdesk",       href: "/helpdesk",                          icon: ic(ShieldCheck), roles: ["admin","super_admin","hr","manager","process_manager","branch_head"], description: "Helpdesk" },
       { label: "Support Command",href: "/support/command-center",            icon: ic(ShieldCheck), pageCode: "SUPPORT_COMMAND_CENTER",    description: "Support ops" },
       { label: "Grievance",      href: "/support/grievance-command-center",  icon: ic(ClipboardList), pageCode: "GRIEVANCE_COMMAND_CENTER", description: "Grievances" },

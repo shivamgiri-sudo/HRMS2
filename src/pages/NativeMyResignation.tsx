@@ -405,7 +405,10 @@ function ActiveResignation({
   const [withdrawBusy, setWithdrawBusy] = useState(false);
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
 
-  const canWithdraw = request.status === "submitted";
+  // A resignation leaves "submitted" within seconds now (it is routed to Manager Review
+  // automatically), so withdrawal has to stay open while it is under review too, otherwise the
+  // employee could never withdraw. The API already allows it from manager_review.
+  const canWithdraw = request.status === "submitted" || request.status === "manager_review";
 
   useEffect(() => {
     let cancelled = false;
@@ -609,7 +612,7 @@ function ResignationForm({ onSubmitted }: { onSubmitted: () => void }) {
           <p className="text-sm font-semibold text-amber-800">Please read before proceeding</p>
           <p className="mt-0.5 text-sm text-amber-700">
             This action cannot be undone after acceptance. Your resignation will be reviewed by your
-            manager and HR. You may withdraw it only while it is in the <strong>Submitted</strong> state.
+            manager and HR. You may withdraw it only while it is <strong>Submitted</strong> or under <strong>Manager Review</strong> (before it is accepted).
           </p>
         </div>
       </div>
