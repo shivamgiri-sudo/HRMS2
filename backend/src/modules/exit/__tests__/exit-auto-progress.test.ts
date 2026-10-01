@@ -42,7 +42,7 @@ describe("runExitAutoProgress", () => {
   it("moves every bucket forward, as 'system', with the expected current status", async () => {
     rows.submitted = [{ id: "s1" }];
     rows.review = [{ id: "r1" }];
-    rows.accepted = [{ id: "a1", has_confirmed: 0, proposed: "2026-11-15" }];
+    rows.accepted = [{ id: "a1", has_confirmed: 0, proposed: "2026-11-15", notice_period_days: 30 }];
     rows.due = [{ id: "d1" }];
     const res = await runExitAutoProgress();
     expect(res).toMatchObject({ toManagerReview: 1, toAccepted: 1, toNotice: 1, toExited: 1, failed: 0 });
@@ -57,13 +57,16 @@ describe("runExitAutoProgress", () => {
 
   it("confirms the employee's proposed last working day only when HR set none", async () => {
     rows.accepted = [
-      { id: "none", has_confirmed: 0, proposed: "2026-11-15" },
-      { id: "set", has_confirmed: 1, proposed: "2026-11-20" },
+      { id: "none", has_confirmed: 0, proposed: "2026-11-15", notice_period_days: 30 },
+      { id: "set", has_confirmed: 1, proposed: "2026-11-20", notice_period_days: 30 },
+      { id: "nodays", has_confirmed: 0, proposed: "2026-11-25", notice_period_days: 0 },
     ];
     await runExitAutoProgress();
     const byId = Object.fromEntries(updateExitStatus.mock.calls.map((c) => [c[0], c[5]]));
-    expect(byId.none).toEqual({ lastWorkingDayConfirmed: "2026-11-15" });
-    expect(byId.set).toBeUndefined();
+    // The notice period is always passed on, so the status code writes the notice start/end dates.
+    expect(byId.none).toEqual({ lastWorkingDayConfirmed: "2026-11-15", noticePeriodDays: 30 });
+    expect(byId.set).toEqual({ noticePeriodDays: 30 });
+    expect(byId.nodays).toEqual({ lastWorkingDayConfirmed: "2026-11-25" });
   });
 
   it("does not guess a date: accepted with no proposed or confirmed LWD is left alone and counted failed", async () => {

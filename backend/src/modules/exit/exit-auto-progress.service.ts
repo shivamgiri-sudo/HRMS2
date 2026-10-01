@@ -57,7 +57,7 @@ async function move(
   from: string,
   to: string,
   remarks: string,
-  notice?: { lastWorkingDayConfirmed?: string | null },
+  notice?: { lastWorkingDayConfirmed?: string | null; noticePeriodDays?: number | null },
 ): Promise<boolean> {
   try {
     await exitService.updateExitStatus(id, to, remarks, AUTO_ACTOR, from, notice);
@@ -116,13 +116,21 @@ export async function runExitAutoProgress(): Promise<AutoProgressResult> {
     const [accepted] = await db.execute<RowDataPacket[]>(
       `SELECT id,
               last_working_day_confirmed IS NOT NULL AS has_confirmed,
+              notice_period_days,
               DATE_FORMAT(last_working_day_proposed, '%Y-%m-%d') AS proposed
          FROM exit_request WHERE status = 'accepted' AND exit_type = 'voluntary' AND COALESCE(exit_sub_type, 'resignation') = 'resignation'
            AND ${NOT_BACKDATED}`,
     );
     for (const r of accepted) {
       if (!r.has_confirmed && !r.proposed) { res.failed++; continue; }
-      const notice = r.has_confirmed ? undefined : { lastWorkingDayConfirmed: String(r.proposed) };
+      // Passing the notice period (unchanged, so no override alert fires) is what makes the status
+      // code write notice_start_date / notice_end_date; without it a notice_serving exit had
+      // those NULL and every "days remaining" reader had nothing to compute from.
+      const days = Number(r.notice_period_days) > 0 ? Number(r.notice_period_days) : null;
+      const notice = {
+        ...(r.has_confirmed ? {} : { lastWorkingDayConfirmed: String(r.proposed) }),
+        ...(days ? { noticePeriodDays: days } : {}),
+      };
       (await move(String(r.id), "accepted", "notice_serving", "Auto: notice period started", notice))
         ? res.toNotice++ : res.failed++;
     }
