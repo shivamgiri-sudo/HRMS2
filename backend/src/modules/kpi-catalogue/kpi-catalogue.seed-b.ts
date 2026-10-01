@@ -23,7 +23,7 @@ function lpKpis(ref: string, onboarding: boolean) {
     k("lp_login_count", "Login count", "workforce", "volume", "count", H, "process", "upload", ref, "COUNT(DISTINCT agent) with login", "upload", ["date"], A_MGMT),
     k("lp_shrinkage_pct", "Shrinkage %", "workforce", "rate", "percent", L, "both", "upload", ref, "(login - net login) / login", "upload", ["date", "agent"], A_ALL),
     k("lp_occupancy_pct", "Occupancy %", "workforce", "rate", "percent", H, "both", "upload", ref, "handle time / (login - break)", "upload", ["date", "agent"], A_ALL),
-    k("lp_avg_talk_per_agent_day", "Average talk per agent-day", "outbound", "duration", "seconds", H, "both", "upload", ref, "SUM(talk) / agent-days", "upload", ["date", "agent"], A_ALL, { metricCode: "TALK_TIME" }),
+    k("lp_avg_talk_per_agent_day", "Average talk per agent-day", "outbound", "duration", "seconds", L, "both", "upload", ref, "SUM(talk) / agent-days", "upload", ["date", "agent"], A_ALL, { metricCode: "TALK_TIME" }),
     ...(onboarding ? [k("lp_qualified_handover", "Qualified and handed over", "funnel", "volume", "count", H, "both", "upload", ref, "COUNT(disposition = qualified and handed over)", "upload", d, A_ALL)] : []),
   ];
 }

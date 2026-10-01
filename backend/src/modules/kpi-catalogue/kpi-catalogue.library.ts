@@ -53,7 +53,7 @@ export function inboundKpis(cdrTable: string, opts: { fcr?: boolean } = {}): Cat
     k("in_service_level_pct", "Service level %", "inbound", "rate", "percent", H, "both", "dialer_live", ref, "answered within threshold / answered (threshold 20s pattern A, 30s pattern B)", "realtime", dims, A_ALL),
     k("in_abandon_pct", "Abandon %", "inbound", "rate", "percent", L, "process", "dialer_live", ref, "abandoned / offered", "realtime", dims, A_MGMT),
     k("in_aht_sec", "Average handle time (AHT)", "inbound", "duration", "seconds", L, "both", "dialer_live", ref, "(talk + hold + ACW) / handled", "realtime", dims, A_ALL, { metricCode: "AHT" }),
-    k("in_talk_sec", "Talk time", "inbound", "duration", "seconds", H, "both", "dialer_live", ref, "SUM(talk seconds) per agent / period", "realtime", dims, A_ALL, { metricCode: "TALK_TIME" }),
+    k("in_talk_sec", "Talk time", "inbound", "duration", "seconds", L, "both", "dialer_live", ref, "SUM(talk seconds) per agent / period", "realtime", dims, A_ALL, { metricCode: "TALK_TIME" }),
     k("in_acw_sec", "After-call work (ACW)", "inbound", "duration", "seconds", L, "both", "dialer_live", ref, "AVG(wrap seconds)", "realtime", dims, A_ALL, { metricCode: "ACW" }),
     k("in_hold_sec", "Hold time", "inbound", "duration", "seconds", L, "both", "dialer_live", ref, "AVG(hold seconds)", "realtime", dims, A_ALL, { metricCode: "HOLD_TIME" }),
     k("in_unique_callers", "Unique callers", "inbound", "volume", "count", H, "process", "dialer_live", ref, "COUNT(DISTINCT caller number)", "realtime", ["date", "campaign"], A_MGMT),
@@ -99,7 +99,7 @@ export function outboundKpis(ref: string, fresh: CatalogueKpiDef["freshness"] = 
     k("ob_dials", "Dials", "outbound", "volume", "count", H, "both", "upload", ref, "COUNT(dial rows)", fresh, d, A_ALL, { metricCode: "DIALS" }),
     k("ob_connected", "Connected calls", "outbound", "volume", "count", H, "both", "upload", ref, "COUNT(connected dials)", fresh, d, A_ALL),
     k("ob_connect_pct", "Connect %", "outbound", "rate", "percent", H, "both", "upload", ref, "connected / dials", fresh, d, A_ALL),
-    k("ob_avg_talk_sec", "Average talk time", "outbound", "duration", "seconds", H, "both", "upload", ref, "SUM(talk) / connected", fresh, d, A_ALL, { metricCode: "TALK_TIME" }),
+    k("ob_avg_talk_sec", "Average talk time", "outbound", "duration", "seconds", L, "both", "upload", ref, "SUM(talk) / connected", fresh, d, A_ALL, { metricCode: "TALK_TIME" }),
     k("ob_calls_per_login_hr", "Calls per login hour", "outbound", "rate", "ratio", H, "both", "derived", "process-dashboard (pd.metrics)", "calls / (login seconds / 3600)", fresh, d, A_ALL),
   ];
 }
