@@ -50,7 +50,7 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     },
   },
   {
-    key: "appreciate_health", label: "Appreciate Wealth", processCodes: ["APPRICIATE_WEALTH"], // sic: process_master spells it APPRICIATE_WEALTH (sql/199)
+    key: "appreciate_health", label: "Appreciate Wealth", processCodes: ["APPRICIATE_WEALTH", "BSS_OB_NOIDA_923"], // sic: APPRICIATE_WEALTH (sql/199); BSS_OB_NOIDA_923 = the live Noida process row (verified in prod 2026-10-01)
     perfPrefixes: ["/appreciate-wealth"], inboundKeys: [],
     uploads: {
       AW_BILLING_MASMIS: "import_aw_billing_batch", AW_INBOUND_MASMIS: "import_aw_inbound_batch", AW_MANDATE_MASMIS: "import_aw_mandate_batch",
@@ -87,17 +87,17 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     uploads: { BIRLANU_SALE_MASMIS: "import_birlanu_sale_batch", BIRLANU_APR_MASMIS: "import_birlanu_apr_batch" },
   },
   {
-    key: "satya_retail", label: "Satya Retail", processCodes: ["SATYA_RETAIL"], // migration 1920
+    key: "satya_retail", label: "Satya Retail", processCodes: ["SATYA_RETAIL", "BSS_OB_NOIDA_1045"], // SATYA_RETAIL (migration 1920, no branch); BSS_OB_NOIDA_1045 = "SATYA E-COM SERVICES LIMITED", the Noida row staff sit on
     perfPrefixes: ["/satya-retail-dashboard", "/satya-retail-report"], inboundKeys: [],
     uploads: { SATYA_ALLOCATION_MASMIS: "import_satya_allocation_batch", SATYA_CDR_MASMIS: "import_satya_cdr_batch" },
   },
   {
-    key: "lp_feedback", label: "LP Feedback", processCodes: ["ERESOLUTION"], // Lawyer Panel runs on the Eresolution process (business-datapoints ERESOLUTION -> lawyerPanel)
+    key: "lp_feedback", label: "LP Feedback", processCodes: ["ERESOLUTION", "BSS_OB_NOIDA_1005"], // Lawyer Panel runs on the Eresolution process (business-datapoints ERESOLUTION -> lawyerPanel)
     perfPrefixes: ["/lp-feedback-dashboard"], inboundKeys: [],
     uploads: { LP_FEEDBACK_APR_MASMIS: "import_lp_feedback_apr_batch", LP_FEEDBACK_CDR_MASMIS: "import_lp_feedback_cdr_batch" },
   },
   {
-    key: "lp_onboarding", label: "LP Onboarding", processCodes: ["ERESOLUTION"],
+    key: "lp_onboarding", label: "LP Onboarding", processCodes: ["ERESOLUTION", "BSS_OB_NOIDA_1005"],
     perfPrefixes: ["/lp-onboarding-dashboard"], inboundKeys: [],
     uploads: { LP_ONBOARDING_APR_MASMIS: "import_lp_onboarding_apr_batch", LP_ONBOARDING_CDR_MASMIS: "import_lp_onboarding_cdr_batch" },
   },
@@ -120,7 +120,7 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     },
   },
   // DU_DIGITAL per business-datapoints; DUBANGLADESH per migration 1952.
-  { key: "dubangladesh", label: "DU Bangladesh", processCodes: ["DU_DIGITAL", "DUBANGLADESH"], perfPrefixes: [], inboundKeys: ["dubangladesh"], uploads: {} },
+  { key: "dubangladesh", label: "DU Bangladesh", processCodes: ["DU_DIGITAL", "BSS_IB_NOIDA_654", "DUBANGLADESH"], perfPrefixes: [], inboundKeys: ["dubangladesh"], uploads: {} },
   { key: "viega", label: "Viega", processCodes: ["VIEGA"], perfPrefixes: [], inboundKeys: ["viega"], uploads: {} },
   { key: "exicom", label: "Exicom", processCodes: ["EXICOM"], perfPrefixes: [], inboundKeys: ["exicom"], uploads: {} },
 ];

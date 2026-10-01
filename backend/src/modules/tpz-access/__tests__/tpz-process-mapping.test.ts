@@ -16,4 +16,12 @@ describe("TPZ company -> process_master mapping", () => {
     expect(tpzCompany("lp_onboarding")?.processCodes).toContain("ERESOLUTION");
     expect(tpzCompany("dubangladesh")?.processCodes).toContain("DU_DIGITAL");
   });
+
+  it("also maps the live Noida BSS_* process rows staff are assigned to (verified in production 2026-10-01)", () => {
+    expect(tpzCompany("appreciate_health")?.processCodes).toContain("BSS_OB_NOIDA_923");
+    expect(tpzCompany("satya_retail")?.processCodes).toContain("BSS_OB_NOIDA_1045");
+    expect(tpzCompany("lp_feedback")?.processCodes).toContain("BSS_OB_NOIDA_1005");
+    expect(tpzCompany("lp_onboarding")?.processCodes).toContain("BSS_OB_NOIDA_1005");
+    expect(tpzCompany("dubangladesh")?.processCodes).toContain("BSS_IB_NOIDA_654");
+  });
 });
