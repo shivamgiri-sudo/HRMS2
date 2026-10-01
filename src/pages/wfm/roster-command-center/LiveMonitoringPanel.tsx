@@ -23,6 +23,7 @@ import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import { scopeParams } from "./filterState";
 import { formatUpdatedAt } from "./heavyQuery";
 import { EmployeeDrawer, ManagerDrawer } from "./live-monitoring/LiveDrawers";
+import { ShiftAdherenceSection } from "./live-monitoring/ShiftAdherenceSection";
 import {
   SHRINKAGE_TARGET, alertSeverity, effectivenessScore, fmtDuration, scoreTone, severityCounts, summarize,
   type LiveAlert, type ManagerDigest, type Severity,
@@ -285,6 +286,9 @@ export default function LiveMonitoringPanel() {
           </div>
         </ConsoleCard>
       </div>
+
+      {/* Process-wise shift adherence — process > shift slot > manager, with a drill-down to people. */}
+      <ShiftAdherenceSection />
 
       {/* Bulk actions — operate on everything in the caller's RBAC scope, not on the filtered view. */}
       <ConsoleCard className="mt-4 p-4">

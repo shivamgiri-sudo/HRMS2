@@ -9,6 +9,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { readLobFilter } from '../../shared/lobFilter.js';
 import { todayLocalDateStr } from './shift-due.util.js';
 import { registerLiveDetailRoutes } from './roster-intelligence-detail.routes.js';
+import { getShiftAdherence, getShiftAdherenceEmployees, type AdherenceEmployeeFilter } from './shift-adherence.service.js';
 import {
   generateManagerDailyDigests,
   generateBranchDashboard,
@@ -135,6 +136,65 @@ router.get('/manager-digest', requireRole(...MANAGER_ROLES), async (req, res) =>
   } catch (err: any) {
     console.error('[roster-intelligence] manager-digest error:', err);
     res.status(500).json({ error: `Failed to generate digest: ${err.message}` });
+  }
+});
+
+/**
+ * GET /api/roster-intelligence/shift-adherence
+ * Process-wise shift adherence for the Live Monitoring tab: per process, with shift-slot and
+ * reporting-manager breakdowns, a late-minutes distribution and logout adherence. Same RBAC scope
+ * and branch/process/LOB narrowing as the other Live Monitoring endpoints.
+ */
+const ADHERENCE_STATUSES = ['late', 'absent', 'on_time', 'left_early', 'missed_logout', 'all'];
+function readAdherenceParams(req: any, res: any): { date: string; grace: number } | null {
+  const date = req.query.date ? String(req.query.date) : todayLocalDateStr();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { res.status(400).json({ error: 'date must be YYYY-MM-DD' }); return null; }
+  const parsed = req.query.grace !== undefined ? parseInt(String(req.query.grace), 10) : 0;
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 120) { res.status(400).json({ error: 'grace must be 0-120 minutes' }); return null; }
+  return { date, grace: parsed };
+}
+
+router.get('/shift-adherence', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
+  try {
+    const p = readAdherenceParams(req, res);
+    if (!p) return;
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+    const scope = await resolveLiveMonitoringScope(req as AuthenticatedRequest);
+    res.json(await getShiftAdherence(p.date, p.grace, scope, { branchId, processId, lob }));
+  } catch (err: any) {
+    console.error('[roster-intelligence] shift-adherence error:', err);
+    res.status(500).json({ error: `Failed to build shift adherence: ${err.message}` });
+  }
+});
+
+/**
+ * GET /api/roster-intelligence/shift-adherence/employees
+ * Drill-down behind a process / shift slot / manager row: the people, worst first.
+ * Query: processId (required), shift, manager, status (late|absent|on_time|left_early|missed_logout|all).
+ */
+router.get('/shift-adherence/employees', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
+  try {
+    const p = readAdherenceParams(req, res);
+    if (!p) return;
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+    if (!processId) { res.status(400).json({ error: 'processId is required' }); return; }
+    const status = String(req.query.status ?? 'all');
+    if (!ADHERENCE_STATUSES.includes(status)) { res.status(400).json({ error: `status must be one of ${ADHERENCE_STATUSES.join(', ')}` }); return; }
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const scope = await resolveLiveMonitoringScope(req as AuthenticatedRequest);
+    res.json(await getShiftAdherenceEmployees(p.date, p.grace, scope, { branchId, processId, lob }, {
+      shift: req.query.shift ? String(req.query.shift) : undefined,
+      manager: req.query.manager ? String(req.query.manager) : undefined,
+      status: status as AdherenceEmployeeFilter,
+    }));
+  } catch (err: any) {
+    console.error('[roster-intelligence] shift-adherence/employees error:', err);
+    res.status(500).json({ error: `Failed to load employees: ${err.message}` });
   }
 });
 
