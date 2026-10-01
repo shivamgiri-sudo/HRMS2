@@ -7,7 +7,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
-import { canSeeEmployee, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
+import { employeeScopeFor, canSeeEmployee, filterVisibleEmployeeIds, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 import type { RowDataPacket } from "mysql2";
 import path from "path";
 import fs from "fs";
@@ -215,6 +215,12 @@ esiRegDocsRouter.get(
     ];
     const params: unknown[] = [];
 
+    // Branch scoping: the caller's own scope always applies; branch_id only narrows it.
+    {
+      const scope = await employeeScopeFor(req as any, "e");
+      whereParts.push(`(${scope.sql})`);
+      params.push(...scope.params);
+    }
     if (branchId) {
       whereParts.push("e.branch_id = ?");
       params.push(branchId);
@@ -331,6 +337,10 @@ esiRegDocsRouter.post(
       return res
         .status(400)
         .json({ success: false, error: "No image uploaded" });
+    if (!(await canSeeEmployee(req as any, employeeId))) {
+      try { fs.unlinkSync(file.path); } catch { /* best effort */ }
+      return res.status(403).json(OUT_OF_SCOPE_BODY);
+    }
 
     const [empRows] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM employees WHERE id = ? LIMIT 1",
@@ -388,6 +398,10 @@ esiRegDocsRouter.post(
       return res
         .status(400)
         .json({ success: false, error: "No image uploaded" });
+    if (!(await canSeeEmployee(req as any, employeeId))) {
+      try { fs.unlinkSync(file.path); } catch { /* best effort */ }
+      return res.status(403).json(OUT_OF_SCOPE_BODY);
+    }
 
     const [empRows] = await db.execute<RowDataPacket[]>(
       "SELECT id FROM employees WHERE id = ? LIMIT 1",
@@ -805,6 +819,7 @@ esiRegDocsRouter.get(
   h(async (req: Request, res: Response) => {
     const { employeeId } = req.params;
     const actorId = (req as any).authUser?.id ?? "unknown";
+    if (!(await canSeeEmployee(req as any, employeeId))) return res.status(403).json(OUT_OF_SCOPE_BODY);
 
     const [[empRow]] = await db.execute<RowDataPacket[]>(
       `SELECT employee_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS name,
@@ -912,6 +927,10 @@ esiRegDocsRouter.post(
         .status(400)
         .json({ error: "Maximum 200 employees per bulk download" });
     }
+    const visibleIds = await filterVisibleEmployeeIds(req as any, employee_ids.map(String));
+    if (visibleIds.size !== new Set(employee_ids.map(String)).size) {
+      return res.status(403).json(OUT_OF_SCOPE_BODY);
+    }
     const actorId = (req as any).authUser?.id ?? "unknown";
     const date = new Date().toISOString().slice(0, 10);
 
@@ -999,6 +1018,11 @@ esiRegDocsRouter.get(
       `e.employment_status != 'terminated'`,
     ];
     const params: unknown[] = [];
+    {
+      const scope = await employeeScopeFor(req as any, "e");
+      whereParts.push(`(${scope.sql})`);
+      params.push(...scope.params);
+    }
     if (branchId) {
       whereParts.push("e.branch_id = ?");
       params.push(branchId);

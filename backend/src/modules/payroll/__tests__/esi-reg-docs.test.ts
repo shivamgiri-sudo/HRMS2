@@ -62,6 +62,14 @@ vi.mock("archiver", () => {
 /** The archive the code under test just constructed. */
 const lastArchive = () => zipInstances[zipInstances.length - 1];
 
+const scopeMock = vi.hoisted(() => ({ canSee: true, visible: null as null | Set<string> }));
+vi.mock("../payroll-branch-scope.js", () => ({
+  OUT_OF_SCOPE_BODY: { success: false, error: "out of scope" },
+  employeeScopeFor: vi.fn(async () => ({ sql: "1=1", params: [] })),
+  canSeeEmployee: vi.fn(async () => scopeMock.canSee),
+  filterVisibleEmployeeIds: vi.fn(async (_r: unknown, ids: string[]) => scopeMock.visible ?? new Set(ids)),
+}));
+
 import { db } from "../../../db/mysql.js";
 
 const app = express();
@@ -69,7 +77,7 @@ app.use(express.json());
 app.use("/api/payroll", esiRegDocsRouter);
 
 describe("GET /api/payroll/esi-reg-docs", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
 
   it("returns paginated ESI-eligible employees with readiness flags", async () => {
     vi.mocked(db.execute)
@@ -107,7 +115,7 @@ describe("GET /api/payroll/esi-reg-docs", () => {
 });
 
 describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
 
   it("streams a zip with manifest.txt when no files exist on disk", async () => {
     // The employee row is queued; everything after it resolves EMPTY by default.
@@ -195,7 +203,7 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
 });
 
 describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
 
   it("returns 400 when more than 200 employee_ids supplied", async () => {
     const ids = Array.from({ length: 201 }, (_, i) => `emp-${i}`);
@@ -237,7 +245,7 @@ describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
 });
 
 describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
 
   it("returns CSV with BOM, all 12 column headers, and the full account number", async () => {
     vi.mocked(db.execute).mockResolvedValueOnce([
@@ -274,5 +282,29 @@ describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
     // role-gated HR export carries it in full. Owner confirmed 2026-09-30.
     expect(res.text).toContain("9876543210");
     expect(res.text).not.toContain("****3210");
+  });
+});
+
+describe("branch scoping", () => {
+  beforeEach(() => { vi.clearAllMocks(); scopeMock.canSee = true; scopeMock.visible = null; });
+
+  it("download returns 403 for an employee outside the caller's scope", async () => {
+    scopeMock.canSee = false;
+    const res = await request(app).get("/api/payroll/esi-reg-docs/emp-9/download");
+    expect(res.status).toBe(403);
+  });
+
+  it("document viewer returns 403 for an employee outside the caller's scope", async () => {
+    scopeMock.canSee = false;
+    const res = await request(app).get("/api/payroll/esi-reg-docs/emp-9/doc/pan");
+    expect(res.status).toBe(403);
+  });
+
+  it("bulk download returns 403 when any requested employee is outside scope", async () => {
+    scopeMock.visible = new Set(["emp-1"]);
+    const res = await request(app)
+      .post("/api/payroll/esi-reg-docs/bulk-download")
+      .send({ employee_ids: ["emp-1", "emp-2"] });
+    expect(res.status).toBe(403);
   });
 });
