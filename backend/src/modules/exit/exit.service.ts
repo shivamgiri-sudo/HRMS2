@@ -25,6 +25,7 @@ import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.j
 import { triggerResignationPendingReview } from "../work-inbox/work-inbox.triggers.js";
 import { recordManagerChange } from "../management/manager-attribution.service.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
+import { AUTO_ACTOR, isExitAutoEnabled } from "./exit-auto-config.js";
 import { upsertOpenWorkItem } from "../../shared/workItem.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
@@ -673,6 +674,23 @@ export const exitService = {
       } catch {
         /* non-fatal */
       }
+    }
+
+    // Route to the reporting manager's review bucket automatically. Nothing needs a person here:
+    // the manager has already been emailed above and the item is in their queue, so leaving the
+    // row at 'submitted' until someone clicked "Move to Manager Review" only stranded it (nine
+    // sat there on 2026-10-01). Same transition, same audit log; the actor is 'system'.
+    // Never throws - if it fails the exit stays 'submitted' and exit-auto-progress picks it up.
+    if (await isExitAutoEnabled()) {
+      await this.updateExitStatus(
+        id,
+        "manager_review",
+        "Auto: routed to the reporting manager for review",
+        AUTO_ACTOR,
+        "submitted",
+      ).catch((err: unknown) => {
+        logger.error({ err, exitRequestId: id }, "[exit] Auto-route to manager_review failed");
+      });
     }
 
     return this.getExitRequest(id);

@@ -34,9 +34,11 @@ import { runAwolDetectionScan } from '../modules/employees/awol-detection.servic
 import { runLastWorkingDayScan } from '../modules/exit/exit-lwd-scan.service.js';
 import { runNocLwdTrigger } from '../modules/exit/noc-lwd-trigger.service.js';
 import { runExitClearanceLwdTrigger } from '../modules/exit/exit-clearance-lwd-trigger.service.js';
+import { runExitAutoProgress } from '../modules/exit/exit-auto-progress.service.js';
 
 let _activationTimer: ReturnType<typeof setTimeout> | null = null;
 let _retryTimer: ReturnType<typeof setInterval> | null = null;
+let _exitAutoTimer: ReturnType<typeof setInterval> | null = null;
 let _awolTimer: ReturnType<typeof setTimeout> | null = null;
 let _lwdTimer: ReturnType<typeof setTimeout> | null = null;
 let _nocTriggerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -179,6 +181,20 @@ async function runClearanceLwdTrigger(): Promise<void> {
   _clearanceLwdTriggerTimer = setTimeout(runClearanceLwdTrigger, 24 * 60 * 60 * 1000);
 }
 
+async function runExitAuto(): Promise<void> {
+  try {
+    const r = await runExitAutoProgress();
+    if (r.toManagerReview + r.toAccepted + r.toNotice + r.toExited + r.failed > 0) {
+      console.log(
+        `[employee-lifecycle] Exit auto-progress: review=${r.toManagerReview} accepted=${r.toAccepted}` +
+        ` notice=${r.toNotice} exited=${r.toExited} failed=${r.failed}`
+      );
+    }
+  } catch (err) {
+    console.error('[employee-lifecycle] Exit auto-progress failed:', err);
+  }
+}
+
 async function runRetry(): Promise<void> {
   try {
     const report = await runProvisioningRetryJob();
@@ -194,7 +210,7 @@ async function runRetry(): Promise<void> {
 }
 
 export function startEmployeeLifecycleWorker(): void {
-  if (_activationTimer || _retryTimer || _awolTimer || _lwdTimer || _nocTriggerTimer || _clearanceLwdTriggerTimer) return;
+  if (_activationTimer || _retryTimer || _exitAutoTimer || _awolTimer || _lwdTimer || _nocTriggerTimer || _clearanceLwdTriggerTimer) return;
 
   // Daily activation at 12:01 AM
   const msUntilFirstRun = msUntilNextActivationRun();
@@ -208,6 +224,11 @@ export function startEmployeeLifecycleWorker(): void {
   _retryTimer = setInterval(runRetry, 60 * 60 * 1000);
   runRetry(); // Run immediately on start
   console.log('[employee-lifecycle] Provisioning retry scheduler started (hourly)');
+
+  // Exit buckets move on their own: submitted -> review -> accepted -> notice -> exited (hourly)
+  _exitAutoTimer = setInterval(runExitAuto, 60 * 60 * 1000);
+  setTimeout(runExitAuto, 2 * 60 * 1000).unref();
+  console.log('[employee-lifecycle] Exit auto-progress scheduler started (hourly)');
 
   // Daily AWOL detection scan at 2:00 AM
   const msUntilAwolRun = msUntilNextAwolScanRun();
@@ -245,6 +266,7 @@ export function startEmployeeLifecycleWorker(): void {
 export function stopEmployeeLifecycleWorker(): void {
   if (_activationTimer) { clearTimeout(_activationTimer); _activationTimer = null; }
   if (_retryTimer) { clearInterval(_retryTimer); _retryTimer = null; }
+  if (_exitAutoTimer) { clearInterval(_exitAutoTimer); _exitAutoTimer = null; }
   if (_awolTimer) { clearTimeout(_awolTimer); _awolTimer = null; }
   if (_lwdTimer) { clearTimeout(_lwdTimer); _lwdTimer = null; }
   if (_nocTriggerTimer) { clearTimeout(_nocTriggerTimer); _nocTriggerTimer = null; }
