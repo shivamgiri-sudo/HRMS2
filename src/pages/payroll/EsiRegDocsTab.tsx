@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   CheckCircle2, XCircle, Download, FileText, Users,
-  AlertTriangle, Search, FileDown, Loader2, Upload, Camera,
+  AlertTriangle, Search, FileDown, Loader2, Upload, Camera, Eye,
 } from "lucide-react";
 
 interface EsiEmployee {
@@ -101,6 +101,29 @@ async function compressImage(file: File, maxBytes = 100 * 1024): Promise<File> {
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
     img.src = url;
   });
+}
+
+const DOC_KINDS = [
+  { kind: "pan", label: "PAN Card" },
+  { kind: "aadhaar", label: "Aadhaar" },
+  { kind: "photo", label: "Employee Photo" },
+  { kind: "passbook", label: "Bank Passbook" },
+] as const;
+
+/** Fetch a document with auth and open it in a new tab. */
+async function viewEsiDoc(employeeId: string, kind: string): Promise<void> {
+  // Open synchronously so the popup blocker treats it as a user gesture.
+  const win = window.open("", "_blank");
+  try {
+    const blob = await hrmsApi.getBlob(`/api/payroll/esi-reg-docs/${employeeId}/doc/${kind}`);
+    const url = URL.createObjectURL(blob);
+    if (win) win.location.href = url;
+    else window.location.assign(url);
+    setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+  } catch (err) {
+    win?.close();
+    throw err;
+  }
 }
 
 function KpiStrip({ employees, total }: { employees: EsiEmployee[]; total: number }) {
@@ -343,6 +366,7 @@ function EsiDrawer({
   const [emp, setEmp] = useState<EsiEmployee | null>(initialEmp);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [uploadingPassbook, setUploadingPassbook] = useState(false);
+  const [viewing, setViewing] = useState<string | null>(null);
 
   // sync when parent changes (new drawer open)
   if (initialEmp?.employee_id !== emp?.employee_id) {
@@ -379,6 +403,17 @@ function EsiDrawer({
       toast({ title: "Upload failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleView(kind: string) {
+    setViewing(kind);
+    try {
+      await viewEsiDoc(emp!.employee_id, kind);
+    } catch {
+      toast({ title: "Document not available", description: "No readable file found for this document.", variant: "destructive" });
+    } finally {
+      setViewing(null);
     }
   }
 
@@ -459,6 +494,27 @@ function EsiDrawer({
                   {!d.ready && (
                     <span className="text-xs text-slate-400 italic">{d.hint}</span>
                   )}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">View Documents</p>
+            <div className="space-y-2">
+              {DOC_KINDS.map((d) => (
+                <div key={d.kind} className="flex items-center justify-between py-2 border-b border-slate-50">
+                  <span className="text-sm font-medium text-slate-700">{d.label}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1 border-blue-200 text-blue-700 hover:bg-blue-50"
+                    disabled={viewing === d.kind}
+                    onClick={() => handleView(d.kind)}
+                  >
+                    {viewing === d.kind ? <Loader2 className="w-3 h-3 animate-spin" /> : <Eye className="w-3 h-3" />}
+                    View
+                  </Button>
                 </div>
               ))}
             </div>
@@ -559,9 +615,9 @@ export default function EsiRegDocsTab() {
     setDownloading(employeeId);
     try {
       const blob = await hrmsApi.getBlob(`/api/payroll/esi-reg-docs/${employeeId}/download`);
-      const date = new Date().toISOString().slice(0, 10);
       const emp = employees.find((e) => e.employee_id === employeeId);
-      triggerBlobDownload(blob, `ESI_Docs_${emp?.emp_code ?? employeeId}_${date}.zip`);
+      const safeName = (emp?.name ?? "").replace(/[^A-Za-z0-9 _-]/g, "").trim();
+      triggerBlobDownload(blob, emp ? `${emp.emp_code} - ${safeName}.zip` : `${employeeId}.zip`);
     } catch {
       toast({ title: "Download failed", description: "Could not download ESI documents.", variant: "destructive" });
     } finally {

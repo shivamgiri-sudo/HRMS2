@@ -7,6 +7,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
+import { canSeeEmployee, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 import type { RowDataPacket } from "mysql2";
 import path from "path";
 import fs from "fs";
@@ -250,7 +251,8 @@ esiRegDocsRouter.get(
          (
            (e.pan_number IS NOT NULL AND e.pan_number != '')
            OR (SELECT COUNT(*) FROM employee_documents ed
-               WHERE ed.employee_id = e.id AND ed.doc_category = 'pan') > 0
+               WHERE ed.employee_id = e.id
+                 AND (ed.doc_category = 'pan' OR LOWER(ed.doc_type) IN ('pan','pan card','pan_card'))) > 0
            OR EXISTS (
                SELECT 1 FROM candidate_onboarding_document d
                JOIN ats_onboarding_bridge ab ON ab.candidate_id = d.candidate_id
@@ -275,7 +277,8 @@ esiRegDocsRouter.get(
          COALESCE(
            (SELECT file_url FROM employee_documents ed
             WHERE ed.employee_id = e.id
-              AND ed.doc_category = 'bank' AND ed.doc_type = 'bank_passbook'
+              AND (ed.doc_category = 'bank' AND ed.doc_type = 'bank_passbook'
+                   OR LOWER(ed.doc_type) IN ('bank passbook','passbook','cancelled cheque','cancelled_cheque'))
             ORDER BY ed.created_at DESC LIMIT 1),
            (SELECT CONCAT('/api/files/candidate/', d.id)
             FROM candidate_onboarding_document d
@@ -569,39 +572,23 @@ function fileExists(filePath: string | null): boolean {
   }
 }
 
-/**
- * Build one employee's ESI registration pack into `archive`, under `prefix`.
- *
- * Single and bulk download used to carry two copies of this, which is how they
- * came to disagree: neither included the Aadhaar, but only the CSV export
- * noticed that ESI registration needs it. One builder means a document added
- * here appears in both, and the manifest can never describe a different set of
- * files from the one actually written.
- *
- * Every document is optional by design. A missing file is recorded in the
- * manifest as a named gap rather than failing the download — Payroll HR needs
- * the pack for the documents that DO exist, plus a list of what to chase.
- *
- * Returns the manifest lines so the caller can also count what was found.
- */
-async function appendEsiPack(
-  archive: ArchiverInstance,
-  emp: {
-    id: string;
-    employee_code: string;
-    name: string;
-    photo_url?: string | null;
-    avatar_url?: string | null;
-  },
-  prefix: string,
-): Promise<{ manifest: string[]; found: number; missing: number }> {
-  const at = (n: string) => (prefix ? `${prefix}/${n}` : n);
-  const manifest: string[] = [
-    `ESI Registration Documents — ${emp.name} (${emp.employee_code})\n`,
-  ];
-  let found = 0,
-    missing = 0;
+type EsiDocKind = "pan" | "aadhaar" | "photo" | "passbook";
+const ESI_DOC_KINDS: readonly EsiDocKind[] = ["pan", "aadhaar", "photo", "passbook"];
 
+type EsiEmpRef = {
+  id: string;
+  photo_url?: string | null;
+  avatar_url?: string | null;
+};
+
+/**
+ * Single source of truth for "which file backs this ESI document". Used by the
+ * ZIP pack AND the on-screen viewer so what you see is what gets zipped.
+ */
+export async function resolveEsiDocPath(
+  emp: EsiEmpRef,
+  kind: EsiDocKind,
+): Promise<string | null> {
   // doc_category is the stable axis here, not doc_type: identity holds 27,165
   // rows as 'POI' plus a handful of 'POI_1'/'POI_4', and a separate 'aadhaar'
   // category holds 2. Matching the category catches all of them.
@@ -645,6 +632,20 @@ async function appendEsiPack(
    * (`pan`/`PAN Card`/`pan_card`, `Aadhaar`/`aadhaar_card`/`aadhar`), so this
    * matches on a normalised set rather than one literal string.
    */
+  // Real uploads from the employee document flow are doc_category='other' with
+  // a human-readable doc_type ("PAN Card", "Aadhaar", "Passport Photo",
+  // "Bank Passbook") — neither the category nor the snake_case type matches.
+  const byDocType = async (types: string[]): Promise<string | null> => {
+    const ph = types.map(() => "?").join(",");
+    const [rows] = await db
+      .execute<RowDataPacket[]>(
+        `SELECT file_url FROM employee_documents WHERE employee_id = ? AND LOWER(doc_type) IN (${ph}) ORDER BY created_at DESC LIMIT 1`,
+        [emp.id, ...types],
+      )
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    return urlToLocalPath((rows as RowDataPacket[])[0]?.file_url ?? null);
+  };
+
   const fromCandidateOnboarding = async (
     types: string[],
   ): Promise<string | null> => {
@@ -664,48 +665,92 @@ async function appendEsiPack(
     );
   };
 
-  const docs: Array<{ label: string; localPath: string | null; note: string }> =
-    [
-      {
-        label: "PAN_Card",
-        localPath:
-          (await byCategory("pan")) ??
-          (await fromCandidateOnboarding(["pan", "pan card", "pan_card"])),
-        note: "PAN document not available — upload it on the employee profile",
-      },
-      // Aadhaar is mandatory for ESI registration and was in no version of this
-      // pack, though the CSV export has carried the aadhaar NUMBER since
-      // 2026-09-02. A number without the scan does not complete a registration.
-      {
-        label: "Aadhaar",
-        localPath:
-          (await byCategory("aadhaar")) ??
-          (await byCategory("identity")) ??
-          (await fromCandidateOnboarding([
-            "aadhaar",
-            "aadhaar_card",
-            "aadhar",
-          ])),
-        note: "Aadhaar / identity proof not available",
-      },
-      {
-        label: "Photo",
-        localPath: urlToLocalPath(emp.photo_url ?? emp.avatar_url ?? null),
-        note: "Employee photo not available",
-      },
-      {
-        label: "Bank_Passbook",
-        localPath: await byCategory("bank", "bank_passbook"),
-        note: "Bank passbook photo not uploaded",
-      },
-    ];
+
+  switch (kind) {
+    case "pan":
+      return (
+        (await byCategory("pan")) ??
+        (await byDocType(["pan", "pan card", "pan_card"])) ??
+        (await fromCandidateOnboarding(["pan", "pan card", "pan_card"]))
+      );
+    case "aadhaar":
+      return (
+        (await byCategory("aadhaar")) ??
+        (await byDocType(["aadhaar", "aadhaar card", "aadhaar_card", "aadhar"])) ??
+        (await byCategory("identity")) ??
+        (await fromCandidateOnboarding(["aadhaar", "aadhaar_card", "aadhar"]))
+      );
+    case "photo":
+      return (
+        urlToLocalPath(emp.photo_url ?? emp.avatar_url ?? null) ??
+        (await byDocType(["passport photo", "photo"]))
+      );
+    case "passbook":
+      // Same sources as the list query's bank_passbook_url: an ESI-screen
+      // upload first, else the candidate's own onboarding upload. The pack used
+      // to read only the first, so every passbook that showed "ready" on screen
+      // but came from onboarding was silently missing from the ZIP.
+      return (
+        (await byCategory("bank", "bank_passbook")) ??
+        (await byDocType(["bank passbook", "passbook", "cancelled cheque", "cancelled_cheque"])) ??
+        (await fromCandidateOnboarding([
+          "bank passbook",
+          "bank_passbook",
+          "passbook",
+          "cancelled cheque",
+          "cancelled_cheque",
+        ]))
+      );
+  }
+}
+
+/**
+ * Build one employee's ESI registration pack into `archive`, under `prefix`.
+ *
+ * Single and bulk download used to carry two copies of this, which is how they
+ * came to disagree: neither included the Aadhaar, but only the CSV export
+ * noticed that ESI registration needs it. One builder means a document added
+ * here appears in both, and the manifest can never describe a different set of
+ * files from the one actually written.
+ *
+ * Every document is optional by design. A missing file is recorded in the
+ * manifest as a named gap rather than failing the download — Payroll HR needs
+ * the pack for the documents that DO exist, plus a list of what to chase.
+ *
+ * Returns the manifest lines so the caller can also count what was found.
+ */
+export async function appendEsiPack(
+  archive: ArchiverInstance,
+  emp: {
+    id: string;
+    employee_code: string;
+    name: string;
+    photo_url?: string | null;
+    avatar_url?: string | null;
+  },
+  prefix: string,
+): Promise<{ manifest: string[]; found: number; missing: number }> {
+  const at = (n: string) => (prefix ? `${prefix}/${n}` : n);
+  const manifest: string[] = [
+    `ESI Registration Documents — ${emp.name} (${emp.employee_code})\n`,
+  ];
+  let found = 0,
+    missing = 0;
+
+  const docs: Array<{ label: string; kind: EsiDocKind; note: string }> = [
+    { label: "PAN_Card", kind: "pan", note: "PAN document not available — upload it on the employee profile" },
+    { label: "Aadhaar", kind: "aadhaar", note: "Aadhaar / identity proof not available" },
+    { label: "Photo", kind: "photo", note: "Employee photo not available" },
+    { label: "Bank_Passbook", kind: "passbook", note: "Bank passbook photo not uploaded" },
+  ];
 
   for (const d of docs) {
-    if (fileExists(d.localPath)) {
-      archive.file(d.localPath!, {
-        name: at(`${d.label}${path.extname(d.localPath!)}`),
+    const localPath = await resolveEsiDocPath(emp, d.kind);
+    if (fileExists(localPath)) {
+      archive.file(localPath!, {
+        name: at(`${d.label}${path.extname(localPath!)}`),
       });
-      manifest.push(`OK  ${d.label}${path.extname(d.localPath!)}`);
+      manifest.push(`OK  ${d.label}${path.extname(localPath!)}`);
       found++;
     } else {
       manifest.push(`--  ${d.note}`);
@@ -804,6 +849,49 @@ esiRegDocsRouter.get(
       documents_included: packed.found,
       documents_missing: packed.missing,
     });
+  }),
+);
+
+// ── Route: view a single document inline ─────────────────────────────────────
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".pdf": "application/pdf",
+};
+
+esiRegDocsRouter.get(
+  "/esi-reg-docs/:employeeId/doc/:kind",
+  requireRole(...ESI_ROLES),
+  h(async (req: Request, res: Response) => {
+    const { employeeId, kind } = req.params;
+    if (!ESI_DOC_KINDS.includes(kind as EsiDocKind))
+      return res.status(400).json({ error: "Unknown document kind" });
+    if (!(await canSeeEmployee(req as any, employeeId)))
+      return res.status(403).json(OUT_OF_SCOPE_BODY);
+
+    const [[empRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT photo_url, avatar_url FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId],
+    );
+    if (!empRow) return res.status(404).json({ error: "Employee not found" });
+
+    const localPath = await resolveEsiDocPath(
+      { id: employeeId, photo_url: empRow.photo_url, avatar_url: empRow.avatar_url },
+      kind as EsiDocKind,
+    );
+    if (!fileExists(localPath))
+      return res.status(404).json({ error: "Document not available" });
+
+    const ext = path.extname(localPath!).toLowerCase();
+    res.setHeader("Content-Type", MIME_BY_EXT[ext] ?? "application/octet-stream");
+    res.setHeader("Content-Disposition", "inline");
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    fs.createReadStream(localPath!).pipe(res);
   }),
 );
 
