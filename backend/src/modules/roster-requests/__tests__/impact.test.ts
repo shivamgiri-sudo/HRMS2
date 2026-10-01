@@ -77,6 +77,18 @@ describe("computeImpact (other kinds)", () => {
     expect(d.checkAssignmentDateNotLocked).not.toHaveBeenCalled();
     expect(d.validateMinimumRest).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
   });
+  it("swap includes the counterpart's week so scope can be checked for both employees", async () => {
+    const d = deps({
+      db: {
+        execute: vi.fn(async (sql: string) => {
+          if (sql.includes("FROM wfm_roster_swap_request")) return [[{ ...baseAssign, id: "s1", counterpart_employee_id: "e2" }], []];
+          return [[], []];
+        }),
+      },
+    });
+    const r = await computeImpact("swap", "s1", d as any);
+    expect(r.week.map((w) => w.employeeId)).toEqual(["e1", "e2"]);
+  });
   it("dispute loads from roster_daily_assignment and skips headcount without process_name", async () => {
     const d = deps({
       db: {

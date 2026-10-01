@@ -55,7 +55,7 @@ async function loadAssignment(kind: RequestKind, id: string, d: ImpactDeps) {
   if (kind === "swap") {
     const [rows] = await d.db.execute(
       `SELECT s.id, s.requester_emp_id AS employee_id, s.swap_date AS roster_date, wra.process_name,
-              wra.shift_template_id, wst.start_time, wst.end_time, wst.shift_name, e.branch_id, e.process_id
+              wra.shift_template_id, wst.start_time, wst.end_time, wst.shift_name, e.branch_id, e.process_id, s.swap_with_emp_id AS counterpart_employee_id
          FROM wfm_roster_swap_request s
          JOIN employees e ON e.id = s.requester_emp_id
          LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = s.requester_emp_id AND wra.roster_date = s.swap_date
@@ -113,18 +113,25 @@ export async function computeImpact(kind: RequestKind, id: string, deps: ImpactD
     sameDayHeadcount = { date, processName: a.process_name, planned: Number((cnt as any[])[0]?.planned ?? 0) };
   }
 
-  const [weekRows] = await deps.db.execute(
-    `SELECT wra.roster_date, wst.shift_name,
-            (wra.is_week_off = 1 OR COALESCE(wra.roster_status,'') = 'Week Off') AS is_week_off
-       FROM wfm_roster_assignment wra
-       LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
-      WHERE wra.employee_id = ? AND wra.roster_date BETWEEN DATE_SUB(?, INTERVAL 3 DAY) AND DATE_ADD(?, INTERVAL 3 DAY)
-      ORDER BY wra.roster_date`,
-    [a.employee_id, date, date]);
-  const week = [{
-    employeeId: a.employee_id as string,
-    days: (weekRows as any[]).map((r) => ({ date: day(r.roster_date), shiftName: r.shift_name ?? null, isWeekOff: Number(r.is_week_off) === 1 })),
-  }];
+  const loadWeek = async (employeeId: string) => {
+    const [weekRows] = await deps.db.execute(
+      `SELECT wra.roster_date, wst.shift_name,
+              (wra.is_week_off = 1 OR COALESCE(wra.roster_status,'') = 'Week Off') AS is_week_off
+         FROM wfm_roster_assignment wra
+         LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
+        WHERE wra.employee_id = ? AND wra.roster_date BETWEEN DATE_SUB(?, INTERVAL 3 DAY) AND DATE_ADD(?, INTERVAL 3 DAY)
+        ORDER BY wra.roster_date`,
+      [employeeId, date, date]);
+    return {
+      employeeId,
+      days: (weekRows as any[]).map((r) => ({ date: day(r.roster_date), shiftName: r.shift_name ?? null, isWeekOff: Number(r.is_week_off) === 1 })),
+    };
+  };
+  const week = [await loadWeek(a.employee_id as string)];
+  // A swap touches the counterpart's roster too; include it so scope checks cover both employees.
+  if (kind === "swap" && a.counterpart_employee_id && a.counterpart_employee_id !== a.employee_id) {
+    week.push(await loadWeek(a.counterpart_employee_id as string));
+  }
 
   return { kind, id, blockers, warnings, locked, rest, sameDayHeadcount, week };
 }
