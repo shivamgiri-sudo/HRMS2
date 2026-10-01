@@ -8,6 +8,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
+import { ReactivationInsights } from "@/components/employees/ReactivationInsights";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1130,6 +1131,9 @@ export default function NativeEmployeeReactivation() {
             </div>
           ))}
         </div>
+
+        {/* Insights */}
+        <ReactivationInsights history={snapshot} queue={queue} />
 
         {/* Toolbar */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
