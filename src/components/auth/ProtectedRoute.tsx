@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { rememberRedirect } from "@/lib/postLoginRedirect";
 import { Navigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEmployeeStatus } from "@/hooks/useEmployeeStatus";
@@ -77,6 +78,7 @@ export function ProtectedRoute({ children, roles, dashboardCode, entitlementVeri
   }
 
   if (authFailure) {
+    rememberRedirect(`${location.pathname}${location.search}${location.hash}`);
     return <Navigate to="/auth" replace state={{ from: location }} />;
   }
 
@@ -121,6 +123,7 @@ export function ProtectedRoute({ children, roles, dashboardCode, entitlementVeri
   }
 
   if (!user) {
+    rememberRedirect(`${location.pathname}${location.search}${location.hash}`);
     return <Navigate to="/auth" replace />;
   }
 

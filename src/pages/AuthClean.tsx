@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { rememberRedirect, takeRedirect } from "@/lib/postLoginRedirect";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck, Users, Clock, BarChart3, CheckCircle2, Phone, Globe, Linkedin, Instagram, Facebook, Twitter, Youtube, MapPin, Megaphone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -85,10 +86,17 @@ export default function AuthClean() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  // Email links may send people here as /auth?redirect=/some/page.
+  useEffect(() => {
+    rememberRedirect(new URLSearchParams(window.location.search).get("redirect"));
+  }, []);
+
   useEffect(() => {
     if (user) {
+      // The stored destination is only consumed once sign-in is fully done;
+      // the password-change and 2FA steps leave it in place for later.
       navigate(
-        mustChangePassword ? "/change-password" : twoFactorRequired && !twoFactorVerified ? "/two-factor" : "/dashboard",
+        mustChangePassword ? "/change-password" : twoFactorRequired && !twoFactorVerified ? "/two-factor" : takeRedirect(),
         { replace: true },
       );
     }

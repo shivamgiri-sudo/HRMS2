@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2, ShieldCheck } from "lucide-react";
+import { peekRedirect, takeRedirect } from "@/lib/postLoginRedirect";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,7 @@ export default function TwoFactor() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (twoFactorVerified) navigate("/dashboard", { replace: true });
+    if (twoFactorVerified) navigate(takeRedirect(), { replace: true });
   }, [navigate, twoFactorVerified]);
 
   const sendCode = async () => {
@@ -40,7 +41,9 @@ export default function TwoFactor() {
       const { error } = await verifyTwoFactorCode(otp);
       if (error) throw error;
       toast({ title: "Login verified", description: "Your secure session is ready." });
-      navigate("/dashboard", { replace: true });
+      // peek, not take: the twoFactorVerified effect above consumes it; taking here
+      // as well would leave that effect with nothing and fall back to /dashboard.
+      navigate(peekRedirect() ?? "/dashboard", { replace: true });
     } catch (error) {
       toast({ title: "Verification failed", description: error instanceof Error ? error.message : "Invalid code.", variant: "destructive" });
     } finally {
