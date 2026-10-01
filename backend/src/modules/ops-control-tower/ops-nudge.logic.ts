@@ -14,6 +14,20 @@ export function isNudgeableIssue(v: string): v is NudgeableIssue {
   return (NUDGEABLE_ISSUES as readonly string[]).includes(v);
 }
 
+/**
+ * Issues also chased by the payroll pendency reminder EMAILS (payroll/pendency, pendency_reminder_log).
+ * The two senders share one contact ledger for these items so a joiner is not messaged twice in a
+ * day: each side counts the other's sent rows toward its own gap/cooldown.
+ */
+export const SHARED_PENDENCY_KIND: Partial<Record<NudgeableIssue, 'bank_account' | 'digilocker'>> = {
+  'account-details-missing': 'bank_account',
+  'digilocker-pending': 'digilocker',
+};
+export const NUDGE_ISSUE_FOR_PENDENCY_KIND: Record<'bank_account' | 'digilocker', NudgeableIssue> = {
+  bank_account: 'account-details-missing',
+  digilocker: 'digilocker-pending',
+};
+
 export const NUDGE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 export type AgeingBucket = '0-2' | '3-7' | '8+';

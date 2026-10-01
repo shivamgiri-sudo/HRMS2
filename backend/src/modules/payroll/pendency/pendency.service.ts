@@ -5,6 +5,7 @@ import { emailService } from '../../communication/email.service.js';
 import { buildAppLink } from '../../../shared/appLink.js';
 import { fetchEsiPendingRows } from '../esi-pending.query.js';
 import { buildPendencyEmail } from './pendency-email.template.js';
+import { NUDGE_ISSUE_FOR_PENDENCY_KIND } from '../../ops-control-tower/ops-nudge.logic.js';
 
 export type PendencyKind = 'esi_docs' | 'bank_account' | 'digilocker';
 export const PENDENCY_KINDS: readonly PendencyKind[] = ['esi_docs', 'bank_account', 'digilocker'];
@@ -117,6 +118,31 @@ async function loadHistory(
   );
   for (const r of rows as RowDataPacket[]) {
     map.set(String(r.employee_id), { sent: Number(r.sent), last: r.last_sent ? new Date(r.last_sent) : null });
+  }
+  // Shared contact ledger with the Ops Control Tower WhatsApp nudges: a WhatsApp reminder for the
+  // same item restarts the minimum gap, so the joiner is not emailed the day after a WhatsApp. It
+  // moves `last` only — the 5-reminder cap and HR escalation keep counting emails alone.
+  const nudgeIssue = (NUDGE_ISSUE_FOR_PENDENCY_KIND as Record<string, string | undefined>)[kind];
+  if (nudgeIssue) {
+    try {
+      const [nrows] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_id, MAX(created_at) AS last_sent
+           FROM ops_nudge_log
+          WHERE issue_key = ? AND status = 'sent' AND employee_id IN (${ids.map(() => '?').join(',')})
+          GROUP BY employee_id`,
+        [nudgeIssue, ...ids],
+      );
+      for (const r of (nrows ?? []) as RowDataPacket[]) {
+        if (!r.last_sent) continue;
+        const t = new Date(r.last_sent);
+        const cur = map.get(String(r.employee_id));
+        if (!cur) map.set(String(r.employee_id), { sent: 0, last: t });
+        else if (!cur.last || t > cur.last) cur.last = t;
+      }
+    } catch (err) {
+      const e = err as { code?: string; errno?: number };
+      if (e?.code !== 'ER_NO_SUCH_TABLE' && e?.errno !== 1146) throw err;
+    }
   }
   return map;
 }

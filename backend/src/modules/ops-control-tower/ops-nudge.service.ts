@@ -22,6 +22,7 @@ import {
   buildNudgeMessage,
   cooldownState,
   isNudgeableIssue,
+  SHARED_PENDENCY_KIND,
   type AgeingBucket,
   type NudgeableIssue,
 } from "./ops-nudge.logic.js";
@@ -85,14 +86,39 @@ async function loadRecipient(employeeId: string): Promise<RecipientRow | null> {
   return (rows[0] as RecipientRow | undefined) ?? null;
 }
 
-async function lastSentMs(employeeId: string, issue: string): Promise<number | null> {
+function isMissingTable(err: unknown): boolean {
+  const e = err as { code?: string; errno?: number };
+  return e?.code === "ER_NO_SUCH_TABLE" || e?.errno === 1146;
+}
+
+/** Last time the payroll pendency EMAIL reminder reached this employee for the same item (shared ledger). */
+async function lastPendencyEmailMs(employeeId: string, issue: NudgeableIssue): Promise<number | null> {
+  const kind = SHARED_PENDENCY_KIND[issue];
+  if (!kind) return null;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(created_at) AS last_sent FROM pendency_reminder_log
+        WHERE employee_id = ? AND reminder_kind = ? AND status = 'sent'`,
+      [employeeId, kind],
+    );
+    const v = rows[0]?.last_sent;
+    return v ? new Date(v as string).getTime() : null;
+  } catch (err) {
+    if (isMissingTable(err)) return null;
+    throw err;
+  }
+}
+
+async function lastSentMs(employeeId: string, issue: NudgeableIssue): Promise<number | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT MAX(created_at) AS last_sent FROM ops_nudge_log
       WHERE employee_id = ? AND issue_key = ? AND status = 'sent'`,
     [employeeId, issue],
   );
   const v = rows[0]?.last_sent;
-  return v ? new Date(v as string).getTime() : null;
+  const mine = v ? new Date(v as string).getTime() : null;
+  const email = await lastPendencyEmailMs(employeeId, issue);
+  return mine === null ? email : email === null ? mine : Math.max(mine, email);
 }
 
 async function logAttempt(a: {
@@ -185,25 +211,47 @@ export interface NudgeStats {
   lastSentMs: number | null;
 }
 
-/** Sent-nudge count + last send time per employee for one issue; employees never nudged are absent. */
+/**
+ * Sent-reminder count + last send time per employee for one issue; employees never reminded are absent.
+ * For items the payroll pendency emails also chase, those emails count too (one shared ledger).
+ */
 export async function getNudgeStats(
   issue: NudgeableIssue,
   employeeIds: string[],
 ): Promise<Map<string, NudgeStats>> {
   const out = new Map<string, NudgeStats>();
   if (employeeIds.length === 0) return out;
+  const marks = employeeIds.map(() => "?").join(",");
+  const fold = (id: string, n: number, last: unknown) => {
+    const t = last ? new Date(last as string).getTime() : null;
+    const cur = out.get(id);
+    out.set(id, {
+      count: (cur?.count ?? 0) + n,
+      lastSentMs: cur?.lastSentMs == null ? t : t == null ? cur.lastSentMs : Math.max(cur.lastSentMs, t),
+    });
+  };
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT employee_id, COUNT(*) AS n, MAX(created_at) AS last_sent
        FROM ops_nudge_log
-      WHERE issue_key = ? AND status = 'sent' AND employee_id IN (${employeeIds.map(() => "?").join(",")})
+      WHERE issue_key = ? AND status = 'sent' AND employee_id IN (${marks})
       GROUP BY employee_id`,
     [issue, ...employeeIds],
   );
-  for (const r of rows) {
-    out.set(String(r.employee_id), {
-      count: Number(r.n),
-      lastSentMs: r.last_sent ? new Date(r.last_sent as string).getTime() : null,
-    });
+  for (const r of rows) fold(String(r.employee_id), Number(r.n), r.last_sent);
+  const kind = SHARED_PENDENCY_KIND[issue];
+  if (kind) {
+    try {
+      const [erows] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_id, COUNT(*) AS n, MAX(created_at) AS last_sent
+           FROM pendency_reminder_log
+          WHERE reminder_kind = ? AND status = 'sent' AND employee_id IN (${marks})
+          GROUP BY employee_id`,
+        [kind, ...employeeIds],
+      );
+      for (const r of erows) fold(String(r.employee_id), Number(r.n), r.last_sent);
+    } catch (err) {
+      if (!isMissingTable(err)) throw err;
+    }
   }
   return out;
 }

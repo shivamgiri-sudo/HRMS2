@@ -132,10 +132,10 @@ describe('bulkNudge', () => {
 
 describe('getNudgeStats', () => {
   it('maps count and last send per employee; empty input skips the query', async () => {
-    expect((await getNudgeStats('digilocker-pending', [])).size).toBe(0);
+    expect((await getNudgeStats('bgv-pending', [])).size).toBe(0);
     expect(dbExecute).not.toHaveBeenCalled();
     dbExecute.mockImplementation(async () => [[{ employee_id: 'e1', n: 3, last_sent: '2026-10-01 09:00:00' }]]);
-    const m = await getNudgeStats('digilocker-pending', ['e1', 'e2']);
+    const m = await getNudgeStats('bgv-pending', ['e1', 'e2']);
     expect(m.get('e1')?.count).toBe(3);
     expect(m.has('e2')).toBe(false);
   });
@@ -202,5 +202,49 @@ describe('employeeBranchId', () => {
   it('returns null when employee missing', async () => {
     dbExecute.mockImplementation(async () => [[]]);
     expect(await employeeBranchId('x')).toBeNull();
+  });
+});
+
+describe('shared ledger with payroll pendency emails', () => {
+  const emailAt = (ms: number) => new Date(ms).toISOString();
+
+  it('an email reminder in the last 24h for the same item blocks the WhatsApp nudge', async () => {
+    dbExecute.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM employees e')) return [[recipient]];
+      if (sql.includes('FROM pendency_reminder_log')) return [[{ last_sent: emailAt(NOW - 3600_000) }]];
+      if (sql.includes('MAX(created_at) AS last_sent')) return [[{ last_sent: null }]];
+      if (sql.includes('INSERT INTO ops_nudge_log')) { inserts.push([]); return [{}]; }
+      return [[]];
+    });
+    const r = await nudgeEmployee({ employeeId: 'e1', issue: 'digilocker-pending', trigger: 'auto', actorId: null, nowMs: NOW });
+    expect(r.status).toBe('skipped_cooldown');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('issues the emails do not cover never consult the pendency log', async () => {
+    await call({ issue: 'bgv-pending' });
+    expect(dbExecute.mock.calls.some((c) => String(c[0]).includes('pendency_reminder_log'))).toBe(false);
+  });
+
+  it('a missing pendency table does not block the nudge', async () => {
+    dbExecute.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM employees e')) return [[recipient]];
+      if (sql.includes('FROM pendency_reminder_log')) throw Object.assign(new Error('no table'), { code: 'ER_NO_SUCH_TABLE', errno: 1146 });
+      if (sql.includes('MAX(created_at) AS last_sent')) return [[{ last_sent: null }]];
+      return [{}];
+    });
+    const r = await nudgeEmployee({ employeeId: 'e1', issue: 'digilocker-pending', trigger: 'manual', actorId: 'u1', nowMs: NOW });
+    expect(r.status).toBe('sent');
+  });
+
+  it('stats fold email reminders into count and last-sent', async () => {
+    dbExecute.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM ops_nudge_log')) return [[{ employee_id: 'e1', n: 1, last_sent: '2026-10-01 09:00:00' }]];
+      if (sql.includes('FROM pendency_reminder_log')) return [[{ employee_id: 'e1', n: 2, last_sent: '2026-10-02 08:00:00' }, { employee_id: 'e2', n: 1, last_sent: '2026-09-30 08:00:00' }]];
+      return [[]];
+    });
+    const m = await getNudgeStats('digilocker-pending', ['e1', 'e2']);
+    expect(m.get('e1')).toEqual({ count: 3, lastSentMs: new Date('2026-10-02 08:00:00').getTime() });
+    expect(m.get('e2')?.count).toBe(1);
   });
 });

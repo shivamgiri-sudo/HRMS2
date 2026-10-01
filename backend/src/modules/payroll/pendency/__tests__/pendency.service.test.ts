@@ -187,4 +187,30 @@ describe('sendPendencyReminders', () => {
     ]);
     expect((vi.mocked(emailService.send).mock.calls[0][0] as any).html).toContain('https://hrms.example.com/onboard-full?token=tok-1');
   });
+
+  describe('shared ledger with Ops Control Tower WhatsApp nudges', () => {
+    const contact = { id: 'e1', employee_code: 'MAS1', first_name: 'Asha', email: null, official_email: null, personal_email: 'asha@x.com' };
+
+    it('a WhatsApp nudge in the last 3 days restarts the gap: no email, and it is not counted toward the cap', async () => {
+      exec.mockImplementation(async (sql: any) => {
+        const s = String(sql);
+        if (s.includes('FROM employees WHERE id IN')) return [[contact], []] as any;
+        if (s.includes('FROM ats_onboarding_bridge')) return [[{ employee_id: 'e1', onboarding_token: 't', token_valid: 1 }], []] as any;
+        if (s.includes('FROM ops_nudge_log')) return [[{ employee_id: 'e1', last_sent: new Date(Date.now() - 3600_000).toISOString() }], []] as any;
+        return [[], []] as any;
+      });
+      vi.mocked(emailService.send).mockResolvedValue({} as any);
+      const res = await sendPendencyReminders({ kind: 'digilocker', employeeIds: ['e1'], sentBy: null, trigger: 'scheduler' });
+      expect(emailService.send).not.toHaveBeenCalled();
+      expect(res[0]).toMatchObject({ status: 'skipped', reason: 'recently_reminded' });
+    });
+
+    it('esi_docs has no WhatsApp counterpart and never reads ops_nudge_log', async () => {
+      mockDb({ contacts: [contact] });
+      vi.mocked(fetchEsiPendingRows).mockResolvedValue([{ employee_id: 'e1', pan_ready: 1, aadhaar_ready: 1, photo_ready: 0, bank_passbook_url: null }] as any);
+      vi.mocked(emailService.send).mockResolvedValue({} as any);
+      await sendPendencyReminders({ kind: 'esi_docs', employeeIds: ['e1'], sentBy: null, trigger: 'scheduler' });
+      expect(exec.mock.calls.some((c) => String(c[0]).includes('ops_nudge_log'))).toBe(false);
+    });
+  });
 });
