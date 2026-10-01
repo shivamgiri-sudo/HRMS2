@@ -22,7 +22,7 @@ const h =
   (req: Request, res: Response, next: NextFunction) =>
     fn(req, res).catch(next);
 
-const MAX_ATTEMPTS = 3;
+export const MAX_ATTEMPTS = 3;
 const GPS_PASS_THRESHOLD_M = 50;
 const EXPIRY_HOURS = 168; // 7 days
 
@@ -118,7 +118,7 @@ async function geocodeAddress(
 }
 
 // Returns ONLY the present address — permanent address is not used for GPS verification.
-function buildPresentAddress(profile: RowDataPacket | null): string {
+export function buildPresentAddress(profile: RowDataPacket | null): string {
   if (!profile) return "";
   // Always the CURRENT residential address — never the permanent one. Falls back to the profile's
   // single-field current_address only when the structured present_* columns are all empty.

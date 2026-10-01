@@ -47,8 +47,10 @@ const GRACES = [0, 5, 10, 15];
 const BUCKET_COLOR: Record<string, string> = {
   b1_5: "bg-amber-200", b6_15: "bg-amber-400", b16_30: "bg-orange-500", b31_60: "bg-red-500", b60p: "bg-red-800",
 };
-// Adherence bands used for colouring only; they are not a contractual target.
-const adhTone = (p: number | null): "green" | "amber" | "red" | "neutral" => (p === null ? "neutral" : p >= 90 ? "green" : p >= 75 ? "amber" : "red");
+// Adherence target is 95% (owner-set). Amber is a 10-point warning band below it; red is anything lower.
+const ADHERENCE_TARGET = 95;
+const ADHERENCE_WARN = ADHERENCE_TARGET - 10;
+const adhTone = (p: number | null): "green" | "amber" | "red" | "neutral" => (p === null ? "neutral" : p >= ADHERENCE_TARGET ? "green" : p >= ADHERENCE_WARN ? "amber" : "red");
 const pctText = (p: number | null) => (p === null ? "—" : `${p}%`);
 const STATUS_TONE: Record<string, "green" | "amber" | "red" | "neutral"> = { on_time: "green", late: "amber", absent: "red" };
 const STATUS_LABEL: Record<string, string> = { on_time: "On time", late: "Late", absent: "No show" };
@@ -229,7 +231,7 @@ export function ShiftAdherenceSection() {
       <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-2 text-[11px] text-slate-600">
         <span className="font-semibold">Late spread:</span>
         {r?.lateBuckets.map((b) => (<span key={b.key} className="inline-flex items-center gap-1"><span className={`h-2 w-2 rounded-full ${BUCKET_COLOR[b.key]}`} aria-hidden />{b.label}</span>))}
-        <span className="ml-auto">Adherence colour: ≥90% green · 75–89% amber · below 75% red</span>
+        <span className="ml-auto">Target {ADHERENCE_TARGET}% · green at or above target · amber {ADHERENCE_WARN}–{ADHERENCE_TARGET - 1}% · red below {ADHERENCE_WARN}%</span>
       </div>
 
       <DetailDrawer open={!!drill} onOpenChange={(o) => !o && setDrill(null)} title={drill?.title ?? "Shift adherence"}
