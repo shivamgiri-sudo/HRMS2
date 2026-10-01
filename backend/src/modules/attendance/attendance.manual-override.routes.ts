@@ -16,6 +16,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { db } from "../../db/mysql.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { branchAdminScope, canAccessEmployee, scopePredicate, OUT_OF_SCOPE_MSG } from "../wfm/branch-scope.js";
 
 export const attendanceManualOverrideRouter = Router();
 attendanceManualOverrideRouter.use(requireAuth);
@@ -97,6 +98,27 @@ async function assertPayrollAccess(userId: string): Promise<{ actorRole: string 
   if (await hasAnyRole(userId, "payroll_head"))  return { actorRole: "payroll_head" };
   if (await hasAnyRole(userId, "payroll_admin")) return { actorRole: "payroll_admin" };
   return null;
+}
+
+// ─── Branch scoping (owner ruling 2026-10-01) ─────────────────────────────────
+// admin is branch-scoped like hr: a branch admin only reads / creates / decides overrides of employees inside their
+// own branch / scope. Org-wide roles and the payroll roles are unchanged.
+
+/** Predicate on `e` for a branch admin, or null when the caller needs no extra limit. */
+async function employeeLimit(userId: string): Promise<{ sql: string; params: unknown[] } | null> {
+  const scope = await branchAdminScope(userId);
+  if (!scope) return null;
+  return scopePredicate(scope, {
+    employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", managerEmployeeId: "e.reporting_manager_id",
+  });
+}
+
+/** Sends the 403 and returns false when a branch admin may not act on this employee. */
+async function guardEmployee(userId: string, employeeId: string, res: Response): Promise<boolean> {
+  const scope = await branchAdminScope(userId);
+  if (!scope || (await canAccessEmployee(scope, employeeId))) return true;
+  res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG });
+  return false;
 }
 
 // ─── Data helpers ─────────────────────────────────────────────────────────────
@@ -213,6 +235,7 @@ attendanceManualOverrideRouter.post("/manual-overrides", h(async (req, res) => {
   // Safety 1: employee must exist and be active (exited employees must not receive new attendance)
   const employee = await getEmployee(employee_id);
   if (!employee) return res.status(409).json({ success: false, error: "Employee not found or is inactive (exited). Attendance cannot be marked for an exited employee." });
+  if (!(await guardEmployee(req.authUser.id, employee_id, res))) return;
 
   // Safety 2: attendance_daily_record must exist (we fetch old values from it)
   const current = await getCurrentAttendance(employee_id, attendance_date);
@@ -335,6 +358,9 @@ attendanceManualOverrideRouter.get("/manual-overrides", h(async (req, res) => {
     params.push(req.query.higherApprovalRequired === "1" ? 1 : 0);
   }
 
+  const limit = await employeeLimit(req.authUser.id);
+  if (limit) { conds.push(`(${limit.sql})`); params.push(...limit.params); }
+
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -373,6 +399,7 @@ attendanceManualOverrideRouter.get("/manual-overrides/:id", h(async (req, res) =
 
   const override = await getOverrideWithDetail(req.params.id);
   if (!override) return res.status(404).json({ success: false, error: "Manual override not found" });
+  if (!(await guardEmployee(req.authUser.id, override.employee_id, res))) return;
 
   // Audit timeline for this override
   const [auditRows] = await db.execute<AuditRow[]>(
@@ -409,6 +436,7 @@ attendanceManualOverrideRouter.post("/manual-overrides/:id/approve", h(async (re
 
   const override = await getOverrideWithDetail(req.params.id);
   if (!override) return res.status(404).json({ success: false, error: "Manual override not found" });
+  if (!(await guardEmployee(req.authUser.id, override.employee_id, res))) return;
 
   // Guard: must be pending
   if (override.approval_status !== "pending") {
@@ -566,6 +594,7 @@ attendanceManualOverrideRouter.post("/manual-overrides/:id/reject", h(async (req
 
   const override = await getOverrideWithDetail(req.params.id);
   if (!override) return res.status(404).json({ success: false, error: "Manual override not found" });
+  if (!(await guardEmployee(req.authUser.id, override.employee_id, res))) return;
 
   // Guard: must be pending
   if (override.approval_status !== "pending") {

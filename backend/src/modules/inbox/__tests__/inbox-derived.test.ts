@@ -38,6 +38,9 @@ vi.mock("../../finance/grn.service.js", () => ({ grnService: { getGrn, reviewGrn
 const { getBudget, reviewBudget } = vi.hoisted(() => ({ getBudget: vi.fn(), reviewBudget: vi.fn() }));
 vi.mock("../../process-pnl/branch-budget.service.js", () => ({ branchBudgetService: { get: getBudget, review: reviewBudget } }));
 
+const { canAccessCandidate } = vi.hoisted(() => ({ canAccessCandidate: vi.fn() }));
+vi.mock("../../ats/candidate-access.js", () => ({ canAccessCandidate }));
+
 const { decideDerivedItem, getDerivedItemDetail } = await import("../inbox-derived.service.js");
 
 const ACTOR_ID = "actor-1";
@@ -66,6 +69,7 @@ beforeEach(() => {
   canReviewLeave.mockReset().mockResolvedValue(true);
   reviewRequest.mockReset().mockResolvedValue({ id: "leave-1", status: "approved" });
   manualReview.mockReset().mockResolvedValue({ status: "clear" });
+  canAccessCandidate.mockReset().mockResolvedValue(true);
 });
 
 describe("decideDerivedItem — reject always requires a reason", () => {
@@ -170,6 +174,30 @@ describe("decideDerivedItem — candidate_bgv_check", () => {
     await expect(decideDerivedItem("candidate_bgv_check", "check-1", "approve", "", ACTOR_ID))
       .rejects.toMatchObject({ statusCode: 403 });
     expect(manualReview).not.toHaveBeenCalled();
+  });
+});
+
+describe("candidate_bgv_check branch scope (owner ruling 2026-10-01: admin/hr are branch-scoped)", () => {
+  it("403s a decision on a candidate outside the actor's branch, and never reaches manualReview", async () => {
+    canAccessCandidate.mockResolvedValue(false);
+    dbExecute.mockResolvedValueOnce([[{ candidate_id: "cand-other", check_type: "pan" }], []]);
+    await expect(decideDerivedItem("candidate_bgv_check", "check-1", "approve", "", ACTOR_ID))
+      .rejects.toMatchObject({ statusCode: 403 });
+    expect(canAccessCandidate).toHaveBeenCalledWith(ACTOR_ID, "cand-other");
+    expect(manualReview).not.toHaveBeenCalled();
+  });
+
+  it("403s the detail view of an out-of-branch candidate's BGV check", async () => {
+    canAccessCandidate.mockResolvedValue(false);
+    dbExecute.mockResolvedValueOnce([[{ id: "check-1", candidate_id: "cand-other" }], []]);
+    await expect(getDerivedItemDetail("candidate_bgv_check", "check-1", ACTOR_ID))
+      .rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it("returns the detail for an in-scope candidate", async () => {
+    dbExecute.mockResolvedValueOnce([[{ id: "check-1", candidate_id: "cand-1" }], []]);
+    await expect(getDerivedItemDetail("candidate_bgv_check", "check-1", ACTOR_ID))
+      .resolves.toMatchObject({ id: "check-1" });
   });
 });
 

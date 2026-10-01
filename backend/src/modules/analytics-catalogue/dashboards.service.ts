@@ -7,7 +7,7 @@ import {
   type AccessLevel, type Share, type Viewer, type WidgetInput,
 } from "./dashboards.access.js";
 import { scopeOptions } from "./query.service.js";
-import { ANALYTICS_VIEWER_ROLES, readableProcessIds } from "./scope.js";
+import { ANALYTICS_VIEWER_ROLES, isOrgWide, readableProcessIds } from "./scope.js";
 
 /**
  * Dashboard Studio storage. Every read and write goes through accessLevel(); a dashboard the viewer cannot see is
@@ -41,7 +41,12 @@ export async function viewerFor(userId: string, roles: string[]): Promise<Viewer
       `SELECT DISTINCT branch_id FROM process_master WHERE id IN (${marks(ids.length)}) AND branch_id IS NOT NULL`, ids);
     for (const r of rows) branchIds.add(String(r.branch_id));
   }
-  return { userId, roles, isAdmin: roles.includes("super_admin") || roles.includes("admin"), processIds, branchIds };
+  // admin is branch-scoped like hr (owner ruling 2026-10-01): only org-wide viewers see/edit every dashboard. A branch
+  // admin still may flag templates (feature gate) but reaches other people's dashboards only by ownership or a share.
+  const isSuper = roles.includes("super_admin");
+  const isAdminRole = roles.includes("admin");
+  const editsAll = isSuper || (isAdminRole && (await isOrgWide(userId)));
+  return { userId, roles, isAdmin: editsAll, canTemplate: isSuper || isAdminRole, processIds, branchIds };
 }
 
 const DASH_COLS = `d.id, d.name, d.description, d.owner_user_id, d.home_branch_id, d.home_process_id, d.theme, d.settings_json,
@@ -139,7 +144,7 @@ export async function getDashboard(viewer: Viewer, id: string) {
 export async function createDashboard(viewer: Viewer, raw: unknown) {
   const input = validateDashboardInput(raw);
   const id = randomUUID();
-  const isTemplate = viewer.isAdmin && (raw as Record<string, unknown>).isTemplate === true;
+  const isTemplate = (viewer.canTemplate ?? viewer.isAdmin) && (raw as Record<string, unknown>).isTemplate === true;
   await db.query(
     `INSERT INTO analytics_dashboard (id, name, description, owner_user_id, home_branch_id, home_process_id, theme, settings_json, is_template)
      VALUES (?,?,?,?,?,?,?,?,?)`,
@@ -153,7 +158,7 @@ export async function updateDashboard(viewer: Viewer, id: string, raw: unknown) 
   const d = await loadForEdit(viewer, id);
   const version = checkVersion(body.version, d.row.version);
   // Only an admin may turn a dashboard into a template (or back); everyone else leaves the flag as it is.
-  const isTemplate = viewer.isAdmin && typeof body.isTemplate === "boolean" ? (body.isTemplate ? 1 : 0) : Number(d.row.is_template);
+  const isTemplate = (viewer.canTemplate ?? viewer.isAdmin) && typeof body.isTemplate === "boolean" ? (body.isTemplate ? 1 : 0) : Number(d.row.is_template);
   const [res] = await db.query<ResultSetHeader>(
     `UPDATE analytics_dashboard SET name = ?, description = ?, home_branch_id = ?, home_process_id = ?, theme = ?, settings_json = ?,
         is_template = ?, version = version + 1

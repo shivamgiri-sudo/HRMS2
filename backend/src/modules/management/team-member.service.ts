@@ -33,9 +33,9 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { managementService } from "./management.service.js";
-import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
 
 /** Roles that may look at any employee, matching resolveTeamScope()'s wide set. */
@@ -65,7 +65,7 @@ function httpError(message: string, statusCode: number): Error {
  * The test that matches the page's purpose is the reporting line itself.
  */
 export async function assertCanViewMember(userId: string, targetEmployeeId: string): Promise<void> {
-  if (await hasRole(userId, ...WIDE_ROLES)) return;
+  if (await hasAnyRole(userId, ...WIDE_ROLES)) return;
 
   const caller = await getEmployeeForUser(userId);
   if (!caller) throw httpError("No employee record for this user", 403);

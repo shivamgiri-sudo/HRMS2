@@ -24,7 +24,7 @@ import { requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
-import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
 import { scopePredicate } from "./branch-scope.js";
 
 /**
@@ -118,7 +118,7 @@ teamAttendanceMonthRouter.get(
 
     const userId = req.authUser!.id;
     const [isWide, callerEmp] = await Promise.all([
-      hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES),
+      hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES),
       getEmployeeForUser(userId),
     ]);
 
@@ -358,7 +358,7 @@ teamAttendanceMonthRouter.post(
     }
 
     const userId = req.authUser!.id;
-    const isWide = await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES);
+    const isWide = await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES);
     const callerEmp = await getEmployeeForUser(userId);
     const vis = isWide ? null : await teamVisibility(userId, callerEmp?.id);
     if (!isWide && !vis) {

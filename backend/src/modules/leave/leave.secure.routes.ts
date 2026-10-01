@@ -67,9 +67,10 @@ export async function canReviewLeave(userId: string, requestId: string): Promise
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id && callerEmp.id === target.employee_id) return false;
 
-  if (await hasAnyRole(userId, "super_admin", "admin")) return true;
-  // hr / hr_admin / payroll_hr review leave only inside their own branch / assigned scope (owner ruling 2026-10-01).
-  if (await hasAnyRole(userId, "hr", "hr_admin", "payroll_hr")) {
+  if (await hasAnyRole(userId, "super_admin")) return true;
+  // admin / hr / hr_admin / payroll_hr review leave only inside their own branch / assigned scope
+  // (owner ruling 2026-10-01: admin is branch-scoped like hr; org-wide roles pass inside rowInScope).
+  if (await hasAnyRole(userId, "admin", "hr", "hr_admin", "payroll_hr")) {
     const reviewerScope = await resolveUserBusinessScope(userId);
     if (rowInScope(reviewerScope, { id: target.employee_id, branch_id: target.branch_id, process_id: target.process_id, reporting_manager_id: target.reporting_manager_id })) return true;
   }

@@ -123,7 +123,10 @@ async function requestedScope(req: AuthenticatedRequest, dashboardCode?: Dashboa
   // genuinely have no real branch/process to show and are left exactly as before) and the
   // v2 quality/operations dashboards' own separate, deliberately fail-closed "unconfigured
   // account" contract (tests/dashboards-v2.routes.test.ts) are completely unaffected.
-  const isDemoSystemWide = user.isDemo === true && (user.role === "super_admin" || user.role === "admin");
+  // Owner ruling 2026-10-01: admin is branch-scoped like hr (resolveDashboardScope's SYSTEM_WIDE_ROLES is now
+  // super_admin only), so a demo `admin` no longer gets the org-wide scope either - it resolves like any
+  // other role. Only the demo super_admin keeps ORG_ALL.
+  const isDemoSystemWide = user.isDemo === true && user.role === "super_admin";
 
   const context = isDemoSystemWide
     ? { roleKeys: [user.role!], primaryRole: user.role!, isSuperAdmin: true, isHO: false }

@@ -2,8 +2,7 @@ import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
-import { hasRole } from '../../shared/accessGuard.js';
-import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from '../../shared/scopeAccess.js';
 import { userCanAccessProcess, scopedProcessIdsForUser } from '../wfm/branch-scope.js';
 import { rosterMasterService } from './roster-master.service.js';
 
@@ -32,7 +31,7 @@ async function assertProcessScope(
   const userId = req.authUser!.id;
   // Owner ruling 2026-10-01: only org-wide roles bypass; hr / wfm / managers need the process to be in
   // their own branch or assignments.
-  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return;
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return;
   if (!processId || !(await userCanAccessProcess(userId, processId, branchId))) {
     throw new RosterMasterScopeError();
   }

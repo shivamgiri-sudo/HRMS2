@@ -30,9 +30,12 @@ describe("wfm-ext coverage/snapshot scope check", () => {
     expect(branch).toMatch(/hasProcessScope\(userId, processId, branchId, \.\.\.WFM_SCOPE_ROLES\)/);
   });
 
-  it("bypasses the check only for admin/hr, matching the read-path convention elsewhere in this file", () => {
+  it("bypasses the check only for the org-wide roles (admin is branch-scoped like hr)", () => {
     const branch = manualOverrideBranch();
-    expect(branch).toMatch(/hasRole\(userId, \.\.\.ORG_WIDE_EXEMPT_ROLES\)/);
+    // accessGuard.hasRole() answers true for admin / super_admin for ANY role, so it must not be the org-wide test;
+    // scopeAccess.hasAnyRole() only short-circuits for super_admin (owner ruling 2026-10-01).
+    expect(branch).toMatch(/hasAnyRole\(userId, \.\.\.ORG_WIDE_EXEMPT_ROLES\)/);
+    expect(branch).not.toMatch(/hasRole\(userId, \.\.\.ORG_WIDE_EXEMPT_ROLES\)/);
   });
 
   it("rejects when process_id/branch_id validation fails, rather than falling through to the write", () => {

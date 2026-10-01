@@ -14,12 +14,12 @@ import { db } from "../../db/mysql.js";
 import { validateAmendmentInput } from "../wfm/roster-audit.helpers.js";
 import { recordAmendmentInDecisionAudit } from "../wfm/roster-audit.amendment.js";
 import type { RowDataPacket } from "mysql2";
-import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
 import { userCanAccessProcess, scopedProcessIdsForUser, getScope, canAccessProcess, allowedBranchIds } from "../wfm/branch-scope.js";
 
 // Owner ruling 2026-10-01: only ORG_WIDE_EXEMPT_ROLES bypass the process/branch scope. admin / hr / wfm
 // used to mean "every branch"; they must now be inside their own branch / assigned processes.
-const isOrgWideUser = (userId: string) => hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES);
+const isOrgWideUser = (userId: string) => hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES);
 
 type WeekOffPolicyRowLike = { scope_type?: string | null; process_id?: string | null; branch_id?: string | null };
 async function canTouchWeekOffPolicy(req: AuthenticatedRequest, row: WeekOffPolicyRowLike, write: boolean): Promise<boolean> {

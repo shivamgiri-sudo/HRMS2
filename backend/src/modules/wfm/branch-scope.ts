@@ -19,7 +19,7 @@ import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 
 /** Roles that work at branch level: their own employees.branch_id is their default scope. */
 export const BRANCH_LEVEL_ROLES = [
-  "hr", "hr_admin", "payroll_hr", "branch_head", "branch_hr", "hr_branch", "branch_admin",
+  "admin", "hr", "hr_admin", "payroll_hr", "branch_head", "branch_hr", "hr_branch", "branch_admin",
   "wfm", "wfm_spoc", "payroll", "payroll_branch", "rta", "operations_manager",
 ];
 
@@ -49,6 +49,18 @@ export function isOrgWide(scope: UserBusinessScope): boolean {
 
 function isBranchLevel(scope: UserBusinessScope): boolean {
   return scope.roles.some((r) => BRANCH_LEVEL_ROLES.includes(r));
+}
+
+/**
+ * Screens gated to a payroll / admin audience (attendance exception bucket, manual overrides, ...) used to let `admin`
+ * reach every employee. admin is branch-scoped like hr (owner ruling 2026-10-01): returns the caller's scope when they
+ * are an `admin` WITHOUT an org-wide role (their data must be limited to it), or null when no extra limit applies
+ * (org-wide roles, and other gate roles such as payroll_head / payroll_admin whose scope is a separate decision).
+ */
+export async function branchAdminScope(userId: string): Promise<UserBusinessScope | null> {
+  const scope = await resolveUserBusinessScope(userId);
+  if (isOrgWide(scope) || !scope.roles.includes("admin")) return null;
+  return scope;
 }
 
 export async function getScope(req: { authUser?: { id: string } | null }): Promise<UserBusinessScope | null> {

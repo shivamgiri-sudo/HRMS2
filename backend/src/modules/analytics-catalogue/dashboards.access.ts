@@ -3,7 +3,8 @@ import { AnalyticsError } from "./analytics.types.js";
 
 /** Pure access and input rules for Dashboard Studio. No database here, so every rule is unit tested. */
 
-export type Viewer = { userId: string; roles: string[]; isAdmin: boolean; processIds: Set<string>; branchIds: Set<string> };
+/** isAdmin = org-wide viewer (sees/edits every dashboard). canTemplate = may flag a dashboard as a template (admin role; defaults to isAdmin). */
+export type Viewer = { userId: string; roles: string[]; isAdmin: boolean; canTemplate?: boolean; processIds: Set<string>; branchIds: Set<string> };
 export type PrincipalType = "role" | "branch" | "process" | "user";
 export type Permission = "view" | "edit";
 export type Share = { principalType: PrincipalType; principalValue: string; permission: Permission };

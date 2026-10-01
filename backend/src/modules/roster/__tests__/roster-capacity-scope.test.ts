@@ -21,6 +21,13 @@ const { hasRole, hasProcessScope, getEmployeeForUser } = vi.hoisted(() => ({
   getEmployeeForUser: vi.fn(),
 }));
 vi.mock("../../../shared/accessGuard.js", () => ({ hasRole, hasProcessScope, getEmployeeForUser }));
+// The org-wide test is scopeAccess.hasAnyRole (accessGuard.hasRole is true for admin for ANY role, so it cannot be the
+// org-wide test - owner ruling 2026-10-01). These tests keep driving "privileged" through the same hasRole mock.
+vi.mock("../../../shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
+  hasAnyRole: (userId: string, ...roles: string[]) => hasRole(userId, ...roles),
+}));
+
 
 const {
   updateCapacityConfig, allocateWeekOff, submitWeekOffPreference, getNotifications, markNotificationRead,

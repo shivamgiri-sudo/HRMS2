@@ -218,20 +218,21 @@ atsFullParityRouter.get("/journey", requireRole("admin", "hr", "recruiter", "man
 
 atsFullParityRouter.post("/recruiter-submission", requireRole("admin", "hr", "recruiter", "manager"), h(async (req: AuthenticatedRequest, res) => {
   const submitScope = await resolveAtsBranchScope(req.authUser!.id);
-  const isPrivileged = submitScope.orgWide || (await getUserRoleKeys(req.authUser!.id)).includes("hr");
+  // admin is branch-scoped like hr (owner ruling 2026-10-01): both may submit on behalf of a recruiter of their own branch.
+  const isPrivileged = submitScope.orgWide || (await getUserRoleKeys(req.authUser!.id)).some((r) => r === "hr" || r === "admin");
   const bodyCode = String(req.body?.recruiterCode ?? "").trim();
 
   let recruiterProfile: import("./recruiterInterview.service.js").RecruiterProfile;
 
   if (isPrivileged && bodyCode) {
-    // Admin/HR may submit on behalf of any active recruiter
+    // Org-wide roles may submit on behalf of any active recruiter; admin / hr only for recruiters of their own branch
     const { db: _db } = await import("../../db/mysql.js");
     const [recRows] = await _db.execute<RecruiterLookupRow[]>(
       `SELECT id, name, recruiter_code, email, branch, employee_id FROM ats_recruiter_roster WHERE recruiter_code = ? AND active_status = 1 LIMIT 1`,
       [bodyCode]
     );
     if (!recRows[0]) return res.status(403).json({ success: false, message: "Recruiter not found or inactive" });
-    // hr acts on behalf of recruiters of ITS OWN branch only.
+    // admin / hr act on behalf of recruiters of THEIR OWN branch only.
     if (!submitScope.orgWide && !branchInScope(submitScope, recRows[0].branch)) {
       return res.status(403).json({ success: false, message: "Forbidden: recruiter is outside your branch / assigned scope" });
     }

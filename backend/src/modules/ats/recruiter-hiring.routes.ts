@@ -542,9 +542,9 @@ recruiterHiringRouter.delete("/recruiter/hiring-activity/:id", async (req: Authe
     if (!row) {
       return res.status(404).json({ success: false, message: "Hiring activity not found" });
     }
-    // Owner ruling 2026-10-01: hr / ho_hr may delete only rows of their own branch (org-wide roles: any row).
+    // Owner ruling 2026-10-01: admin / hr / ho_hr may delete only rows of their own branch (org-wide roles: any row).
     let isAdmin = isOrgWideRole(role);
-    if (!isAdmin && ["hr", "ho_hr"].includes(role)) {
+    if (!isAdmin && ["admin", "hr", "ho_hr"].includes(role)) {
       const actorBranch = await getActorBranch(userId);
       isAdmin = !!actorBranch && row.branch_name === actorBranch;
     }

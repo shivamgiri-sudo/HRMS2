@@ -23,6 +23,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { db } from "../../db/mysql.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { branchAdminScope, canAccessEmployee, scopePredicate, OUT_OF_SCOPE_MSG } from "./branch-scope.js";
 import { COSEC_DEFAULT_FULL_DAY_MINUTES } from "./attendance-engine.service.js";
 
 export const attendanceExceptionBucketRouter = Router();
@@ -55,6 +56,29 @@ async function assertPayrollAccess(userId: string): Promise<{ actorRole: string 
   if (await hasAnyRole(userId, "payroll_admin")) return { actorRole: "payroll_admin" };
   return null;
 }
+
+// ─── Branch scoping (owner ruling 2026-10-01) ─────────────────────────────────
+// admin is branch-scoped like hr: a branch admin only reads / changes bucket rows of employees inside their own
+// branch / scope. Org-wide roles and the payroll roles are unchanged (no extra predicate, SQL byte-identical).
+
+/** `e.id`-style predicate for a branch admin, or null when the caller needs no extra limit. */
+async function employeeLimit(userId: string, alias = "e"): Promise<{ sql: string; params: unknown[] } | null> {
+  const scope = await branchAdminScope(userId);
+  if (!scope) return null;
+  return scopePredicate(scope, {
+    employeeId: `${alias}.id`, branchId: `${alias}.branch_id`, processId: `${alias}.process_id`,
+    managerEmployeeId: `${alias}.reporting_manager_id`,
+  });
+}
+
+/** True when the caller may act on this employee (always true unless a branch admin). */
+async function mayAccessEmployee(userId: string, employeeId: string): Promise<boolean> {
+  const scope = await branchAdminScope(userId);
+  if (!scope) return true;
+  return canAccessEmployee(scope, employeeId);
+}
+
+const denyScope = (res: Response) => res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -117,6 +141,8 @@ attendanceExceptionBucketRouter.get("/", h(async (req, res) => {
   const params: unknown[] = [];
   if (!includeInactive) conds.push("b.active_status = 1");
   if (req.query.employeeId) { conds.push("b.employee_id = ?"); params.push(String(req.query.employeeId)); }
+  const limit = await employeeLimit(req.authUser.id);
+  if (limit) { conds.push(`(${limit.sql})`); params.push(...limit.params); }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -153,7 +179,7 @@ attendanceExceptionBucketRouter.get("/match-employees", h(async (req, res) => {
     });
   }
 
-  const rows = await matchGroupEmployees(filters);
+  const rows = await matchGroupEmployees(filters, await employeeLimit(req.authUser.id));
   if (rows.length > MAX_BULK_MATCH) {
     return res.status(400).json({
       success: false,
@@ -173,6 +199,7 @@ attendanceExceptionBucketRouter.get("/:id", h(async (req, res) => {
 
   const row = await getRowById(req.params.id);
   if (!row) return res.status(404).json({ success: false, error: "Exception bucket entry not found" });
+  if (!(await mayAccessEmployee(req.authUser.id, String(row.employee_id)))) return denyScope(res);
 
   const [auditRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, actor_user_id, action_type, actor_role, reason,
@@ -311,6 +338,7 @@ attendanceExceptionBucketRouter.post("/", h(async (req, res) => {
     [employee_id.trim()],
   );
   if (!empRows.length) return res.status(404).json({ success: false, error: "Employee not found" });
+  if (!(await mayAccessEmployee(req.authUser.id, employee_id.trim()))) return denyScope(res);
 
   const { id, created } = await upsertBucketRow({
     employeeId: employee_id.trim(),
@@ -343,7 +371,10 @@ function bulkGroupFilters(query: Record<string, unknown>) {
   return { branchId, costCentreId, designationId };
 }
 
-async function matchGroupEmployees(filters: { branchId: string | null; costCentreId: string | null; designationId: string | null }) {
+async function matchGroupEmployees(
+  filters: { branchId: string | null; costCentreId: string | null; designationId: string | null },
+  limit: { sql: string; params: unknown[] } | null = null,
+) {
   const { branchId, costCentreId, designationId } = filters;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code,
@@ -360,10 +391,11 @@ async function matchGroupEmployees(filters: { branchId: string | null; costCentr
       WHERE e.active_status = 1
         AND (? IS NULL OR e.branch_id      = ?)
         AND (? IS NULL OR e.cost_centre_id = ?)
-        AND (? IS NULL OR e.designation_id = ?)
+        AND (? IS NULL OR e.designation_id = ?)${limit ? `
+        AND (${limit.sql})` : ""}
       ORDER BY employee_name
       LIMIT ${MAX_BULK_MATCH + 1}`,
-    [branchId, branchId, costCentreId, costCentreId, designationId, designationId],
+    [branchId, branchId, costCentreId, costCentreId, designationId, designationId, ...(limit?.params ?? [])],
   );
   return rows;
 }
@@ -405,7 +437,7 @@ attendanceExceptionBucketRouter.post("/bulk", h(async (req, res) => {
     });
   }
 
-  const rows = await matchGroupEmployees(filters);
+  const rows = await matchGroupEmployees(filters, await employeeLimit(req.authUser.id));
   if (rows.length === 0) {
     return res.status(404).json({ success: false, error: "No active employees match this combination." });
   }
@@ -456,6 +488,7 @@ attendanceExceptionBucketRouter.patch("/:id", h(async (req, res) => {
 
   const current = await getRowById(req.params.id);
   if (!current) return res.status(404).json({ success: false, error: "Exception bucket entry not found" });
+  if (!(await mayAccessEmployee(req.authUser.id, String(current.employee_id)))) return denyScope(res);
 
   const { single_punch_counts_as_present, full_day_threshold_minutes, reason } = req.body ?? {};
   const rErr = reasonError(reason);
@@ -529,6 +562,7 @@ attendanceExceptionBucketRouter.delete("/:id", h(async (req, res) => {
 
   const current = await getRowById(req.params.id);
   if (!current) return res.status(404).json({ success: false, error: "Exception bucket entry not found" });
+  if (!(await mayAccessEmployee(req.authUser.id, String(current.employee_id)))) return denyScope(res);
   if (Number(current.active_status) === 0) {
     return res.status(409).json({ success: false, error: "This employee is already removed from the bucket" });
   }

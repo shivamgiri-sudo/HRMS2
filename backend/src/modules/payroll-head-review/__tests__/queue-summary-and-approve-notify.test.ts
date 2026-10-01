@@ -36,7 +36,7 @@ vi.mock("../../payroll/salary-start-date.service.js", async (importOriginal) => 
   getSalaryStartDateConsistency: vi.fn().mockResolvedValue({ consistent: true, expected: null, problems: [] }),
 }));
 
-import { getQueue, approve } from "../payroll-head-review.service.js";
+import { getQueue, approve, listQueueBranches } from "../payroll-head-review.service.js";
 
 describe("getQueue() summary enrichment", () => {
   beforeEach(() => {
@@ -158,11 +158,37 @@ describe("getQueue() summary enrichment", () => {
     expect(buildScopeWhereClause).toHaveBeenCalledWith(
       "caller-2",
       expect.arrayContaining(["payroll_head", "payroll_hr", "branch_head"]),
-      { branchId: "e.branch_id", processId: "e.process_id" }
+      { branchId: "e.branch_id", processId: "e.process_id" },
+      { allowAdminBypass: true }
     );
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain("e.branch_id = ?");
     expect(params).toContain("branch-9");
+  });
+
+  it("owner policy 2026-10-01: admin is NOT full access - only payroll_head/super_admin skip scoping", async () => {
+    hasAnyRole.mockClear();
+    hasAnyRole.mockResolvedValue(false);
+    buildScopeWhereClause.mockResolvedValue({ sql: "e.branch_id = ?", params: ["admin-branch"] });
+    execute.mockResolvedValueOnce([[]]);
+
+    await getQueue({ status: "pending_review" }, "admin-1");
+
+    expect(hasAnyRole).toHaveBeenCalledWith("admin-1", "payroll_head", "super_admin");
+    expect(buildScopeWhereClause).toHaveBeenCalled();
+    expect(execute.mock.calls[0][1]).toContain("admin-branch");
+  });
+});
+
+describe("listQueueBranches() admin scoping", () => {
+  it("scopes admin to its own branch (was: every branch)", async () => {
+    hasAnyRole.mockResolvedValue(false);
+    buildScopeWhereClause.mockResolvedValue({ sql: "e.branch_id = ?", params: ["admin-branch"] });
+    execute.mockReset();
+    execute.mockResolvedValueOnce([[{ branch_name: "B1" }]]);
+    expect(await listQueueBranches("admin-1")).toEqual(["B1"]);
+    expect(hasAnyRole).toHaveBeenLastCalledWith("admin-1", "payroll_head", "super_admin");
+    expect(execute.mock.calls[0][1]).toContain("admin-branch");
   });
 });
 

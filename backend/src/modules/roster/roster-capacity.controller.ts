@@ -3,7 +3,7 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
-import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from '../../shared/scopeAccess.js';
 import { resolveUserBusinessScope } from '../../shared/enterpriseScope.js';
 import { canAccessProcess, canAccessEmployee, scopedProcessIdsForUser } from '../wfm/branch-scope.js';
 import { rosterCapacityService } from './roster-capacity.service.js';
@@ -16,7 +16,7 @@ async function assertProcessScope(req: Request, processId: string | null | undef
   const userId = req.authUser!.id;
   // Owner ruling 2026-10-01: only org-wide roles are unrestricted. hr and a wfm 'all' grant are
   // limited to their own branch / assigned processes.
-  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return true;
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return true;
   if (!processId) return false;
   const scope = await resolveUserBusinessScope(userId);
   return canAccessProcess(scope, processId, null);
@@ -171,7 +171,7 @@ export const rosterCapacityController = {
       // No auth check beyond requireAuth existed here at all, despite the route
       // comment reading "Employee can view own" — any authenticated user could read
       // any other employee's week-off notification history by id.
-      if (!(await hasRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) {
+      if (!(await hasAnyRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) {
         const caller = await getEmployeeForUser(req.authUser!.id);
         const ownRecord = !!caller && caller.id === employeeId;
         // hr / wfm: only employees inside their own branch / scope (owner ruling 2026-10-01).
@@ -200,7 +200,7 @@ export const rosterCapacityController = {
       const { notificationId } = req.params;
       // No ownership check at all — any authenticated user could mark any other
       // employee's notification read by id.
-      if (!(await hasRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) {
+      if (!(await hasAnyRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) {
         const owner = await notificationOwnerId(notificationId);
         const caller = await getEmployeeForUser(req.authUser!.id);
         const ownRecord = !!owner && !!caller && owner === caller.id;

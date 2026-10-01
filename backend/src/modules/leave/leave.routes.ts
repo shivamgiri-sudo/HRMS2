@@ -102,6 +102,13 @@ leaveRouter.delete(
 // Employee self-scope: employees can submit only their own leave request.
 leaveRouter.post("/requests", requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   const privileged = await isLeavePrivileged(req.authUser!.id);
+  if (privileged && req.body?.employeeId) {
+    // Privileged callers may file for others, but only inside their own branch / scope (owner policy 2026-10-01).
+    const own = await getEmployeeForUser(req.authUser!.id);
+    if (own?.id !== req.body.employeeId && !(await employeeVisibleTo(req, String(req.body.employeeId)))) {
+      return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
+    }
+  }
   if (!privileged) {
     const callerEmp = await getEmployeeForUser(req.authUser!.id);
     if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record linked to your login" });

@@ -64,6 +64,24 @@ async function resolveActorRole(userId: string): Promise<string> {
   return "employee";
 }
 
+// ─── Branch scoping for admin ──────────────────────────────────────────────
+
+/**
+ * admin is branch-scoped like hr (owner ruling 2026-10-01): an admin only sees audit rows about employees inside
+ * their own branch / scope. super_admin (and any org-wide role held alongside admin) is unrestricted. Rows with no
+ * employee_id cannot be placed in a branch and are hidden from a branch admin (fail closed, same as hr).
+ * Returns null when no extra condition is needed.
+ */
+async function adminBranchCondition(req: RequiredAuthRequest): Promise<{ sql: string; params: unknown[] } | null> {
+  if (await hasAnyRole(req.authUser.id, "super_admin")) return null;
+  const scoped = buildEmployeeScopeCondition(await resolveUserBusinessScope(req.authUser), {
+    employeeId: "e.id", branchId: "e.branch_id", processId: "e.process_id", lobId: "e.lob_id",
+    departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id",
+  });
+  if (scoped.sql === "1=1") return null;
+  return { sql: `sal.employee_id IN (SELECT e.id FROM employees e WHERE ${scoped.sql})`, params: scoped.params };
+}
+
 // ─── GET /api/access/audit-log (extended) ────────────────────────────────
 /**
  * Extended audit log query with rich filtering.
@@ -120,7 +138,11 @@ export async function getAuditLogExtended(req: RequiredAuthRequest, res: Respons
       params.push(...scoped.params);
     }
   }
-  // Admin/super_admin: no module restriction
+  // Admin: no module restriction, but branch-scoped (super_admin: unrestricted)
+  if (isAdmin) {
+    const adminScope = await adminBranchCondition(req);
+    if (adminScope) { conds.push(adminScope.sql); params.push(...adminScope.params); }
+  }
 
   // Date range
   if (req.query.fromDate) {
@@ -270,6 +292,10 @@ auditLogRouter.post("/export", h(async (req, res) => {
 
   if (isPayrollHead && !isAdmin) {
     conds.push("(sal.module_key IN ('attendance','payroll') OR sal.module_key LIKE 'manual_override%')");
+  }
+  if (isAdmin) {
+    const adminScope = await adminBranchCondition(req);
+    if (adminScope) { conds.push(adminScope.sql); params.push(...adminScope.params); }
   }
 
   if (fromDate) { conds.push("sal.acted_at >= ?"); params.push(fromDate); }

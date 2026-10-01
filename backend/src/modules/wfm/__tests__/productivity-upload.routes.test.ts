@@ -429,3 +429,53 @@ describe('GET /api/wfm/productivity-upload/sources', () => {
     }
   });
 });
+
+describe('productivity upload branch scope (owner ruling 2026-10-01: admin is branch-scoped like hr)', () => {
+  const preview = (branchId: string) => request(buildApp())
+    .post('/api/wfm/productivity-upload/preview')
+    .field('diallerSourceId', 'ds-1')
+    .field('branchId', branchId)
+    .field('processId', 'process-1')
+    .field('dateFrom', '2026-07-01')
+    .field('dateTo', '2026-07-31')
+    .field('columnMappings', JSON.stringify({ 'Emp Code': 'employee_code', 'Report Date': 'report_date', 'Login Minutes': 'login_minutes' }))
+    .attach('file', Buffer.from(CSV_CONTENT), 'july.csv');
+  const scope = (roles: string[], over: Record<string, unknown> = {}) => ({
+    roles, branchId: 'branch-a', isSuperAdmin: roles.includes('super_admin'), isAdmin: roles.includes('admin'),
+    isHr: roles.includes('hr'), isPayroll: false, isFinance: false, assignments: [], ...over,
+  });
+  const allAssignment = { scopeType: 'all', branchId: null, processId: null };
+
+  beforeEach(() => {
+    buildUploadPreviewMock.mockReset();
+    commitUploadBatchMock.mockReset();
+    resolveUserBusinessScopeMock.mockReset();
+    buildUploadPreviewMock.mockResolvedValue({ accepted: [], rejected: [] });
+  });
+
+  it('admin (no longer org-wide) is refused for a branch outside its own', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['admin'], { assignments: [{ scopeType: 'branch', branchId: 'branch-a', processId: null }] }));
+    expect((await preview('branch-b')).status).toBe(403);
+    expect(buildUploadPreviewMock).not.toHaveBeenCalled();
+  });
+  it('admin may upload for its own branch', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['admin'], { assignments: [{ scopeType: 'branch', branchId: 'branch-a', processId: null }] }));
+    expect((await preview('branch-a')).status).toBe(200);
+  });
+  it("an 'all' assignment on a branch-scoped role means its own branch, not every branch", async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['hr'], { assignments: [allAssignment] }));
+    expect((await preview('branch-b')).status).toBe(403);
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['hr'], { assignments: [allAssignment] }));
+    expect((await preview('branch-a')).status).toBe(200);
+  });
+  it('an admin with no branch and no assignment uploads nothing (fail closed)', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['admin'], { branchId: null }));
+    expect((await preview('branch-a')).status).toBe(403);
+  });
+  it('org-wide roles (super_admin, ceo, ...) upload for any branch', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['super_admin']));
+    expect((await preview('branch-z')).status).toBe(200);
+    resolveUserBusinessScopeMock.mockResolvedValueOnce(scope(['ceo']));
+    expect((await preview('branch-z')).status).toBe(200);
+  });
+});

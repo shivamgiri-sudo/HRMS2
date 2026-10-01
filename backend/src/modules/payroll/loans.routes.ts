@@ -191,6 +191,10 @@ loansRouter.post(
       });
     }
 
+    // Branch scoping (owner ruling 2026-10-01): admin / hr / branch payroll may only open a loan for
+    // an employee inside their own branch; org-wide roles pass.
+    if (!(await guardEmployee(req, res, String(employee_id)))) return;
+
     // Resolve employee_code from DB
     const [empRows] = await db.execute<RowDataPacket[]>(
       "SELECT id, employee_code, branch_name FROM employees WHERE id = ? AND active_status = 1 LIMIT 1",
@@ -456,6 +460,7 @@ loansRouter.post(
     if (!loan) {
       return res.status(404).json({ success: false, message: "Loan not found" });
     }
+    if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     if (loan.created_by && String(loan.created_by) === String(userId)) {
       return res.status(403).json({
@@ -534,6 +539,7 @@ loansRouter.post(
     if (!loan) {
       return res.status(404).json({ success: false, message: "Loan not found" });
     }
+    if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     if (loan.created_by && String(loan.created_by) === String(userId)) {
       return res.status(403).json({
@@ -607,6 +613,7 @@ loansRouter.patch(
     if (!loan) {
       return res.status(404).json({ success: false, message: "Loan not found" });
     }
+    if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
 
     const body = req.body as Record<string, unknown>;
     const ALLOWED = [
@@ -715,6 +722,7 @@ loansRouter.post(
     if (!loan) {
       return res.status(404).json({ success: false, message: "Loan not found" });
     }
+    if (!(await guardEmployee(req, res, String(loan.employee_id)))) return;
     if (loan.status === "cancelled") {
       return res.status(400).json({
         success: false,

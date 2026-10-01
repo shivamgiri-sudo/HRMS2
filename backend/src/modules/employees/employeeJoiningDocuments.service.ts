@@ -8,7 +8,7 @@ import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
 import { listSignedAppointmentLetters } from "./employeeSignedAppointmentLetter.service.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import { hasAnyRole, hasScopedAccess, getUserRoleKeys } from "../../shared/scopeAccess.js";
+import { hasAnyRole, hasScopedAccess, getUserRoleKeys, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysis.service.js";
 import { esignWithUrl, generateClientTransactionId, sanitizeProviderPayload, luckpayClient } from "../integrations/luckpay/luckpay.client.js";
 import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
@@ -340,7 +340,10 @@ export async function resolveEmployeeDocumentAccessContext(userId: string, emplo
   const isSelf = actorEmployee?.id === employeeId;
   const canPayroll = roles.includes("payroll_hr") || roles.includes("payroll");
 
-  let canManage = isAdmin || isSelf;
+  // Owner policy 2026-10-01: admin is branch-scoped like hr. Only super_admin (and an admin who ALSO holds an
+  // org-wide role) skips the scope check; a plain admin goes through hasScopedAccess (own branch only).
+  const isOrgWide = roles.includes("super_admin") || (isAdmin && roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r)));
+  let canManage = isOrgWide || isSelf;
   if (!canManage) {
     const targetManagerId = target.reporting_manager_id ?? target.manager_id ?? null;
     canManage = await hasScopedAccess(

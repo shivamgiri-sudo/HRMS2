@@ -31,7 +31,7 @@ import { scopedAttendanceDailyHandler } from "./attendance-daily-scoped.routes.j
 import { getWfmAnalyticsSummary } from "./wfm-analytics.service.js";
 import {
   getScope, isOrgWide, scopePredicate, canAccessEmployee, canAccessTarget, canAccessBranch, canAccessProcess,
-  canTouchScopedPolicy, branchScopeGuard, employeeFieldGuard, employeeParamGuard, employeeOwnerGuard, rosterOwnerGuard, OUT_OF_SCOPE_MSG,
+  canTouchScopedPolicy, resolveBranchFilter, branchScopeGuard, employeeFieldGuard, employeeParamGuard, employeeOwnerGuard, rosterOwnerGuard, OUT_OF_SCOPE_MSG,
 } from "./branch-scope.js";
 
 export const wfmRouter = Router();
@@ -463,12 +463,24 @@ wfmRouter.get("/week-off-preference", requireAuth, h(async (req: any, res: any) 
   let cond = '', params: unknown[] = [];
 
   if (isAdmin) {
-    // Admin/HR/WFM see all or filtered by branchId
-    if (req.query.branchId) {
-      cond = 'WHERE e.branch_id = ?';
-      params = [req.query.branchId];
+    // Org-wide roles see all or filtered by branchId. admin / hr / wfm are branch-scoped (owner ruling
+    // 2026-10-01): a browser ?branchId= may only NARROW their own branch, never widen it; no scope = 403.
+    const scope = await getScope(req);
+    if (!scope) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    if (isOrgWide(scope)) {
+      if (req.query.branchId) {
+        cond = 'WHERE e.branch_id = ?';
+        params = [req.query.branchId];
+      }
+      // else no filter, see all
+    } else {
+      const f = resolveBranchFilter(scope, req.query.branchId ? String(req.query.branchId) : null);
+      if (f.denied || !f.branchIds || f.branchIds.length === 0) {
+        return res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG });
+      }
+      cond = `WHERE e.branch_id IN (${f.branchIds.map(() => '?').join(',')})`;
+      params = [...f.branchIds];
     }
-    // else no filter, see all
   } else {
     const emp = await getEmployeeForUser(req.authUser.id);
     if (!emp) return res.status(403).json({ success: false, error: 'Forbidden' });

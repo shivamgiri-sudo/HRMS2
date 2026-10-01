@@ -99,8 +99,13 @@ describe("persistStructuredFields — bgv_result", () => {
     vi.doMock("../../../middleware/requireRole.js", () => ({
       requireRole: () => (_req: any, _res: any, next: any) => next(),
     }));
-    // Caller is an admin here: this test is about bgv_result validation, not branch scope
-    // (assertTaskInScope short-circuits for admin and must not consume the mocked db rows).
+    // Caller is a super_admin here: this test is about bgv_result validation, not branch scope
+    // (assertTaskInScope short-circuits for super_admin and must not consume the mocked db rows;
+    // plain admin is branch-scoped since the 2026-10-01 ruling).
+    vi.doMock("../../../shared/scopeAccess.js", async (orig) => ({
+      ...(await orig<Record<string, unknown>>()),
+      hasAnyRole: vi.fn().mockResolvedValue(true),
+    }));
     vi.doMock("../../../shared/accessGuard.js", () => ({
       hasRole: vi.fn().mockResolvedValue(true),
       getEmployeeForUser: vi.fn().mockResolvedValue(null),

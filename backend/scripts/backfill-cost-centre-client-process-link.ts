@@ -156,6 +156,7 @@ async function main() {
 
     // 2. ensure a client_master row per key
     const clientIdByKey = new Map<string, string>();
+    const clientNameById = new Map<string, string>(cms.map((r) => [String(r.id), String(r.client_name)]));
     let created = 0, legalFilled = 0;
     const merges: string[] = [];
     for (const [key, list] of groups) {
@@ -168,6 +169,7 @@ async function main() {
       const display = key === "INTERNAL" ? INTERNAL_CLIENT_NAME : mode(rawNames) ?? clean(list[0].billing_client_name);
       if (existing) {
         clientIdByKey.set(key, existing.id);
+        clientNameById.set(existing.id, existing.name);
         if (!existing.legal) {
           await unit(() => conn.query(`UPDATE client_master SET legal_entity_name = ? WHERE id = ? AND legal_entity_name IS NULL`, [bill || existing.name, existing.id]));
           legalFilled++;
@@ -183,6 +185,7 @@ async function main() {
         [id, code, display, key === "INTERNAL" ? INTERNAL_CLIENT_NAME : bill || display, key === "INTERNAL" ? "Internal" : null],
       ));
       clientIdByKey.set(key, id);
+      clientNameById.set(id, display);
       created++;
     }
 
@@ -196,7 +199,10 @@ async function main() {
       const key = resolved.get(cc.id);
       if (!key) continue;
       const clientId = clientIdByKey.get(key)!;
-      const [[cl]] = await conn.query<RowDataPacket[]>(`SELECT client_name FROM client_master WHERE id = ?`, [clientId]);
+      // In-memory name: a deadlock rolls back the whole dry-run transaction and would hide just-inserted clients.
+      const clName = clientNameById.get(clientId);
+      const cl = clName === undefined ? undefined : { client_name: clName };
+      if (!cl) throw new Error(`client not found for cost centre ${cc.cost_centre_code}: key="${key}" clientId=${clientId}`);
       // Pre-decide the new process (code/id) outside the unit so a retry reuses the same values.
       const derived = derivedProcessCode(cc.cost_centre_code);
       const existingPid = cc.process_id ?? pmByCode.get(derived) ?? null;

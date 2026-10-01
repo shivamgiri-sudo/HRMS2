@@ -41,6 +41,10 @@ const { execute, hasAnyRole, logSensitiveAction } = vi.hoisted(() => ({
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
+vi.mock("../payroll-branch-scope.js", () => ({
+  employeeScopeFor: async () => ({ sql: "1=1", params: [] }),
+  guardEmployee: async () => true,
+}));
 
 /** Mutable so each test can act as a different authenticated user. */
 let currentActorId = CREATOR_ID;

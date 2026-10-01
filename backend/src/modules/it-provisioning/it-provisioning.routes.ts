@@ -9,6 +9,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { hasRole, getEmployeeForUser } from '../../shared/accessGuard.js';
+import { hasAnyRole } from '../../shared/scopeAccess.js';
 import { narrowDashboardScope, resolveDashboardScope } from '../../shared/dashboardScope.js';
 import { dashboardRowScopeSql } from '../exit/exitScope.js';
 import { branchPredicate, resolveCallerBranchScope } from '../org/branchScope.js';
@@ -38,6 +39,15 @@ const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catc
 // the dashboard.
 // branch_wfm / branch_head open the WFM Alignment queue; they are BRANCH_ALL roles, so the list
 // endpoints and assertTaskInScope() below confine them to their own branch(es).
+/**
+ * Row-scope bypass. admin is BRANCH-SCOPED like hr (owner ruling 2026-10-01), so only super_admin skips
+ * the scope (hasAnyRole matches super_admin exactly, unlike accessGuard.hasRole which also passes admin).
+ * Org-wide roles (ceo, department heads ...) are handled by resolveDashboardScope -> ORG_ALL.
+ */
+async function isUnscopedCaller(userId: string): Promise<boolean> {
+  return hasAnyRole(userId, 'super_admin');
+}
+
 const PROVISIONING_ROLES = ['admin', 'wfm', 'hr', 'branch_admin', 'branch_wfm', 'branch_head', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')];
 
 /**
@@ -48,7 +58,7 @@ const PROVISIONING_ROLES = ['admin', 'wfm', 'hr', 'branch_admin', 'branch_wfm', 
  */
 async function assertTaskInScope(req: AuthenticatedRequest, taskId: string): Promise<void> {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, 'admin', 'super_admin')) return;
+  if (await isUnscopedCaller(userId)) return;
   const forbidden = () => Object.assign(new Error('Provisioning request is outside your branch scope'), { statusCode: 403 });
   let scope;
   try {
@@ -76,13 +86,13 @@ async function assertTaskInScope(req: AuthenticatedRequest, taskId: string): Pro
  * no longer an unrestricted shortcut here.
  */
 async function callerEmployeeScope(userId: string, alias = 'e'): Promise<{ sql: string; params: unknown[] }> {
-  if (await hasRole(userId, 'admin', 'super_admin')) return { sql: '1=1', params: [] };
+  if (await isUnscopedCaller(userId)) return { sql: '1=1', params: [] };
   return dashboardRowScopeSql(userId, alias);
 }
 
 /** Branch ids for the SLA endpoints: undefined = unrestricted; [] = nothing (fail closed). */
 async function callerSlaBranchIds(userId: string): Promise<string[] | undefined> {
-  if (await hasRole(userId, 'admin', 'super_admin')) return undefined;
+  if (await isUnscopedCaller(userId)) return undefined;
   try {
     const roleContext = await getUserRoleContext(userId);
     const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
@@ -363,9 +373,10 @@ router.get('/stats', requireRole(...PROVISIONING_ROLES), h(async (req: Authentic
   // and fails closed to their own branch otherwise). Including it here made anyone who
   // also held 'hr' — e.g. a branch admin who is also branch HR — bypass branch scoping
   // entirely and see every branch's unassigned queue instead of their own.
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
+  const isAdminRole = await hasRole(userId, 'admin', 'super_admin'); // may pick the queue (assigned_role)
+  const isAdmin = await isUnscopedCaller(userId);                    // may skip the row scope: super_admin only
   const filters: { assignedRole?: string; branchIds?: string[]; processIds?: string[] } = {
-    assignedRole: isAdmin ? String(req.query.assigned_role ?? 'it') : 'it',
+    assignedRole: isAdminRole ? String(req.query.assigned_role ?? 'it') : 'it',
   };
 
   if (isAdmin) {
@@ -389,7 +400,8 @@ router.get('/stats', requireRole(...PROVISIONING_ROLES), h(async (req: Authentic
 router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   // See the /stats handler above for why 'hr' is not in this bypass list.
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
+  const isAdminRole = await hasRole(userId, 'admin', 'super_admin'); // may pick the queue (assigned_role)
+  const isAdmin = await isUnscopedCaller(userId);                    // may skip the row scope: super_admin only
 
   const filters: Record<string, any> = {
     status:      req.query.status as string | undefined,
@@ -407,6 +419,8 @@ router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: Authen
     if (isIT) filters.assignedRole = 'it';
     else if (isWFM) filters.assignedRole = 'wfm';
     else if (isBranchAdmin) filters.assignedRole = 'admin';
+    // admin keeps the queue picker, but stays inside its own branch scope (below).
+    if (isAdminRole && req.query.assigned_role) filters.assignedRole = req.query.assigned_role as string;
 
     const roleContext = await getUserRoleContext(userId);
     const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
@@ -429,7 +443,7 @@ router.get('/requests', requireRole(...PROVISIONING_ROLES), h(async (req: Authen
 router.get(['/tasks', '/tasks/my'], requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   // See the /stats handler above for why 'hr' is not in this bypass list.
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
+  const isAdmin = await isUnscopedCaller(userId); // row-scope bypass: super_admin only (admin is branch-scoped)
   const filters: Record<string, any> = {
     status: req.query.status as string | undefined,
     requestType: req.query.request_type as string | undefined,
@@ -1054,7 +1068,7 @@ router.post('/bulk-sync', requireRole('it', 'admin', 'super_admin', 'hr'), h(asy
 router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   // hr is no longer an unrestricted shortcut (owner ruling 2026-10-01): it goes through the scoped branch below.
-  const isAdmin = await hasRole(userId, 'admin', 'super_admin');
+  const isAdmin = await isUnscopedCaller(userId); // admin is branch-scoped (owner ruling 2026-10-01)
   const dashEmpScope = await callerEmployeeScope(userId, 'e');
   const dashCaller = await resolveCallerBranchScope({ id: userId });
   const dashAssetScope = branchPredicate(dashCaller, 'branch_id');

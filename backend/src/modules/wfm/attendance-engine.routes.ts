@@ -9,7 +9,8 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
-import { buildScopeWhereClause } from '../../shared/scopeAccess.js';
+import { buildScopeWhereClause, hasAnyRole, ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
+import { getScope, isOrgWide, canAccessEmployee, branchScopeGuard, OUT_OF_SCOPE_MSG } from './branch-scope.js';
 import { CLOSED_RUN_STATUSES_SQL } from '../payroll/run-status.js';
 import { toIST } from '../../shared/timezone.js';
 import { getAprMonthly, resolveAprUserIds } from './apr-attendance.service.js';
@@ -138,6 +139,32 @@ type BreakSummaryRow = {
   final_status: string | null;
 };
 
+/**
+ * Privileged callers (admin / hr / wfm / manager ...) may read other employees, but only inside their own branch / scope
+ * (owner ruling 2026-10-01); org-wide roles and the payroll roles (whose scope is a separate decision) are unrestricted.
+ * Sends the 403 itself and returns false when refused.
+ */
+async function guardTargetEmployee(req: AuthenticatedRequest, res: Response, targetId: string): Promise<boolean> {
+  const userId = req.authUser!.id;
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES, 'payroll_admin')) return true;
+  const scope = await getScope(req);
+  if (scope && (isOrgWide(scope) || (await canAccessEmployee(scope, targetId)))) return true;
+  res.status(403).json({ success: false, error: OUT_OF_SCOPE_MSG });
+  return false;
+}
+
+/** Route middleware for list endpoints: narrows / validates ?branchId= for a privileged non-org-wide caller. */
+async function privilegedListScope(req: any, res: Response, next: (e?: unknown) => void) {
+  try {
+    if (await hasAnyRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES, 'payroll_admin')) return next();
+    // Only callers that may list others (not a plain employee reading their own rows) need the branch scope.
+    if (!(await hasRole(req.authUser!.id, 'admin', 'hr', 'wfm', 'manager'))) return next();
+    return branchScopeGuard({ inject: true })(req, res, next);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmployeeRow[]> {
   const userId = req.authUser!.id;
 
@@ -154,9 +181,11 @@ async function listScopedEmployees(req: AuthenticatedRequest): Promise<ScopedEmp
   const userRoleSet = new Set<string>(
     (roleRows as { role_key: string }[]).map((r) => String(r.role_key ?? '').trim().toLowerCase()).filter(Boolean)
   );
-  const hasAdminBypass = userRoleSet.has('super_admin') || userRoleSet.has('admin');
+  // admin is branch-scoped like hr (owner ruling 2026-10-01): only super_admin / ceo read platform-wide; admin still
+  // passes the reader gate and then goes through buildScopeWhereClause below (own branch).
+  const hasAdminBypass = userRoleSet.has('super_admin');
   const isPlatformWide = hasAdminBypass || userRoleSet.has('ceo');
-  const isScopedReader = hasAdminBypass || ['hr', 'wfm', 'manager', 'assistant_manager', 'tl', 'payroll_head', 'payroll_admin'].some((r) => userRoleSet.has(r));
+  const isScopedReader = hasAdminBypass || userRoleSet.has('admin') || ['hr', 'wfm', 'manager', 'assistant_manager', 'tl', 'payroll_head', 'payroll_admin'].some((r) => userRoleSet.has(r));
 
   const callerEmp = await getEmployeeForUser(userId);
 
@@ -574,7 +603,7 @@ router.post('/process', requireRole('admin', 'hr', 'wfm'), h(async (req, res) =>
 }));
 
 // GET /daily - list records with filters
-router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
+router.get('/daily', privilegedListScope, h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const isPrivileged = await hasRole(userId, 'super_admin', 'admin', 'hr', 'wfm', 'manager', 'payroll_head', 'payroll_admin');
   // Validate pagination parameters to prevent NaN/negative values
@@ -597,6 +626,7 @@ router.get('/daily', h(async (req: AuthenticatedRequest, res: Response) => {
     if (qEmpId && !DB_ID_REGEX.test(qEmpId)) {
       return res.status(400).json({ success: false, error: 'Invalid employeeId' });
     }
+    if (qEmpId && !(await guardTargetEmployee(req, res, qEmpId))) return;
     filters.employeeId = qEmpId;
   } else {
     const emp = await getEmployeeForUser(userId);
@@ -852,7 +882,7 @@ router.get('/daily/:employeeId/:date', h(async (req: AuthenticatedRequest, res: 
     if (!emp || emp.id !== targetId) {
       return res.status(403).json({ success: false, error: 'Forbidden' });
     }
-  }
+  } else if (!(await guardTargetEmployee(req, res, targetId))) return;
   const record = await attendanceEngineService.getRecord(targetId, req.params.date);
   if (!record) return res.status(404).json({ success: false, error: 'Record not found' });
   return res.json({ success: true, data: record });
@@ -860,6 +890,7 @@ router.get('/daily/:employeeId/:date', h(async (req: AuthenticatedRequest, res: 
 
 // PATCH /daily/:employeeId/:date - WFM correction + lock
 router.patch('/daily/:employeeId/:date', requireRole('admin', 'hr', 'wfm'), h(async (req, res) => {
+  if (!(await guardTargetEmployee(req as AuthenticatedRequest, res, req.params.employeeId))) return;
   const schema = z.object({
     attendanceStatus: z.enum(['present','half_day','absent','leave_approved','holiday','week_off','unreconciled']),
     lwpValue:         z.number().multipleOf(0.5).min(0).max(1),
@@ -905,7 +936,7 @@ router.get('/summary/:employeeId/:month', h(async (req: AuthenticatedRequest, re
     if (!emp || emp.id !== targetId) {
       return res.status(403).json({ success: false, error: 'Forbidden' });
     }
-  }
+  } else if (!(await guardTargetEmployee(req, res, targetId))) return;
   const data = await computeNcosecMonthlySummary(targetId, req.params.month);
   return res.json({ success: true, data });
 }));
@@ -1054,6 +1085,7 @@ router.post('/:employeeId/:date/unlock', requireRole('admin', 'wfm', 'super_admi
       error: 'Invalid employeeId or date format'
     });
   }
+  if (!(await guardTargetEmployee(req, res, employeeId))) return;
 
   // Check if record exists
   const [checkRows] = await db.execute<RowDataPacket[]>(

@@ -105,11 +105,20 @@ describe("POST /api/exit — raising an exit for someone else", () => {
     expect(m.createExitRequest).not.toHaveBeenCalled();
   });
 
-  it("HR is unrestricted and recorded as 'hr'", async () => {
+  it("HR / admin raising for an employee inside their branch scope is recorded as 'hr'", async () => {
     roles("hr", "admin");
+    m.canViewEmployee.mockImplementation(async (_u: unknown, id: string) => id === STRANGER);
     const res = await request(app()).post("/api/exit").send(body(STRANGER));
     expect(res.status).toBe(201);
     expect((m.createExitRequest.mock.calls[0][0] as any).exitInitiatedBy).toBe("hr");
+  });
+
+  it("HR / admin are branch-scoped (owner ruling 2026-10-01): an employee outside their scope is refused, nothing created", async () => {
+    roles("hr", "admin");
+    m.canViewEmployee.mockResolvedValue(false);
+    const res = await request(app()).post("/api/exit").send(body(STRANGER));
+    expect(res.status).toBe(403);
+    expect(m.createExitRequest).not.toHaveBeenCalled();
   });
 
   it("a plain employee naming a different employee is refused", async () => {

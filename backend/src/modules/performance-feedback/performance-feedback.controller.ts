@@ -294,7 +294,15 @@ export const performanceFeedbackController = {
       // non-admin/hr caller may only view a request where they are the reviewer or the
       // subject employee.
       const isPrivileged = await hasRole(req.authUser!.id, "admin", "hr");
-      if (!isPrivileged) {
+      if (isPrivileged) {
+        // admin / hr are branch-scoped (owner ruling 2026-10-01): the subject must be inside their scope
+        // (true for org-wide roles), unless they are the reviewer on the request.
+        const emp = await getEmployeeForUser(req.authUser!.id);
+        const isReviewer = !!emp && (request as any).reviewer_id === emp.id;
+        if (!isReviewer && !(await canAccessEmployeeRecord(req.authUser!, String((request as any).employee_id)))) {
+          return res.status(403).json({ error: OUTSIDE_SCOPE_MESSAGE });
+        }
+      } else {
         const emp = await getEmployeeForUser(req.authUser!.id);
         const isReviewer = emp && (request as any).reviewer_id === emp.id;
         const isSubject = emp && (request as any).employee_id === emp.id;

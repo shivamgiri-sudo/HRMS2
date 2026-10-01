@@ -19,6 +19,7 @@ vi.mock("../../../middleware/authMiddleware.js", async (orig) => ({
 }));
 
 vi.mock("../../../shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
   buildScopeWhereClause: async () => ({ sql: "p.id = ?", params: ["proc-1"] }),
   hasAnyRole: async (_id: string, ...roles: string[]) => roles.includes(actor.role),
   hasOrgWideScope: async () => false,
@@ -166,18 +167,30 @@ describe("/api/analytics-catalogue/dashboards", () => {
     expect(getConnection).not.toHaveBeenCalled();
   });
 
-  it("the owner and an admin can replace shares", async () => {
+  it("the owner and a super_admin can replace shares; a branch admin who does not own it cannot even see it", async () => {
     const body = { shares: [{ principalType: "role", principalValue: "hr" }, { principalType: "role", principalValue: "hr", permission: "edit" }] };
     expect((await request(appFor("manager", "owner-1")).put(`${base}/${DASH}/shares`).send(body)).status).toBe(200);
     expect(writes().map(([sql]) => sql.trim().split(" ").slice(0, 3).join(" "))).toEqual(["DELETE FROM analytics_dashboard_share", "INSERT INTO analytics_dashboard_share"]);
-    expect((await request(appFor("admin")).put(`${base}/${DASH}/shares`).send(body)).status).toBe(200);
+    expect((await request(appFor("super_admin")).put(`${base}/${DASH}/shares`).send(body)).status).toBe(200);
+    // admin is branch-scoped like hr (owner ruling 2026-10-01): not an org-wide viewer, so another user's private dashboard is a 404.
+    const before = writes().length;
+    expect((await request(appFor("admin")).put(`${base}/${DASH}/shares`).send(body)).status).toBe(404);
+    expect((await request(appFor("admin")).get(`${base}/${DASH}`)).status).toBe(404);
+    expect(writes()).toHaveLength(before);
+  });
+
+  it("a branch admin still edits dashboards it owns or that are shared to it", async () => {
+    dashboards[0].owner_user_id = "user-admin";
+    expect((await request(appFor("admin")).get(`${base}/${DASH}`)).body.data.canEdit).toBe(true);
   });
 
   it("only an admin can make a template", async () => {
     await request(appFor("manager", "owner-1")).put(`${base}/${DASH}`).send({ name: "Ops board", version: 3, isTemplate: true });
+    await request(appFor("super_admin")).put(`${base}/${DASH}`).send({ name: "Ops board", version: 3, isTemplate: true });
+    dashboards[0].owner_user_id = "user-admin";
     await request(appFor("admin")).put(`${base}/${DASH}`).send({ name: "Ops board", version: 3, isTemplate: true });
     const flags = writes().map(([, p]) => p[6]);
-    expect(flags).toEqual([0, 1]);
+    expect(flags).toEqual([0, 1, 1]);
   });
 
   it("an invalid body is a 400 with a readable message", async () => {

@@ -1,6 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { buildScopeWhereClause, hasAnyRole, hasOrgWideScope } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole, hasOrgWideScope, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
 import { AnalyticsError, type Dataset, type ScopeClause } from "./analytics.types.js";
 
@@ -45,9 +45,13 @@ export function narrowScope(a: Aliases, pick: { processIds?: string[]; branchIds
   return parts.length ? { sql: parts.join(" AND "), params } : { sql: "1=1", params: [] };
 }
 
-/** Viewer can read every row in the organisation: super_admin, admin, ceo, or an assignment scope of "all". */
+/**
+ * Viewer can read every row in the organisation: an ORG_WIDE_EXEMPT_ROLES role (super_admin, ceo, coo, cfo, finance
+ * and payroll/finance/accounts heads, heads of any department) or an assignment scope of "all" held by one.
+ * admin is branch-scoped like hr (owner ruling 2026-10-01).
+ */
 export async function isOrgWide(userId: string): Promise<boolean> {
-  if (await hasAnyRole(userId, "super_admin", "admin", "ceo")) return true;
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return true;
   return hasOrgWideScope(userId, ANALYTICS_VIEWER_ROLES);
 }
 

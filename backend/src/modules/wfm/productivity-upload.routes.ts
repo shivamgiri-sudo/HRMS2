@@ -12,6 +12,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { resolveUserBusinessScope, type UserBusinessScope } from '../../shared/enterpriseScope.js';
+import { ORG_WIDE_EXEMPT_ROLES } from '../../shared/scopeAccess.js';
 import { buildUploadPreview, type UploadPreviewResult } from './productivity-upload-preview.service.js';
 import { commitUploadBatch, DuplicateUploadBatchError } from './productivity-upload-commit.service.js';
 import type { UploadTargetField } from './productivity-upload-parser.js';
@@ -98,11 +99,18 @@ function asyncRoute(
  * canonical org-wide marker is scopeType === 'all' (see addAssignmentPredicates, which pushes
  * `1=1` for exactly that case and otherwise SKIPS a null branchId rather than wildcarding it).
  */
+// Owner ruling 2026-10-01: only ORG_WIDE_EXEMPT_ROLES are org-wide. admin is branch-scoped like hr, and an
+// 'all' assignment on a branch-scoped role means "my own branch" (same rule as enterpriseScope).
+function isOrgWideUploader(scope: UserBusinessScope): boolean {
+  return !!scope.isSuperAdmin || (scope.roles ?? []).some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r));
+}
+
 function isBranchInUploaderScope(scope: UserBusinessScope, branchId: string): boolean {
-  if (scope.isSuperAdmin || scope.isAdmin) return true;
+  if (isOrgWideUploader(scope)) return true;
   // Truthiness, not `!== null`: a partially-built scope object can carry undefined rather than
   // null, and an empty-string id must never match either.
-  return scope.assignments.some((a) => a.scopeType === 'all' || (!!a.branchId && a.branchId === branchId));
+  return scope.assignments.some((a) =>
+    a.scopeType === 'all' ? (!!scope.branchId && scope.branchId === branchId) : (!!a.branchId && a.branchId === branchId));
 }
 
 /**
@@ -117,9 +125,9 @@ function isProcessInUploaderScope(
   branchId: string,
   processId: string,
 ): boolean {
-  if (scope.isSuperAdmin || scope.isAdmin) return true;
+  if (isOrgWideUploader(scope)) return true;
   return scope.assignments.some((a) => {
-    if (a.scopeType === 'all') return true;
+    if (a.scopeType === 'all') return !!scope.branchId && scope.branchId === branchId;
     if (a.processId) return a.processId === processId;
     return !!a.branchId && a.branchId === branchId;
   });

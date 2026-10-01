@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasProcessScope, hasRole } from "../../shared/accessGuard.js";
-import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
 import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 import { scopePredicate, userCanAccessProcess } from "../wfm/branch-scope.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
@@ -158,7 +158,7 @@ weekoffPreferenceRouter.get("/weekoff-preferences", h(async (req, res) => {
 
     // All-access roles: super_admin, ceo, payroll, finance
     // Owner ruling 2026-10-01: org-wide = ORG_WIDE_EXEMPT_ROLES only; generic `payroll` is branch-scoped.
-    const isAllAccess = await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES);
+    const isAllAccess = await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES);
     // Branch-scoped roles: admin, hr, wfm, branch_manager see their branch only
     // "team_leader" alongside the legacy "tl" alias -- hasRole() matches
     // role_key literally, no synonym expansion, and live data shows 9 real

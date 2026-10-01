@@ -4,7 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
-import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
 import { canAccessEmployeeRecord, employeeIdInScope, employeeListScope, OUTSIDE_SCOPE_MESSAGE } from "../dashboards/branch-scope-guards.js";
 import { managementService } from "./management.service.js";
 import { db } from "../../db/mysql.js";
@@ -90,7 +90,7 @@ function requireRoleOrDirectReports(...roles: string[]) {
  * Returns [] if the manager has no reports yet (no data returned).
  */
 async function resolveTeamScope(userId: string): Promise<{ employeeIds: string[] | null; isWide: boolean }> {
-  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
     return { employeeIds: null, isWide: true };
   }
   const emp = await getEmployeeForUser(userId);
@@ -133,7 +133,7 @@ router.get("/team-kpi", requireRole("admin", "hr", "manager", "branch_head", "ce
 
 router.get("/coaching", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
     return res.json({ data: await managementService.listCoachingSessions(req.query as any) });
   }
   const emp = await getEmployeeForUser(userId);
@@ -236,7 +236,7 @@ router.get("/system-dashboard", requireRole("admin", "super_admin"), h(async (_r
 // Returns the calling manager's direct reports (for coaching modal dropdowns, etc.)
 router.get("/team-members", requireRoleOrDirectReports("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) {
     // Wide roles: return a small employee list (name + id only) filtered by process if provided
     const processId = req.query.process_id as string | undefined;
     const conds = ["e.active_status = 1"];

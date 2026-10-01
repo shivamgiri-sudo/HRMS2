@@ -21,6 +21,7 @@ vi.mock("../../../middleware/authMiddleware.js", async (orig) => ({
 const scopeClause = vi.fn();
 const orgWide = vi.fn();
 vi.mock("../../../shared/scopeAccess.js", () => ({
+  ORG_WIDE_EXEMPT_ROLES: ["super_admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head", "finance"],
   buildScopeWhereClause: (...a: unknown[]) => scopeClause(...a),
   hasAnyRole: async (_id: string, ...roles: string[]) => roles.includes(actor.role),
   hasOrgWideScope: (...a: unknown[]) => orgWide(...a),
@@ -93,6 +94,14 @@ describe("/api/analytics-catalogue", () => {
   it("unknown dataset is 404; org dataset is 403 for a scoped viewer", async () => {
     expect((await request(appFor("manager")).post("/api/analytics-catalogue/query").send({ dataset: "nope", dimensions: [], measures: [{ agg: "count" }] })).status).toBe(404);
     expect((await request(appFor("manager")).post("/api/analytics-catalogue/query").send({ dataset: "org_thing", dimensions: [], measures: [{ field: "n" }] })).status).toBe(403);
+  });
+
+  it("admin is branch-scoped like hr: organisation-wide datasets are refused, a super_admin is let through", async () => {
+    const q = { dataset: "org_thing", dimensions: [], measures: [{ field: "n" }] };
+    expect((await request(appFor("admin")).post("/api/analytics-catalogue/query").send(q)).status).toBe(403);
+    const list = await request(appFor("admin")).get("/api/analytics-catalogue/datasets");
+    expect(list.body.data.map((d: any) => d.code)).toEqual(["process_kpi_daily"]);
+    expect((await request(appFor("super_admin")).post("/api/analytics-catalogue/query").send(q)).status).not.toBe(403);
   });
 
   it("only admins may register datasets or list tables", async () => {

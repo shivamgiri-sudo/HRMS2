@@ -216,17 +216,19 @@ export async function getQueue(
     conds.push("b.branch_name = ?");
     params.push(filters.branch);
   }
-  // payroll_head/admin/super_admin see the whole queue as before — bypassed explicitly rather
+  // payroll_head/super_admin see the whole queue as before (admin: own branch only, below) — bypassed explicitly rather
   // than relying on buildScopeWhereClause resolving them to an 'all' scope row (both live
   // payroll_head users happen to have one today, but that's data, not a guarantee for the next
   // one). payroll_hr/branch_head — newly allowed onto this route — are branch/process-scoped,
   // the same helper every other row-scoped query in this codebase uses.
-  const isFullAccess = await hasAnyRole(callerUserId, "payroll_head", "admin", "super_admin");
+  const isFullAccess = await hasAnyRole(callerUserId, "payroll_head", "super_admin");
   if (!isFullAccess) {
     const scope = await buildScopeWhereClause(
       callerUserId,
       [...VIEWER_ROLES],
-      { branchId: "e.branch_id", processId: "e.process_id" }
+      { branchId: "e.branch_id", processId: "e.process_id" },
+      // admin is branch-scoped (owner policy 2026-10-01): own branch only; org-wide roles stay 1=1.
+      { allowAdminBypass: true }
     );
     conds.push(scope.sql);
     params.push(...scope.params);
@@ -367,12 +369,14 @@ export async function getQueue(
 export async function listQueueBranches(callerUserId: string) {
   const conds = ["b.branch_name IS NOT NULL"];
   const params: unknown[] = [];
-  const isFullAccess = await hasAnyRole(callerUserId, "payroll_head", "admin", "super_admin");
+  const isFullAccess = await hasAnyRole(callerUserId, "payroll_head", "super_admin");
   if (!isFullAccess) {
     const scope = await buildScopeWhereClause(
       callerUserId,
       [...VIEWER_ROLES],
-      { branchId: "e.branch_id", processId: "e.process_id" }
+      { branchId: "e.branch_id", processId: "e.process_id" },
+      // admin is branch-scoped (owner policy 2026-10-01): own branch only; org-wide roles stay 1=1.
+      { allowAdminBypass: true }
     );
     conds.push(scope.sql);
     params.push(...scope.params);

@@ -7,6 +7,7 @@ import { env } from '../../config/env.js';
 import { inboxService } from '../inbox/inbox.service.js';
 import { getUserRoleKeys } from '../../shared/roleResolver.js';
 import { createPortalAccess } from './candidate-portal.service.js';
+import { resolveAtsBranchScope, branchInScope, OUT_OF_BRANCH_MESSAGE } from './ats-branch-scope.js';
 
 /**
  * Interview Service
@@ -150,9 +151,9 @@ export async function getCandidateForInterview(candidateId: string, recruiterId:
  * it to req.authUser.id, as the sibling read path does, can never match — so
  * the roster id is resolved first.
  */
-async function assertCandidateAssignedToCaller(candidateId: string, userId: string): Promise<void> {
+export async function assertCandidateAssignedToCaller(candidateId: string, userId: string): Promise<void> {
   const [[candidate]] = await db.execute<RowDataPacket[]>(
-    `SELECT recruiter_id FROM ats_candidate WHERE id = ? LIMIT 1`,
+    `SELECT recruiter_id, applied_for_branch, applied_for_process FROM ats_candidate WHERE id = ? LIMIT 1`,
     [candidateId]
   );
   if (!candidate) {
@@ -168,9 +169,18 @@ async function assertCandidateAssignedToCaller(candidateId: string, userId: stri
   );
   if (roster?.roster_id && String(roster.roster_id) === String(candidate.recruiter_id)) return;
 
-  // HR and admins legitimately act across candidates they were never assigned.
+  // HR and admins legitimately act across candidates they were never assigned - inside their own branch (owner ruling
+  // 2026-10-01: admin is branch-scoped like hr). Org-wide roles (super_admin, ...) act on any candidate.
   const roleKeys = await getUserRoleKeys(userId);
-  if (roleKeys.some((role) => ['admin', 'super_admin', 'hr'].includes(role))) return;
+  if (roleKeys.some((role) => ['admin', 'super_admin', 'hr'].includes(role))) {
+    const scope = await resolveAtsBranchScope(userId);
+    if (
+      scope.orgWide ||
+      branchInScope(scope, candidate.applied_for_branch) ||
+      (!!candidate.applied_for_process && scope.processNames.includes(String(candidate.applied_for_process)))
+    ) return;
+    throw Object.assign(new Error(OUT_OF_BRANCH_MESSAGE), { statusCode: 403 });
+  }
 
   throw Object.assign(
     new Error('This candidate is not assigned to you.'),

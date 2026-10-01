@@ -12,7 +12,8 @@ import { db } from "../../db/mysql.js";
 import { sqlLimitOffset } from "../../db/pagination.js";
 import { randomUUID } from "crypto";
 import { getJourneySummary } from "./resignation-journey.service.js";
-import { employeeScopeSql, guardExitEmployee } from "./exitScope.js";
+import { canTouchExitEmployee, employeeScopeSql, guardExitEmployee } from "./exitScope.js";
+import { resolveEmployeeRef } from "./resolveEmployeeRef.js";
 import { requestTalkFirst, withdrawResignation } from "./resignation-self.service.js";
 
 export const resignationRouter = Router();
@@ -125,6 +126,18 @@ resignationRouter.post(
     const b = (req.body ?? {}) as Record<string, unknown>;
     const namesAnEmployee = !!(b.employeeId ?? b.employee_id ?? b.employeeCode ?? b.employee_code);
     const actingOnSelf = !isPrivileged || !namesAnEmployee;
+    // Branch scoping (owner ruling 2026-10-01): a privileged caller raising an exit for someone else
+    // (admin / hr / manager) must be able to see that employee (own record, branch / assigned scope, reporting
+    // span). Org-wide roles pass.
+    if (!actingOnSelf) {
+      const targetId = await resolveEmployeeRef(
+        (b.employeeId ?? b.employee_id) as string | undefined,
+        (b.employeeCode ?? b.employee_code) as string | undefined,
+      );
+      if (!(await canTouchExitEmployee(userId, targetId))) {
+        return res.status(403).json({ success: false, message: "This employee is outside your branch / assigned scope" });
+      }
+    }
     // See the equivalent block in exit.routes.ts POST / — initiated_by is derived from the
     // caller's roles, not accepted from the body, so an exit raised on someone else's behalf
     // is recorded as such instead of masquerading as a self-resignation.

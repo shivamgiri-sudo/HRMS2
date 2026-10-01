@@ -9,6 +9,7 @@ import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import * as XLSX from "xlsx";
 import { resolveAccountNumber, resolveAccountNumberWithConflict } from "../../shared/fieldEncryption.js";
+import { guardEmployee } from "./payroll-branch-scope.js";
 
 /**
  * Roles whose payroll authority can be org-wide. Used with hasExportScope (below) for
@@ -87,6 +88,11 @@ payrollExtendedRouter.get("/uan/:employeeId", h(async (req: AuthenticatedRequest
   if (!isPrivileged) {
     const callerEmp = await getEmployeeForUser(req.authUser!.id);
     if (!callerEmp || callerEmp.id !== employeeId) return res.status(403).json({ success: false, message: "Forbidden" });
+  } else {
+    // Branch scoping (owner ruling 2026-10-01): admin / hr are limited to their own branch. Org-wide
+    // roles pass canViewEmployee; the employee's own record is always visible.
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (callerEmp?.id !== employeeId && !(await guardEmployee(req, res, employeeId))) return;
   }
   const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM employee_uan WHERE employee_id = ? LIMIT 1", [employeeId]);
   return res.json({ success: true, data: rows[0] ?? null });
@@ -96,6 +102,7 @@ payrollExtendedRouter.post("/uan/:employeeId", requireRole("admin", "hr", "finan
   const { employeeId } = req.params;
   const { uan, member_id, epf_join_date } = req.body as { uan: string; member_id?: string; epf_join_date?: string };
   if (!uan) return res.status(400).json({ success: false, message: "uan is required" });
+  if (!(await guardEmployee(req, res, employeeId))) return;
   await db.execute(
     `INSERT INTO employee_uan (id, employee_id, uan, member_id, epf_join_date)
      VALUES (UUID(), ?, ?, ?, ?)

@@ -98,6 +98,11 @@ exitRouter.post("/", h(async (req: AuthenticatedRequest, res: Response) => {
   let initiatedBy: "employee" | "manager" | "hr" = "employee";
   if (isHr) {
     initiatedBy = "hr";
+    // hr / admin are branch-scoped (owner ruling 2026-10-01): they may raise an exit only for an
+    // employee inside their own branch / assigned scope. Org-wide roles pass canViewEmployee.
+    if (actingOnOther && !(await canTouchExitEmployee(userId, targetId!))) {
+      return res.status(403).json({ success: false, message: "This employee is outside your branch / assigned scope" });
+    }
   } else if (actingOnOther) {
     // Reporting managers hold only the plain employee role as often as a manager role, so
     // the test is the reporting line, not a role list: the target must be in the caller's

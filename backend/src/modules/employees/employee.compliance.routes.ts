@@ -1554,7 +1554,9 @@ payrollEpfComplianceRouter.use(requireAuth, requireRole("admin", "super_admin", 
 
 payrollEpfComplianceRouter.get("/epf-compliance", h(async (req: AuthenticatedRequest, res) => {
   const userId = req.authUser!.id;
-  const adminBypass = await hasAnyRole(userId, "admin", "super_admin");
+  // admin is branch-scoped (owner policy 2026-10-01): only super_admin short-circuits to 1=1; admin is
+  // clamped to its own branch by buildScopeWhereClause (allowAdminBypass).
+  const adminBypass = await hasAnyRole(userId, "super_admin");
   const scoped = await buildScopeWhereClause(
     userId,
     ["payroll_hr", "payroll", "hr", "manager"],

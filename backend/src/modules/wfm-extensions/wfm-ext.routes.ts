@@ -7,7 +7,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasProcessScope, hasRole } from "../../shared/accessGuard.js";
-import { buildScopeWhereClause, ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
 import { resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 import { scopePredicate, canAccessEmployee, employeeOwnerGuard, OUT_OF_SCOPE_MSG } from "../wfm/branch-scope.js";
 import { rosterSwapService, rosterConflictService, coverageService, attritionService } from "./wfm-ext.service.js";
@@ -21,7 +21,7 @@ router.use(requireAuth);
 async function employeeScope(userId: string, aliases: { employee?: string } = {}) {
   const e = aliases.employee ?? "e";
   // Org-wide roles only (owner ruling 2026-10-01): hr / wfm are limited to their own branch / scope.
-  if (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return { sql: "1=1", params: [] as unknown[] };
+  if (await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) return { sql: "1=1", params: [] as unknown[] };
   const own = scopePredicate(await resolveUserBusinessScope(userId), {
     branchId: `${e}.branch_id`, processId: `${e}.process_id`, employeeId: `${e}.id`, managerEmployeeId: `${e}.reporting_manager_id`,
   });
@@ -52,7 +52,7 @@ async function computedCoverageSnapshot(input: any, userId: string) {
     // could write a fabricated headcount/shrinkage snapshot for any other branch
     // or process, feeding downstream coverage reporting with numbers nobody who
     // actually owns that scope produced.
-    if (!(await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES))) {
+    if (!(await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES))) {
       const processId = input.process_id ? String(input.process_id) : null;
       const branchId = input.branch_id ? String(input.branch_id) : null;
       // hasProcessScope requires a process id to evaluate against — it has no
@@ -132,7 +132,7 @@ router.post("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) 
   const target = req.body.swap_with_emp_id ?? req.body.target_employee_id;
   const swapDate = req.body.swap_date;
   if (!requester || !target || !swapDate) return res.status(400).json({ error: "requester/target employee and swap_date are required" });
-  if (!(await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES))) {
+  if (!(await hasAnyRole(userId, ...ORG_WIDE_EXEMPT_ROLES))) {
     // Owner ruling 2026-10-01: both employees of a swap must be inside the caller's branch / scope.
     const callerScope = await resolveUserBusinessScope(userId);
     if (!(await canAccessEmployee(callerScope, String(requester)))) {
@@ -230,7 +230,7 @@ router.get("/attrition/summary", requireRole("admin", "hr", "wfm", "manager", "b
 router.post("/attrition/record", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employee_id, exit_date } = req.body;
   if (!employee_id || !exit_date) return res.status(400).json({ error: "employee_id and exit_date required" });
-  if (!(await hasRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) {
+  if (!(await hasAnyRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) {
     const callerScope = await resolveUserBusinessScope(req.authUser!.id);
     if (!(await canAccessEmployee(callerScope, String(employee_id)))) {
       return res.status(403).json({ success: false, message: OUT_OF_SCOPE_MSG });
