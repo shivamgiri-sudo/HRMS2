@@ -24,9 +24,16 @@ export const PROJECTS: ProjectConfig[] = [
     campaigns: ["GNC_Order_Related","GNC_Product_Quality","GNC_Other_Queries","GNC_Product_Info","GNC_Offer_Order","GNC_Authentication"],
     mandate: 8, required: 6, hasFCR: false },
   { key: "bellavita",   name: "Bellavita",     icon: "🌸", color: "#E67E22", table: "cdr_in_11_5",  pattern: "A",
+    // Kenaz (Ken_Existing_Order / Kenaz_New_Order) and Guzz (Guz_Existing_Order / Guzz_New_Order)
+    // campaigns were missing from this list entirely -- confirmed live in dialer_db.cdr_in_11_5
+    // 2026-09-30 that both carry real volume (H_Ken_Existing_Order alone: 4,724 calls/45 days),
+    // just never queried, so they showed zero everywhere in this dashboard. RotoresN (8 calls/45
+    // days) is deliberately left out per explicit user direction -- it has no assigned LOB.
     campaigns: ["H_Bellavita_Luxury","E_Bellavita_Organic","E_Bellavita_Luxury","H_Bellavita_Organic","H_Bevzilla_Complaint",
                 "H_Bevzilla_CC_Agent","E_Bevzilla_CC_Agent","H_Bevzilla_Order","E_Bevzilla_Order","E_Bevzilla_Complaint",
-                "E_Emb_Existing_Order","H_Bevzilla_Product","H_Emb_New_Order","H_Emb_Existing_Order","E_Bevzilla_Product","E_Emb_New_Order"],
+                "E_Emb_Existing_Order","H_Bevzilla_Product","H_Emb_New_Order","H_Emb_Existing_Order","E_Bevzilla_Product","E_Emb_New_Order",
+                "H_Ken_Existing_Order","E_Ken_Existing_Order","H_Kenaz_New_Order","E_Kenaz_New_Order",
+                "E_Guzz_New_Order","E_Guz_Existing_Order","H_Guz_Existing_Order","H_Guzz_New_Order"],
     mandate: 14, required: 12, hasFCR: false },
   { key: "clovia",      name: "Clovia",        icon: "👗", color: "#27AE60", table: "cdr_in_250",   pattern: "A",
     campaigns: ["Clovia_English","Clovia_Hindi"], mandate: 7, required: 6, hasFCR: false },
