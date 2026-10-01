@@ -12,6 +12,7 @@ const GLOBAL_FINANCE_ROLES = new Set([
   "hr_admin",
   "ceo",
   "coo",
+  "cfo",
 ]);
 
 function normalizedRoles(primaryRole?: string, userRoles?: string[]) {
@@ -50,6 +51,7 @@ const OVERRIDING_GLOBAL_FINANCE_ROLES = new Set([
   "payroll_head",
   "ceo",
   "coo",
+  "cfo",
   "hr_admin",
 ]);
 

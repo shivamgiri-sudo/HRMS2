@@ -374,9 +374,15 @@ export const expenseService = {
    * expense_type is therefore explicit. Callers wanting the vendor/imprest ledger
    * must ask for it; the default is the employee-claim view the UI presents.
    */
-  async list(filters: { employee_id?: string; status?: string; expense_type?: string | string[] }) {
+  async list(
+    filters: { employee_id?: string; status?: string; expense_type?: string | string[] },
+    scope?: { sql: string; params: unknown[] },
+  ) {
     const conds: string[] = [];
     const params: unknown[] = [];
+    // Branch scoping (owner ruling 2026-10-01): hr sees only claims of employees inside its branch / scope.
+    // `emp` is the employees join below; omitted for org-wide callers so their SQL is unchanged.
+    if (scope) { conds.push(`(${scope.sql})`); params.push(...scope.params); }
     if (filters.employee_id) { conds.push("e.employee_id = ?"); params.push(filters.employee_id); }
     if (filters.status)      { conds.push("e.status = ?");      params.push(filters.status); }
 
@@ -724,9 +730,14 @@ export const billingInvoiceService = {
 // ─── Procurement ─────────────────────────────────────────────────────────────
 
 export const procurementService = {
-  async list(filters: { requested_by?: string; status?: string; department_id?: string }) {
+  async list(
+    filters: { requested_by?: string; status?: string; department_id?: string },
+    scope?: { sql: string; params: unknown[] },
+  ) {
     const conds: string[] = [];
     const params: unknown[] = [];
+    // Branch scoping: filter by the requester's branch / scope (emp join below). No-op for org-wide callers.
+    if (scope) { conds.push(`(${scope.sql})`); params.push(...scope.params); }
     if (filters.requested_by)  { conds.push("p.requested_by = ?");  params.push(filters.requested_by); }
     if (filters.status)        { conds.push("p.status = ?");        params.push(filters.status); }
     if (filters.department_id) { conds.push("p.department_id = ?"); params.push(filters.department_id); }

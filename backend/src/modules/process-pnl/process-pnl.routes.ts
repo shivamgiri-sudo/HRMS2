@@ -444,6 +444,8 @@ router.get(
   requireAuth,
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
+    // Branch scoping: branch_head/process_manager may only read amendments of a budget in their branch.
+    await asForbidden(assertBranchOf(req, await branchBudgetService.get(req.params.budgetId).then((b: any) => b?.branch_id)));
     const data = await branchBudgetService.getTaxAmendmentPreflight(
       req.params.budgetId,
       req.params.lineId
@@ -495,6 +497,7 @@ router.get(
   h(async (req, res) => {
     const budgetId = String(req.query.budgetId ?? "").trim();
     if (!budgetId) throw Object.assign(new Error("budgetId query param is required"), { statusCode: 400 });
+    await asForbidden(assertBranchOf(req, await branchBudgetService.get(budgetId).then((b: any) => b?.branch_id)));
     const data = await branchBudgetService.listTaxAmendments(budgetId);
     res.json({ success: true, data });
   })
@@ -1857,8 +1860,12 @@ router.post(
 router.get(
   "/pnl/cost-centre-overrides",
   requireRole(...PNL_READ_ROLES),
-  h(async (_req, res) => {
-    const data = await listCostCentreOverrides();
+  h(async (req, res) => {
+    const user = actor(req);
+    const scope = await asForbidden(resolveFinanceBranchScopeSet({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    }));
+    const data = await listCostCentreOverrides(scope);
     res.json({ success: true, data });
   })
 );
@@ -1867,8 +1874,13 @@ router.get(
   "/pnl/cost-centre-overrides/cost-centres",
   requireRole(...PNL_READ_ROLES),
   h(async (req, res) => {
-    const branchId = req.query.branchId ? String(req.query.branchId) : null;
-    const data = await listOverrideCostCentreOptions(branchId);
+    const user = actor(req);
+    // A requested branch may only narrow what the caller is allowed; outside it -> 403.
+    const scope = await asForbidden(resolveFinanceBranchScopeSet({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    }));
+    const data = await listOverrideCostCentreOptions(null, scope);
     res.json({ success: true, data });
   })
 );

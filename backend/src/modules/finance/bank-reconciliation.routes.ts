@@ -7,6 +7,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { BANK_ACCOUNT_READ_ROLES, BANK_ACCOUNT_WRITE_ROLES } from "./company-bank-account.routes.js";
 import { bankStatementImportService, parseStatementRows, type ColumnMapping } from "./bank-statement-import.service.js";
 import { bankReconciliationMatchService } from "./bank-reconciliation-match.service.js";
+import { assertBankAccountInScope, callerBranchScope, bankAccountBranchId, assertBranchInScope } from "./finance-branch-guard.js";
 import { bankReconciliationPeriodService } from "./bank-reconciliation-period.service.js";
 
 /**
@@ -37,6 +38,7 @@ bankReconciliationRouter.get(
   "/periods",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
+    await assertBankAccountInScope(req, String(req.query.bankAccountId));
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM bank_reconciliation_period WHERE bank_account_id = ? ORDER BY from_date DESC`,
       [String(req.query.bankAccountId)],
@@ -61,6 +63,13 @@ bankReconciliationRouter.get(
   "/periods/:periodId/statement-lines",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
+    const scope = await callerBranchScope(req);
+    if (scope.mode !== "all") {
+      const [[period]] = await db.execute<RowDataPacket[]>(
+        `SELECT bank_account_id FROM bank_reconciliation_period WHERE id = ? LIMIT 1`, [req.params.periodId],
+      );
+      assertBranchInScope(scope, period ? await bankAccountBranchId(String(period.bank_account_id)) : null, "reconciliation period");
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT bsl.id, bsl.txn_date, bsl.description, bsl.reference, bsl.debit_amount, bsl.credit_amount, bsl.match_status
          FROM bank_statement_line bsl
@@ -144,6 +153,7 @@ bankReconciliationRouter.get(
       [req.params.lineId],
     );
     if (!line) { res.status(404).json({ success: false, message: "Statement line not found." }); return; }
+    await assertBankAccountInScope(req, String(line.bank_account_id));
     const amountClause = Number(line.debit_amount) > 0 ? "debit_amount = ?" : "credit_amount = ?";
     const amountParam = Number(line.debit_amount) > 0 ? line.debit_amount : line.credit_amount;
     const [rows] = await db.execute<RowDataPacket[]>(

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { BANK_ACCOUNT_READ_ROLES } from "./company-bank-account.routes.js";
+import { callerBranchScope } from "./finance-branch-guard.js";
 import { ledgerReportsService } from "./ledger-reports.service.js";
 
 /**
@@ -25,8 +26,8 @@ ledgerReportsRouter.use(requireAuth);
 ledgerReportsRouter.get(
   "/filter-options",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
-  h(async (_req, res) => {
-    const result = await ledgerReportsService.filterOptions();
+  h(async (req, res) => {
+    const result = await ledgerReportsService.filterOptions(await callerBranchScope(req));
     res.json({ success: true, data: result });
   }),
 );
@@ -41,7 +42,9 @@ ledgerReportsRouter.get(
       costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
       processId: req.query.processId ? String(req.query.processId) : undefined,
     };
-    const result = await ledgerReportsService.trialBalance(asOfDate, filters);
+    // ?branchId only narrows: outside the caller's scope it is a 403 (see callerBranchScope).
+    const scope = await callerBranchScope(req, filters.branchId);
+    const result = await ledgerReportsService.trialBalance(asOfDate, filters, scope);
     res.json({ success: true, data: result });
   }),
 );
@@ -52,7 +55,7 @@ ledgerReportsRouter.get(
   h(async (req, res) => {
     const from = req.query.from ? String(req.query.from) : undefined;
     const to = req.query.to ? String(req.query.to) : undefined;
-    const result = await ledgerReportsService.vendorLedger(String(req.params.vendorId), from, to);
+    const result = await ledgerReportsService.vendorLedger(String(req.params.vendorId), from, to, await callerBranchScope(req));
     res.json({ success: true, data: result });
   }),
 );
@@ -68,7 +71,8 @@ ledgerReportsRouter.get(
       costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
       processId: req.query.processId ? String(req.query.processId) : undefined,
     };
-    const result = await ledgerReportsService.headSubHeadLedger(from, to, filters);
+    const scope = await callerBranchScope(req, filters.branchId);
+    const result = await ledgerReportsService.headSubHeadLedger(from, to, filters, scope);
     res.json({ success: true, data: result });
   }),
 );
@@ -94,6 +98,7 @@ ledgerReportsRouter.get(
       String(req.params.accountId),
       from,
       to,
+      await callerBranchScope(req),
     );
     res.json({ success: true, data: result });
   }),

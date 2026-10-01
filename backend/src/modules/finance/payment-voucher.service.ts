@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
@@ -287,12 +288,18 @@ async function resolveActorNames(userIds: (string | null | undefined)[]): Promis
 }
 
 export const paymentVoucherService = {
-  async list(filters: { status?: string; sourceType?: string; bankAccountId?: string; limit?: number }) {
+  async list(filters: { status?: string; sourceType?: string; bankAccountId?: string; limit?: number; branchScope?: FinanceBranchScope }) {
     const conditions: string[] = ["1=1"];
     const params: unknown[] = [];
     if (filters.status) { conditions.push("pv.status = ?"); params.push(filters.status); }
     if (filters.sourceType) { conditions.push("pv.source_type = ?"); params.push(filters.sourceType); }
     if (filters.bankAccountId) { conditions.push("pv.bank_account_id = ?"); params.push(filters.bankAccountId); }
+    // Branch scoping: a voucher belongs to its bank account's branch (cba is joined below). No filter for org-wide.
+    if (filters.branchScope && filters.branchScope.mode === "branches") {
+      const f = financeBranchFilter(filters.branchScope, "cba.branch_id");
+      conditions.push(f.sql);
+      params.push(...f.params);
+    }
     const limit = Math.min(500, Math.max(1, filters.limit ?? 200));
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT pv.*,
@@ -328,7 +335,7 @@ export const paymentVoucherService = {
    *  list()'s own filters (status/sourceType/bankAccountId) so the export always matches
    *  whatever tab/filter the user is looking at, and a higher row cap than the grid view since
    *  a CSV download is explicitly asking for the full set, not a paginated page. */
-  async toCsv(filters: { status?: string; sourceType?: string; bankAccountId?: string }) {
+  async toCsv(filters: { status?: string; sourceType?: string; bankAccountId?: string; branchScope?: FinanceBranchScope }) {
     const rows = await this.list({ ...filters, limit: 5000 });
     const columns = [
       "Voucher No.", "Type", "Bank Account", "Payable Account", "Purpose",

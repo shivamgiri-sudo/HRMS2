@@ -13,6 +13,7 @@ import {
   type AuthenticatedRequest,
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { callerBranchScope } from "../finance/finance-branch-guard.js";
 import { gstExportService, type GstExportType } from "./gst-export.service.js";
 
 const GST_WRITE_ROLES = ["accounts_head", "finance_head", "super_admin"] as const;
@@ -76,8 +77,8 @@ router.post(
 router.get(
   "/registrations",
   requireRole(...GST_READ_ROLES),
-  h(async (_req, res) => {
-    const data = await gstExportService.listRegistrations();
+  h(async (req, res) => {
+    const data = await gstExportService.listRegistrations(await callerBranchScope(req));
     return res.json({ success: true, data });
   })
 );
@@ -92,7 +93,7 @@ router.get(
       companyGstin: req.query.companyGstin ? String(req.query.companyGstin) : undefined,
       periodMonth: req.query.periodMonth ? String(req.query.periodMonth) : undefined,
       limit: req.query.limit ? Number(req.query.limit) : undefined,
-    });
+    }, await callerBranchScope(req));
     return res.json({ success: true, data });
   })
 );
@@ -102,11 +103,13 @@ router.get(
   "/exports/:id",
   requireRole(...GST_READ_ROLES),
   h(async (req, res) => {
+    const scope = await callerBranchScope(req);
     try {
-      const data = await gstExportService.getBatch(String(req.params.id));
+      const data = await gstExportService.getBatch(String(req.params.id), scope);
       return res.json({ success: true, ...data });
     } catch (error) {
-      return res.status(404).json({
+      const statusCode = (error as { statusCode?: number }).statusCode === 403 ? 403 : 404;
+      return res.status(statusCode).json({
         success: false,
         error: error instanceof Error ? error.message : "GST export batch not found",
       });
@@ -122,7 +125,7 @@ router.get(
   "/exports/:id/exceptions",
   requireRole(...GST_READ_ROLES),
   h(async (req, res) => {
-    const data = await gstExportService.getExceptions(String(req.params.id));
+    const data = await gstExportService.getExceptions(String(req.params.id), await callerBranchScope(req));
     return res.json({ success: true, count: data.length, data });
   })
 );
@@ -139,7 +142,7 @@ router.get(
   requireRole(...GST_READ_ROLES),
   h(async (req, res) => {
     const includeExceptions = String(req.query.includeExceptions ?? "") === "true";
-    const { batch, rows } = await gstExportService.getBatch(String(req.params.id));
+    const { batch, rows } = await gstExportService.getBatch(String(req.params.id), await callerBranchScope(req));
     if (Number((batch as any).exception_rows) > 0 && !includeExceptions) {
       return res.status(409).json({
         success: false,

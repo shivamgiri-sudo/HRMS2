@@ -6,6 +6,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { companyBankAccountService, CompanyBankAccountError } from "./company-bank-account.service.js";
 import { bankLedgerService } from "./bank-ledger.service.js";
 import { tallyExportService } from "./tally-export.service.js";
+import { assertBankAccountInScope, assertBranchInScope, callerBranchScope } from "./finance-branch-guard.js";
 
 /**
  * Company Bank Account master — own prefix (/api/finance/bank-accounts), matching the
@@ -63,6 +64,7 @@ companyBankAccountRouter.get(
   h(async (req, res) => {
     const data = await companyBankAccountService.list({
       includeInactive: req.query.includeInactive === "1",
+      branchScope: await callerBranchScope(req),
     });
     res.json({ success: true, data });
   }),
@@ -74,6 +76,7 @@ companyBankAccountRouter.get(
   h(async (req, res) => {
     const data = await companyBankAccountService.get(req.params.id);
     if (!data) return res.status(404).json({ success: false, error: "Bank account not found" });
+    assertBranchInScope(await callerBranchScope(req), (data as any).branch_id, "bank account");
     res.json({ success: true, data });
   }),
 );
@@ -82,6 +85,7 @@ companyBankAccountRouter.get(
   "/:id/audit",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
+    await assertBankAccountInScope(req, req.params.id);
     const data = await companyBankAccountService.getAuditTrail(req.params.id);
     res.json({ success: true, data });
   }),
@@ -92,6 +96,7 @@ companyBankAccountRouter.get(
   "/:id/ledger",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
+    await assertBankAccountInScope(req, req.params.id);
     const data = await bankLedgerService.getReport({
       bankAccountId: req.params.id,
       from: req.query.from ? String(req.query.from) : undefined,
@@ -108,6 +113,7 @@ companyBankAccountRouter.get(
   "/:id/ledger/export",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
+    await assertBankAccountInScope(req, req.params.id);
     const csv = await bankLedgerService.toCsv({
       bankAccountId: req.params.id,
       from: req.query.from ? String(req.query.from) : undefined,
@@ -126,6 +132,7 @@ companyBankAccountRouter.get(
   "/:id/tally-export",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
+    await assertBankAccountInScope(req, req.params.id);
     const result = await tallyExportService.exportAndLog(
       req.params.id,
       req.query.from ? String(req.query.from) : undefined,

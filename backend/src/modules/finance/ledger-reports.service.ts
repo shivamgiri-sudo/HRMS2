@@ -1,5 +1,14 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
+
+/** Appends `col IN (...)` for a branch-limited caller; no-op for org-wide ({mode:"all"}) or no scope given. */
+function pushBranchScope(conditions: string[], params: unknown[], scope: FinanceBranchScope | undefined, col: string) {
+  if (!scope || scope.mode === "all") return;
+  const f = financeBranchFilter(scope, col);
+  conditions.push(f.sql);
+  params.push(...f.params);
+}
 
 /**
  * Phase 4 of the double-entry plan (payment-voucher-double-entry-plan.md) — the first reports
@@ -135,16 +144,28 @@ export const ledgerReportsService = {
    * gated to admin/hr roles, not the finance roles (finance_head, accounts_head, ceo,
    * branch_head, admin, finance, super_admin) that read this page.
    */
-  async filterOptions() {
-    const [branches] = await db.execute<RowDataPacket[]>(
-      `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
-    );
-    const [costCentres] = await db.execute<RowDataPacket[]>(
-      `SELECT id, cost_centre_name FROM cost_centre_master WHERE active_status = 1 ORDER BY cost_centre_name`,
-    );
-    const [processes] = await db.execute<RowDataPacket[]>(
-      `SELECT id, process_name FROM process_master WHERE active_status = 1 ORDER BY process_name`,
-    );
+  async filterOptions(scope?: FinanceBranchScope) {
+    const limited = scope && scope.mode === "branches";
+    const bF = limited ? financeBranchFilter(scope, "branch_id") : null;
+    const bIdF = limited ? financeBranchFilter(scope, "id") : null;
+    const [branches] = limited
+      ? await db.execute<RowDataPacket[]>(
+          `SELECT id, branch_name FROM branch_master WHERE active_status = 1 AND ${bIdF!.sql} ORDER BY branch_name`, bIdF!.params)
+      : await db.execute<RowDataPacket[]>(
+          `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
+        );
+    const [costCentres] = limited
+      ? await db.execute<RowDataPacket[]>(
+          `SELECT id, cost_centre_name FROM cost_centre_master WHERE active_status = 1 AND ${bF!.sql} ORDER BY cost_centre_name`, bF!.params)
+      : await db.execute<RowDataPacket[]>(
+          `SELECT id, cost_centre_name FROM cost_centre_master WHERE active_status = 1 ORDER BY cost_centre_name`,
+        );
+    const [processes] = limited
+      ? await db.execute<RowDataPacket[]>(
+          `SELECT id, process_name FROM process_master WHERE active_status = 1 AND ${bF!.sql} ORDER BY process_name`, bF!.params)
+      : await db.execute<RowDataPacket[]>(
+          `SELECT id, process_name FROM process_master WHERE active_status = 1 ORDER BY process_name`,
+        );
     return {
       branches: (branches as RowDataPacket[]).map((r) => ({ id: String(r.id), name: r.branch_name })),
       costCentres: (costCentres as RowDataPacket[]).map((r) => ({ id: String(r.id), name: r.cost_centre_name })),
@@ -163,6 +184,7 @@ export const ledgerReportsService = {
   async trialBalance(
     asOfDate?: string,
     filters?: { branchId?: string; costCentreId?: string; processId?: string },
+    scope?: FinanceBranchScope,
   ): Promise<{ rows: TrialBalanceRow[]; balanced: boolean; totalDebit: number; totalCredit: number }> {
     const conditions = ["je.reversed_by_entry_id IS NULL"];
     const params: unknown[] = [];
@@ -170,6 +192,7 @@ export const ledgerReportsService = {
     if (filters?.branchId) { conditions.push("je.branch_id = ?"); params.push(filters.branchId); }
     if (filters?.costCentreId) { conditions.push("je.cost_centre_id = ?"); params.push(filters.costCentreId); }
     if (filters?.processId) { conditions.push("je.process_id = ?"); params.push(filters.processId); }
+    pushBranchScope(conditions, params, scope, "je.branch_id");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT jel.account_type, jel.account_id,
@@ -216,11 +239,12 @@ export const ledgerReportsService = {
    * can drill down into the same underlying entries (the Drill-Down Mandate) without a second,
    * near-duplicate query — vendorLedger() below is now a thin wrapper over this.
    */
-  async accountLedger(accountType: AccountType, accountId: string, from?: string, to?: string) {
+  async accountLedger(accountType: AccountType, accountId: string, from?: string, to?: string, scope?: FinanceBranchScope) {
     const conditions = ["jel.account_type = ?", "jel.account_id = ?", "je.reversed_by_entry_id IS NULL"];
     const params: unknown[] = [accountType, accountId];
     if (from) { conditions.push("je.entry_date >= ?"); params.push(from); }
     if (to) { conditions.push("je.entry_date <= ?"); params.push(to); }
+    pushBranchScope(conditions, params, scope, "je.branch_id");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT je.id AS journal_entry_id, je.entry_date, je.narration, je.source_type, je.source_id,
@@ -259,8 +283,8 @@ export const ledgerReportsService = {
     return { entries, closingBalance: runningBalance };
   },
 
-  async vendorLedger(vendorId: string, from?: string, to?: string) {
-    return ledgerReportsService.accountLedger("vendor", vendorId, from, to);
+  async vendorLedger(vendorId: string, from?: string, to?: string, scope?: FinanceBranchScope) {
+    return ledgerReportsService.accountLedger("vendor", vendorId, from, to, scope);
   },
 
   /**
@@ -273,6 +297,7 @@ export const ledgerReportsService = {
     from?: string,
     to?: string,
     filters?: { branchId?: string; costCentreId?: string; processId?: string },
+    scope?: FinanceBranchScope,
   ) {
     const conditions = ["jel.account_type = 'expense_sub_head'", "je.reversed_by_entry_id IS NULL"];
     const params: unknown[] = [];
@@ -281,6 +306,7 @@ export const ledgerReportsService = {
     if (filters?.branchId) { conditions.push("je.branch_id = ?"); params.push(filters.branchId); }
     if (filters?.costCentreId) { conditions.push("je.cost_centre_id = ?"); params.push(filters.costCentreId); }
     if (filters?.processId) { conditions.push("je.process_id = ?"); params.push(filters.processId); }
+    pushBranchScope(conditions, params, scope, "je.branch_id");
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT jel.account_id, SUM(jel.debit_amount) AS total_spent, COUNT(DISTINCT je.source_id) AS grn_count
