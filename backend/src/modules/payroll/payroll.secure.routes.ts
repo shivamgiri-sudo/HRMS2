@@ -63,7 +63,7 @@ router.get("/runs", requireRole(
       branchId: "spr.branch_id",
       processId: "spr.process_id",
     },
-    { allowAdminBypass: true, allowCeoAllRead: false },
+    { allowAdminBypass: true, allowCeoAllRead: false, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
   (req as any).scopeFilter = scoped;
   return c.listRuns(req, res);
@@ -82,7 +82,7 @@ router.get("/records", requireRole(
       branchId: "e.branch_id",
       processId: "e.process_id",
     },
-    { allowAdminBypass: true, allowCeoAllRead: false },
+    { allowAdminBypass: true, allowCeoAllRead: false, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
 
   const page = Math.max(1, Number(req.query.page ?? 1) || 1);

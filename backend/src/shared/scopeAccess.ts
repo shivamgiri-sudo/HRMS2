@@ -249,10 +249,22 @@ export async function buildScopeWhereClause(
   userId: string,
   allowedRoles: string[],
   aliases: ScopeAliases,
-  options: { allowAdminBypass?: boolean; allowCeoAllRead?: boolean } = {}
+  options: {
+    allowAdminBypass?: boolean;
+    allowCeoAllRead?: boolean;
+    /**
+     * Role keys for which scope_type='all' is NOT honoured — the user is forced to their
+     * explicitly assigned branch(es) instead.  If no branch assignment exists either, falls
+     * back to the user's own employees.branch_id so the scope never silently becomes 1=0.
+     * super_admin / admin (with allowAdminBypass) / ceo (with allowCeoAllRead) bypass before
+     * reaching this logic and are unaffected.
+     */
+    blockOrgWideForRoles?: string[];
+  } = {}
 ): Promise<{ sql: string; params: unknown[] }> {
   const allowAdminBypass = options.allowAdminBypass ?? false;
   const allowCeoAllRead = options.allowCeoAllRead ?? false;
+  const blockOrgWideForRoles = options.blockOrgWideForRoles ?? [];
 
   // super_admin always sees everything
   if (await hasAnyRole(userId, "super_admin")) {
@@ -281,6 +293,9 @@ export async function buildScopeWhereClause(
 
   for (const s of scopes) {
     if (s.scope_type === "all") {
+      // Roles in blockOrgWideForRoles must not bypass branch scoping via scope_type='all'.
+      // Skip this entry; explicit branch/process rows from other scopes still apply.
+      if (blockOrgWideForRoles.includes(s.role_key)) continue;
       ors.push("1=1");
       continue;
     }
@@ -337,6 +352,19 @@ export async function buildScopeWhereClause(
   }
 
   if (ors.length === 0) {
+    // If blockOrgWideForRoles stripped every scope_type='all' entry and the user has no
+    // explicit branch/process assignments, fall back to their own employee record's branch_id
+    // so they can still see their own branch rather than nothing.
+    if (blockOrgWideForRoles.length > 0 && aliases.branchId) {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        "SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+        [userId]
+      );
+      const branchId = (empRows as RowDataPacket[])[0]?.branch_id;
+      if (branchId) {
+        return { sql: `${aliases.branchId} = ?`, params: [branchId] };
+      }
+    }
     return { sql: "1=0", params: [] };
   }
 

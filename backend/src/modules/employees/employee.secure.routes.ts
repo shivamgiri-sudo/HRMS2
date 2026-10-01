@@ -142,7 +142,7 @@ async function employeeScopeWhere(userId: string) {
       managerEmployeeId: "e.reporting_manager_id",
       employeeId: "e.id",
     },
-    { allowAdminBypass: true, allowCeoAllRead: true },
+    { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
 }
 

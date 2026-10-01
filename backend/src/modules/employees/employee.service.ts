@@ -399,6 +399,14 @@ export const employeeService = {
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const filterWhere = filterConds.length ? `WHERE ${filterConds.join(" AND ")}` : "";
 
+    // Index hint for branch-scoped queries: when the scope resolves to a single branch_id
+    // (mandatory for HR users after blockOrgWideForRoles enforcement), the covering index
+    // idx_emp_active_branch (active_status, branch_id) cuts the scan from ~57k rows to the
+    // branch population (~100-500 rows) even before the ORDER BY step.
+    const scopeSql = scopeFilter?.sql ?? "";
+    const isBranchScoped = /e\.branch_id\s*=\s*\?/.test(scopeSql) && !/OR/.test(scopeSql);
+    const indexHint = isBranchScoped ? "USE INDEX (idx_emp_active_branch)" : "";
+
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
     const orderExpr = (sortBy && EMPLOYEE_SORT_COLUMNS[sortBy]) || EMPLOYEE_SORT_COLUMNS.employeeCode;
     const orderDir = sortOrder === "desc" ? "DESC" : "ASC";
@@ -442,7 +450,7 @@ export const employeeService = {
            pm.process_name,
            bm.branch_name,
            CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name,'')) AS reporting_manager_name
-         FROM employees e
+         FROM employees e ${indexHint}
          LEFT JOIN designation_master  desig ON desig.id = e.designation_id
          LEFT JOIN department_master   dept  ON dept.id  = e.department_id
          LEFT JOIN cost_centre_master  cc    ON cc.id    = e.cost_centre_id
@@ -453,7 +461,7 @@ export const employeeService = {
         params
       ),
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) AS total FROM employees e ${where}`, params
+        `SELECT COUNT(*) AS total FROM employees e ${indexHint} ${where}`, params
       ),
       includeAnalytics
         ? db.execute<RowDataPacket[]>(

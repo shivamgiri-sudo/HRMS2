@@ -32,7 +32,7 @@ async function leaveListScope(userId: string): Promise<{ sql: string; params: un
   // broken screen (Attendance Lookup's Leave tab shows one employee at a time and would
   // have been permanently empty for them). Payroll signs off every branch's salary.
   if (await hasAnyRole(userId, "super_admin", "payroll_head")) return { sql: "1=1", params: [] };
-  const scoped = await buildScopeWhereClause(userId, LEAVE_VIEW_SCOPE_ROLES, { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id", employeeId: "e.id" }, { allowAdminBypass: false, allowCeoAllRead: false });
+  const scoped = await buildScopeWhereClause(userId, LEAVE_VIEW_SCOPE_ROLES, { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id", employeeId: "e.id" }, { allowAdminBypass: false, allowCeoAllRead: false, blockOrgWideForRoles: ["hr", "hr_admin"] });
   // View-only skip level: an AM also sees the leave of the people under each TL (UAT 2026-09-25).
   // canReviewLeave below is untouched, so approval stays with the effective approver.
   const span = await reportingSpanClause(userId);

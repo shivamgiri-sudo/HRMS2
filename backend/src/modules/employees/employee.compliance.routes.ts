@@ -1558,7 +1558,7 @@ payrollEpfComplianceRouter.get("/epf-compliance", h(async (req: AuthenticatedReq
     userId,
     ["payroll_hr", "payroll", "hr", "manager"],
     { branchId: "p.branch_id", processId: "p.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id", employeeId: "e.id" },
-    { allowAdminBypass: true },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
   const whereSql = adminBypass ? "1=1" : scoped.sql;
   const [rows] = await db.execute<RowDataPacket[]>(

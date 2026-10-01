@@ -21,7 +21,7 @@ employeeReportMasterRouter.get("/directory-masters", h(async (req: any, res: any
       managerEmployeeId: "e.reporting_manager_id",
       employeeId: "e.id",
     },
-    { allowAdminBypass: true, allowCeoAllRead: true },
+    { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
 
   const employeeWhere = `e.active_status = 1 AND (${scoped.sql})`;

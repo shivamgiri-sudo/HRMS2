@@ -156,7 +156,7 @@ async function exitListScope(userId: string) {
       managerEmployeeId: "e.reporting_manager_id",
       employeeId: "e.id",
     },
-    { allowAdminBypass: true, allowCeoAllRead: true },
+    { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
   // A TL sees the team and an AM sees each TL's team, from the day a resignation is submitted (UAT
   // 2026-09-25). View only: canActOnExit below still requires the direct manager.

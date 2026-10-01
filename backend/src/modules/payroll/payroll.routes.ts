@@ -212,7 +212,7 @@ router.get(
         "payroll_admin",
       ],
       { branchId: "e.branch_id", processId: "e.process_id" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
@@ -435,7 +435,7 @@ router.get(
         req.authUser!.id,
         [...PAYROLL_SCOPE_ROLES],
         { branchId: "spr.branch_id", processId: "spr.process_id" },
-        { allowAdminBypass: true, allowCeoAllRead: true },
+        { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
       );
     } catch (_err) {
       scoped = { sql: "1=0", params: [] };
@@ -464,7 +464,7 @@ router.get(
         req.authUser!.id,
         [...PAYROLL_SCOPE_ROLES],
         { branchId: "e.branch_id", processId: "e.process_id" },
-        { allowAdminBypass: true, allowCeoAllRead: true },
+        { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
       );
     } catch (_err) {
       scoped = { sql: "1=0", params: [] };
@@ -1019,7 +1019,7 @@ router.get(
       req.authUser!.id,
       [...PAYROLL_SCOPE_ROLES],
       { branchId: "e.branch_id", processId: "e.process_id" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
     const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
 
@@ -1678,7 +1678,7 @@ router.get(
           req.authUser!.id,
           ["admin", "hr", "finance", "payroll", "payroll_head"],
           { branchId: "e.branch_id", processId: "e.process_id" },
-          { allowCeoAllRead: true },
+          { allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
         );
       }
     } catch {

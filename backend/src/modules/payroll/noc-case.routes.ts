@@ -241,7 +241,7 @@ nocCaseRouter.get(
         processId: "c.process_id",
         employeeId: "c.employee_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
 
     const {
@@ -297,7 +297,7 @@ nocCaseRouter.get(
         processId: "c.process_id",
         employeeId: "c.employee_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
 
     const [byRole] = await db.execute<RowDataPacket[]>(

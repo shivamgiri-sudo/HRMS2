@@ -123,7 +123,7 @@ router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_ad
     userId,
     ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
     { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
-    { allowAdminBypass: true },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
 
   // Optional ?codes=A,B,C narrows the same aggregate to one company's own
@@ -188,7 +188,7 @@ router.get("/batches", requireRole(...HUB_ROLES), h(async (req: AuthenticatedReq
     userId,
     ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
     { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
-    { allowAdminBypass: true },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
 
   const where: string[] = [`(ub.uploaded_by = ? OR (${scope.sql}))`];
@@ -255,7 +255,7 @@ router.get("/batches/filter-options", requireRole(...HUB_ROLES), h(async (req: A
     userId,
     ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
     { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
-    { allowAdminBypass: true },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
   const lobOnly = lobOnlyBatchFilter(req, "ub");
   const visible = `(ub.uploaded_by = ? OR (${scope.sql}))${lobOnly.sql}`;

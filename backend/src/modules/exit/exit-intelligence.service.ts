@@ -154,7 +154,8 @@ export async function getExitCommandCenter(scope: { actorUserId: string; actorRo
     const clause = await buildScopeWhereClause(
       scope.actorUserId,
       SCOPED_ROLES,
-      { branchId: 'e.branch_id', processId: 'e.process_id' }
+      { branchId: 'e.branch_id', processId: 'e.process_id' },
+      { blockOrgWideForRoles: ["hr", "hr_admin"] }
     );
     scopeWhere = clause.sql;
     scopeParams = clause.params;

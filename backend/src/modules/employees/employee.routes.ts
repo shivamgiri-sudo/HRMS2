@@ -1694,7 +1694,7 @@ router.get(
       req.authUser!.id,
       ["hr", "manager", "branch_head"],
       { branchId: "e.branch_id", processId: "e.process_id" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
     const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1756,7 +1756,7 @@ router.get(
         departmentId: "e.department_id",
         managerEmployeeId: "e.reporting_manager_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
 
     const baseConditions = ["e.active_status = 1"];
@@ -1874,7 +1874,7 @@ router.get(
         "payroll_hr",
       ],
       { branchId: "e.branch_id", processId: "e.process_id" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
     const scopeSql = scoped.sql === "1=1" ? "" : ` AND (${scoped.sql})`;
     /*
@@ -1987,7 +1987,7 @@ router.get(
         departmentId: "e.department_id",
         managerEmployeeId: "e.reporting_manager_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      { allowAdminBypass: true, allowCeoAllRead: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
     );
 
     const parsed = employeeFiltersSchema.safeParse(req.query);
@@ -2222,7 +2222,13 @@ router.get(
         departmentId: "e.department_id",
         managerEmployeeId: "e.reporting_manager_id",
       },
-      { allowAdminBypass: true, allowCeoAllRead: true },
+      {
+        allowAdminBypass: true,
+        allowCeoAllRead: true,
+        // HR users must always be branch-scoped. scope_type='all' gives org-wide access which
+        // is correct for admin/ceo (they bypass above) but HR should only see their own branch(es).
+        blockOrgWideForRoles: ["hr", "hr_admin"],
+      },
     );
 
     (req as any).scopeFilter = scoped;

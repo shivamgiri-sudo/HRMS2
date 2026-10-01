@@ -366,7 +366,12 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
       const hasAllGrant = assignments.some(
         (row) => String(row.scope_type ?? "").trim().toLowerCase() === "all",
       );
-      if (hasAllGrant) {
+      // HR function roles must be branch-scoped even when they carry scope_type='all'.
+      // A scope_type='all' grant was historically used to give HR org-wide access but the
+      // business rule is: HR sees only their own branch. super_admin / admin / ceo / HO
+      // roles bypass before reaching this block and are unaffected.
+      const isBranchMandatoryRole = effectiveRole === "hr" || effectiveRole === "hr_admin";
+      if (hasAllGrant && !isBranchMandatoryRole) {
         return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
       }
       // Fail closed to the employee's own branch rather than opening the whole org.

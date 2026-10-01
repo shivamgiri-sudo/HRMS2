@@ -310,7 +310,7 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
     req.authUser!.id,
     PAYROLL_REPORT_SCOPE_ROLES,
     { branchId: "e.branch_id", processId: "e.process_id" },
-    { allowAdminBypass: true },
+    { allowAdminBypass: true, blockOrgWideForRoles: ["hr", "hr_admin"] },
   );
   // buildScopeWhereClause returns 1=0 for a caller with no assigned scope. Letting that
   // through would download an empty workbook, which reads as "this run has no payroll"
