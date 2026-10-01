@@ -42,6 +42,25 @@ export interface ScopeAliases {
   employeeId?: string;
 }
 
+// Roles whose scope_type='all' grant is honoured. Every other role is branch-scoped by default:
+// an 'all' row is downgraded to the user's own employees.branch_id.
+export const ORG_WIDE_EXEMPT_ROLES = [
+  "super_admin", "admin", "ceo", "coo", "cfo", "payroll_head", "finance_head", "accounts_head",
+];
+
+async function holdsOrgWideExemptRole(userId: string): Promise<boolean> {
+  const roles = await getUserRoleKeys(userId);
+  return roles.some((r) => ORG_WIDE_EXEMPT_ROLES.includes(r));
+}
+
+async function ownBranchId(userId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+    [userId]
+  );
+  return ((rows as RowDataPacket[])[0]?.branch_id as string) ?? null;
+}
+
 export async function getUserRoleKeys(userId: string): Promise<string[]> {
   // buildScopeWhereClause / hasScopedAccess call hasAnyRole up to 4x per request, each of which
   // re-read the same user_roles rows. Memoised for ONE request only (see requestContext.ts:
@@ -129,8 +148,14 @@ export async function hasScopedAccess(
     return !requireScopeForNonAdmin;
   }
 
+  const orgWideOk = await holdsOrgWideExemptRole(userId);
   for (const scope of scopes) {
-    if (scope.scope_type === "all") return true;
+    if (scope.scope_type === "all") {
+      if (orgWideOk || ORG_WIDE_EXEMPT_ROLES.includes(scope.role_key)) return true;
+      if (!target.branchId) continue;
+      if ((await ownBranchId(userId)) === target.branchId) return true;
+      continue;
+    }
 
     if (
       scope.scope_type === "branch" &&
@@ -231,6 +256,7 @@ export async function hasOrgWideScope(userId: string, allowedRoles: string[]): P
   if (await hasAnyRole(userId, "super_admin")) return true;
   if (!(await hasAnyRole(userId, ...allowedRoles))) return false;
   const scopes = await getUserAssignmentScopes(userId, allowedRoles);
+  if (!(await holdsOrgWideExemptRole(userId))) return false;
   return scopes.some((s) => s.scope_type === "all");
 }
 
@@ -290,12 +316,16 @@ export async function buildScopeWhereClause(
 
   const ors: string[] = [];
   const params: unknown[] = [];
+  const orgWideOk = await holdsOrgWideExemptRole(userId);
+  let downgradedAll = false;
 
   for (const s of scopes) {
     if (s.scope_type === "all") {
-      // Roles in blockOrgWideForRoles must not bypass branch scoping via scope_type='all'.
-      // Skip this entry; explicit branch/process rows from other scopes still apply.
-      if (blockOrgWideForRoles.includes(s.role_key)) continue;
+      // Branch scoping is the default: only exempt roles keep org-wide access.
+      if (!orgWideOk || blockOrgWideForRoles.includes(s.role_key)) {
+        downgradedAll = true;
+        continue;
+      }
       ors.push("1=1");
       continue;
     }
@@ -355,12 +385,8 @@ export async function buildScopeWhereClause(
     // If blockOrgWideForRoles stripped every scope_type='all' entry and the user has no
     // explicit branch/process assignments, fall back to their own employee record's branch_id
     // so they can still see their own branch rather than nothing.
-    if (blockOrgWideForRoles.length > 0 && aliases.branchId) {
-      const [empRows] = await db.execute<RowDataPacket[]>(
-        "SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
-        [userId]
-      );
-      const branchId = (empRows as RowDataPacket[])[0]?.branch_id;
+    if (downgradedAll && aliases.branchId) {
+      const branchId = await ownBranchId(userId);
       if (branchId) {
         return { sql: `${aliases.branchId} = ?`, params: [branchId] };
       }

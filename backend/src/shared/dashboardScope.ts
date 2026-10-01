@@ -1,3 +1,4 @@
+import { ORG_WIDE_EXEMPT_ROLES } from "./scopeAccess.js";
 import { db } from "../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { getUserRoleContext } from "./roleResolver.js";
@@ -370,7 +371,7 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
       // A scope_type='all' grant was historically used to give HR org-wide access but the
       // business rule is: HR sees only their own branch. super_admin / admin / ceo / HO
       // roles bypass before reaching this block and are unaffected.
-      const isBranchMandatoryRole = effectiveRole === "hr" || effectiveRole === "hr_admin";
+      const isBranchMandatoryRole = !ORG_WIDE_EXEMPT_ROLES.includes(effectiveRole);
       if (hasAllGrant && !isBranchMandatoryRole) {
         return { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId, role: effectiveRole };
       }
