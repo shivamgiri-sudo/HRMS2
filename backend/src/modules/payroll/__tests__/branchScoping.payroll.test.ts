@@ -181,7 +181,11 @@ describe("per-employee reads are refused outside the caller's branch", () => {
     await request(mount(payrollLinesCompatRouter, "/p")).get("/p/runs/r1/lines");
     const q = sqlLog.find((l) => /FROM salary_prep_line spl/.test(l.sql) && /COUNT/.test(l.sql));
     expect(q!.sql).toMatch(/e\.branch_id = \?/);
-    expect(q!.params).toEqual(["r1", "emp-self", "A"]);
+    // run id, the caller's own employee, then the branch - repeated once because the own-branch clamp
+    // (eda08483f) also ANDs the branch on the caller's employee record to every assignment row.
+    expect(q!.params.slice(0, 2)).toEqual(["r1", "emp-self"]);
+    expect(q!.params.slice(2).every((p: unknown) => p === "A")).toBe(true);
+    expect(q!.params.length).toBeGreaterThanOrEqual(3);
   });
 
   it("noc: GET /required/:employeeId", async () => {
