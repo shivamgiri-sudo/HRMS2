@@ -24,7 +24,7 @@ const h =
 
 const MAX_ATTEMPTS = 3;
 const GPS_PASS_THRESHOLD_M = 50;
-const EXPIRY_HOURS = 72;
+const EXPIRY_HOURS = 168; // 7 days
 
 const SELFIE_DIR = path.resolve("uploads/bgv-selfies");
 if (!fs.existsSync(SELFIE_DIR)) fs.mkdirSync(SELFIE_DIR, { recursive: true });
@@ -120,7 +120,9 @@ async function geocodeAddress(
 // Returns ONLY the present address — permanent address is not used for GPS verification.
 function buildPresentAddress(profile: RowDataPacket | null): string {
   if (!profile) return "";
-  return [
+  // Always the CURRENT residential address — never the permanent one. Falls back to the profile's
+  // single-field current_address only when the structured present_* columns are all empty.
+  const structured = [
     profile.present_address_line1,
     profile.present_address_line2,
     profile.present_address,
@@ -131,6 +133,7 @@ function buildPresentAddress(profile: RowDataPacket | null): string {
     .map((v) => (v ? String(v).trim() : ""))
     .filter(Boolean)
     .join(", ");
+  return structured || (profile.current_address ? String(profile.current_address).trim() : "");
 }
 
 function extractAddressHints(profile: RowDataPacket | null) {
@@ -248,7 +251,7 @@ export async function initiateAddressBgvForCandidate(
   );
 
   const [profiles] = await db.execute<RowDataPacket[]>(
-    `SELECT present_address_line1, present_address_line2, present_address,
+    `SELECT current_address, present_address_line1, present_address_line2, present_address,
             present_city, present_state, present_pincode,
             permanent_address_line1, permanent_address_line2, permanent_address,
             permanent_city, permanent_state, permanent_pincode
@@ -346,7 +349,7 @@ export async function sweepMissingAddressBgvLinks(limit = 5): Promise<number> {
       WHERE (c.current_stage = 'offer_approved' OR c.profile_submitted_at IS NOT NULL)
         AND COALESCE(c.profile_submitted_at, c.updated_at) >= NOW() - INTERVAL 14 DAY
         AND c.email IS NOT NULL AND TRIM(c.email) <> ''
-        AND COALESCE(NULLIF(TRIM(p.present_address), ''), NULLIF(TRIM(p.present_address_line1), '')) IS NOT NULL
+        AND COALESCE(NULLIF(TRIM(p.present_address), ''), NULLIF(TRIM(p.present_address_line1), ''), NULLIF(TRIM(p.current_address), '')) IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification v WHERE v.candidate_id = c.id)
       ORDER BY c.updated_at DESC
       LIMIT ${Math.max(1, Math.min(50, Math.trunc(limit)))}`,
