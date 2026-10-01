@@ -12,11 +12,13 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findByStoredFilename, logDocumentAccess, isHoldActive } = vi.hoisted(() => ({
+const { findByStoredFilename, logDocumentAccess, isHoldActive, canViewEmployee } = vi.hoisted(() => ({
   findByStoredFilename: vi.fn(),
   logDocumentAccess: vi.fn(),
   isHoldActive: vi.fn(),
+  canViewEmployee: vi.fn(),
 }));
+vi.mock("../../../shared/enterpriseScope.js", () => ({ canViewEmployee }));
 
 vi.mock("../../document-vault/documentVault.service.js", () => ({ findByStoredFilename, logDocumentAccess }));
 vi.mock("../../privacy-engine/privacyHold.service.js", () => ({ isHoldActive }));
@@ -47,6 +49,7 @@ describe("authorizeDocumentAccess owner bypass", () => {
     findByStoredFilename.mockReset();
     logDocumentAccess.mockReset().mockResolvedValue(undefined);
     isHoldActive.mockReset().mockResolvedValue(null);
+    canViewEmployee.mockReset().mockResolvedValue(true);
   });
 
   it("denies the owning employee when only actorUserId (not actorEmployeeId) is passed — the pre-fix shape", async () => {
@@ -96,8 +99,9 @@ describe("authorizeDocumentAccess owner bypass", () => {
     expect(result.reasonCode).toBe("INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL");
   });
 
-  it("hr can still access a pii document they don't own, independent of the owner bypass", async () => {
+  it("hr can still access a pii document they don't own when the owner is inside their branch", async () => {
     findByStoredFilename.mockResolvedValue(PII_ITEM);
+    canViewEmployee.mockResolvedValue(true);
 
     const result = await authorizeDocumentAccess({
       actorUserId: "some-hr-user",
@@ -107,5 +111,39 @@ describe("authorizeDocumentAccess owner bypass", () => {
     });
 
     expect(result.allowed).toBe(true);
+    expect(canViewEmployee).toHaveBeenCalledWith({ id: "some-hr-user" }, EMPLOYEE_ID);
+  });
+
+  it("hr is refused a pii or payroll document whose owner is in another branch (branch scoping)", async () => {
+    canViewEmployee.mockResolvedValue(false);
+    for (const level of ["pii", "payroll"] as const) {
+      findByStoredFilename.mockResolvedValue({ ...PII_ITEM, access_level: level });
+      const result = await authorizeDocumentAccess({
+        actorUserId: "some-hr-user", actorRole: "hr", storedFilename: "abc.pdf", action: "view",
+      });
+      expect(result.allowed).toBe(false);
+      expect(result.reasonCode).toBe("OUTSIDE_BRANCH_SCOPE");
+    }
+  });
+
+  it("org-wide roles and the DPO are never branch-checked", async () => {
+    canViewEmployee.mockResolvedValue(false);
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    for (const role of ["admin", "super_admin", "ceo", "dpo"]) {
+      const result = await authorizeDocumentAccess({
+        actorUserId: "u", actorRole: role, storedFilename: "abc.pdf", action: "view",
+      });
+      expect(`${role}: ${result.allowed} ${result.reasonCode}`).toBe(`${role}: true ALLOWED`);
+    }
+    expect(canViewEmployee).not.toHaveBeenCalled();
+  });
+
+  it("a canViewEmployee failure fails closed", async () => {
+    canViewEmployee.mockRejectedValue(new Error("db down"));
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    const result = await authorizeDocumentAccess({
+      actorUserId: "some-hr-user", actorRole: "hr", storedFilename: "abc.pdf", action: "view",
+    });
+    expect(result.allowed).toBe(false);
   });
 });

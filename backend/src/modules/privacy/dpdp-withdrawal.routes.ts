@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import * as svc from "./dpdp-withdrawal.service.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { buildRequesterScope, withdrawalScopeGuard } from "./dpdp-withdrawal.scope.js";
 
 export const dpdpWithdrawalRouter = Router();
 
@@ -62,7 +63,7 @@ dpdpWithdrawalRouter.get(
       branchId: req.query.branch_id as string | undefined,
       dateFrom: req.query.date_from as string | undefined,
       dateTo: req.query.date_to as string | undefined,
-    });
+    }, await buildRequesterScope(req.authUser!));
     return res.json({ success: true, data });
   })
 );
@@ -82,11 +83,14 @@ dpdpWithdrawalRouter.get(
   "/dpdp-withdrawal/stats",
   requireAuth,
   requireRole("hr", "admin", "dpo", "compliance", "super_admin"),
-  h(async (_req: AuthenticatedRequest, res: Response) => {
-    const data = await svc.getStats();
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await svc.getStats(await buildRequesterScope(req.authUser!));
     return res.json({ success: true, data });
   })
 );
+
+// Branch scope for every /dpdp-withdrawal/:id/* route below (static routes above never reach this).
+dpdpWithdrawalRouter.use("/dpdp-withdrawal/:id", requireAuth, withdrawalScopeGuard);
 
 // GET /dpdp-withdrawal/:id — get single (own or HR)
 dpdpWithdrawalRouter.get(

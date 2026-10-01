@@ -11,6 +11,8 @@
 import type { VaultItem, VaultAccessLevel } from "../document-vault/documentVault.service.js";
 import { findByStoredFilename, logDocumentAccess } from "../document-vault/documentVault.service.js";
 import { isHoldActive } from "../privacy-engine/privacyHold.service.js";
+import { canViewEmployee } from "../../shared/enterpriseScope.js";
+import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 
 export type VaultAction = "view" | "download" | "delete" | "token_generate" | "token_consume";
 
@@ -126,6 +128,40 @@ export async function authorizeDocumentAccess(opts: DocumentAuthOptions): Promis
       userAgent: opts.userAgent,
     }).catch(() => {});
     return { allowed: false, reasonCode: "INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL", item };
+  }
+
+  // Branch scoping (owner ruling 2026-10-01): the role table above says WHICH ROLES may open a level,
+  // not whose documents. hr / payroll_hr could open the pii and payroll documents of an employee in any
+  // branch. For the sensitive levels a role that is not org-wide (or the DPO, who legitimately sees all)
+  // must be able to see the document owner's branch. Owner access and org-wide roles are unchanged.
+  const SENSITIVE_LEVELS: VaultAccessLevel[] = ["pii", "payroll", "confidential"];
+  if (
+    !isOwner &&
+    item.owner_employee_id &&
+    SENSITIVE_LEVELS.includes(accessLevel) &&
+    opts.actorRole !== "dpo" &&
+    !ORG_WIDE_EXEMPT_ROLES.includes(opts.actorRole)
+  ) {
+    let inScope = false;
+    try {
+      inScope = await canViewEmployee({ id: opts.actorUserId }, item.owner_employee_id);
+    } catch {
+      inScope = false; // fail closed
+    }
+    if (!inScope) {
+      await logDocumentAccess({
+        vaultItemId: item.id,
+        storedPath: opts.storedFilename,
+        actorUserId: opts.actorUserId,
+        actorType: "employee",
+        action: toAuditAction(opts.action),
+        accessResult: "denied",
+        denialReason: `Document owner is outside the caller's branch / assigned scope (access_level '${accessLevel}')`,
+        ipAddress: opts.ipAddress,
+        userAgent: opts.userAgent,
+      }).catch(() => {});
+      return { allowed: false, reasonCode: "OUTSIDE_BRANCH_SCOPE", item };
+    }
   }
 
   return { allowed: true, reasonCode: "ALLOWED", item };

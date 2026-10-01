@@ -67,8 +67,6 @@ const HELPDESK_ADMIN_ROLES = ["admin", "hr", "super_admin", "it", "branch_it", "
 // set by any live route. Matches the live enum, confirmed 2026-08-24:
 // enum('open','in_progress','pending_info','on_hold','resolved','closed','cancelled').
 const ACTIVE_TICKET_STATUSES = ["open", "in_progress", "pending_info", "on_hold"] as const;
-// The subset of HELPDESK_ADMIN_ROLES that is org-wide by design (unchanged).
-const HELPDESK_ORG_WIDE_ROLES = ["admin", "hr", "super_admin"] as const;
 // The subset that must be scoped to its own branch/process — previously treated
 // identically to org-wide roles, giving company-wide ticket visibility to a role
 // named "branch_it" (delta-audit 2026-08-14, P1; same anti-pattern the same-HEAD
@@ -83,6 +81,32 @@ for (const [category, roles] of Object.entries(CATEGORY_OWNER_ROLES)) {
   for (const role of roles) {
     (ROLE_OWNED_CATEGORIES[role] ??= []).push(category);
   }
+}
+
+/**
+ * Branch/process part of the helpdesk row scope (no category restriction). Owner ruling 2026-10-01:
+ * only ORG_WIDE_EXEMPT roles (admin, super_admin, ceo ...) are branch-unrestricted; hr is limited to its
+ * own branch / assignments like it/branch_it/it_admin. Used directly by the aggregate endpoints that never
+ * had a category restriction (sla-summary, owner-workload, root-causes, agents).
+ */
+async function resolveHelpdeskBranchScope(
+  user: AuthenticatedRequest["authUser"]
+): Promise<{ sql: string; params: unknown[] }> {
+  if (await hasRoleForRequest(user, "super_admin")) return { sql: "1=1", params: [] };
+  let branchScope: { sql: string; params: unknown[] };
+  if (await hasRoleForRequest(user, "admin")) {
+    branchScope = { sql: "1=1", params: [] };
+  } else {
+    const scope = await resolveUserBusinessScope(user as { id: string });
+    branchScope = buildProcessScopeCondition(scope, { branchId: "e.branch_id", processId: "e.process_id" });
+    // hr without an assignment row still has a resolvable scope: its own employee branch.
+    if (branchScope.sql !== "1=1" && scope.roles?.includes("hr") && scope.branchId) {
+      branchScope = branchScope.sql === "1=0"
+        ? { sql: "e.branch_id = ?", params: [scope.branchId] }
+        : { sql: `(${branchScope.sql}) OR e.branch_id = ?`, params: [...branchScope.params, scope.branchId] };
+    }
+  }
+  return branchScope;
 }
 
 /**
@@ -125,13 +149,7 @@ async function resolveHelpdeskTicketScope(
       .flatMap((role) => ROLE_OWNED_CATEGORIES[role] ?? [])
   )];
 
-  let branchScope: { sql: string; params: unknown[] };
-  if (await hasRoleForRequest(user, ...HELPDESK_ORG_WIDE_ROLES)) {
-    branchScope = { sql: "1=1", params: [] };
-  } else {
-    const scope = await resolveUserBusinessScope(user as { id: string });
-    branchScope = buildProcessScopeCondition(scope, { branchId: "e.branch_id", processId: "e.process_id" });
-  }
+  const branchScope = await resolveHelpdeskBranchScope(user);
 
   // A HELPDESK_ADMIN_ROLES member holding none of the mapped roles (shouldn't happen given
   // the current mapping covers every role in HELPDESK_ADMIN_ROLES, but fail closed rather than
@@ -183,7 +201,7 @@ router.get("/dashboard", requireRole("admin", "hr", "super_admin", "manager", "p
 }));
 
 router.get("/sla-summary", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getHelpdeskSlaSummary(req.query as any);
+  const data = await getHelpdeskSlaSummary(req.query as any, await resolveHelpdeskBranchScope(req.authUser));
   return res.json({ success: true, data });
 }));
 
@@ -193,8 +211,8 @@ router.get("/category-breakdown", requireRole("admin", "hr", "super_admin", "man
   return res.json({ success: true, data });
 }));
 
-router.get("/owner-workload", requireRole("admin", "hr", "super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
-  const data = await getOwnerWorkload();
+router.get("/owner-workload", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const data = await getOwnerWorkload(await resolveHelpdeskBranchScope(req.authUser));
   return res.json({ success: true, data });
 }));
 
@@ -205,7 +223,7 @@ router.get("/aging", requireRole("admin", "hr", "super_admin", "manager"), h(asy
 }));
 
 router.get("/root-causes", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getRootCauses(req.query as any);
+  const data = await getRootCauses(req.query as any, await resolveHelpdeskBranchScope(req.authUser));
   return res.json({ success: true, data });
 }));
 
@@ -856,7 +874,8 @@ router.post(
 
 router.get("/agents", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { branch_id } = req.query as { branch_id?: string };
-  const data = await helpdeskService.listAgents({ branch_id });
+  const scope = await resolveHelpdeskBranchScope(req.authUser);
+  const data = await helpdeskService.listAgents({ branch_id }, scope);
   return res.json({ success: true, data });
 }));
 

@@ -114,16 +114,20 @@ export async function getMyRequests(requesterId: string): Promise<RowDataPacket[
 /**
  * HR/compliance views all requests with optional filters.
  */
-export async function listAll(filters: WithdrawalFilters): Promise<RowDataPacket[]> {
+export async function listAll(filters: WithdrawalFilters, scope?: { sql: string; params: unknown[] } | null): Promise<RowDataPacket[]> {
   const conditions: string[] = ["1=1"];
   const params: unknown[] = [];
 
+  if (scope) {
+    conditions.push(scope.sql);
+    params.push(...scope.params);
+  }
   if (filters.status) {
     conditions.push("dcw.status = ?");
     params.push(filters.status);
   }
   if (filters.branchId) {
-    conditions.push("e.branch_id = ?");
+    conditions.push("dcw.requester_id IN (SELECT be.user_id FROM employees be WHERE be.user_id IS NOT NULL AND be.branch_id = ?)");
     params.push(filters.branchId);
   }
   if (filters.dateFrom) {
@@ -462,7 +466,7 @@ export async function addEvidence(
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
-export async function getStats(): Promise<Record<string, number>> {
+export async function getStats(scope?: { sql: string; params: unknown[] } | null): Promise<Record<string, number>> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total,
@@ -470,7 +474,8 @@ export async function getStats(): Promise<Record<string, number>> {
        SUM(status = 'approved' AND MONTH(created_at) = MONTH(NOW()) AND YEAR(created_at) = YEAR(NOW())) AS approved_this_month,
        SUM(sla_due_at IS NOT NULL AND sla_due_at < NOW() AND status IN ('submitted','in_review')) AS sla_breached,
        SUM(processing_hold_active = 1) AS on_hold
-     FROM dpdp_consent_withdrawal`
+     FROM dpdp_consent_withdrawal dcw${scope ? ` WHERE ${scope.sql}` : ""}`,
+    scope ? scope.params : []
   );
   return rows[0] as Record<string, number>;
 }
