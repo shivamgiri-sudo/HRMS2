@@ -183,7 +183,13 @@ async function runClearanceLwdTrigger(): Promise<void> {
 
 async function runExitAuto(): Promise<void> {
   try {
-    const r = await runExitAutoProgress();
+    // The DB client opens a circuit breaker after a burst of errors (seen 2026-10-01 14:27); one
+    // short wait and retry saves the move from waiting a whole hour for the next tick.
+    const r = await runExitAutoProgress().catch(async (err: unknown) => {
+      if (!/circuit breaker/i.test(String((err as Error)?.message))) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 30_000));
+      return runExitAutoProgress();
+    });
     if (r.toManagerReview + r.toAccepted + r.toNotice + r.toExited + r.failed > 0) {
       console.log(
         `[employee-lifecycle] Exit auto-progress: review=${r.toManagerReview} accepted=${r.toAccepted}` +

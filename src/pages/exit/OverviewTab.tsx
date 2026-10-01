@@ -9,6 +9,7 @@ import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
 import {
   ExitStagePipeline,
   exitStageOf,
+  exitStageOfRow,
   isPendingAtExit,
   type ExitStageKey,
 } from "@/components/exit/ExitStagePipeline";
@@ -73,7 +74,7 @@ export function OverviewTab({
     const rows = data?.requests ?? [];
     return stage === "all"
       ? rows
-      : rows.filter((r) => exitStageOf(r.status) === stage);
+      : rows.filter((r) => exitStageOfRow(r) === stage);
   }, [data, stage]);
 
   const moveStatus = async (id: string, nextStatus: string) => {
@@ -253,7 +254,7 @@ export function OverviewTab({
                     <td className="p-4">
                       <Pill tone="blue">{r.status?.replace(/_/g, " ")}</Pill>
                       <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                        Stage: {exitStageOf(r.status)}
+                        Stage: {exitStageOfRow(r)}
                       </div>
                     </td>
                     <td className="p-4">
