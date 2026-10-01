@@ -246,6 +246,7 @@ esiRegDocsRouter.get(
       `SELECT
          e.id                                              AS employee_id,
          e.employee_code,
+         e.employee_code                                   AS emp_code,
          CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS name,
          COALESCE(b.branch_name, '')                       AS branch,
          e.esic_number,
