@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { UserMinus } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { RaiseExitDialog, type RaiseExitEmployee } from "./RaiseExitDialog";
 
 /**
@@ -18,7 +18,6 @@ export function RaiseExitButton({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const { toast } = useToast();
   return (
     <>
       <button
@@ -35,7 +34,7 @@ export function RaiseExitButton({
         <RaiseExitDialog
           employee={employee}
           onClose={() => setOpen(false)}
-          onSubmitted={() => toast({ title: "Exit raised", description: `${employee.name} is now in Exit Command Center.` })}
+          onSubmitted={() => toast.success(`Exit raised for ${employee.name} - now in Exit Command Center`)}
         />
       )}
     </>
