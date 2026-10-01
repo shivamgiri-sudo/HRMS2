@@ -188,8 +188,12 @@ export async function withdrawResignation(input: WithdrawInput): Promise<Withdra
   let ownsIt = !!input.callerEmployeeId && String(current.employee_id) === input.callerEmployeeId;
   if (!ownsIt && input.actorUserId) {
     const [linked] = await db.execute<RowDataPacket[]>(
-      `SELECT 1 FROM employees WHERE id = ? AND user_id = ? LIMIT 1`,
-      [current.employee_id, input.actorUserId],
+      `SELECT 1 FROM employees e
+        WHERE e.id = ?
+          AND (e.user_id = ?
+               OR e.employee_code = (SELECT me.employee_code FROM employees me WHERE me.id = ? LIMIT 1))
+        LIMIT 1`,
+      [current.employee_id, input.actorUserId, input.callerEmployeeId ?? null],
     );
     ownsIt = Array.isArray(linked) && linked.length > 0;
   }

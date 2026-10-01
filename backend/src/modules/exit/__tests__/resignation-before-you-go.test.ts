@@ -154,7 +154,7 @@ describe("POST /:exitId/withdraw — employee self-withdraw", () => {
 
   it("200 when the resignation sits on another employee record linked to the same login", async () => {
     on(/SELECT status, employee_id/, () => [exitRow("manager_review", { employee: "emp-other-record" })]);
-    on(/SELECT 1 FROM employees WHERE id = \? AND user_id = \?/, (params) =>
+    on(/SELECT 1 FROM employees e\s+WHERE e\.id = \?/, (params) =>
       params[0] === "emp-other-record" && params[1] === "user-self" ? [{ 1: 1 }] : []);
     on(/SELECT active_status FROM employees/, () => [{ active_status: 1 }]);
     const res = await withdraw();

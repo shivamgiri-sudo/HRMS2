@@ -703,10 +703,13 @@ resignationRouter.get(
         -- Every employee row linked to this login: a resignation filed against another record of
         -- the same person (rehire, duplicate) was invisible here, so the page showed no request
         -- and no Withdraw button.
+        -- ...and any record carrying the same employee code (a duplicate row created without the
+        -- login link still belongs to this person).
         WHERE er.employee_id = ?
            OR er.employee_id IN (SELECT e2.id FROM employees e2 WHERE e2.user_id = ?)
+           OR er.employee_id IN (SELECT e3.id FROM employees e3 WHERE e3.employee_code = ?)
         ORDER BY er.created_at DESC`,
-      [emp.id, req.authUser!.id]
+      [emp.id, req.authUser!.id, emp.employee_code]
     );
     return res.json({ success: true, data: rows });
   })
