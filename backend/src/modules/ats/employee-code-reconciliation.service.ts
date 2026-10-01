@@ -58,7 +58,7 @@ export async function reconcileEmployeeCodeDrift(): Promise<ReconciliationResult
       [row.current_code, row.candidate_id],
     );
     await db.execute<ResultSetHeader>(
-      `UPDATE ats_onboarding_bridge SET employee_code = ?, updated_at = NOW() WHERE candidate_id = ?`,
+      `UPDATE ats_onboarding_bridge SET employee_code = ? WHERE candidate_id = ?`,
       [row.current_code, row.candidate_id],
     ).catch(() => {
       // ats_onboarding_bridge.employee_code may not exist on an older bridge row shape; the
