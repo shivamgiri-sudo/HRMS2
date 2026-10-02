@@ -200,10 +200,10 @@ export async function resolveDispute(p: ResolveDisputeParams): Promise<ResolveDi
     }
   }
 
-  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
   const setClause = new_shift_template_id
-    ? "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = ?, dispute_resolution = ?, shift_template_id = ?"
-    : "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = ?, dispute_resolution = ?";
+    ? "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = NOW(), dispute_resolution = ?, shift_template_id = ?"
+    : "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = NOW(), dispute_resolution = ?";
+  // dispute_resolved_at uses NOW(): the pool session timezone is +05:30, matching every other DB-written timestamp.
   // dispute_resolved_by has FK -> employees(id): store the resolver's EMPLOYEE id (NULL when none).
   // The acting user id stays in the audit log below.
   let resolverEmployeeId: string | null = null;
@@ -212,8 +212,8 @@ export async function resolveDispute(p: ResolveDisputeParams): Promise<ResolveDi
     resolverEmployeeId = Array.isArray(empRows) && empRows[0]?.id ? String(empRows[0].id) : null;
   }
   const setParams = new_shift_template_id
-    ? [resolverEmployeeId, now, resolution.trim(), new_shift_template_id, assignmentId]
-    : [resolverEmployeeId, now, resolution.trim(), assignmentId];
+    ? [resolverEmployeeId, resolution.trim(), new_shift_template_id, assignmentId]
+    : [resolverEmployeeId, resolution.trim(), assignmentId];
 
   await db.execute(`UPDATE roster_daily_assignment SET ${setClause} WHERE id = ?`, setParams);
 

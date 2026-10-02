@@ -84,7 +84,7 @@ describe("resolveDispute", () => {
     const r = await resolveDispute({ assignmentId: "rda-1", userId: "u1", resolution: " moved ", newShiftTemplateId: "t-new", canOwn: allow });
     const [sql, params] = rdaUpdate()!;
     expect(sql).toMatch(/shift_template_id = \?/);
-    expect(params).toEqual(["emp-u1", expect.any(String), "moved", "t-new", "rda-1"]);
+    expect(params).toEqual(["emp-u1", "moved", "t-new", "rda-1"]);
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ employeeIds: ["e1"], kind: "dispute", sourceId: "rda-1" }));
     expect(r).toMatchObject({ previousShiftTemplateId: "t-old", shiftTemplateId: "t-new", resolution: "moved" });
   });
@@ -106,7 +106,7 @@ describe("resolveDispute", () => {
     await resolveDispute({ assignmentId: "rda-1", userId: "u1", resolution: "keep", canOwn: allow });
     const [sql, params] = rdaUpdate()!;
     expect(sql).not.toMatch(/shift_template_id = \?/);
-    expect(params).toEqual(["emp-u1", expect.any(String), "keep", "rda-1"]);
+    expect(params).toEqual(["emp-u1", "keep", "rda-1"]);
   });
 });
 
@@ -271,5 +271,14 @@ describe("resolveDispute — acknowledgement only (no shift change)", () => {
   it("an unchanged shift id counts as no shift change", async () => {
     await resolveDispute({ assignmentId: "rda-1", userId: "u1", resolution: "same", newShiftTemplateId: "t-old", canOwn: allow });
     expect(m.syncCycleToRta).not.toHaveBeenCalled();
+  });
+
+  it("stamps dispute_resolved_at with NOW() (IST session), not a UTC param", async () => {
+    await resolveDispute({ assignmentId: "rda-1", userId: "u1", resolution: "ack", canOwn: allow });
+    const [sql, params] = rdaUpdate()! as [string, unknown[]];
+    expect(sql).toContain("dispute_resolved_at = NOW()");
+    expect(params).toHaveLength(3);
+    expect(params.some((p) => typeof p === "string" && /^\d{4}-\d{2}-\d{2} \d{2}:/.test(p))).toBe(false);
+    expect(params[params.length - 1]).toBe("rda-1");
   });
 });
