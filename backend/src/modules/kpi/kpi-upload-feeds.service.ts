@@ -140,6 +140,12 @@ type FeedDef = {
   toFacts: (row: Record<string, unknown>, date: string) => FeedFact[];
 };
 
+/** SQL: seconds from 'h:mm:ss' text or an Excel day-fraction ('0.0034' = 0.0034 days). NULL when blank. */
+const secs = (col: string) =>
+  `(CASE WHEN NULLIF(TRIM(${col}), '') IS NULL THEN NULL
+         WHEN TRIM(${col}) REGEXP '^[0-9]*[.][0-9]+$' THEN CAST(TRIM(${col}) AS DECIMAL(20,10)) * 86400
+         ELSE TIME_TO_SEC(TRIM(${col})) END)`;
+
 async function masmisPool(): Promise<Pool> {
   return (await getPoolForKey("sales_brand_mis")) as Pool;
 }
@@ -221,7 +227,7 @@ export const FEEDS: FeedDef[] = [
     fetch: async (date) => {
       const pool = await masmisPool();
       const part = (t: string) => `SELECT UPPER(TRIM(emp_id)) AS emp_id, CAST(NULLIF(total_calls, '') AS UNSIGNED) AS calls, CAST(NULLIF(connected_calls, '') AS UNSIGNED) AS connected,
-              TIME_TO_SEC(NULLIF(total_talk_time, '')) AS talk_s, TIME_TO_SEC(NULLIF(total_login_time, '')) AS login_s
+              ${secs('total_talk_time')} AS talk_s, ${secs('total_login_time')} AS login_s
          FROM db_masmis.${t} WHERE STR_TO_DATE(call_date, '%e-%b-%y') = ? AND emp_id IS NOT NULL AND TRIM(emp_id) <> ''`;
       const [rows] = await pool.execute(
         `SELECT emp_id, SUM(calls) AS calls, SUM(connected) AS connected, SUM(talk_s) AS talk_s, SUM(login_s) AS login_s
@@ -237,7 +243,7 @@ export const FEEDS: FeedDef[] = [
       const pool = await masmisPool();
       const [rows] = await pool.execute(
         `SELECT UPPER(TRIM(mas_id)) AS emp_id, COUNT(*) AS chats,
-                AVG(CAST(NULLIF(star_rating_value, '') AS DECIMAL(5,2))) AS avg_rating, AVG(TIME_TO_SEC(NULLIF(wait_time, ''))) AS avg_wait_s
+                AVG(NULLIF(CAST(NULLIF(star_rating_value, '') AS DECIMAL(5,2)), 0)) AS avg_rating, AVG(${secs('wait_time')}) AS avg_wait_s
            FROM db_masmis.cl_chat WHERE STR_TO_DATE(report_date, '%e-%b-%y') = ? AND mas_id IS NOT NULL AND TRIM(mas_id) <> ''
           GROUP BY UPPER(TRIM(mas_id))`, [date]);
       return rows as Record<string, unknown>[];
