@@ -11,7 +11,7 @@ export const AUTO_RULE_WARNING =
   "An auto-approved week-off rejection is recorded as a manager force-approve. Swaps always still need the counterpart's acceptance. " +
   "Max coverage drop is stored but does not restrict anything yet. Default is off.";
 
-function RuleRow({ processId, kind, rows }: { processId: string; kind: RequestKind; rows: AutoRuleRow[] }) {
+export function RuleRow({ processId, kind, rows }: { processId: string; kind: RequestKind; rows: AutoRuleRow[] }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<AutoRuleDraft>(DEFAULT_RULE);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
