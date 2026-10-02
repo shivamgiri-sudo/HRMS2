@@ -24,8 +24,8 @@ import { getIstDateString } from '../../utils/dateUtils.js';
 import { bulkImportRouter } from "./bulk-import.routes.js";
 import { getRecruiterAnalyticsSummary } from "./recruiter-analytics.service.js";
 import { canAccessCandidate, resolveCandidateScope } from "./candidate-access.js";
-import { buildBranchNameScopeSql, pinDashboardBranch, resolveAtsBranchScope, OUT_OF_BRANCH_MESSAGE } from "./ats-branch-scope.js";
-import { getAtsOverview, type OverviewPeriod } from "./dashboard.overview.service.js";
+import { branchInScope, buildBranchNameScopeSql, pinDashboardBranch, resolveAtsBranchScope, OUT_OF_BRANCH_MESSAGE } from "./ats-branch-scope.js";
+import { getAtsOverview, limitOverviewToBranches, type OverviewPeriod } from "./dashboard.overview.service.js";
 import { getAtsInsights, getSourcingInsights, getSourcingLeads } from "./dashboard.insights.service.js";
 import { getOperations } from "./dashboard.operations.service.js";
 import { getCandidateJourney, getDrill, listPipeline } from "./dashboard.pipeline.service.js";
@@ -272,9 +272,12 @@ const dashInt = (v: unknown) => (v !== undefined && v !== "" && Number.isInteger
 const ORG_WIDE_ONLY_MESSAGE = "Forbidden: this report is company-wide and limited to head-office roles";
 atsRouter.get("/dashboard/overview", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
   const q = req.query;
-  const pin = pinDashboardBranch(await resolveAtsBranchScope(req.authUser!.id), dashText(q.branch));
+  const scope = await resolveAtsBranchScope(req.authUser!.id);
+  const pin = pinDashboardBranch(scope, dashText(q.branch));
   if (!pin.ok) return res.status(403).json({ success: false, message: OUT_OF_BRANCH_MESSAGE });
-  return res.json({ success: true, data: await getAtsOverview(dashPeriod(q.period, "30d"), pin.branch) });
+  const overview = await getAtsOverview(dashPeriod(q.period, "30d"), pin.branch);
+  // Branch-limited callers must not see other branches in the breakdown / movers (those sections come from the org-wide cube).
+  return res.json({ success: true, data: scope.orgWide ? overview : limitOverviewToBranches(overview, (name) => branchInScope(scope, name)) });
 }));
 atsRouter.get("/dashboard/insights", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
   const q = req.query;

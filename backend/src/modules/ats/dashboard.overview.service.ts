@@ -336,3 +336,16 @@ export function warmAtsOverview() {
   void run();
   setInterval(() => void run(), 10 * 60_000).unref();
 }
+
+
+/**
+ * The branch breakdown and movers come from the organisation-wide cube, so they list every branch even when the request was pinned
+ * to one. A branch-limited caller (hr, manager, branch head ...) must only see their own branches there. Returns a copy: the cached
+ * overview object is shared and must not be mutated.
+ */
+export function limitOverviewToBranches<T extends { branches: { name: string }[]; movers: { up: { name: string }[]; down: { name: string }[]; all: { name: string }[] } }>(
+  ov: T, allow: (branchName: string) => boolean,
+): T {
+  const keep = <R extends { name: string }>(rows: R[]) => rows.filter((r) => allow(r.name));
+  return { ...ov, branches: keep(ov.branches), movers: { ...ov.movers, up: keep(ov.movers.up), down: keep(ov.movers.down), all: keep(ov.movers.all) } };
+}
