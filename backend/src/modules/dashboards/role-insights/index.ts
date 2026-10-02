@@ -86,7 +86,7 @@ export async function computeRoleInsights(code: DashboardCode, ctx: InsightConte
 
 /** Scope-keyed 60s cache for shared (non-per-user) dashboards; per-user ones key on userId. */
 export async function cachedRoleInsights(code: DashboardCode, ctx: InsightContext, perUser: boolean): Promise<RoleInsights> {
-  const key = `role-insights:v1:${code}:${ctx.scope.level}:${ctx.scope.branchIds.join(",")}:${ctx.scope.processIds.join(",")}:${ctx.scope.employeeIds.join(",")}${perUser ? `:u${ctx.userId}` : ""}`;
+  const key = `role-insights:v1:${code}:${ctx.scope.level}:${ctx.scope.branchIds.join(",")}:${ctx.scope.processIds.join(",")}:${ctx.scope.employeeIds.join(",")}${perUser ? `:u${ctx.userId}` : ""}:f${ctx.canSeeFinance ? 1 : 0}`;
   return sharedInFlight(
     key,
     () => cacheInstance.getOrSet(key, () => computeRoleInsights(code, ctx) as never, 60) as unknown as Promise<Record<string, unknown>>,

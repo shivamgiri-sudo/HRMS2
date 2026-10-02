@@ -190,6 +190,19 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
   }
 }
 
+/**
+ * Luckpay answers a status poll for a session that ended in "Failed" with HTTP 500 /
+ * BGW_001 "Status mapping not found for pipe: ..., status: Failed" — its own gateway
+ * has no mapping for the terminal Failed status. That is a verdict, not an outage, but
+ * it was logged as a provider error and the session stayed non-terminal, so every
+ * later poll hit the vendor again (36 of the 38 BGV errors in 24h, two candidates).
+ */
+export function isVendorFailedStatusMappingError(error: unknown): boolean {
+  const e = error as { message?: unknown; providerPayload?: unknown } | null;
+  const text = `${String(e?.message ?? "")} ${JSON.stringify(e?.providerPayload ?? "")}`;
+  return /Status mapping not found/i.test(text) && /status:\s*Failed/i.test(text);
+}
+
 async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutcome> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT client_transaction_id, provider_reference_id, status
@@ -212,14 +225,32 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
   if (["documents_received", "completed"].includes(String(row.status ?? ""))) {
     return { state: "completed", clientTransactionId, transactionId, changed: false };
   }
+  // Terminal: stop re-polling a session already known to have failed. A new attempt
+  // creates a new transaction row, which becomes the latest one above.
+  if (String(row.status ?? "") === "failed") {
+    return { state: "failed", clientTransactionId, transactionId, changed: false };
+  }
 
   // Logged into the same table the BGV API monitor and cost panel read, so
   // DigiLocker stops being invisible there — it previously only ever reached
   // ats_provider_transaction_log.
-  const status = await withProviderFailureLogged(
-    { candidateId, endpointKey: "DIGILOCKER_STATUS", providerKey: "luckpay" },
-    () => luckpayClient.checkKycStatus({ clientTransactionId, transactionId }),
-  );
+  let status: LuckpayStatusResult;
+  try {
+    status = await withProviderFailureLogged(
+      { candidateId, endpointKey: "DIGILOCKER_STATUS", providerKey: "luckpay" },
+      () => luckpayClient.checkKycStatus({ clientTransactionId, transactionId }),
+    );
+  } catch (error) {
+    if (!isVendorFailedStatusMappingError(error)) throw error;
+    // Record the verdict so this session is never polled again.
+    const message = "DigiLocker session failed (reported by provider)";
+    await updateProviderLog({ clientTransactionId, status: "failed", errorMessage: message });
+    await upsertDigilockerCheck({
+      candidateId, state: "failed", providerRequestId: clientTransactionId,
+      providerReferenceId: transactionId, summary: message, raw: { providerStatus: "Failed" },
+    });
+    return { state: "failed", providerStatus: "Failed", clientTransactionId, transactionId, message, changed: true };
+  }
   await writeBgvApiLog({
     candidateId,
     endpointKey: "DIGILOCKER_STATUS",

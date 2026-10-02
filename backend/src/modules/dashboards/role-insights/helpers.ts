@@ -54,3 +54,12 @@ export function lastDays(today: string, n: number): string[] {
 export function istToday(): string {
   return new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
 }
+
+/** Roles that may see revenue / cost / margin on operational dashboards. */
+const FINANCE_VIEW_ROLES = new Set([
+  "super_admin", "ceo", "coo", "cfo", "finance_head", "accounts_head", "finance", "payroll_head", "operations_head", "ho_operations",
+]);
+
+export function canSeeFinanceFigures(roleKeys: readonly string[]): boolean {
+  return roleKeys.some((r) => FINANCE_VIEW_ROLES.has(r));
+}

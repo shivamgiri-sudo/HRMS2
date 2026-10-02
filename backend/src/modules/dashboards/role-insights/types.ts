@@ -99,6 +99,8 @@ export interface InsightContext {
   scope: DashboardScope;
   userId: string;
   roleKeys: string[];
+  /** May see revenue / cost / margin (finance-sensitive) figures. Part of the cache key where it matters. */
+  canSeeFinance?: boolean;
   /** IST calendar date, YYYY-MM-DD. */
   today: string;
   branchId?: string;

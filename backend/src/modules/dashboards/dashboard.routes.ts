@@ -23,7 +23,7 @@ import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js"
 import { cacheInstance as dashboardMetricsCache } from "../../lib/cache/quality-cache.js";
 import { sharedInFlight } from "./metrics-in-flight.js";
 import { cachedRoleInsights } from "./role-insights/index.js";
-import { istToday } from "./role-insights/helpers.js";
+import { canSeeFinanceFigures, istToday } from "./role-insights/helpers.js";
 import { loadRunInsights } from "./role-insights/providers/payrollRun.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
 import {
@@ -655,6 +655,7 @@ router.get("/:dashboardCode/insights", h(async (req: AuthenticatedRequest, res: 
       scope,
       userId: user.id,
       roleKeys: context.roleKeys,
+      canSeeFinance: canSeeFinanceFigures(context.roleKeys),
       today: istToday(),
       branchId: String(req.query.branchId ?? "") || undefined,
       processId: String(req.query.processId ?? "") || undefined,

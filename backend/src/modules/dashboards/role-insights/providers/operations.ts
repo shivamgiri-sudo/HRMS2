@@ -199,6 +199,9 @@ function allowedRow(ctx: InsightContext, r: BpoPnlRow): boolean {
 }
 
 async function pnl(ctx: InsightContext): Promise<InsightSection> {
+  if (!ctx.canSeeFinance) {
+    return { tables: [{ key: "pnl_lite", title: "Process P&L-lite", columns: [], rows: [], unavailable: "Revenue, cost and margin are visible to finance and operations-head roles only." }] };
+  }
   if (ctx.scope.level === "TEAM_ONLY" || ctx.scope.level === "SELF_ONLY") {
     return { tables: [{ key: "pnl_lite", title: "Process P&L-lite", columns: [], rows: [], unavailable: "Revenue and cost are shown for branch / process scopes only." }] };
   }

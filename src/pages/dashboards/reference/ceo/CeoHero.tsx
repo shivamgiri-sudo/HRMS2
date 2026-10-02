@@ -14,11 +14,11 @@ const tone = (v: number | null, good: number, warn: number, higherIsBetter = tru
 /** CEO hero: headcount headline, live stat chips that each drill, and the composite health ring. */
 export function CeoHero({ model, insights, filters, loading }: { model: CeoModel; insights?: RoleInsights; filters: React.ReactNode; loading?: boolean }) {
   const flow = kpiOf(insights?.kpis, "net_flow_30d");
-  const attr = kpiOf(insights?.kpis, "attrition_12m");
+  const attr = kpiOf(insights?.kpis, "attrition_month");
   const gap = kpiOf(insights?.kpis, "hiring_gap");
   const stats: HeroStat[] = [
     { label: model.attendanceAsOf ? `Attendance · ${model.attendanceAsOf.slice(5)}` : "Attendance", value: pctText(model.attendance), tone: tone(model.attendance, 90, 80), href: drillTo("ATTENDANCE") },
-    { label: "Attrition · 12 mo", value: attr?.value == null ? "—" : `${Math.round(attr.value)}%`, tone: tone(attr?.value ?? null, 40, 80, false), href: drillTo("RESIGNATION") },
+    { label: "Attrition · last month", value: attr?.value == null ? "—" : `${attr.value}%`, tone: tone(attr?.value ?? null, 8, 15, false), href: drillTo("RESIGNATION") },
     { label: "Hiring gap", value: gap?.value == null ? "—" : gap.value.toLocaleString("en-IN"), tone: tone(gap?.value ?? null, 0, 50, false), href: drillTo("HIRING_ALERT") },
     { label: model.revenue.month ? `Revenue · ${model.revenue.month}` : "Revenue", value: model.revenue.revenue === null ? "—" : formatUnit(model.revenue.revenue, "inr").text, href: "/finance/process-pnl" },
     { label: "Quality vs target", value: model.qualityScore === null ? "—" : `${model.qualityScore.toFixed(1)}${model.qualityTarget ? ` / ${model.qualityTarget}` : ""}`, tone: model.qualityScore !== null && model.qualityTarget !== null ? (model.qualityScore >= model.qualityTarget ? "good" : model.qualityScore >= model.qualityTarget - 10 ? "warn" : "bad") : "neutral", href: "/quality/executive" },
