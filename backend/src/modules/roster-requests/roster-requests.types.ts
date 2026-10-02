@@ -33,3 +33,15 @@ export interface DecideResult {
   /** Swap: the swap service's own `applied` flag. Other kinds: true once the decision is committed. */
   applied: boolean;
 }
+
+/**
+ * Actor id written into the underlying services' reviewer columns (wfm_roster_swap_request.reviewed_by,
+ * wfm_roster_assignment.manager_action_by, roster_decision_audit.override_by, sensitive_action_log.actor_user_id)
+ * when an auto-approve rule decides. None of those columns has a foreign key to users (same convention
+ * as the "system" actor used by exitAutoAdvance.cron.ts), and the spec names this exact value. The hub's
+ * own roster_request_decision_log records actor_user_id = NULL with auto = 1 instead.
+ */
+export const SYSTEM_AUTO_APPROVE_ACTOR = "system:auto-approve";
+
+/** Kinds an auto-approve rule may decide. Disputes and conflicts always need a human. */
+export const AUTO_APPROVABLE_KINDS: readonly RequestKind[] = ["swap", "weekoff_rejection"];

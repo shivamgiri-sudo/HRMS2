@@ -44,6 +44,12 @@ export interface WeekoffReviewParams {
    * row (used by the roster-requests hub to write its decision log atomically with the decision).
    */
   onTx?: (tx: TxExec) => Promise<void>;
+  /**
+   * Set ONLY by the roster-requests auto-approve path (decide with actor.auto): the decision is taken
+   * by a configured process rule, not a person, so there is no manager whose scope to verify. The
+   * reason requirement and the attendance/payroll lock check still apply. No HTTP handler sets it.
+   */
+  systemActor?: true;
 }
 
 export interface WeekoffReviewResult {
@@ -136,7 +142,7 @@ async function preflight(p: WeekoffReviewParams): Promise<string> {
   if (!reason) throw fail(400, { error: "reason is required" });
 
   // Verify manager scope before mutation
-  const isPrivileged = await hasRole(p.userId, "admin", "hr", "wfm");
+  const isPrivileged = p.systemActor === true || (await hasRole(p.userId, "admin", "hr", "wfm"));
   if (!isPrivileged) {
     const emp = await getEmployeeForUser(p.userId);
     if (!emp) throw fail(403, { error: "No employee record" });

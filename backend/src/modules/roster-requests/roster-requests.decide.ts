@@ -33,7 +33,9 @@ import { computeImpact as defaultComputeImpact, type ImpactCandidate } from "./r
 import { logDecision as defaultLogDecision } from "./roster-requests.decision-log.js";
 import { notifyRosterRequest as defaultNotify } from "./roster-requests.notify.js";
 import {
+  AUTO_APPROVABLE_KINDS,
   REQUEST_KINDS,
+  SYSTEM_AUTO_APPROVE_ACTOR,
   type DecideInput,
   type DecideResult,
   type DecisionAction,
@@ -55,7 +57,10 @@ export const ALLOWED_ACTIONS: Readonly<Record<RequestKind, readonly DecisionActi
 };
 
 export interface DecideActor {
-  userId: string;
+  /** null only for an auto-approve-rule decision (auto: true). */
+  userId: string | null;
+  /** Decision taken by an auto-approve rule: approve only, swap / week-off only. */
+  auto?: boolean;
   req?: Request;
 }
 
@@ -153,6 +158,13 @@ export async function decideRosterRequest(
     // week-off force-approve has always required a reason at the existing endpoint
     || kind === "weekoff_rejection";
   if (reasonRequired && !reason) throw httpError(400, "reason is required");
+  const isAuto = actor.auto === true;
+  if (isAuto && (action !== "approve" || !AUTO_APPROVABLE_KINDS.includes(kind))) {
+    throw httpError(400, `Auto-approve cannot ${action} a ${kind} request`);
+  }
+  if (!isAuto && !actor.userId) throw httpError(400, "A deciding user is required");
+  // The id the underlying services record as reviewer. See SYSTEM_AUTO_APPROVE_ACTOR.
+  const serviceUserId: string = isAuto ? SYSTEM_AUTO_APPROVE_ACTOR : (actor.userId as string);
   const restOverrideReason = typeof input.restOverrideReason === "string" ? input.restOverrideReason.trim() : "";
 
   const subject = await assertStillPending(kind, id, action, d);
@@ -176,7 +188,8 @@ export async function decideRosterRequest(
     kind,
     sourceId: id,
     action,
-    actorUserId: actor.userId,
+    actorUserId: isAuto ? null : actor.userId,
+    auto: isAuto,
     reason: reason || restOverrideReason || null,
     before: impact,
     after,
@@ -196,21 +209,22 @@ export async function decideRosterRequest(
   if (kind === "swap") {
     const wantsForce = input.forceWithoutCounterpartAcceptance === true;
     // Same rule as POST /roster/swaps/:id/review: force is honoured for admin/hr only.
-    const forceWithoutCounterpartAcceptance = wantsForce && (await d.hasRole(actor.userId, "admin", "hr"));
-    const result: any = await d.swapReview(id, action === "approve" ? "approved" : "rejected", actor.userId, actor.req, {
+    // An auto decision never forces past a missing counterpart acceptance.
+    const forceWithoutCounterpartAcceptance = !isAuto && wantsForce && (await d.hasRole(serviceUserId, "admin", "hr"));
+    const result: any = await d.swapReview(id, action === "approve" ? "approved" : "rejected", serviceUserId, actor.req, {
       forceWithoutCounterpartAcceptance,
       restOverrideReason: restOverrideReason || undefined,
     });
     applied = !!result?.applied;
     await logAfterCommit(result);
   } else if (kind === "conflict") {
-    const scope = await d.conflictScope(actor.userId);
-    await d.conflictResolve(id, actor.userId, { resolution_action: reason, resolution_remarks: null, scope }, actor.req);
+    const scope = await d.conflictScope(serviceUserId);
+    await d.conflictResolve(id, serviceUserId, { resolution_action: reason, resolution_remarks: null, scope }, actor.req);
     await logAfterCommit({ resolved: true, resolution_action: reason });
   } else if (kind === "dispute") {
     const result = await d.resolveDispute({
       assignmentId: id,
-      userId: actor.userId,
+      userId: serviceUserId,
       resolution: reason,
       newShiftTemplateId,
       restOverrideReason: restOverrideReason || undefined,
@@ -231,9 +245,10 @@ export async function decideRosterRequest(
     };
     await d.weekoff[action]({
       assignmentId: id,
-      userId: actor.userId,
+      userId: serviceUserId,
       body,
       req: actor.req,
+      ...(isAuto ? { systemActor: true as const } : {}),
       // Written inside the week-off decision transaction: the decision and its log commit together.
       onTx: (tx) => d.logDecision(logEntry({ finalRosterStatus: finalStatus[action], ...body }), tx),
     });

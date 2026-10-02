@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ALLOWED_ACTIONS, decideRosterRequest, type DecideDeps } from "../roster-requests.decide.js";
-import type { ImpactResult, RequestKind } from "../roster-requests.types.js";
+import { SYSTEM_AUTO_APPROVE_ACTOR, type ImpactResult, type RequestKind } from "../roster-requests.types.js";
 
 const actor = { userId: "u-mgr" };
 
@@ -320,5 +320,56 @@ describe("decideRosterRequest — side effects are non-fatal after commit", () =
       return [[], []];
     });
     await expect(decideRosterRequest("swap", "s1", { action: "approve" }, actor, d)).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe("decideRosterRequest — auto-approve actor", () => {
+  const auto = { userId: null, auto: true };
+
+  it("swap: passes the system actor to the service and logs actor null with auto=1", async () => {
+    const { d } = deps();
+    await decideRosterRequest("swap", "s1", { action: "approve", reason: "Auto-approved by rule" }, auto, d);
+    expect((d.swapReview as any).mock.calls[0][2]).toBe(SYSTEM_AUTO_APPROVE_ACTOR);
+    expect(d.hasRole).not.toHaveBeenCalled();
+    expect((d.logDecision as any).mock.calls[0][0]).toMatchObject({ actorUserId: null, auto: true, action: "approve" });
+    expect(inboxCloseCall(d)[1]).toEqual(["roster_request_pending:swap", "s1"]);
+  });
+
+  it("week-off: runs the service as the system actor with the scope check skipped, log inside the tx", async () => {
+    const { d, tx } = deps();
+    await decideRosterRequest("weekoff_rejection", "a1", { action: "approve", reason: "Auto-approved by rule" }, auto, d);
+    const p = (d.weekoff.approve as any).mock.calls[0][0];
+    expect(p.userId).toBe(SYSTEM_AUTO_APPROVE_ACTOR);
+    expect(p.systemActor).toBe(true);
+    expect((d.logDecision as any).mock.calls[0][0]).toMatchObject({ actorUserId: null, auto: true });
+    expect((d.logDecision as any).mock.calls[0][1]).toBe(tx);
+  });
+
+  it.each([
+    ["dispute", "approve"],
+    ["conflict", "approve"],
+    ["swap", "reject"],
+    ["weekoff_rejection", "escalate"],
+  ])("refuses an auto %s/%s decision", async (kind, action) => {
+    const { d } = deps();
+    await expect(decideRosterRequest(kind as RequestKind, "x", { action: action as any, reason: "r" }, auto, d))
+      .rejects.toMatchObject({ statusCode: 400 });
+    expect(d.logDecision).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-auto decision without a user", async () => {
+    const { d } = deps();
+    await expect(decideRosterRequest("swap", "s1", { action: "approve" }, { userId: null }, d))
+      .rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("a normal manager decision never sets systemActor", async () => {
+    const { d } = deps();
+    await decideRosterRequest("weekoff_rejection", "a1", { action: "approve", reason: "ok" }, actor, d);
+    const p = (d.weekoff.approve as any).mock.calls[0][0];
+    expect(p.systemActor).toBeUndefined();
+    expect(p.userId).toBe("u-mgr");
+    expect((d.logDecision as any).mock.calls[0][0]).toMatchObject({ actorUserId: "u-mgr" });
+    expect((d.logDecision as any).mock.calls[0][0].auto).toBeFalsy();
   });
 });
