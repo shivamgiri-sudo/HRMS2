@@ -51,7 +51,12 @@ export async function safe<T>(label: string, fn: () => Promise<T>, fallback: T):
   }
 }
 
-export const BRANCH_EXPR = `COALESCE(NULLIF(branch_display_name,''),NULLIF(applied_for_branch,''),'Unspecified')`;
+// Some writers stored a branch_master.id in applied_for_branch (21 candidates, 2026-10), which then
+// surfaced as a raw UUID in every branch chart. The branch_master lookup resolves those to the
+// branch name; for every other value it matches nothing and falls through to applied_for_branch.
+// The alias is deliberately unusual so it cannot collide with a caller's own join, and the lookup is
+// on the primary key.
+export const BRANCH_EXPR = `COALESCE(NULLIF(branch_display_name,''),(SELECT _bid.branch_name FROM branch_master _bid WHERE _bid.id = applied_for_branch LIMIT 1),NULLIF(applied_for_branch,''),'Unspecified')`;
 
 export interface CubeRow { d: string; b: string; status: string; stage: string; n: number }
 let cube: { at: number; rows: CubeRow[] } | null = null;
