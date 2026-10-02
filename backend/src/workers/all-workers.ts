@@ -58,6 +58,7 @@ import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker
 // topologies). No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true.
 import { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } from "../modules/management/daily-brief/daily-brief.cron.js";
 import { startRosterUploadEscalationScheduler, stopRosterUploadEscalationScheduler } from "../modules/wfm/roster-upload-escalation.cron.js";
+import { startRosterRequestsScheduler, stopRosterRequestsScheduler } from "../modules/roster-requests/roster-requests.cron.js";
 import { startInterventionRecommendationScheduler, stopInterventionRecommendationScheduler } from "../modules/analytics/intervention-recommendation.cron.js";
 import { startMetaCampaignSyncScheduler, stopMetaCampaignSyncScheduler } from "../modules/meta-campaign/meta-campaign.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
@@ -293,6 +294,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // ROSTER_UPLOAD_ESCALATION_DRY_RUN=false — see roster-upload-escalation.cron.ts.
     name: "roster-upload-escalation",
     start: () => { startRosterUploadEscalationScheduler(); return Promise.resolve(); },
+  },
+  {
+    // Off by default: ROSTER_REQUESTS_CRON_ENABLED must be "true" — see roster-requests.cron.ts.
+    // Auto-approve sweep every 5 min, SLA escalation sweep every 30 min.
+    name: "roster-requests",
+    start: () => { startRosterRequestsScheduler(); return Promise.resolve(); },
   },
   {
     // Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly
@@ -601,6 +608,7 @@ function shutdown(): void {
   stopAttendanceReconciliationWorker();
   stopManagerDailyBriefScheduler();
   stopRosterUploadEscalationScheduler();
+  stopRosterRequestsScheduler();
   stopInterventionRecommendationScheduler();
   stopMetaCampaignSyncScheduler();
   stopAccessExpiryScheduler();
