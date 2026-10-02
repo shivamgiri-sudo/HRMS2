@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSwap, normalizeConflict, normalizeWeekoff, normalizeDispute, sortRequests } from "../normalize";
+import { normalizeSwap, normalizeConflict, normalizeWeekoff, normalizeDispute, sortRequests, computeSla, parseDbTimestamp } from "../normalize";
 
 const now = new Date("2026-10-02T10:00:00Z");
 
@@ -31,5 +31,26 @@ describe("normalize", () => {
     const overdue = normalizeSwap({ id: "o", requester_employee_id: "e", target_employee_id: "f", swap_date: "2026-11-03", status: "pending", created_at: "2026-09-25T09:00:00Z" } as any, now);
     const fresh = normalizeSwap({ id: "f", requester_employee_id: "e", target_employee_id: "f", swap_date: "2026-11-03", status: "pending", created_at: "2026-10-02T09:30:00Z" } as any, now);
     expect(sortRequests([fresh, overdue, urgent]).map((r) => r.id)).toEqual(["u", "o", "f"]);
+  });
+
+  it("parses a naive DB string as IST (same ageHours as the equivalent Z instant)", () => {
+    // 2026-10-02 10:00:00 IST == 04:30Z; now 10:00Z -> 5.5h -> 5
+    const naive = computeSla("2026-10-02 10:00:00", "2026-10-20", now);
+    const z = computeSla("2026-10-02T04:30:00Z", "2026-10-20", now);
+    expect(naive).toEqual(z);
+    expect(naive.ageHours).toBe(5);
+  });
+  it("treats date-only values as IST midnight", () => {
+    expect(parseDbTimestamp("2026-10-02")).toBe(Date.parse("2026-10-01T18:30:00Z"));
+    expect(parseDbTimestamp("2026-10-02T10:00:00")).toBe(Date.parse("2026-10-02T04:30:00Z"));
+    expect(parseDbTimestamp("2026-10-02T10:00:00+05:30")).toBe(Date.parse("2026-10-02T04:30:00Z"));
+    expect(Number.isNaN(parseDbTimestamp("nope"))).toBe(true);
+  });
+  it("uses IST midnight for the 24h shift boundary", () => {
+    // shift 2026-10-03 00:00 IST == 2026-10-02T18:30Z
+    const at24 = new Date("2026-10-01T18:30:00Z");
+    const before = new Date("2026-10-01T18:29:00Z");
+    expect(computeSla("2026-10-01 18:00:00", "2026-10-03", at24).state).toBe("urgent");
+    expect(computeSla("2026-10-01 18:00:00", "2026-10-03", before).state).toBe("ok");
   });
 });
