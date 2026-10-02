@@ -270,6 +270,12 @@ const dashInt = (v: unknown) => (v !== undefined && v !== "" && Number.isInteger
 // they hold - a foreign one is 403). Aggregates that cannot be limited to a branch (sourcing, operations) are
 // org-wide-roles-only.
 const ORG_WIDE_ONLY_MESSAGE = "Forbidden: this report is company-wide and limited to head-office roles";
+// Whether the caller sees every branch. The Command Center reads this once so it never calls an organisation-wide-only
+// endpoint (live queue, sourcing, analytics) for a branch-limited role, which would just answer 403.
+atsRouter.get("/dashboard/scope", requireRole(...DASH_CANDIDATE_ROLES), h(async (req, res) => {
+  const scope = await resolveAtsBranchScope(req.authUser!.id);
+  return res.json({ success: true, data: { orgWide: scope.orgWide, branches: scope.orgWide ? [] : scope.branchNames } });
+}));
 atsRouter.get("/dashboard/overview", requireRole(...DASH_AGG_ROLES), h(async (req, res) => {
   const q = req.query;
   const scope = await resolveAtsBranchScope(req.authUser!.id);

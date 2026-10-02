@@ -112,7 +112,7 @@ export function LiveOpsTab() {
   const act = useDrillActions();
   const base = cc.drill();
   // Scoped roles (branch head, process manager) never call the org-wide live queue or overview aggregates.
-  const ops = useAtsOperations(!cc.scoped);
+  const ops = useAtsOperations(cc.orgWide);
   const ov = useAtsOverview(cc.period, cc.branch, !cc.scoped);
   const dwell = useStageDwell(base);
   const all = useDrill(base);
@@ -127,7 +127,7 @@ export function LiveOpsTab() {
   const goIdle = (crumb: string, extra: Record<string, unknown>) => act.openDrill(crumb, { branch: cc.branch || undefined, ...extra });
 
   const d = ops.data;
-  const blocked = cc.scoped || errStatus(ops.error) === 403;
+  const blocked = cc.scoped || (cc.scopeKnown && !cc.orgWide) || errStatus(ops.error) === 403;
   const sla = d?.slaMinutes ?? 20;
   const branchNames = useMemo(() => (d?.branches ?? []).map((b) => b.name).filter((n) => n && n !== "Unspecified"), [d]);
   const br = d && cc.branch ? d.branches.find((b) => b.name === cc.branch) : undefined;

@@ -30,10 +30,12 @@ export function SourcingRecruitersTab() {
   const act = useDrillActions();
   // Scoped roles (branch head, process manager) skip every org-wide aggregate: those endpoints refuse branch-limited roles, and the
   // panels that depend on them say so. Recruiter names, the leaderboard and the scorecard come from the row-scoped drill instead.
-  const on = !cc.scoped;
+  // `on` = the org-wide-only endpoints (sourcing ledger, analytics, name review) may be called; branch-limited aggregate roles (hr, manager)
+  // would only get a 403 from them. Overview and insights are branch-pinned aggregates, so they stay on for every non-scoped role.
+  const on = cc.orgWide;
   const src = useAtsSourcing(cc.period, on);
-  const ov = useAtsOverview(cc.period, cc.branch, on);
-  const ins = useAtsInsights(cc.period, cc.branch, on);
+  const ov = useAtsOverview(cc.period, cc.branch, !cc.scoped);
+  const ins = useAtsInsights(cc.period, cc.branch, !cc.scoped);
   const roi = useSourceRoi(on), tth = useTimeToHire(on), hire = useHiringTrend(6, on);
   const go = (crumb: string, extra: DrillFilters = {}) => act.openDrill(crumb, cc.drill(extra));
 
@@ -66,7 +68,7 @@ export function SourcingRecruitersTab() {
   })) : [];
 
   if (src.isLoading && ov.isLoading) return <div className="space-y-4"><Skeleton className="h-14 rounded-2xl" /><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}</div><Skeleton className="h-80 rounded-2xl" /></div>;
-  const denied = cc.scoped || src.isError;
+  const denied = cc.scoped || (cc.scopeKnown && !cc.orgWide) || src.isError;
   const t = d?.totals;
 
   return (
@@ -265,7 +267,7 @@ export function SourcingRecruitersTab() {
         </Card>
       </div>
 
-      <DuplicateReview i={13} suspects={cleanSuspects(names.data?.suspects)} loading={on && names.isLoading} error={on && names.isError && getHrmsApiErrorStatus(names.error) !== 403} forbidden={!on || (names.isError && getHrmsApiErrorStatus(names.error) === 403)} onRetry={() => void names.refetch()} />
+      <DuplicateReview i={13} suspects={cleanSuspects(names.data?.suspects)} loading={!cc.scopeKnown || (on && names.isLoading)} error={on && names.isError && getHrmsApiErrorStatus(names.error) !== 403} forbidden={cc.scoped || (cc.scopeKnown && !on) || (names.isError && getHrmsApiErrorStatus(names.error) === 403)} onRetry={() => void names.refetch()} />
 
       <Card i={14} title="Reusable pool" hint="Earlier candidates worth re-approaching before fresh sourcing" icon={<Database className="h-4 w-4" />}
         right={pool.data && pool.data.rows.length > 0 && <ExportButton onClick={() => downloadCsv("ats-reusable-pool.csv", ["Candidate ID", "Name", "Branch", "Process", "Status", "Stage", "Reason", "Last update"], pool.data.rows.map((r) => [r.candidateCode || r.id, r.name, r.branch, r.process, r.status, r.stage, r.reason, r.lastUpdate ?? ""]))} />}>

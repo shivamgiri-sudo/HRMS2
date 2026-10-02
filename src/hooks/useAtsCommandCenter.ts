@@ -40,3 +40,9 @@ export interface ReusablePool { generatedAt: string; shown: number; /** True whe
 /** Light, row-scoped, server-cached replacement for the legacy 9 MB command-center payload. Loads on its own. */
 export const useReusablePool = (f: DrillFilters) =>
   useQuery({ queryKey: ["ats-cc-reusable-pool", f], ...opts, queryFn: async () => (await hrmsApi.get<{ data: ReusablePool }>(`/api/ats/dashboard/reusable-pool?${qs(f)}`)).data });
+
+export interface AtsScope { orgWide: boolean; branches: string[] }
+/** Whether the caller sees every branch (cheap, cached). Used to skip organisation-wide-only endpoints for branch-limited roles. */
+export const useAtsScope = () =>
+  useQuery({ queryKey: ["ats-cc-scope"], staleTime: 10 * 60_000, refetchOnWindowFocus: false, retry: 1,
+    queryFn: async () => (await hrmsApi.get<{ data: AtsScope }>("/api/ats/dashboard/scope")).data });
