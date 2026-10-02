@@ -56,6 +56,12 @@
   "modules/quality-dashboard/onfido-utilization.routes.ts": [
     "onfido_utilization_upload"
   ],
+  "modules/roster-requests/roster-requests.auto-rule.ts": [
+    "roster_request_auto_rule"
+  ],
+  "modules/roster-requests/roster-requests.decision-log.ts": [
+    "roster_request_decision_log"
+  ],
   "modules/salary-dispute/salary-dispute.service.ts": [
     "email_queue"
   ],
