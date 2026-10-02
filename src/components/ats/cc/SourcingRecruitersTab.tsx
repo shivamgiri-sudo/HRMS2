@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Copy, Crown, Database, Filter, GitBranch, Layers3, Lightbulb, Phone, Radar as RadarIcon, Repeat, Send, Share2, Timer, Trophy, UserCheck, Users, Wallet } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { hrmsApi } from "@/lib/hrmsApi";
 import { useAtsOverview } from "@/hooks/useAtsOverview";
 import { useAtsInsights, useAtsSourcing, useDrill, useHiringTrend, useSourceRoi, useTimeToHire, type DrillFilters } from "@/hooks/useAtsDashboards";
 import { useDrillActions } from "@/components/ats/overview/drill";
@@ -15,8 +13,8 @@ import { useCC } from "./cc-context";
 import { getHrmsApiErrorStatus } from "@/lib/hrmsApi";
 import { CostPerHireCard } from "./CostPerHireCard";
 import { DuplicateReview, cleanSuspects } from "./DuplicateReview";
-import { useRecruiterNameSuspects } from "@/hooks/useAtsCommandCenter";
-import { RADAR_AXES, bestSource, isRawId, isUnowned, momentum, peerMedian, pct, poolRows, radarValues, rankRecruiters, recruiterFindings, statsFromKpis, toStats } from "./sourcing-helpers";
+import { useRecruiterNameSuspects, useReusablePool } from "@/hooks/useAtsCommandCenter";
+import { RADAR_AXES, bestSource, isRawId, isUnowned, momentum, peerMedian, pct, radarValues, rankRecruiters, recruiterFindings, statsFromKpis, toStats } from "./sourcing-helpers";
 
 const tick = { fontSize: 11, fill: "hsl(var(--muted-foreground))" };
 const SERIES = [V.blue, V.aqua, V.orange, V.violet, V.yellow];
@@ -30,10 +28,13 @@ const NoteBox = ({ children }: { children: React.ReactNode }) => <div role="stat
 export function SourcingRecruitersTab() {
   const cc = useCC();
   const act = useDrillActions();
-  const src = useAtsSourcing(cc.period);
-  const ov = useAtsOverview(cc.period, cc.branch);
-  const ins = useAtsInsights(cc.period, cc.branch);
-  const roi = useSourceRoi(), tth = useTimeToHire(), hire = useHiringTrend(6);
+  // Scoped roles (branch head, process manager) skip every org-wide aggregate: those endpoints refuse branch-limited roles, and the
+  // panels that depend on them say so. Recruiter names, the leaderboard and the scorecard come from the row-scoped drill instead.
+  const on = !cc.scoped;
+  const src = useAtsSourcing(cc.period, on);
+  const ov = useAtsOverview(cc.period, cc.branch, on);
+  const ins = useAtsInsights(cc.period, cc.branch, on);
+  const roi = useSourceRoi(on), tth = useTimeToHire(on), hire = useHiringTrend(6, on);
   const go = (crumb: string, extra: DrillFilters = {}) => act.openDrill(crumb, cc.drill(extra));
 
   // Peer slice: the unfiltered-by-recruiter drill, whose recruiter split is the leaderboard and the peer baseline.
@@ -42,21 +43,11 @@ export function SourcingRecruitersTab() {
   const [picked, setPicked] = useState(cc.recruiter);
   useEffect(() => { if (cc.recruiter) setPicked(cc.recruiter); }, [cc.recruiter]);
   const slice = useDrill(picked ? cc.drill({ recruiter: picked }) : null);
-  const names = useRecruiterNameSuspects();
-  const [poolOn, setPoolOn] = useState(false);
-  const pool = useQuery({
-    queryKey: ["ats-cc-reusable-pool", cc.period, cc.branch, cc.process, cc.recruiter], enabled: poolOn, staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 0,
-    queryFn: async () => {
-      const q = new URLSearchParams({ period: cc.period });
-      (["branch", "process", "recruiter"] as const).forEach((k) => cc[k] && q.set(k, cc[k]));
-      const r = await hrmsApi.get<{ reusablePool?: unknown; reusableTotal?: number; }>(`/api/ats-full-parity/command-center?${q}`);
-      const rows = poolRows(r.reusablePool);
-      return { rows, total: r.reusableTotal ?? rows.length };
-    },
-  });
+  const names = useRecruiterNameSuspects(on);
+  const pool = useReusablePool(cc.drill());
 
   const d = src.data, o = ov.data;
-  const recruiterNames = useMemo(() => Array.from(new Set([...(o?.recruiters ?? []).map((r) => r.name), ...(cc.recruiter ? [cc.recruiter] : [])])).filter((n) => n && n !== "Unspecified" && n !== "Unmapped"), [o, cc.recruiter]);
+  const recruiterNames = useMemo(() => Array.from(new Set([...(o?.recruiters ?? []).map((r) => r.name), ...(peer.data?.splits.recruiter ?? []).map((r) => r.name), ...(cc.recruiter ? [cc.recruiter] : [])])).filter((n) => n && n !== "Unspecified" && n !== "Unmapped" && n !== "Unassigned"), [o, peer.data, cc.recruiter]);
   const board = useMemo(() => {
     const rows = peer.data?.splits.recruiter?.length ? peer.data.splits.recruiter.map(toStats) : (o?.recruiters ?? []).map((r) => toStats({ ...r, total: r.total }));
     return rankRecruiters(rows.filter((r) => !isUnowned(r.name)));
@@ -75,7 +66,7 @@ export function SourcingRecruitersTab() {
   })) : [];
 
   if (src.isLoading && ov.isLoading) return <div className="space-y-4"><Skeleton className="h-14 rounded-2xl" /><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-36 rounded-2xl" />)}</div><Skeleton className="h-80 rounded-2xl" /></div>;
-  const denied = src.isError;
+  const denied = cc.scoped || src.isError;
   const t = d?.totals;
 
   return (
@@ -274,24 +265,26 @@ export function SourcingRecruitersTab() {
         </Card>
       </div>
 
-      <DuplicateReview i={13} suspects={cleanSuspects(names.data?.suspects)} loading={names.isLoading} error={names.isError && getHrmsApiErrorStatus(names.error) !== 403} forbidden={names.isError && getHrmsApiErrorStatus(names.error) === 403} onRetry={() => void names.refetch()} />
+      <DuplicateReview i={13} suspects={cleanSuspects(names.data?.suspects)} loading={on && names.isLoading} error={on && names.isError && getHrmsApiErrorStatus(names.error) !== 403} forbidden={!on || (names.isError && getHrmsApiErrorStatus(names.error) === 403)} onRetry={() => void names.refetch()} />
 
       <Card i={14} title="Reusable pool" hint="Earlier candidates worth re-approaching before fresh sourcing" icon={<Database className="h-4 w-4" />}
-        right={pool.data && <ExportButton onClick={() => downloadCsv("ats-reusable-pool.csv", ["Candidate ID", "Name", "Branch", "Quality", "Reason"], pool.data.rows.map((r) => [r.id, r.name, r.branch, r.quality, r.reason]))} />}>
-        {!poolOn ? (
-          <div className="flex flex-wrap items-center gap-3"><button onClick={() => setPoolOn(true)} className="cursor-pointer rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Load reusable pool</button><span className="text-xs text-muted-foreground">Loads the full legacy command-center payload (about 9 MB), so it only runs on request.</span></div>
-        ) : pool.isLoading ? <div className="space-y-2" aria-busy="true"><Skeleton className="h-8" /><Skeleton className="h-40" /><p className="text-xs text-muted-foreground">Loading a large payload, this can take a while.</p></div>
+        right={pool.data && pool.data.rows.length > 0 && <ExportButton onClick={() => downloadCsv("ats-reusable-pool.csv", ["Candidate ID", "Name", "Branch", "Process", "Status", "Stage", "Reason", "Last update"], pool.data.rows.map((r) => [r.candidateCode || r.id, r.name, r.branch, r.process, r.status, r.stage, r.reason, r.lastUpdate ?? ""]))} />}>
+        <p className="mb-2 text-xs text-muted-foreground">Who counts: candidates on Hold or Client Round - Pending, No Shows (reattempt the confirmation call), and Rejected candidates whose latest interview feedback cites a fixable reason (salary, shift, timing, location, travel or not interested). Updated in the selected period, or the last 90 days.</p>
+        {pool.isLoading ? <div className="space-y-2" aria-busy="true"><Skeleton className="h-8" /><Skeleton className="h-40" /></div>
         : pool.isError || !pool.data ? <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-600 dark:text-red-300">Could not load the pool. <button onClick={() => void pool.refetch()} className="cursor-pointer rounded-lg border px-2 py-1 text-xs text-foreground">Retry</button></div>
         : (
           <>
-            <p className="mb-2 text-xs text-muted-foreground" role="status">Showing <b className="text-foreground">{fmt(pool.data.rows.length)}</b> of <b className="text-foreground">{fmt(pool.data.total)}</b> reusable candidates{pool.data.total > pool.data.rows.length && " (the server returns a capped page; the rest are not sent)"}.</p>
+            <p className="mb-2 text-xs text-muted-foreground" role="status">Showing the <b className="text-foreground">{fmt(pool.data.shown)}</b> most recently updated reusable candidates{pool.data.more ? " (more match; narrow the period or process to see others)" : ""}.</p>
             {pool.data.rows.length ? (
-              <div className="max-h-[420px] overflow-auto rounded-xl border"><table className="w-full min-w-[620px] text-xs">
-                <thead className="sticky top-0 bg-muted text-left text-muted-foreground"><tr><th className="px-3 py-2 font-medium">ID</th><th className="px-3 py-2 font-medium">Candidate</th><th className="px-3 py-2 font-medium">Branch</th><th className="px-3 py-2 font-medium">Quality</th><th className="px-3 py-2 font-medium">Reason</th></tr></thead>
-                <tbody>{pool.data.rows.map((r, i) => (
-                  <tr key={`${r.id}-${i}`} className="border-t hover:bg-muted/40"><td className="px-3 py-1.5 font-mono text-muted-foreground">{r.id || "–"}</td>
+              <div className="max-h-[420px] overflow-auto rounded-xl border"><table className="w-full min-w-[680px] text-xs">
+                <thead className="sticky top-0 bg-muted text-left text-muted-foreground"><tr><th className="px-3 py-2 font-medium">ID</th><th className="px-3 py-2 font-medium">Candidate</th><th className="px-3 py-2 font-medium">Branch</th><th className="px-3 py-2 font-medium">Status</th><th className="px-3 py-2 font-medium">Reason</th></tr></thead>
+                <tbody>{pool.data.rows.map((r) => (
+                  <tr key={r.id} onClick={() => act.openCandidate(r.id)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); act.openCandidate(r.id); } }} tabIndex={0} role="button" aria-label={`Open ${r.name || "candidate"}`} className="cursor-pointer border-t hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+                    <td className="px-3 py-1.5 font-mono text-muted-foreground">{r.candidateCode || "–"}</td>
                     <td className="px-3 py-1.5 font-medium">{r.name || "–"}</td>
-                    <td className="px-3 py-1.5">{r.branch || "–"}</td><td className="px-3 py-1.5">{r.quality || "–"}</td><td className="px-3 py-1.5 text-primary">{r.reason || "–"}</td></tr>))}</tbody></table></div>
+                    <td className="px-3 py-1.5">{r.branch || "–"}</td>
+                    <td className="px-3 py-1.5"><span className="rounded-full bg-muted px-2 py-0.5">{r.status || "–"}</span></td>
+                    <td className="px-3 py-1.5"><span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">{r.reason || "–"}</span></td></tr>))}</tbody></table></div>
             ) : <Empty text="No reusable candidates for these filters" />}
           </>
         )}

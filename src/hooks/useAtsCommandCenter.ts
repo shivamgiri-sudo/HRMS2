@@ -31,6 +31,12 @@ export const useBmi = (months = 6) =>
 
 export interface NameSuspects { generatedAt: string; names: number; suspects: { a: string; b: string; reason: string }[]; truncated: boolean }
 /** Cheap (distinct spellings only). Org-wide roles only: other roles get a 403 the caller shows as "not available". */
-export const useRecruiterNameSuspects = () =>
-  useQuery({ queryKey: ["ats-cc-name-suspects"], placeholderData: keepPreviousData, staleTime: 10 * 60_000, refetchOnWindowFocus: false, retry: 0,
+export const useRecruiterNameSuspects = (enabled = true) =>
+  useQuery({ queryKey: ["ats-cc-name-suspects"], enabled, placeholderData: keepPreviousData, staleTime: 10 * 60_000, refetchOnWindowFocus: false, retry: 0,
     queryFn: async () => (await hrmsApi.get<{ data: NameSuspects }>("/api/ats/dashboard/recruiter-name-suspects")).data });
+
+export interface PoolRow { id: string; candidateCode: string; name: string; branch: string; process: string; status: string; stage: string; reason: string; lastUpdate: string | null }
+export interface ReusablePool { generatedAt: string; shown: number; /** True when more than `shown` candidates match (the list is capped; no exact total is computed). */ more: boolean; rows: PoolRow[] }
+/** Light, row-scoped, server-cached replacement for the legacy 9 MB command-center payload. Loads on its own. */
+export const useReusablePool = (f: DrillFilters) =>
+  useQuery({ queryKey: ["ats-cc-reusable-pool", f], ...opts, queryFn: async () => (await hrmsApi.get<{ data: ReusablePool }>(`/api/ats/dashboard/reusable-pool?${qs(f)}`)).data });

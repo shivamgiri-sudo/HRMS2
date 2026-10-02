@@ -111,8 +111,9 @@ export function LiveOpsTab() {
   const cc = useCC();
   const act = useDrillActions();
   const base = cc.drill();
-  const ops = useAtsOperations();
-  const ov = useAtsOverview(cc.period, cc.branch);
+  // Scoped roles (branch head, process manager) never call the org-wide live queue or overview aggregates.
+  const ops = useAtsOperations(!cc.scoped);
+  const ov = useAtsOverview(cc.period, cc.branch, !cc.scoped);
   const dwell = useStageDwell(base);
   const all = useDrill(base);
   const ns = useDrill({ ...base, outcome: "noShow" });
@@ -126,7 +127,7 @@ export function LiveOpsTab() {
   const goIdle = (crumb: string, extra: Record<string, unknown>) => act.openDrill(crumb, { branch: cc.branch || undefined, ...extra });
 
   const d = ops.data;
-  const blocked = errStatus(ops.error) === 403;
+  const blocked = cc.scoped || errStatus(ops.error) === 403;
   const sla = d?.slaMinutes ?? 20;
   const branchNames = useMemo(() => (d?.branches ?? []).map((b) => b.name).filter((n) => n && n !== "Unspecified"), [d]);
   const br = d && cc.branch ? d.branches.find((b) => b.name === cc.branch) : undefined;
@@ -161,7 +162,7 @@ export function LiveOpsTab() {
 
   return (
     <div className="space-y-5">
-      <FilterBar show={["period", "branch"]} branches={branchNames.length ? branchNames : (ov.data?.branches ?? []).map((b) => b.name).filter((n) => n !== "Unspecified" && n !== "Unmapped")}
+      <FilterBar show={cc.scoped ? ["period"] : ["period", "branch"]} branches={branchNames.length ? branchNames : (ov.data?.branches ?? []).map((b) => b.name).filter((n) => n !== "Unspecified" && n !== "Unmapped")}
         right={<><span className="hidden text-[11px] text-muted-foreground md:inline">Period applies to the analysis sections; the live board is always today.</span><LiveBadge at={ops.dataUpdatedAt || undefined} /></>} />
 
       {blocked ? (
@@ -294,7 +295,7 @@ export function LiveOpsTab() {
           ) : <Empty text="No stage history in this window" />}
         </Card>
         <Card className="lg:col-span-5" i={16} title="Pipeline aging" hint="Open candidates by days since last movement; click a bar" icon={<TimerReset className="h-4 w-4" />}>
-          {ov.isLoading ? <Skeleton className="h-52" /> : ov.data?.aging.length ? (
+          {cc.scoped ? <Empty text="Pipeline aging is shown to head-office roles" /> : ov.isLoading ? <Skeleton className="h-52" /> : ov.data?.aging.length ? (
             <ResponsiveContainer width="100%" height={220}><BarChart data={AGING.map((b) => ({ bucket: b, n: ov.data!.aging.find((a) => a.bucket === b)?.n ?? 0 }))} margin={{ left: -12, right: 8 }}>
               <CartesianGrid stroke={V.grid} strokeDasharray="3 4" vertical={false} /><XAxis dataKey="bucket" tick={tick} axisLine={false} tickLine={false} /><YAxis tick={tick} axisLine={false} tickLine={false} allowDecimals={false} />
               <Tooltip {...tooltipStyle} cursor={{ fill: V.track }} formatter={(v: number) => [fmt(v), "Open candidates"]} />

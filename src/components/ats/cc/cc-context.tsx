@@ -9,6 +9,8 @@ import type { DrillFilters } from "@/hooks/useAtsDashboards";
  */
 export interface CCFilters { period: OverviewPeriod; branch: string; process: string; recruiter: string }
 interface CCState extends CCFilters {
+  /** True for roles whose data is limited to their own branch / assigned processes (branch head, process manager). Those roles get the scoped tabs, built only on row-scoped endpoints. */
+  scoped: boolean;
   set: (patch: Partial<CCFilters>) => void;
   /** Filters in the shape the drill / candidate endpoints take (period bounded by `from`). */
   drill: (extra?: DrillFilters) => DrillFilters;
@@ -16,10 +18,11 @@ interface CCState extends CCFilters {
 
 const Ctx = createContext<CCState | null>(null);
 
-export function CCProvider({ children, initial }: { children: ReactNode; initial?: Partial<CCFilters> }) {
+export function CCProvider({ children, initial, scoped = false }: { children: ReactNode; initial?: Partial<CCFilters>; scoped?: boolean }) {
   const [f, setF] = useState<CCFilters>({ period: "30d", branch: "", process: "", recruiter: "", ...initial });
   const value = useMemo<CCState>(() => ({
     ...f,
+    scoped,
     set: (patch) => setF((prev) => ({ ...prev, ...patch })),
     drill: (extra = {}) => {
       const out: DrillFilters = { ...extra };
@@ -30,7 +33,7 @@ export function CCProvider({ children, initial }: { children: ReactNode; initial
       if (f.recruiter && !out.recruiter) out.recruiter = f.recruiter;
       return out;
     },
-  }), [f]);
+  }), [f, scoped]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

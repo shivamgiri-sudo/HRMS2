@@ -47,7 +47,7 @@ function Finder() {
   const search = useDebounced(q.trim(), 350);
   useEffect(() => setPage(1), [search, status, stage, cc.branch]);
   const pipe = usePipeline({ from: "", to: "", branch: cc.branch, process: "", status, stage, search, includeLeads: false, page });
-  const ov = useAtsOverview("30d", "");
+  const ov = useAtsOverview("30d", "", !cc.scoped);
   const branches = useMemo(() => (ov.data?.branches ?? []).map((b) => b.name).filter((n) => n !== "Unmapped"), [ov.data]);
   const d = pipe.data;
   const pages = d ? Math.max(1, Math.ceil(d.total / d.limit)) : 1;
@@ -61,7 +61,7 @@ function Finder() {
 
   return (
     <div className="space-y-4">
-      <FilterBar show={["branch"]} branches={branches} right={d && <ExportButton label="Export page" onClick={() => downloadCsv("ats-finder.csv", ["Code", "Name", "Mobile", "Email", "Status", "Stage", "Branch", "Process", "Recruiter"], d.rows.map((r) => [r.candidate_code, r.full_name, r.mobile, r.email, r.status, r.stage, r.branch, r.process, r.recruiter]))} />} />
+      <FilterBar show={cc.scoped ? [] : ["branch"]} branches={branches} right={d && <ExportButton label="Export page" onClick={() => downloadCsv("ats-finder.csv", ["Code", "Name", "Mobile", "Email", "Status", "Stage", "Branch", "Process", "Recruiter"], d.rows.map((r) => [r.candidate_code, r.full_name, r.mobile, r.email, r.status, r.stage, r.branch, r.process, r.recruiter]))} />} />
 
       <Card title="Find a candidate" hint="Search by ID, name, mobile, email or queue token" icon={<Search className="h-4 w-4" />} i={0}>
         <div className="relative">
@@ -301,11 +301,15 @@ function Benchmarks() {
 }
 
 export function ControlsTab() {
+  const cc = useCC();
+  const { hasAnyRole } = useWorkforceAccess();
+  // The health checks API is limited to admin, HR and CEO; scoped roles would only ever see a lock screen, so the view is not offered.
+  const views = VIEWS.filter((v) => v.id !== "health" || (!cc.scoped && hasAnyRole("super_admin", "admin", "hr", "ceo")));
   const [view, setView] = useState<View>("finder");
   return (
     <div className="space-y-4">
       <div className="inline-flex rounded-xl bg-muted p-1" role="group" aria-label="Candidates and controls view">
-        {VIEWS.map((v) => (
+        {views.map((v) => (
           <button key={v.id} onClick={() => setView(v.id)} aria-pressed={view === v.id}
             className={`inline-flex min-h-[34px] cursor-pointer items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors duration-200 ${focus} ${view === v.id ? "bg-card text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{v.icon}{v.label}</button>
         ))}

@@ -6,7 +6,7 @@ vi.mock("../dashboard.overview.service.js", async (orig) => ({ ...(await orig<ty
 vi.mock("../dashboard.joined.js", () => ({ getJoinedInfo: async () => ({ ids: [] }), joinedIdSql: () => ({ sql: "0", params: [] }) }));
 
 import { getDrill } from "../dashboard.pipeline.service.js";
-import { buildCohorts, buildLeakage, buildNameSuspects, clampWeeks, computeDwell, isExpectedWait, weekStarts } from "../dashboard.commandcenter.service.js";
+import { buildCohorts, buildLeakage, buildNameSuspects, clampWeeks, computeDwell, fixableReason, getReusablePool, isExpectedWait, poolReason, weekStarts } from "../dashboard.commandcenter.service.js";
 
 const H = 3_600_000;
 
@@ -129,5 +129,40 @@ describe("buildNameSuspects", () => {
     const r = buildNameSuspects(names, 10);
     expect(r.suspects.length).toBe(10);
     expect(r.truncated).toBe(true);
+  });
+});
+
+describe("reusable pool", () => {
+  beforeEach(() => qMock.mockReset());
+  it("matches fixable reasons case-insensitively", () => {
+    expect(fixableReason("Candidate unhappy with SALARY offered")).toBe("salary");
+    expect(fixableReason("Not Interested in night shift")).toBe("shift");
+    expect(fixableReason("poor communication")).toBeNull();
+    expect(fixableReason(null)).toBeNull();
+  });
+  it("selects the reason text by status", () => {
+    expect(poolReason("Hold")).toBe("Hold - reusable after follow-up");
+    expect(poolReason("Client Round - Pending")).toBe("Hold - reusable after follow-up");
+    expect(poolReason("No Show")).toBe("No show - reattempt confirmation call");
+    expect(poolReason("Rejected", "location too far")).toBe("Rejected on a fixable reason: location too far");
+    expect(poolReason("Rejected", "poor typing")).toBeNull();
+    expect(poolReason("Selected", "salary")).toBeNull();
+  });
+  it("returns the shaped payload without a COUNT, with parameterised SQL", async () => {
+    qMock
+      .mockResolvedValueOnce([
+        { id: "7", candidate_code: "C-7", full_name: "Asha", branch: "Pune", process: "Sales", status: "Rejected", stage: "Interview", updated_at: new Date("2026-09-30T10:00:00Z"), voc: "salary too low" },
+        { id: "8", candidate_code: "C-8", full_name: "Ravi", branch: "Pune", process: null, status: "No Show", stage: "Interview", updated_at: null, voc: null },
+      ]);
+    const r = (await getReusablePool({ page: 1, limit: 10, from: "2026-08-01", branch: "zz-pool" })) as any;
+    expect(r).toMatchObject({ shown: 2, more: false });
+    expect(r.rows[0]).toMatchObject({ id: "7", candidateCode: "C-7", name: "Asha", status: "Rejected", reason: "Rejected on a fixable reason: salary too low", lastUpdate: "2026-09-30T10:00:00.000Z" });
+    expect(r.rows[1]).toMatchObject({ id: "8", reason: "No show - reattempt confirmation call", process: "", lastUpdate: null });
+    const [sql, params] = qMock.mock.calls[0];
+    expect(sql).toContain("ORDER BY c.updated_at DESC LIMIT 101");
+    expect(qMock).toHaveBeenCalledTimes(1);
+    expect(params).toEqual(expect.arrayContaining(["2026-08-01", "Hold", "No Show", "%salary%", "%not interested%"]));
+    expect((params as string[]).filter((p) => String(p).startsWith("%")).length).toBe(24);
+    expect(sql).not.toContain("salary");
   });
 });

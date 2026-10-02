@@ -1,7 +1,7 @@
 import { createSwrCache } from './dashboard.cache.js';
-import { JOINED, OFFERED, num, pct, q, safe } from './dashboard.overview.service.js';
+import { BRANCH_EXPR, JOINED, OFFERED, num, pct, q, safe } from './dashboard.overview.service.js';
 import { getJoinedInfo, joinedIdSql } from './dashboard.joined.js';
-import { rawValues, recruiterNamer } from './dashboard.scope.js';
+import { branchDisplay, processDisplay, rawValues, recruiterNamer } from './dashboard.scope.js';
 import { suspectedDuplicateRecruiters } from './ats-vocabulary.js';
 import { OPEN_STATUSES, where, type PipelineFilters } from './dashboard.pipeline.service.js';
 
@@ -204,3 +204,65 @@ export function buildNameSuspects(rawNames: readonly string[], limit = 200) {
 }
 
 export const getRecruiterNameSuspects = async () => ({ generatedAt: new Date().toISOString(), ...buildNameSuspects((await rawValues()).recruiter) });
+
+// ── Reusable pool ────────────────────────────────────────────────────────────
+// Definition: candidates worth re-approaching before fresh sourcing =
+//   status 'Hold' / 'Client Round - Pending'  -> "Hold - reusable after follow-up"
+//   status 'No Show'                          -> "No show - reattempt confirmation call"
+//   status 'Rejected' whose LATEST interview submission VOC (round1 > skilltest > round2 > round3, first non-empty)
+//     mentions a fixable reason (salary, shift, timing, location, travel, not interested).
+// Window: updated_at >= filters.from, else the last 90 days. Row-scoped via where(); newest 100 plus the full count.
+export const POOL_HOLD = ['Hold', 'Client Round - Pending'] as const;
+export const FIXABLE_VOC = ['salary', 'shift', 'timing', 'location', 'travel', 'not interested'] as const;
+export const POOL_LIMIT = 100;
+/** The first fixable keyword found in a VOC, or null. Case-insensitive substring match (same as the SQL LIKE). */
+export const fixableReason = (voc: unknown): string | null => {
+  const t = String(voc ?? '').toLowerCase();
+  return FIXABLE_VOC.find((k) => t.includes(k)) ?? null;
+};
+/** Why a candidate is in the pool; null when the status/VOC combination does not qualify. */
+export function poolReason(status: unknown, voc?: unknown): string | null {
+  const s = String(status ?? '');
+  if ((POOL_HOLD as readonly string[]).includes(s)) return 'Hold - reusable after follow-up';
+  if (s === 'No Show') return 'No show - reattempt confirmation call';
+  if (s === 'Rejected') {
+    if (!fixableReason(voc)) return null;
+    const v = String(voc).trim().replace(/\s+/g, ' ');
+    return `Rejected on a fixable reason: ${v.length > 80 ? `${v.slice(0, 77)}...` : v}`;
+  }
+  return null;
+}
+
+const LATEST_VOC = `(SELECT COALESCE(NULLIF(s.round1_voc,''),NULLIF(s.skilltest_voc,''),NULLIF(s.round2_voc,''),NULLIF(s.round3_voc,''))
+  FROM ats_interview_submission s WHERE s.candidate_id = c.id ORDER BY s.submitted_at DESC LIMIT 1)`;
+
+async function computePool(f: PipelineFilters) {
+  const raw = needsRaw(f) ? await rawValues() : undefined;
+  const joinedIds = f.outcome === 'joined' ? (await getJoinedInfo()).ids : undefined;
+  // The pool defines its own statuses, so an incoming outcome filter must not narrow it further.
+  const w = where({ ...f, from: undefined, outcome: undefined }, { raw, joinedIds });
+  const fromSql = f.from && DATE_RE.test(f.from) ? f.from : null;
+  const win = fromSql ? 'c.updated_at >= ?' : 'c.updated_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)';
+  // EXISTS over the submission's four reason columns, not the "latest reason" subquery: it stops at the first match, so the list comes back in
+  // about a second on production, where the correlated latest-reason version took 9-13 s. The exact reason text is read only for the rows shown.
+  const VOC_COLS = ['round1_voc', 'skilltest_voc', 'round2_voc', 'round3_voc'] as const;
+  const likes = FIXABLE_VOC.flatMap(() => VOC_COLS.map((col) => `s.${col} LIKE ?`)).join(' OR ');
+  const fixable = `EXISTS (SELECT 1 FROM ats_interview_submission s WHERE s.candidate_id = c.id AND (${likes}))`;
+  const poolTail = ` AND ${win} AND (c.status IN (?,?,?) OR (c.status = 'Rejected' AND ${fixable}))`;
+  const params = [...w.params, ...(fromSql ? [fromSql] : []), ...POOL_HOLD, 'No Show', ...FIXABLE_VOC.flatMap((k) => VOC_COLS.map(() => `%${k}%`))];
+  // One row beyond the cap tells us there is more, without an exact COUNT (8-13 s here and not needed for a work list).
+  const fetched = await q<{ id: string; candidate_code: string | null; full_name: string | null; branch: string | null; process: string | null; status: string; stage: string | null; updated_at: Date | string | null; voc: string | null }>(
+    `SELECT c.id, c.candidate_code, c.full_name, ${BRANCH_EXPR.replace(/\b(branch_display_name|applied_for_branch)\b/g, 'c.$1')} AS branch,
+            c.applied_for_process AS process, c.status, c.current_stage AS stage, c.updated_at, ${LATEST_VOC} AS voc
+     FROM ats_candidate c WHERE ${w.sql}${poolTail} ORDER BY c.updated_at DESC LIMIT ${POOL_LIMIT + 1}`, params);
+  const more = fetched.length > POOL_LIMIT;
+  const rows = fetched.slice(0, POOL_LIMIT);
+  const out = rows.map((r) => ({
+    id: String(r.id), candidateCode: r.candidate_code ?? '', name: r.full_name ?? '', branch: branchDisplay(r.branch),
+    process: r.process ? processDisplay(r.process) : '', status: String(r.status), stage: r.stage ?? '',
+    reason: poolReason(r.status, r.voc) ?? 'Worth a follow-up',
+    lastUpdate: r.updated_at instanceof Date ? r.updated_at.toISOString() : r.updated_at ? String(r.updated_at) : null,
+  }));
+  return { generatedAt: new Date().toISOString(), shown: out.length, more, rows: out };
+}
+export const getReusablePool = (f: PipelineFilters) => cache.get(keyOf('pool', f), () => computePool(f));
