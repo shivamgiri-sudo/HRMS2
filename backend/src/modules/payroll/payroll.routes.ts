@@ -4353,6 +4353,7 @@ router.post(
   "/runs/:id/finance-approve",
   requireAuth,
   requireRole("finance", "admin", "super_admin"),
+  requireRunInScope(),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
     const actorUserId = req.authUser!.id;
@@ -4368,6 +4369,9 @@ router.post(
       }
       if (msg.includes("must be in")) {
         return res.status(400).json({ success: false, message: msg });
+      }
+      if (err?.statusCode) {
+        return res.status(err.statusCode).json({ success: false, message: msg, code: err.code });
       }
       throw err;
     }
