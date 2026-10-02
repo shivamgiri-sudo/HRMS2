@@ -17,6 +17,7 @@ import RosterQuickFill from "./RosterQuickFill";
 import { computeBulkFill, describeSkipped, pageShiftOptions, type BulkEdit } from "./rosterBulkFill";
 import SubmitProblemsDialog from "./SubmitProblemsDialog";
 import { planAutofill } from "./autofillPlan";
+import { usePendingCells } from "@/pages/wfm/roster-requests/usePendingCells";
 import TeamRosterGrid, { shiftOptionsFor, stagedKey, type StagedEdit } from "./TeamRosterGrid";
 import {
   RANGE_PRESETS, formatDmy, presetRange, shiftKeyOf, spanDays, splitShiftKey, storedLabel, unpackError,
@@ -56,6 +57,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
     : spanDays(from, to) > me.maxRangeDays ? `A range can span at most ${me.maxRangeDays} days.` : null;
 
   const grid = useTeamRosterGrid({ from, to, search: debounced.trim(), offset, limit: pageSize, lobId: lobId || undefined, processId: processId || undefined }, !rangeError);
+  const pendingCells = usePendingCells({ from, to, processId: processId || undefined, enabled: !rangeError });
   const templates = useTeamRosterTemplates(true);
   const draft = useTeamRosterDraft(true);
   const save = useSaveDraftLines();
@@ -244,6 +246,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
             staged={stagedChoice} onApply={applyEdits}
           />
           <TeamRosterGrid
+            pendingCells={pendingCells}
             data={grid.data} today={me.today} templates={templates.data?.processes ?? []} staged={staged}
             dayFillOptions={pageShiftOptions(gridRows, templates.data?.processes ?? [])}
             onFillRow={(row, choice) => fillSubset([row], gridDates, choice)}

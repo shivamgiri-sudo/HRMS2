@@ -9,7 +9,7 @@
  * it here, or two employees want to swap and a manager approves that here. Splitting them across
  * two menu entries is why the second one was never wired up at all.
  */
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,6 +21,9 @@ import { BulkBar } from "./roster-requests/BulkBar";
 import { BULK_KINDS } from "./roster-requests/actions";
 import { useDecide } from "./roster-requests/useDecide";
 import { useKeyboardNav } from "./roster-requests/useKeyboardNav";
+import { AutoRulesPanel } from "./roster-requests/AutoRulesPanel";
+import { findDeepLinked, parseDeepLink } from "./roster-requests/deepLink";
+import { useHasRole } from "@/hooks/useUserRole";
 import { useToast } from "@/hooks/use-toast";
 import { useRosterRequests } from "./roster-requests/useRosterRequests";
 import { KIND_LABEL, type RequestKind, type RosterRequest } from "./roster-requests/types";
@@ -54,8 +57,17 @@ export default function RosterRequestsPage() {
   const activeTab = TABS.find((t) => t.value === active) ?? TABS[0];
 
   const { requests, isLoading, errors } = useRosterRequests();
-  const [kindFilter, setKindFilter] = useState<RequestKind | "all">("all");
+  const deepLink = useMemo(() => parseDeepLink(searchParams), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [kindFilter, setKindFilter] = useState<RequestKind | "all">(deepLink.kind ?? "all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const canEditRules = useHasRole("admin", "hr", "wfm", "ho_wfm");
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (deepLinkDone.current || isLoading || !deepLink.id) return;
+    deepLinkDone.current = true;
+    const hit = findDeepLinked(requests, deepLink);
+    if (hit) { setKindFilter(hit.kind); setSelectedKey(hit.key); }
+  }, [isLoading, requests, deepLink]);
   const kinds = Object.keys(KIND_LABEL) as RequestKind[];
   const visible = useMemo(
     () => (kindFilter === "all" ? requests : requests.filter((r) => r.kind === kindFilter)),
@@ -141,6 +153,13 @@ export default function RosterRequestsPage() {
             ) : <div className="p-10 text-center text-sm text-slate-500">Select a request to see its roster impact.</div>}
           </div>
         </div>
+
+        {canEditRules ? (
+          <details className="rounded-lg border p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-slate-700">Auto-approve rules</summary>
+            <AutoRulesPanel />
+          </details>
+        ) : null}
 
         <details className="rounded-lg border p-4">
           <summary className="cursor-pointer text-sm font-semibold text-slate-700">Decide in classic view</summary>

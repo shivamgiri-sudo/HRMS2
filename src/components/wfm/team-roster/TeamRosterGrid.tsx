@@ -1,6 +1,8 @@
 import { LobBadge } from "@/components/wfm/LobBadge";
 import { RaiseExitButton } from "@/components/exit/RaiseExitButton";
+import { Link } from "react-router-dom";
 import { Lock, Pencil } from "lucide-react";
+import { pendingBadgeHref, pendingBadgeTitle, pendingCellKey, type PendingRef } from "@/pages/wfm/roster-requests/pendingCells";
 import ShiftChoiceOptions from "./ShiftChoiceOptions";
 import type { GridResponse, GridRow } from "@/hooks/useTeamRoster";
 import {
@@ -24,6 +26,8 @@ export interface TeamRosterGridProps {
   onFillDay?: (date: string, choice: CellChoice) => void;
   /** Shifts offered in the column-header select (union across the people shown). */
   dayFillOptions?: ShiftOption[];
+  /** Pending roster requests keyed `${employeeId}|${date}` (see indexPendingCells). Optional. */
+  pendingCells?: Map<string, PendingRef[]>;
 }
 
 export const stagedKey = cellKey;
@@ -107,6 +111,17 @@ function GridCellView({ row, date, props }: { row: GridRow; date: string; props:
   );
 }
 
+export function PendingRequestBadges({ refs }: { refs: PendingRef[] }) {
+  return (
+    <>
+      {refs.map((r) => (
+        <Link key={`${r.kind}:${r.id}`} to={pendingBadgeHref(r)} title={pendingBadgeTitle(r.kind)} aria-label={pendingBadgeTitle(r.kind)}
+          className="ml-1 inline-block h-2.5 w-2.5 rounded-full bg-amber-500 ring-1 ring-amber-300" />
+      ))}
+    </>
+  );
+}
+
 function FillSelect({ label, options, onPick }: { label: string; options: ShiftOption[]; onPick: (c: CellChoice) => void }) {
   return (
     <select
@@ -123,7 +138,7 @@ function FillSelect({ label, options, onPick }: { label: string; options: ShiftO
 }
 
 export default function TeamRosterGrid(props: TeamRosterGridProps) {
-  const { data, today, onFillRow, onFillDay, dayFillOptions, templates } = props;
+  const { data, today, onFillRow, onFillDay, dayFillOptions, templates, pendingCells } = props;
   if (data.rows.length === 0) {
     return <p className="rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No team members match your search.</p>;
   }
@@ -153,7 +168,9 @@ export default function TeamRosterGrid(props: TeamRosterGridProps) {
                 {onFillRow && <FillSelect label={`Fill all empty days for ${row.name}`} options={shiftOptionsFor(templates, row.processId)} onPick={(c) => onFillRow(row, c)} />}
               </th>
               {data.dates.map((d) => (
-                <td key={d} className="border-b px-1.5 py-1.5 align-middle"><GridCellView row={row} date={d} props={props} /></td>
+                <td key={d} className="border-b px-1.5 py-1.5 align-middle"><GridCellView row={row} date={d} props={props} />
+                  {pendingCells?.get(pendingCellKey(row.employeeId, d)) ? <PendingRequestBadges refs={pendingCells.get(pendingCellKey(row.employeeId, d)) as PendingRef[]} /> : null}
+                </td>
               ))}
             </tr>
           ))}

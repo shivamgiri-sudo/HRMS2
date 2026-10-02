@@ -14,6 +14,7 @@ vi.mock("@/components/layout/DashboardLayout", () => ({
     React.createElement("div", { "data-layout": "mock" }, children),
 }));
 
+vi.mock("@/hooks/useUserRole", () => ({ useHasRole: () => false }));
 vi.mock("@/pages/wfm/roster-requests/useDecide", () => ({
   useDecide: () => ({ mutate() {}, isPending: false }),
   useBulkDecide: () => ({ mutate() {}, isPending: false }),
