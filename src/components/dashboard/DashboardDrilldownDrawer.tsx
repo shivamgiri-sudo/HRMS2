@@ -9,6 +9,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, X, TrendingUp, TrendingDown, Users, Clock, CheckCircle2, XCircle } from "lucide-react";
+import { Link } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { cn } from "@/lib/utils";
 
@@ -328,6 +329,14 @@ export function DashboardDrilldownDrawer({
         )}
 
         <div className="mt-6 flex justify-end gap-2">
+          <Button asChild variant="outline" size="sm" className="rounded-lg border-slate-200">
+            <Link
+              to={`/dashboards/drill/${dashboardCode}/${metricCode}${filters && Object.keys(filters).length ? `?${new URLSearchParams(filters).toString()}` : ""}`}
+              onClick={onClose}
+            >
+              Open full page
+            </Link>
+          </Button>
           <Button
             variant="outline"
             size="sm"

@@ -327,11 +327,16 @@ router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: Authenticate
         COUNT(DISTINCT User) as unique_agents,
         COUNT(DISTINCT ClientId) as unique_clients,
         SUM(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 ELSE 0 END) as fraud_flags,
-        ROUND(100 - (AVG(COALESCE(call_answered_within_5_seconds,0)) * 100), 1) as fail_rate_call_open,
-        ROUND(100 - (AVG(COALESCE(professionalism_maintained,0)) * 100), 1) as fail_rate_professionalism,
-        ROUND(100 - (AVG(COALESCE(active_listening,0)) * 100), 1) as fail_rate_active_listening,
-        ROUND(100 - (AVG(COALESCE(proper_call_closure,0)) * 100), 1) as fail_rate_call_closure,
-        ROUND(100 - (AVG(COALESCE(correct_and_complete_information,0)) * 100), 1) as fail_rate_accuracy
+        COUNT(CASE WHEN quality_percentage < 50 THEN 1 END) as failed_audits,
+        COUNT(CASE WHEN quality_percentage >= 50 THEN 1 END) as passed_audits,
+        -- Fail rate = failed / EVALUATED. AVG() skips NULL (parameter not evaluated on that call); the previous
+        -- AVG(COALESCE(col,0)) counted every un-evaluated call as a failure - for 'answered within 5 seconds'
+        -- 8,550 of 19,056 September rows were NULL, so it reported 45.9% against a true 1.9%.
+        ROUND(100 - (AVG(call_answered_within_5_seconds) * 100), 1) as fail_rate_call_open,
+        ROUND(100 - (AVG(professionalism_maintained) * 100), 1) as fail_rate_professionalism,
+        ROUND(100 - (AVG(active_listening) * 100), 1) as fail_rate_active_listening,
+        ROUND(100 - (AVG(proper_call_closure) * 100), 1) as fail_rate_call_closure,
+        ROUND(100 - (AVG(correct_and_complete_information) * 100), 1) as fail_rate_accuracy
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?${clientCond}${scopeCond}
     `, params);

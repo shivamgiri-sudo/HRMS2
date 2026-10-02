@@ -1,33 +1,17 @@
-import {
-  BadgeCheck,
-  BookOpen,
-  Briefcase,
-  CalendarDays,
-  Clock,
-  Clock3,
-  ExternalLink,
-  FileText,
-  FolderOpen,
-  Headphones,
-  Target,
-  TrendingUp,
-  TriangleAlert,
-  UserCheck,
-  Zap,
-} from "lucide-react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { CalendarX2, ExternalLink, Clock3, TriangleAlert, UserCheck, Wallet, Zap } from "lucide-react";
 
-import {
-  ReferenceHeader,
-  ReferenceMetricGrid,
-  ReferencePanel,
-  ReferenceProgress,
-  ReferenceQuickLink,
-} from "../ReferenceDashboardUI";
+import { ActionCenter, InsightGrid, KpiTiles, PulseGrid, PulseTile, SectionTitle, SignalList, TablePanel } from "../kit";
+import type { InsightAction } from "../kit";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
-import { METRIC_NO_DATA_REASON, asNumber, formatValue, stringAt } from "../reference-dashboard-model";
-import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
-import { LeaveApprovalPanel } from "./ReferenceSharedPanels";
+import { asNumber } from "../reference-dashboard-model";
+import { AttendanceCalendar } from "./employee/AttendanceCalendar";
+import { LeaveAndHolidays } from "./employee/LeaveAndHolidays";
+import { LegacyDetails } from "./employee/LegacyDetails";
+import { MyHero } from "./employee/MyHero";
+import { PayAndPerformance } from "./employee/PayAndPerformance";
+import { indexInsights } from "./employee/insightIndex";
 import { CompanyFeedSidePanel } from "@/components/dashboard/CompanyFeedSidePanel";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 import { EngagementPromoBanner } from "@/components/engagement/EngagementPromoBanner";
@@ -39,316 +23,184 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LiveCallScoreStrip } from "@/components/my-kpi/LiveCallScoreStrip";
 import { AhtTrendChart } from "@/components/my-kpi/AhtTrendChart";
 import { HeroScoreDial } from "@/components/my-kpi/HeroScoreDial";
-import { useState } from "react";
 
+/**
+ * Employee self-service "My Day": a personal card stack (hero -> what I must do -> attendance &
+ * LOP risk -> leave -> pay & performance -> requests), fed by the per-user insights provider.
+ * The hero and attendance tiles paint from the summary/loader feeds first; insight-fed cards show
+ * skeletons until /insights resolves. Every pre-redesign datapoint lives in <LegacyDetails/>.
+ */
 export function EmployeeReferenceLayout({ data, employeeName }: { data: ReferenceDashboardData; employeeName: string }) {
   const [videoModal, setVideoModal] = useState<{ id: string; title: string } | null>(null);
-  const drill = data.drilldownFor ?? (() => ({}));
+  const drill: NonNullable<ReferenceDashboardData["drilldownFor"]> = data.drilldownFor ?? (() => ({}));
+  const ix = useMemo(() => indexInsights(data.insights), [data.insights]);
+  const loading = Boolean(data.insightsLoading);
   const attendance = data.employee.attendance;
-  const onboarding = data.employee.onboarding;
-  const lms = data.employee.lms;
-  const present = asNumber(attendance.presentDays ?? attendance.present);
-  const absent = asNumber(attendance.absentDays ?? attendance.absent);
-  const late = asNumber(attendance.lateDays ?? attendance.late);
-  const attendancePct = asNumber(attendance.attendancePct ?? attendance.attendance_pct);
-  // Half-days are the missing link between the two tiles. The CEO UAT reported
-  // "Present 0 Days" beside "Attendance % 13.8%" as a contradiction — but both
-  // figures were correct: that month held 0 full-present days and 8 half-days
-  // against 29 expected, and 8 x 0.5 / 29 = 13.8%. The panel simply never showed
-  // the half-day count that reconciles them.
-  const halfDay = asNumber(attendance.halfDays ?? attendance.half_day ?? attendance.halfDay);
+  const hour = new Date(Date.now() + 5.5 * 3_600_000).getUTCHours();
 
-  /**
-   * This layout reads /api/wfm/my-attendance rather than the metric bundle, so it has no
-   * metricUnavailableReason() to call — but it has the same problem the metric model
-   * solves. When the month holds no rows the endpoint COALESCEs every figure to 0, and
-   * "Present 0, Absent 0, Late 0, Attendance 0%" is indistinguishable from a person who
-   * genuinely did not attend. loadEmployee() already detects the empty case and records it
-   * in sourceErrors; this reuses that signal on the tiles themselves, in the same wording
-   * the metric-driven dashboards use.
-   */
-  const attendanceMissing = (data.employee.sourceErrors ?? []).some((message) =>
-    message.startsWith("Attendance:"),
-  );
-  const attendanceReason = attendanceMissing ? METRIC_NO_DATA_REASON : null;
-  const completion = asNumber(lms.completion_pct ?? lms.completionPct ?? lms.course_completion_pct);
-  const mcq = asNumber(lms.mcq_best_score ?? lms.mcqBestScore);
-  const readiness = asNumber(lms.readiness_score ?? lms.readinessScore);
-  const certification = String(lms.certification_status ?? lms.certificationStatus ?? "—");
-  const lmsSyncedAt = stringAt(lms, "synced_at") ?? stringAt(lms, "last_synced_at") ?? stringAt(lms, "updated_at");
-  const lmsSyncLabel = (() => {
-    if (!lmsSyncedAt) return null;
-    try {
-      const d = new Date(lmsSyncedAt);
-      if (Number.isNaN(d.getTime())) return null;
-      const diffMs = Date.now() - d.getTime();
-      const diffH = Math.floor(diffMs / (1000 * 60 * 60));
-      if (diffH < 1) return "Synced just now";
-      if (diffH < 24) return `Synced ${diffH}h ago`;
-      const diffD = Math.floor(diffH / 24);
-      return `Synced ${diffD}d ago`;
-    } catch {
-      return null;
-    }
-  })();
-  const lmsStale = (() => {
-    if (!lmsSyncedAt) return false;
-    try {
-      const d = new Date(lmsSyncedAt);
-      return !Number.isNaN(d.getTime()) && Date.now() - d.getTime() > 24 * 60 * 60 * 1000;
-    } catch {
-      return false;
-    }
-  })();
-  const onboardingPct = asNumber(onboarding.percentComplete ?? onboarding.percent_complete);
-  const completedSteps = asNumber(onboarding.completedSteps ?? onboarding.completed_steps);
-  const totalSteps = asNumber(onboarding.totalSteps ?? onboarding.total_steps);
-  const stage = String(onboarding.stage ?? "—");
-
-  const leaveRows = data.employee.balances.slice(0, 4).map((row, index) => {
-    const label = String(row.leaveType ?? row.leave_type ?? row.leave_name ?? row.name ?? `Leave ${index + 1}`);
-    const remaining = asNumber(row.balance ?? row.remaining ?? row.available ?? row.available_days);
-    const used = asNumber(row.used ?? row.used_days);
-    const total = asNumber(row.total ?? row.entitled ?? row.allocated ?? row.allocated_days);
-    return { label, remaining, used, total };
-  });
-  const sourceFreshness = Object.entries(data.employee.sourceFreshness ?? {});
-  const freshnessLabel = (value: string | null) => {
-    if (!value) return "Timestamp unavailable";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "Timestamp unavailable" : date.toLocaleString("en-IN");
+  // Summary-feed fallbacks, used only until (or unless) the provider answers.
+  // Once the provider has answered for a KPI its value (even null = "no completed days") is the truth.
+  const fallback = (key: string, ...raw: unknown[]): number | null => {
+    const k = ix.kpi(key);
+    return k ? k.value : raw.map(asNumber).find((v) => v !== null) ?? null;
   };
+  const attendanceMissing = (data.employee.sourceErrors ?? []).some((m) => m.startsWith("Attendance:"));
+  const unavailable = (key: string) => ix.kpi(key)?.unavailable ?? (attendanceMissing && !ix.kpi(key) ? "No attendance data for this month yet" : null);
+  const attDrill = drill("att").onDrilldown;
+
+  // Onboarding is not in the provider (the loader already owns it): turn it into a queue row here.
+  const onboarding = data.employee.onboarding;
+  const onboardingPct = asNumber(onboarding.percentComplete ?? onboarding.percent_complete);
+  const totalSteps = asNumber(onboarding.totalSteps ?? onboarding.total_steps);
+  const doneSteps = asNumber(onboarding.completedSteps ?? onboarding.completed_steps);
+  const actions: InsightAction[] = useMemo(() => {
+    const list = [...ix.actions];
+    if (onboardingPct !== null && onboardingPct < 100) {
+      list.push({
+        id: "onboarding", label: "Finish my onboarding", group: "Onboarding", severity: "high", href: "/profile",
+        count: totalSteps !== null && doneSteps !== null ? Math.max(1, totalSteps - doneSteps) : 1,
+        hint: `${onboardingPct}% complete — open your profile to upload what is missing`,
+      });
+    }
+    return list;
+  }, [ix.actions, onboardingPct, totalSteps, doneSteps]);
 
   return (
     <div className="space-y-0">
-    {/* Dashboard tab bar */}
-    <Tabs defaultValue="home" className="w-full">
-      <TabsList className="bg-white border border-slate-200 rounded-xl p-1 h-auto gap-1 mb-5">
-        {([
-          { value: "home", label: "Home" },
-          { value: "my-kpi", label: "My KPI" },
-          { value: "live", label: "Live Performance", icon: Zap },
-        ] as Array<{ value: string; label: string; icon?: typeof Zap }>).map(({ value, label, icon: Icon }) => (
-          <TabsTrigger
-            key={value}
-            value={value}
-            className="flex items-center gap-1.5 text-xs font-semibold data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm rounded-lg px-3 py-2 transition-all"
-          >
-            {Icon && <Icon size={12} />}
-            {label}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-
-      {/* ── Home tab — existing layout unchanged ── */}
-      <TabsContent value="home" className="focus-visible:outline-none">
-    <div className="grid gap-4 md:gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-    <div className="reference-dashboard-page min-w-0">
-      <ReferenceHeader title={`Welcome, ${employeeName}`} subtitle="Your personal dashboard" badge="Self Service" />
-
-      <TodayCelebrationsWidget />
-
-      <EngagementPromoBanner />
-
-      <ReferencePanel title="My Attendance This Month" bodyClassName="p-2 sm:p-3">
-        <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
-          { label: "Present", value: present, helper: "Full days", icon: UserCheck, tone: "green",
-            unavailableReason: attendanceReason, ...drill("att"), },
-          { label: "Half Day", value: halfDay, helper: "Counts as 0.5", icon: Clock3, tone: halfDay && halfDay > 0 ? "amber" : "blue",
-            unavailableReason: attendanceReason, ...drill("att"), },
-          { label: "Absent", value: absent, helper: "Day", icon: TriangleAlert, tone: absent && absent > 0 ? "red" : "green",
-            unavailableReason: attendanceReason, ...drill("att"), },
-          { label: "Late", value: late, helper: "Days", icon: Clock3, tone: late && late > 0 ? "amber" : "blue",
-            unavailableReason: attendanceReason, ...drill("att"), },
-          { label: "Attendance %", value: attendancePct, valueSuffix: "%", helper: "Full + half days", icon: Target, tone: "blue",
-            unavailableReason: attendanceReason, ...drill("att"), },
-        ]} />
-      </ReferencePanel>
-
-      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.02fr_0.98fr]">
-        <ReferencePanel
-          title="My Training Status"
-          bodyClassName="p-0"
-          action={
-            lmsSyncLabel ? (
-              <span className={`flex items-center gap-1 text-xs font-medium ${lmsStale ? "text-[#f97316]" : "text-[#61708a]"}`}>
-                <Clock className="h-3 w-3" aria-hidden="true" />
-                {lmsSyncLabel}
-                {lmsStale ? " — data may be outdated" : ""}
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-xs text-[#94a3b8]">
-                <Clock className="h-3 w-3" aria-hidden="true" />
-                Sync time unknown
-              </span>
-            )
-          }
-        >
-          <div className="grid min-h-[118px] grid-cols-2 divide-x divide-[#edf1f6] sm:grid-cols-4">
-            {[
-              { label: "Completion", value: completion, suffix: "%", helper: stringAt(lms, "course_progress") ?? "Courses", icon: BookOpen, tone: "violet" as const },
-              { label: "MCQ Best Score", value: mcq, suffix: "%", helper: "Best Score", icon: Target, tone: "green" as const },
-              { label: "Readiness Score", value: readiness, suffix: "%", helper: "LMS readiness", icon: TrendingUp, tone: "amber" as const },
-              { label: "Certification", value: certification, suffix: "", helper: stringAt(lms, "course_name") ?? "Certification", icon: BadgeCheck, tone: "blue" as const },
-            ].map((item) => {
-              const Icon = item.icon;
-              return <div key={item.label} className="flex min-w-0 items-center gap-3 px-4 py-5"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${item.tone === "violet" ? "bg-[#f3efff] text-[#7c3aed]" : item.tone === "green" ? "bg-[#eaf8ef] text-[#16a34a]" : item.tone === "amber" ? "bg-[#fff4e8] text-[#f97316]" : "bg-[#edf4ff] text-[#0b63e5]"}`}><Icon className="h-5 w-5" /></span><div className="min-w-0"><p className="truncate text-xs font-semibold text-[#1d2b45]">{item.label}</p><p className="mt-1 text-[23px] font-extrabold leading-none text-[#0b1f44]">{formatValue(item.value, item.suffix)}</p><p className="mt-2 truncate text-xs text-[#71809a]">{item.helper}</p></div></div>;
-            })}
-          </div>
-        </ReferencePanel>
-
-        <ReferenceAIBrief title="Automated Attendance & Leave Summary" actionHref="/attendance" actionLabel="View attendance details" items={[
-          { label: "Attendance", value: attendancePct === null ? null : `${attendancePct}%`, text: "Current month attendance based on your finalized attendance records.", icon: UserCheck, tone: attendancePct !== null && attendancePct >= 90 ? "green" : "blue" },
-          { label: "Leave balance", value: leaveRows.length ? leaveRows.reduce((sum, row) => sum + (row.remaining ?? 0), 0) : null, text: "Total available leave across your visible leave types.", icon: CalendarDays, tone: "violet" },
-          { label: "Late days", value: late, text: "Late arrivals recorded during the current month.", icon: Clock3, tone: late && late > 3 ? "amber" : "blue" },
-        ]} />
-      </div>
-
-      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.05fr_0.95fr]">
-        <ReferencePanel title="My Onboarding Status" bodyClassName="px-5 py-4">
-          <div className="grid items-center gap-4 sm:grid-cols-[52px_1fr_90px]">
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f3efff] text-[#7c3aed]"><UserCheck className="h-5 w-5" /></span>
-            <div><div className="flex items-center justify-between gap-3 text-xs"><span className="font-semibold text-[#1d2b45]">Stage: {stage}</span><span className="font-medium text-[#61708a]">Completed Steps: {formatValue(completedSteps)} / {formatValue(totalSteps)}</span></div>{onboardingPct === null ? <p className="mt-3 text-xs text-[#94a3b8]">Onboarding progress unavailable</p> : <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#edf1f6]"><div className="h-full rounded-full bg-[#8b5cf6]" style={{ width: `${Math.min(100, Math.max(0, onboardingPct))}%` }} /></div>}</div>
-            <div className="text-right"><p className="text-[26px] font-extrabold leading-none text-[#0b1f44]">{formatValue(onboardingPct, "%")}</p><p className="mt-1 text-xs text-[#71809a]">Complete</p></div>
-          </div>
-        </ReferencePanel>
-        <div aria-hidden="true" />
-      </div>
-
-      <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.05fr_0.95fr]">
-        <ReferencePanel title="My Leave Balance" action={<a href="/leaves" className="text-xs font-semibold text-[#0b63e5]">View Leave Policy</a>} bodyClassName="p-0">
-          <div className="divide-y divide-[#edf1f6]">
-            {leaveRows.length ? leaveRows.map((row) => {
-              const used = row.used ?? (row.total !== null && row.remaining !== null ? Math.max(0, row.total - row.remaining) : null);
-              const total = row.total ?? ((used ?? 0) + (row.remaining ?? 0));
-              return (
-                <div key={row.label} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_90px_minmax(120px,1fr)_70px] items-center gap-2 sm:gap-3 px-3 sm:px-5 py-3 text-xs">
-                  <span className="truncate font-medium text-[#1d2b45]">{row.label}</span>
-                  <span className="font-bold text-[#16a34a] text-right sm:text-left">{formatValue(row.remaining)} Days</span>
-                  <div className="hidden sm:block"><ReferenceProgress label="" value={used} max={total || 1} tone="green" /></div>
-                  <span className="hidden sm:block text-right font-medium text-[#61708a]">{formatValue(used)} / {formatValue(total)}</span>
-                </div>
-              );
-            }) : <div className="px-5 py-10 text-center text-xs text-[#94a3b8]">Leave balance is unavailable</div>}
-          </div>
-        </ReferencePanel>
-        <ReferenceWorkInbox maxItems={4} />
-      </div>
-
-      <ReferencePanel title="Source Freshness" bodyClassName="p-0">
-        <div className="grid divide-y divide-[#edf1f6] grid-cols-2 sm:grid-cols-3 sm:divide-x sm:divide-y-0 lg:grid-cols-5">
-          {sourceFreshness.map(([source, asOf]) => (
-            <div key={source} className="px-4 py-3">
-              <p className="text-xs font-semibold capitalize text-[#1d2b45]">{source}</p>
-              <p className="mt-1 text-xs text-[#71809a]">{freshnessLabel(asOf)}</p>
-            </div>
+      <Tabs defaultValue="home" className="w-full">
+        <TabsList className="mb-5 h-auto gap-1 rounded-xl border border-slate-200 bg-white p-1">
+          {([
+            { value: "home", label: "Home" },
+            { value: "my-kpi", label: "My KPI" },
+            { value: "live", label: "Live Performance", icon: Zap },
+          ] as Array<{ value: string; label: string; icon?: typeof Zap }>).map(({ value, label, icon: Icon }) => (
+            <TabsTrigger key={value} value={value} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-all data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm">
+              {Icon && <Icon size={12} />}
+              {label}
+            </TabsTrigger>
           ))}
-        </div>
-      </ReferencePanel>
+        </TabsList>
 
-      <LeaveApprovalPanel data={data} />
+        <TabsContent value="home" className="focus-visible:outline-none">
+          <div className="grid gap-4 md:gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+            <div className="min-w-0 space-y-4">
+              <MyHero ix={ix} name={employeeName} hour={hour} loading={loading} fallbackPct={asNumber(attendance.attendancePct ?? attendance.attendance_pct)} />
+              {data.insightsError ? <p role="status" className="rounded-xl bg-amber-50 px-3 py-2 text-[12px] text-amber-800">Some personal insights could not be loaded ({data.insightsError}). Your summary below still works.</p> : null}
 
-      <ReferencePanel title="Quick Links" bodyClassName="p-3">
-        <div className="grid gap-2 sm:gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
-          <ReferenceQuickLink icon={CalendarDays} title="Apply Leave" subtitle="Request time off" href="/leaves" tone="green" />
-          <ReferenceQuickLink icon={FileText} title="View Payslip" subtitle="Check your salary details" href="/payroll/payslips" tone="blue" />
-          <ReferenceQuickLink icon={Headphones} title="Raise Helpdesk" subtitle="Get support for issues" href="/helpdesk" tone="amber" />
-          <ReferenceQuickLink icon={FolderOpen} title="View Documents" subtitle="Access your documents" href="/profile" tone="violet" />
-          <ReferenceQuickLink icon={Briefcase} title="Internal Jobs" subtitle="Career opportunities" href="/people/ijp" tone="green" />
-          <ReferenceQuickLink icon={BadgeCheck} title="My Engagement" subtitle="Points, badges & games" href="/engagement" tone="violet" />
-        </div>
-      </ReferencePanel>
+              <TodayCelebrationsWidget />
+              <EngagementPromoBanner />
 
-      {/* Weekly Winners — engagement leaderboard spotlight */}
-      <WeeklyWinnersWidget />
+              <div className="grid gap-4 lg:grid-cols-5">
+                <div id="my-actions" className="scroll-mt-4 lg:col-span-3">
+                  <ActionCenter title="What I need to do" subtitle={loading ? "Loading…" : undefined} actions={actions} loading={loading && !actions.length} error={data.insightsError} limit={10} />
+                </div>
+                <div className="lg:col-span-2"><SignalList title="Heads-up" signals={ix.signals} loading={loading} /></div>
+              </div>
 
-      {/* MCNmeet — upcoming meetings widget */}
-      <MyMeetingsWidget />
+              <SectionTitle hint={ix.kpi("att_pct")?.helper}>Attendance & LOP risk</SectionTitle>
+              <PulseGrid cols={5}>
+                <PulseTile label="Present" icon={UserCheck} tone="green" unit="days" loading={loading && !ix.kpi("att_present") && !attendance.presentDays}
+                  value={fallback("att_present", attendance.presentDays, attendance.present)} helper={ix.kpi("att_present")?.helper ?? "Full days"}
+                  unavailable={unavailable("att_present")} onDrill={attDrill} formula="Days marked present (incl. week-off worked) on completed days" />
+                <PulseTile label="Half days" icon={Clock3} tone={(ix.kpi("att_half")?.value ?? 0) > 0 ? "amber" : "green"} unit="days" loading={loading && !ix.kpi("att_half") && !attendance.halfDays}
+                  value={fallback("att_half", attendance.halfDays, attendance.half_day)} helper={ix.kpi("att_half")?.helper ?? "Counts as 0.5"}
+                  unavailable={unavailable("att_half")} onDrill={attDrill} formula="Days with worked time under the full-day rule" />
+                <PulseTile label="Absent" icon={TriangleAlert} tone={(ix.kpi("att_absent")?.value ?? 0) > 0 ? "red" : "green"} unit="days" higherIsBetter={false} loading={loading && !ix.kpi("att_absent") && !attendance.absentDays}
+                  value={fallback("att_absent", attendance.absentDays, attendance.absent)} helper={ix.kpi("att_absent")?.helper ?? "Day"}
+                  unavailable={unavailable("att_absent")} onDrill={attDrill} formula="Completed days marked absent (1 LOP day each)" />
+                <PulseTile label="Late marks" icon={CalendarX2} tone={ix.kpi("att_late")?.tone ?? "blue"} unit="count" higherIsBetter={false} loading={loading && !ix.kpi("att_late") && !attendance.lateDays}
+                  value={fallback("att_late", attendance.lateDays, attendance.late)} helper={ix.kpi("att_late")?.helper ?? "Days"}
+                  unavailable={unavailable("att_late")} onDrill={attDrill} formula="Days clocked in after the grace period" />
+                <PulseTile label="LOP booked" icon={Wallet} tone={ix.kpi("att_lop")?.tone ?? "slate"} unit="days" higherIsBetter={false} loading={loading && !ix.kpi("att_lop")}
+                  value={ix.kpi("att_lop")?.value ?? null} helper={ix.kpi("att_lop")?.helper} unavailable={ix.kpi("att_lop")?.unavailable ?? (loading ? null : "Needs the personal insights feed")}
+                  onDrill={attDrill} formula={ix.kpi("att_lop")?.formula} />
+              </PulseGrid>
+              <KpiTiles kpis={ix.kpis(["att_pct"])} loading={loading} cols={3} />
 
-      {/* MAS Connect — social feed widget */}
-      <SocialFeedWidget onPlayVideo={(id, title) => setVideoModal({ id, title })} />
-      {videoModal && <VideoModal videoId={videoModal.id} title={videoModal.title} onClose={() => setVideoModal(null)} />}
+              <div className="grid gap-4 lg:grid-cols-5">
+                <div className="lg:col-span-3"><AttendanceCalendar series={ix.series("att_calendar")} loading={loading} /></div>
+                <div className="space-y-4 lg:col-span-2">
+                  {ix.table("att_rule") ? <TablePanel table={ix.table("att_rule")!} /> : loading ? <div className="kit-shimmer h-48 rounded-2xl" /> : null}
+                  {ix.table("my_regularisations") ? <TablePanel table={ix.table("my_regularisations")!} /> : null}
+                </div>
+              </div>
 
-      {/* Company Feed — shown inline on mobile/tablet (hidden on xl where it's in the right aside) */}
-      <div className="xl:hidden">
-        <CompanyFeedSidePanel />
-      </div>
-    </div>
+              <SectionTitle hint="Balances, accrual, what lapses and the next holidays">Leave & holidays</SectionTitle>
+              <LeaveAndHolidays ix={ix} loading={loading} />
+              {ix.table("my_leave_requests") ? <TablePanel table={ix.table("my_leave_requests")!} /> : null}
 
-    <aside className="hidden xl:block">
-      <div className="sticky top-4">
-        <CompanyFeedSidePanel />
-      </div>
-    </aside>
-    </div>
-      </TabsContent>
+              <PayAndPerformance ix={ix} loading={loading} employee={data.employee} />
 
-      {/* ── My KPI tab — condensed KPI overview ── */}
-      <TabsContent value="my-kpi" className="focus-visible:outline-none space-y-5">
-        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-bold text-blue-800">Your Performance Overview</p>
-            <p className="text-xs text-blue-600 mt-0.5">Condensed view — open the full hub for all 4 tabs, drill-downs and trends.</p>
+              {ix.table("team_moments") ? <><SectionTitle>Team feed</SectionTitle><InsightGrid tables={[ix.table("team_moments")!]} /></> : null}
+
+              <details className="kit-card group">
+                <summary className="cursor-pointer select-none px-4 py-3 text-[13px] font-bold text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500">
+                  All my details, onboarding, training &amp; data sources
+                </summary>
+                <div className="border-t border-slate-100 p-3"><LegacyDetails data={data} ix={ix} /></div>
+              </details>
+
+              <WeeklyWinnersWidget />
+              <MyMeetingsWidget />
+              <SocialFeedWidget onPlayVideo={(id, title) => setVideoModal({ id, title })} />
+              {videoModal && <VideoModal videoId={videoModal.id} title={videoModal.title} onClose={() => setVideoModal(null)} />}
+
+              <div className="xl:hidden"><CompanyFeedSidePanel /></div>
+            </div>
+
+            <aside className="hidden xl:block"><div className="sticky top-4"><CompanyFeedSidePanel /></div></aside>
           </div>
-          <Link
-            to="/my-kpi"
-            className="flex items-center gap-1.5 text-xs font-bold text-blue-600 bg-white border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-all whitespace-nowrap"
-          >
-            View Full Hub
-            <ExternalLink size={12} />
-          </Link>
-        </div>
+        </TabsContent>
 
-        {/* Hero score + KPI strip — uses live period=day data */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex items-center gap-5">
-            <HeroScoreDial score={0} rating={null} ratingColor={null} size={88} />
+        <TabsContent value="my-kpi" className="space-y-5 focus-visible:outline-none">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
             <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Today's Score</p>
-              <p className="text-xs text-slate-400 mt-1">Open "View Full Hub" for live data.</p>
-              <Link to="/my-kpi" className="inline-flex items-center gap-1 mt-2 text-xs font-semibold text-blue-600 hover:underline">
-                Load live data <ExternalLink size={11} />
-              </Link>
+              <p className="text-sm font-bold text-blue-800">Your Performance Overview</p>
+              <p className="mt-0.5 text-xs text-blue-600">Condensed view — open the full hub for all 4 tabs, drill-downs and trends.</p>
+            </div>
+            <Link to="/my-kpi" className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-600 transition-all hover:bg-blue-600 hover:text-white">
+              View Full Hub <ExternalLink size={12} />
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex items-center gap-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <HeroScoreDial score={ix.kpi("kpi_score")?.value ?? 0} rating={null} ratingColor={null} size={88} />
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Month-to-date score</p>
+                <p className="mt-1 text-xs text-slate-400">{ix.kpi("kpi_score")?.value == null ? (ix.kpi("kpi_score")?.unavailable ?? "Open the full hub for live data.") : "Weighted against your targets."}</p>
+                <Link to="/my-kpi" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:underline">Load live data <ExternalLink size={11} /></Link>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-500">Quick Actions</p>
+              <div className="space-y-2">
+                {[
+                  { label: "Performance KPIs", href: "/my-kpi", color: "text-blue-600" },
+                  { label: "Call Quality & CLAP", href: "/my-kpi?tab=quality", color: "text-emerald-600" },
+                  { label: "Learning & TNI", href: "/my-kpi?tab=learning", color: "text-purple-600" },
+                ].map(({ label, href, color }) => (
+                  <Link key={href} to={href} className={`flex items-center justify-between text-xs font-semibold ${color} hover:underline`}>{label}<ExternalLink size={11} /></Link>
+                ))}
+              </div>
             </div>
           </div>
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Quick Actions</p>
-            <div className="space-y-2">
-              {[
-                { label: "Performance KPIs", href: "/my-kpi", color: "text-blue-600" },
-                { label: "Call Quality & CLAP", href: "/my-kpi?tab=quality", color: "text-emerald-600" },
-                { label: "Learning & TNI", href: "/my-kpi?tab=learning", color: "text-purple-600" },
-              ].map(({ label, href, color }) => (
-                <Link key={href} to={href} className={`flex items-center justify-between text-xs font-semibold ${color} hover:underline`}>
-                  {label}
-                  <ExternalLink size={11} />
-                </Link>
-              ))}
+          <LiveCallScoreStrip refetchInterval={60_000} />
+        </TabsContent>
+
+        <TabsContent value="live" className="space-y-5 focus-visible:outline-none">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-500" />
+              <p className="text-xs font-bold uppercase tracking-widest text-slate-700">Live Data — refreshes every 60s</p>
             </div>
+            <Link to="/my-kpi?tab=live" className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-600 transition-all hover:bg-blue-600 hover:text-white">
+              Full Analysis <ExternalLink size={12} />
+            </Link>
           </div>
-        </div>
-        <LiveCallScoreStrip refetchInterval={60_000} />
-      </TabsContent>
-
-      {/* ── Live Performance tab ── */}
-      <TabsContent value="live" className="focus-visible:outline-none space-y-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <p className="text-xs font-bold text-slate-700 uppercase tracking-widest">Live Data — refreshes every 60s</p>
-          </div>
-          <Link
-            to="/my-kpi?tab=live"
-            className="flex items-center gap-1.5 text-xs font-bold text-blue-600 border border-blue-200 bg-white px-3 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-all"
-          >
-            Full Analysis <ExternalLink size={12} />
-          </Link>
-        </div>
-        <LiveCallScoreStrip refetchInterval={60_000} showLiveBadge />
-        <AhtTrendChart refetchInterval={60_000} compactMode />
-      </TabsContent>
-
-    </Tabs>
+          <LiveCallScoreStrip refetchInterval={60_000} showLiveBadge />
+          <AhtTrendChart refetchInterval={60_000} compactMode />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -13,7 +13,14 @@ import { resolve } from "node:path";
  * These are static checks on the layout sources, so they need no database and no server.
  */
 const REF = resolve(__dirname, "../reference");
-const read = (f: string) => readFileSync(resolve(REF, f), "utf8");
+/** Layouts split into sub-components: the checks below read the whole family, so moving markup into a subfolder never hides it. */
+const SPLIT_PARTS: Record<string, string[]> = {
+  "SuperAdminReferenceLayout.tsx": ["superadmin/OrgPulse.tsx", "superadmin/PlatformPanels.tsx", "superadmin/AccessPanels.tsx", "superadmin/SystemsGrid.tsx"],
+  "ManagerReferenceLayout.tsx": ["manager/ManagerClassicPanels.tsx", "manager/ManagerHeroBlock.tsx", "manager/ManagerSummaryTiles.tsx", "manager/PeopleCards.tsx", "manager/TeamTodayStrip.tsx", "manager/WeekOutStrip.tsx", "manager/managerModel.ts"],
+  "OperationsReferenceLayout.tsx": ["operations/OperationsClassicPanels.tsx", "operations/OperationsHeroBlock.tsx", "operations/OperationsPulseTiles.tsx", "operations/ProcessBoard.tsx", "operations/FteVsRequired.tsx", "operations/operationsModel.ts"],
+  "QualityReferenceLayout.tsx": ["quality/QualityClassicPanels.tsx", "quality/QualityHeroBlock.tsx", "quality/QualitySummaryTiles.tsx", "quality/CoverageMeter.tsx", "quality/LeagueBoard.tsx", "quality/qualityModel.ts"],
+};
+const read = (f: string) => [f, ...(SPLIT_PARTS[f] ?? [])].map((p) => readFileSync(resolve(REF, p), "utf8")).join("\n");
 
 const LAYOUTS = [
   "SuperAdminReferenceLayout.tsx",

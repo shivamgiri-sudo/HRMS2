@@ -146,7 +146,9 @@ async function loadSystemDashboardRows() {
            COALESCE(au.email, 'System') AS user,
            REPLACE(LOWER(sal.action_type), '_', ' ') AS action,
            sal.acted_at AS timestamp,
-           'success' AS status
+           CASE WHEN UPPER(sal.action_type) LIKE '%FAIL%' OR UPPER(sal.action_type) LIKE '%DENIED%'
+                  OR UPPER(sal.action_type) LIKE '%LOCK%' OR UPPER(sal.action_type) LIKE '%REUSE%'
+                THEN 'error' ELSE 'success' END AS status
          FROM sensitive_action_log sal
          LEFT JOIN auth_user au ON au.id = sal.actor_user_id
          ORDER BY sal.acted_at DESC

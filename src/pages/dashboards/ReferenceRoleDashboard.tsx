@@ -27,6 +27,7 @@ import {
   type ReferenceDashboardData,
 } from "./reference-dashboard-model";
 import { ReferenceError, UpdatedControl } from "./ReferenceDashboardUI";
+import { useRoleInsights } from "./kit/useRoleInsights";
 import { CeoReferenceLayout } from "./reference/CeoReferenceLayout";
 import { EmployeeReferenceLayout } from "./reference/EmployeeReferenceLayout";
 import { HrReferenceLayout } from "./reference/HrReferenceLayout";
@@ -420,6 +421,8 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     retry: 1,
   });
 
+  const insightsQuery = useRoleInsights(code, { branchId, processId }, accessGranted && !roleLoading);
+
   const summary = summaryQuery.data;
   const metrics = summary?.metrics ?? {};
   const employeeData = employeeQuery.data ?? EMPTY_EMPLOYEE;
@@ -441,6 +444,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     ...(variant === "quality" ? [qualitySummaryQuery, qualityTrendQuery, qualityAgentsQuery] : []),
     ...(["operations", "manager", "super_admin", "ceo"].includes(variant) ? [qaQualityQuery] : []),
     ...(variant === "it_manager" ? [itProvisioningQuery, itDashboardQuery] : []),
+    insightsQuery,
   ] : [];
 
   // Merge executive quality (for ceo/admin) with QA-role quality (for quality/operations roles)
@@ -516,6 +520,11 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
 
   const data: ReferenceDashboardData = {
     variant,
+    dashboardCode: code,
+    insights: insightsQuery.data,
+    insightsLoading: insightsQuery.isLoading,
+    insightsError: insightsQuery.isError ? (insightsQuery.error as Error)?.message ?? "Insights unavailable" : null,
+    openDrill: (metricCode, metricName, filters) => setActiveDrilldown({ metricCode, metricName, filters }),
     summary: summary ?? {} as DashboardSummary,
     metrics,
     drilldownFor,
@@ -575,7 +584,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   // refresh, "data as of") rendered permanently empty. This control is generic
   // (driven by dashboardCode, not the variant), so adding payroll here is the same
   // fix every other listed dashboard already has, not a new behavior.
-  const filterControl = ["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin", "payroll"].includes(variant) ? (
+  const filterControl = ["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin", "payroll", "recruiter", "it_manager"].includes(variant) ? (
     <div className="flex flex-wrap items-center justify-end gap-3">
       <ScopedFilterBar
         onBranchChange={setBranchId}

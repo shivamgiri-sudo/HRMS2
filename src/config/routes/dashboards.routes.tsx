@@ -40,6 +40,7 @@ const OperationsDashboard      = lazy(() => import("@/pages/OperationsDashboard"
 const RecruiterDashboard       = lazy(() => import("@/pages/dashboards/RecruiterDashboard"));
 const WfmAttendanceDashboard   = lazy(() => import("@/pages/dashboards/WfmAttendanceDashboard"));
 const ItManagerDashboard       = lazy(() => import("@/pages/dashboards/ItManagerDashboard"));
+const DashboardDrillPage       = lazy(() => import("@/pages/dashboards/DashboardDrillPage"));
 
 export const dashboardRouteElements = (
   <>
@@ -59,6 +60,8 @@ export const dashboardRouteElements = (
       <Route path="/operations-dashboard"   element={<DashboardRouteGate code="OPERATIONS_DASHBOARD"><OperationsDashboard /></DashboardRouteGate>} />
       <Route path="/recruiter-dashboard"    element={<DashboardRouteGate code="RECRUITER_DASHBOARD"><RecruiterDashboard /></DashboardRouteGate>} />
       <Route path="/wfm-attendance"         element={<DashboardRouteGate code="WFM_ATTENDANCE_DASHBOARD"><WfmAttendanceDashboard /></DashboardRouteGate>} />
+      {/* Full-page drill-down for any dashboard metric; the API enforces the dashboard entitlement + scope. */}
+      <Route path="/dashboards/drill/:dashboardCode/:metricCode" element={<ProtectedRoute><DashboardDrillPage /></ProtectedRoute>} />
       <Route path="/it/dashboard"           element={<DashboardRouteGate code="IT_MANAGER_DASHBOARD"><ItManagerDashboard /></DashboardRouteGate>} />
   </>
 );

@@ -1109,7 +1109,8 @@ router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsu
          SUM(sla_breached = 1 AND status NOT IN ('resolved','closed','cancelled'))    AS sla_breached_open,
          ROUND(AVG(CASE WHEN resolved_at IS NOT NULL
            THEN TIMESTAMPDIFF(MINUTE, created_at, resolved_at) END), 0)               AS avg_resolution_minutes,
-         SUM(status IN ('resolved','closed') AND sla_breached = 0)                   AS resolved_on_time
+         SUM(status IN ('resolved','closed') AND sla_breached = 0)                   AS resolved_on_time,
+         SUM(status IN ('resolved','closed'))                                         AS resolved_total
        FROM helpdesk_ticket
        WHERE category = 'it'
          AND employee_id IN (SELECT e.id FROM employees e WHERE ${dashEmpScope.sql})`,

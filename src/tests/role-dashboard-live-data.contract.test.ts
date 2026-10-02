@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -11,7 +11,22 @@ import {
 } from "@/pages/dashboards/dashboard-data-contracts";
 import { countEmployeesOnLeaveOnDate } from "@/pages/dashboards/reference-dashboard-model";
 
-const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
+/**
+ * Manager, Operations and Quality layouts are split into reference/<role>/*.tsx sub-components. The assertions below
+ * guard what the layout renders, wherever that code lives, so a split layout is read as one source.
+ */
+const SPLIT_LAYOUT_DIR: Record<string, string> = {
+  "src/pages/dashboards/reference/ManagerReferenceLayout.tsx": "src/pages/dashboards/reference/manager",
+  "src/pages/dashboards/reference/OperationsReferenceLayout.tsx": "src/pages/dashboards/reference/operations",
+  "src/pages/dashboards/reference/QualityReferenceLayout.tsx": "src/pages/dashboards/reference/quality",
+};
+const read = (path: string) => {
+  const main = readFileSync(resolve(process.cwd(), path), "utf8");
+  const dir = SPLIT_LAYOUT_DIR[path];
+  if (!dir) return main;
+  const parts = readdirSync(resolve(process.cwd(), dir)).filter((f) => /\.tsx?$/.test(f)).sort();
+  return [main, ...parts.map((f) => readFileSync(resolve(process.cwd(), dir, f), "utf8"))].join("\n");
+};
 
 describe("role dashboard live-data contracts", () => {
   it("normalizes quality summary, trend, defects, coaching agents, and pending audits", () => {
@@ -216,7 +231,7 @@ describe("role dashboard live-data contracts", () => {
     // PayrollReferenceLayout's header falls back to, is never mounted anywhere in the
     // app — so the Payroll dashboard's header rendered no filter bar and no refresh
     // control at all, unlike every other listed dashboard. Fixed 2026-08-13.
-    expect(dashboard).toContain('["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin", "payroll"].includes(variant)');
+    expect(dashboard).toContain('["hr", "wfm", "wfm_attendance", "ceo", "quality", "operations", "manager", "super_admin", "payroll", "recruiter", "it_manager"].includes(variant)');
     expect(dashboard).toContain("dashboardCode={code}");
     expect(filters).toContain("dashboardCode?: string");
     expect(filters).toContain("/api/dashboards/${dashboardCode}/filters");
@@ -258,7 +273,11 @@ describe("role dashboard live-data contracts", () => {
 
   it("keeps IT provisioning failures distinct from genuine zero results", () => {
     const dashboard = read("src/pages/dashboards/ReferenceRoleDashboard.tsx");
-    const layout = read("src/pages/dashboards/reference/ItManagerReferenceLayout.tsx");
+    // The IT layout is split into itmanager/*; the same guard covers every file of it.
+    const layout = [
+      "src/pages/dashboards/reference/ItManagerReferenceLayout.tsx",
+      ...["ProvisioningTab", "TicketsTab", "EmployeeDirectoryTab", "SlaBoard"].map((f) => `src/pages/dashboards/reference/itmanager/${f}.tsx`),
+    ].map(read).join("\n");
 
     expect(dashboard).toContain("itProvisioningAvailable: !itProvisioningQuery.isError");
     expect(layout).not.toContain("?? 0");
@@ -380,7 +399,12 @@ describe("role dashboard live-data contracts", () => {
 
   it("does not convert missing employee source fields into zero or static AI claims", () => {
     const dashboard = read("src/pages/dashboards/ReferenceRoleDashboard.tsx");
-    const employee = read("src/pages/dashboards/reference/EmployeeReferenceLayout.tsx");
+    // The layout is split across reference/employee/*; the guarded strings may live in any part.
+    const employeeDir = resolve(process.cwd(), "src/pages/dashboards/reference/employee");
+    const employee = [
+      read("src/pages/dashboards/reference/EmployeeReferenceLayout.tsx"),
+      ...readdirSync(employeeDir).filter((f) => /\.tsx?$/.test(f)).map((f) => readFileSync(resolve(employeeDir, f), "utf8")),
+    ].join("\n");
 
     const fallback = dashboard.slice(
       dashboard.indexOf("function employeeAttendanceFallback"),

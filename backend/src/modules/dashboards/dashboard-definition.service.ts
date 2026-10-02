@@ -147,7 +147,11 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // running. A false zero on an executive dashboard is worse than a blank. Those
   // three tiles are removed from CeoReferenceLayout instead; re-add the keys here
   // once the pipelines feed data.
-  CEO_DASHBOARD: ["hc", "att", "payroll", "onb", "resign", "attException", "docCompliance", "bgv"],
+  // `hiringAlert` added: the CEO hiring-gap tile drills into the per-process shortage list
+  // (workforce_mandate holds 22 live rows, so this is a real figure, not a false zero).
+  // `training` added: the Certified Learners tile had no drilldown and no CEO-openable page behind it;
+  // lms_learning_progress_snapshot holds 1,622 rows, so completion is a real figure, not a false zero.
+  CEO_DASHBOARD: ["hc", "att", "payroll", "onb", "resign", "attException", "docCompliance", "bgv", "hiringAlert", "training"],
   // `tat` and `dpdp` removed 2026-08-28, on exactly the reasoning already written into the
   // CEO bundle below: task_tat_instance and dpdp_consent_withdrawal hold 0 rows on a
   // COUNT(*), so requesting them asserted "no open TAT items" and "no pending DPDP

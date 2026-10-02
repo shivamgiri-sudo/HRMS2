@@ -2100,6 +2100,9 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
   //
   // All of it now derives from the shared helpers, so this endpoint, the org-wide
   // metric and the dashboards agree by construction.
+  //
+  // Completed days only (record_date < today): today's rows are created before reconciliation, so
+  // counting them read ~0% mid-day. The employee layout reads the insights provider's figure when no day has completed.
   // Every aggregate is COALESCEd because an empty month returns one row of NULLs, not
   // zero rows. SUM() over no rows is NULL, and an aggregate query without GROUP BY always
   // produces exactly one row — so the `?? {...}` default below can never fire, and the
@@ -2131,7 +2134,7 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
      FROM attendance_daily_record
      WHERE employee_id = ?
        AND DATE_FORMAT(record_date, '%Y-%m') = ?
-       AND record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
+       AND record_date < DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
     [selfEmp.id, monthStr]
   );
 

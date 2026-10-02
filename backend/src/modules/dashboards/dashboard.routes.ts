@@ -22,6 +22,9 @@ import { executeDashboardMetrics, isMetricConfiguredForDashboard } from "./dashb
 import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js";
 import { cacheInstance as dashboardMetricsCache } from "../../lib/cache/quality-cache.js";
 import { sharedInFlight } from "./metrics-in-flight.js";
+import { cachedRoleInsights } from "./role-insights/index.js";
+import { istToday } from "./role-insights/helpers.js";
+import { loadRunInsights } from "./role-insights/providers/payrollRun.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
 import {
   HALF_DAY_STATUS,
@@ -181,17 +184,25 @@ router.get("/employee/summary", requireFixedDashboard("EMPLOYEE_SELF_DASHBOARD")
      FROM attendance_daily_record
      WHERE employee_id = ?
        AND record_date >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m-01')
-       AND record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
+       -- Completed days only (strictly before today, IST). Today's rows are created at
+       -- start-of-day before any punch is reconciled — at 01:14 on 2 Oct production held 26
+       -- rows for the day, 19 already 'absent' and none 'present' — so counting them charged
+       -- people an absence for a shift that had not happened. Matches
+       -- LATEST_COMPLETE_ATTENDANCE_DATE_SQL, which also excludes today.
+       AND record_date < DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
     [(employee as any).id],
   );
 
   const row = rows[0] as any;
+  // No completed day (1st of the month, or no attendance feed for this person) means there is
+  // no denominator: report the percentage as unavailable, never a confident 0%.
+  const attendancePct = row?.attendance_pct === null || row?.attendance_pct === undefined ? null : Number(row.attendance_pct);
   return res.json({
     success: true,
     data: {
       metrics: {
         att: {
-          value: Number(row?.attendance_pct ?? 0),
+          value: attendancePct,
           detail: {
             present: Number(row?.present ?? 0),
             halfDay: Number(row?.half_day ?? 0),
@@ -201,7 +212,7 @@ router.get("/employee/summary", requireFixedDashboard("EMPLOYEE_SELF_DASHBOARD")
             onLeave: Number(row?.on_leave ?? 0),
             totalWorkingDays: Number(row?.total_working_days ?? 0),
             expectedToWork: Number(row?.expected_to_work ?? 0),
-            attendanceRate: Number(row?.attendance_pct ?? 0),
+            attendanceRate: attendancePct,
           },
         },
       },
@@ -464,41 +475,29 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
     };
   }) : Promise.resolve(null);
 
-  // salary_payslip is keyed by run_month (no run_id), so generation is counted for
-  // the run's month against the lines in the run. This is what the "Payslip
-  // Generation Status" panel was trying to show with a `disbursement` breakdown
-  // that the endpoint never returned.
-  const payslipsP = currentRun ? panel("payslips", async () => {
-    // Scoped callers count only payslips / lines of employees inside their own scope.
-    const scoped = scope.level !== "ORG_ALL";
-    const [rows] = await db.execute<RowDataPacket[]>(
-      scoped
-        ? `SELECT
-         (SELECT COUNT(*) FROM salary_payslip sp JOIN employees e ON e.id = sp.employee_id
-           WHERE sp.run_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci AND ${salaryScope.sql}) AS \`generated\`,
-         (SELECT COUNT(*) FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
-           WHERE spl.run_id = ? AND ${salaryScope.sql}) AS expected`
-        : `SELECT
-         (SELECT COUNT(*) FROM salary_payslip
-           WHERE run_month COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci) AS \`generated\`,
-         (SELECT COUNT(*) FROM salary_prep_line WHERE run_id = ?) AS expected`,
-      scoped
-        ? [currentRun.run_month, ...salaryScope.params, currentRun.id, ...salaryScope.params]
-        : [currentRun.run_month, currentRun.id],
-    );
-    const r = rows[0];
-    const expected = Number(r?.expected ?? 0);
-    if (expected === 0) return null;
-    const generated = Number(r?.generated ?? 0);
-    return {
-      generated,
-      expected,
-      pending: Math.max(0, expected - generated),
-      pct: Math.round((generated / expected) * 1000) / 10,
-    };
-  }) : Promise.resolve(null);
+  // Run-linked figures the old panels could not give: previous-run delta + variance drivers, active-vs-in-run
+  // headcount, branch cost, pipeline stage, pay date, filings and payslips. Payslips are matched to THIS run's lines
+  // through prep_line_id; the old count was keyed by run_month and over-counted whenever a month had two runs.
+  const runInsightsP = panel("run-insights", () => loadRunInsights(
+    { id: currentRun.id, run_month: currentMonth, status: String(currentRun.status ?? "draft") },
+    salaryScope, scope.level === "ORG_ALL", istToday(),
+  ));
   // The three panels are independent and each already catches its own failure.
+  const payslipsP = currentRun ? panel("payslips", async () => {
+    const ri = await runInsightsP;
+    return ri?.payslips
+      ? {
+          generated: ri.payslips.generated,
+          expected: ri.payslips.expected,
+          pending: Math.max(0, ri.payslips.expected - ri.payslips.generated),
+          pct: Math.round((ri.payslips.generated / ri.payslips.expected) * 1000) / 10,
+          acknowledged: ri.payslips.acknowledged,
+          emailed: ri.payslips.emailed,
+        }
+      : null;
+  }) : Promise.resolve(null);
   const [disbursement, branchReadiness, payslips] = await Promise.all([disbursementP, branchReadinessP, payslipsP]);
+  const runInsights = await runInsightsP;
 
   // Loans and reimbursements are deliberately NOT queried here.
   //
@@ -520,6 +519,9 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
       disbursement,
       branchReadiness,
       payslips,
+      runInsights,
+      payDay: runInsights?.calendar?.pay ?? null,
+      statutoryFiling: runInsights?.filings ?? [],
       currentRun: currentRun ? {
         id: currentRun.id,
         month: currentRun.run_month,
@@ -548,8 +550,7 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
       // Each entry is now conditional, so the panel shrinks as sources come back
       // and disappears entirely once nothing is missing.
       unavailableSources: {
-        // statutory_filing_record does not exist in the database at all.
-        statutoryFiling: "No statutory filing records are stored yet",
+        ...(runInsights ? (runInsights.filings.length ? {} : { statutoryFiling: `No statutory filing records exist for ${currentMonth}` }) : { runInsights: "Run analytics (previous-run delta, headcount, pipeline) could not be computed" }),
         pendingQueues: "Queue records are not linked to a payroll run",
         ...(disbursement ? {} : { disbursement: "No disbursement recorded for this run" }),
         ...(payslips ? {} : { payslips: "No payroll lines in this run to generate payslips for" }),
@@ -637,6 +638,30 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
     metrics,
     generatedAt: generatedAt.toISOString(),
   });
+  return res.json({ success: true, data });
+}));
+
+/**
+ * Role insights: pending actions, KPIs with sparklines, series, ranked tables and good/bad
+ * signals for one dashboard, computed by providers in ./role-insights/providers. Each section is
+ * isolated — a failing one is reported in `sectionErrors`, never blanks the rest or fakes a zero.
+ */
+router.get("/:dashboardCode/insights", h(async (req: AuthenticatedRequest, res: any) => {
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
+  const { user, context, scope } = await requestedScope(req, dashboardCode);
+  const data = await cachedRoleInsights(
+    dashboardCode,
+    {
+      scope,
+      userId: user.id,
+      roleKeys: context.roleKeys,
+      today: istToday(),
+      branchId: String(req.query.branchId ?? "") || undefined,
+      processId: String(req.query.processId ?? "") || undefined,
+    },
+    // Personal or inbox-bearing views must not be shared across users of the same scope.
+    dashboardCode === "EMPLOYEE_SELF_DASHBOARD" || dashboardCode === "MANAGEMENT_DASHBOARD",
+  );
   return res.json({ success: true, data });
 }));
 
