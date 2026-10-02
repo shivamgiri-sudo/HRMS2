@@ -195,6 +195,8 @@ function startServer() {
         const [routes, svc] = await Promise.all([import("./modules/management/management.routes.js"), import("./modules/management/management.service.js")]);
         await routes.workforceDashboardCache.getOrCompute("workforce:ORG_ALL::", () => svc.managementService.getWorkforceDashboard([], [], "ORG_ALL"));
         await svc.managementService.getSystemDashboard();
+        const [ats, atsSvc] = await Promise.all([import("./modules/ats/ats.controller.js"), import("./modules/ats/ats.service.js")]);
+        await ats.atsStatsCache.getOrCompute("ats-stats:null:null:[]:[]", () => atsSvc.atsService.getDashboardStats({ branch: [], process: [] }));
       }).catch((err) => console.error("[warm] role dashboards:", err instanceof Error ? err.message : err));
     }, 300_000).unref();
     // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to

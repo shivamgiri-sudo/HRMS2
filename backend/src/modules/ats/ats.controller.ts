@@ -45,7 +45,8 @@ const resolveProcessNames = (ids: readonly string[]) => resolveNames("process_ma
 // so viewers with the same filters share one computation per 30s window, and concurrent
 // requests share the in-flight one instead of each running the whole query batch.
 const ATS_STATS_TTL_MS = 30_000;
-export const atsStatsCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: ATS_STATS_TTL_MS });
+// Stale-while-revalidate: ~9-16s cold, so a visit after the TTL gets the previous result at once while one refresh runs.
+export const atsStatsCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: ATS_STATS_TTL_MS, defaultStaleMs: 30 * 60_000 });
 
 export const atsController = {
   async listCandidates(req: AuthenticatedRequest, res: Response) {
