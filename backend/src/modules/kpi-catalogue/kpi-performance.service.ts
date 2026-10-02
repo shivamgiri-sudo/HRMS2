@@ -12,7 +12,7 @@ import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { getProcessKpis } from "./kpi-catalogue.service.js";
 import { DEFAULT_RATING_BANDS, ratingFor, type RatingBand } from "./kpi-catalogue.resolve.js";
 import {
-  aggregate, attainmentPct, availabilityFor, buildBreakdown, buildSeries, round2, stalenessDays, windowFor,
+  aggregate, attainmentPct, availabilityFor, buildBreakdown, buildSeries, round2, scaledTotalTarget, stalenessDays, windowFor,
   type Availability, type BreakdownRow, type Period,
 } from "./kpi-performance.calc.js";
 
@@ -226,7 +226,9 @@ export async function getProcessPerformance(processKey: string, o: PerformanceOp
     let value: number | null = null;
     let series: KpiPerformance["series"] = [];
     let breakdown: BreakdownRow[] = [];
-    const target: number | null = (code ? targets.get(code) : undefined) ?? k.default_target ?? null;
+    const perDayTarget: number | null = (code ? targets.get(code) : undefined) ?? k.default_target ?? null;
+    // Summed volume KPIs: the resolved target is per employee per day, so compare the total with target x worked days.
+    const target: number | null = agg === "sum" && rows.length ? scaledTotalTarget(perDayTarget, rows.filter((r) => r.value != null).length) : perDayTarget;
     if (rows.length) {
       const perEmployee = new Map<string, number[]>();
       for (const r of rows) if (r.value != null) perEmployee.set(r.employeeId, [...(perEmployee.get(r.employeeId) ?? []), r.value]);
@@ -237,13 +239,13 @@ export async function getProcessPerformance(processKey: string, o: PerformanceOp
       const keyOf = (r: ActualRow) => o.groupBy === "team" ? [r.teamKey, r.teamLabel] : o.groupBy === "branch" ? [r.branchKey, r.branchLabel] : [r.employeeId, r.label];
       breakdown = buildBreakdown(
         rows.map((r) => ({ date: r.date, employeeId: r.employeeId, value: r.value, groupKey: keyOf(r)[0], groupLabel: keyOf(r)[1] })),
-        agg, agg === "sum" ? null : target, k.direction, bands,
+        agg, perDayTarget, k.direction, bands, 200, agg === "sum",
       );
     } else if (procSeries.length) {
       value = round2(aggregate(procSeries.map((p) => p.value), agg));
       series = buildSeries(procSeries.map((p) => ({ date: p.date, employeeId: "process", value: p.value })), agg, window);
     }
-    const attainment = agg === "sum" && rows.length ? null : attainmentPct(value, target, k.direction);
+    const attainment = attainmentPct(value, target, k.direction);
     const lastData = rowCount
       ? [...rows.map((r) => r.date), ...procSeries.map((p) => p.date)].sort().pop() ?? null
       : (code ? lastSeen.get(code) ?? null : null);

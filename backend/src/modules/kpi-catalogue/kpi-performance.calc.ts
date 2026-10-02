@@ -92,6 +92,8 @@ export function buildBreakdown(
   direction: string,
   bands: RatingBand[],
   limit = 200,
+  /** For summed volume KPIs the target is per employee-day: score each group against target x its worked days. */
+  scaleTargetBySamples = false,
 ): BreakdownRow[] {
   const groups = new Map<string, { label: string; vals: Array<{ d: string; v: number }> }>();
   for (const r of rows) {
@@ -104,8 +106,9 @@ export function buildBreakdown(
   for (const [key, g] of groups) {
     g.vals.sort((a, b) => a.d.localeCompare(b.d));
     const value = round2(aggregate(g.vals.map((x) => x.v), method));
-    const att = attainmentPct(value, target, direction);
-    out.push({ key, label: g.label, value, target, attainmentPct: att, rating: ratingFor(att, bands), samples: g.vals.length });
+    const groupTarget = scaleTargetBySamples && target != null ? round2(target * g.vals.length) : target;
+    const att = attainmentPct(value, groupTarget, direction);
+    out.push({ key, label: g.label, value, target: groupTarget, attainmentPct: att, rating: ratingFor(att, bands), samples: g.vals.length });
   }
   // worst first so a manager sees who needs attention
   out.sort((a, b) => (a.attainmentPct ?? Infinity) - (b.attainmentPct ?? Infinity) || a.label.localeCompare(b.label));
@@ -123,4 +126,10 @@ export function availabilityFor(opts: { mapped: boolean; hasData: boolean; rowCo
 export function stalenessDays(lastDataDate: string | null, today: string): number | null {
   if (!lastDataDate) return null;
   return Math.round((new Date(`${today}T00:00:00Z`).getTime() - new Date(`${lastDataDate.slice(0, 10)}T00:00:00Z`).getTime()) / 86400000);
+}
+
+/** Target for a summed volume KPI: the per-employee-day target times the employee-days actually worked. */
+export function scaledTotalTarget(perDayTarget: number | null, employeeDays: number): number | null {
+  if (perDayTarget == null || employeeDays <= 0) return null;
+  return round2(perDayTarget * employeeDays);
 }

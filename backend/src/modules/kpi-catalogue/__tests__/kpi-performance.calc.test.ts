@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_RATING_BANDS } from "../kpi-catalogue.resolve.js";
-import { aggregate, attainmentPct, availabilityFor, buildBreakdown, buildSeries, stalenessDays, windowFor } from "../kpi-performance.calc.js";
+import { aggregate, attainmentPct, availabilityFor, buildBreakdown, buildSeries, scaledTotalTarget, stalenessDays, windowFor } from "../kpi-performance.calc.js";
 
 describe("windowFor", () => {
   it("builds today / yesterday / wtd / mtd / last30", () => {
@@ -88,5 +88,24 @@ describe("availability and staleness", () => {
   it("counts staleness in days", () => {
     expect(stalenessDays("2026-09-28", "2026-10-01")).toBe(3);
     expect(stalenessDays(null, "2026-10-01")).toBeNull();
+  });
+});
+
+describe("volume KPIs are scored against target x worked days", () => {
+  it("scales a per-day target by employee-days", () => {
+    expect(scaledTotalTarget(80, 100)).toBe(8000);
+    expect(scaledTotalTarget(null, 100)).toBeNull();
+    expect(scaledTotalTarget(80, 0)).toBeNull();
+  });
+  it("breakdown scores each group against target x its own days (sum metrics)", () => {
+    const rows = [
+      { date: "2026-10-01", employeeId: "a", value: 60, groupKey: "a", groupLabel: "A" },
+      { date: "2026-10-02", employeeId: "a", value: 100, groupKey: "a", groupLabel: "A" },
+      { date: "2026-10-01", employeeId: "b", value: 40, groupKey: "b", groupLabel: "B" },
+    ];
+    const b = buildBreakdown(rows, "sum", 80, "higher_is_better", DEFAULT_RATING_BANDS, 200, true);
+    const a = b.find((x) => x.key === "a")!, bb = b.find((x) => x.key === "b")!;
+    expect(a).toMatchObject({ value: 160, target: 160, attainmentPct: 100, rating: "S" });
+    expect(bb).toMatchObject({ value: 40, target: 80, attainmentPct: 50, rating: "D" });
   });
 });
