@@ -23,3 +23,30 @@ describe("decision paths notify affected employees", () => {
     expect(s).toMatch(/notifyRosterRequest\(\s*\{\s*employeeIds: \[assignment\.employee_id\]/s);
   });
 });
+
+describe("request producers notify approvers and trigger auto-approve", () => {
+  it("swap create and conflict log raise from the service", () => {
+    const s = read("../../wfm-extensions/wfm-ext.service.ts");
+    expect(s).toContain("import { onRosterRequestRaised, scheduleAutoApprove }");
+    expect(s).toMatch(/onRosterRequestRaised\(\{\s*kind: "swap",\s*sourceId: id/s);
+    expect(s).toMatch(/onRosterRequestRaised\(\{\s*kind: "conflict",\s*sourceId: id/s);
+  });
+  it("a counterpart acceptance re-evaluates auto-approve", () => {
+    const s = read("../../wfm-extensions/wfm-ext.service.ts");
+    expect(s).toMatch(/response === "accepted"\) scheduleAutoApprove\("swap", id\)/);
+  });
+  it("week-off rejection raises after the state change", () => {
+    const s = read("../../wfm/wfm.routes.ts");
+    const handler = s.slice(s.indexOf('"/my-weekoff/:assignmentId/reject"'));
+    const raiseAt = handler.indexOf('onRosterRequestRaised({ kind: "weekoff_rejection"');
+    expect(raiseAt).toBeGreaterThan(handler.indexOf("rejectResult.affectedRows !== 1"));
+    expect(raiseAt).toBeLessThan(handler.indexOf("Rejection recorded. Your reporting manager has been notified."));
+  });
+  it("dispute raise raises after the state change", () => {
+    const s = read("../../roster/roster.governance.routes.ts");
+    const handler = s.slice(s.indexOf('"/assignments/:id/dispute"'));
+    const raiseAt = handler.indexOf('onRosterRequestRaised({ kind: "dispute"');
+    expect(raiseAt).toBeGreaterThan(handler.indexOf("acknowledgement_status = 'disputed'"));
+    expect(raiseAt).toBeLessThan(handler.indexOf("Dispute raised. Your manager has been notified."));
+  });
+});

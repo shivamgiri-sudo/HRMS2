@@ -9,6 +9,7 @@ import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
 import { validateMinimumRest, isRestPolicyFeatureActive, logRestOverride } from "../wfm/rest-policy.service.js";
 import { notifyRosterRequest } from "../roster-requests/roster-requests.notify.js";
+import { onRosterRequestRaised, scheduleAutoApprove } from "../roster-requests/roster-requests.raise.js";
 import { columnExists } from "../../shared/schema-object-cache.js";
 import type { Request } from "express";
 
@@ -81,6 +82,8 @@ export const rosterSwapService = {
       [id, data.requester_emp_id, data.swap_with_emp_id, data.swap_date, data.reason ?? null],
     );
     const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM wfm_roster_swap_request WHERE id = ? LIMIT 1", [id]);
+    // Approver inbox items + auto-approve evaluation, deferred and non-fatal (roster-requests.raise.ts).
+    onRosterRequestRaised({ kind: "swap", sourceId: id, employeeId: data.requester_emp_id, date: data.swap_date, summary: "Shift swap requested" });
     return rows[0];
   },
 
@@ -114,6 +117,8 @@ export const rosterSwapService = {
       [response, id]
     );
     await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_SWAP_COUNTERPART_RESPONDED", module_key: "WFM", entity_type: "wfm_roster_swap_request", entity_id: id, change_summary: { response }, req });
+    // Acceptance is often the last missing auto-approve condition. Deferred and non-fatal.
+    if (response === "accepted") scheduleAutoApprove("swap", id);
     const [after] = await db.execute<RowDataPacket[]>("SELECT * FROM wfm_roster_swap_request WHERE id = ? LIMIT 1", [id]);
     return after[0];
   },
@@ -418,7 +423,11 @@ export const rosterConflictService = {
 
   async log(data: { employee_id: string; conflict_date: string; conflict_type: string; description?: string }) {
     const id = randomUUID();
-    await db.execute("INSERT IGNORE INTO wfm_roster_conflict_log (id, employee_id, conflict_date, conflict_type, description) VALUES (?, ?, ?, ?, ?)", [id, data.employee_id, data.conflict_date, data.conflict_type, data.description ?? null]);
+    const inserted: any = await db.execute("INSERT IGNORE INTO wfm_roster_conflict_log (id, employee_id, conflict_date, conflict_type, description) VALUES (?, ?, ?, ?, ?)", [id, data.employee_id, data.conflict_date, data.conflict_type, data.description ?? null]);
+    // INSERT IGNORE: a duplicate that was ignored raised nothing new, so nobody is notified for it.
+    if ((Array.isArray(inserted) ? inserted[0]?.affectedRows : undefined) !== 0) {
+      onRosterRequestRaised({ kind: "conflict", sourceId: id, employeeId: data.employee_id, date: data.conflict_date, summary: `Roster conflict: ${data.conflict_type}` });
+    }
     return id;
   },
 

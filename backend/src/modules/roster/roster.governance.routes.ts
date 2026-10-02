@@ -15,6 +15,7 @@ import { resolveDispute, isDisputeResolutionError, canOwnRosterForUser, DISPUTE_
 import { validateAmendmentInput } from "../wfm/roster-audit.helpers.js";
 import { recordAmendmentInDecisionAudit } from "../wfm/roster-audit.amendment.js";
 import type { RowDataPacket } from "mysql2";
+import { onRosterRequestRaised } from "../roster-requests/roster-requests.raise.js";
 import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
 import { userCanAccessProcess, scopedProcessIdsForUser, getScope, canAccessProcess, allowedBranchIds } from "../wfm/branch-scope.js";
 
@@ -518,6 +519,8 @@ router.post("/assignments/:id/dispute", h(async (req: AuthenticatedRequest, res:
     "UPDATE roster_daily_assignment SET acknowledgement_status = 'disputed', dispute_reason = ? WHERE id = ?",
     [dispute_reason.trim(), req.params.id]
   );
+  // Approver inbox items for the dispute (deferred, non-fatal). Disputes are never auto-approved.
+  onRosterRequestRaised({ kind: "dispute", sourceId: String(req.params.id), employeeId: String(emp.id), date: assignment.roster_date, summary: "Roster dispute raised" });
   return res.json({ success: true, message: "Dispute raised. Your manager has been notified." });
 }));
 

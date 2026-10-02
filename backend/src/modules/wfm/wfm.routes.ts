@@ -36,6 +36,7 @@ import { calculate } from "./hcCalculation.service.js";
 import { attendanceAprBulkRouter } from "./attendance-apr-bulk.routes.js";
 import { scopedAttendanceDailyHandler } from "./attendance-daily-scoped.routes.js";
 import { getWfmAnalyticsSummary } from "./wfm-analytics.service.js";
+import { onRosterRequestRaised } from "../roster-requests/roster-requests.raise.js";
 import {
   getScope, isOrgWide, scopePredicate, canAccessEmployee, canAccessTarget, canAccessBranch, canAccessProcess,
   canTouchScopedPolicy, resolveBranchFilter, branchScopeGuard, employeeFieldGuard, employeeParamGuard, employeeOwnerGuard, rosterOwnerGuard, OUT_OF_SCOPE_MSG,
@@ -1193,6 +1194,8 @@ wfmRouter.post("/my-weekoff/:assignmentId/reject", requireAuth, h(async (req: an
   await closeRosterAckInboxItem(dbConn, (emp as any).id, req.params.assignmentId);
   // The message promised the manager had been notified; nothing had told them. The assignment
   // now sits in pending_manager_action, which is what GET /manager/weekoff-review lists.
+  // Approver inbox items (reporting manager + WFM in scope) and auto-approve: deferred, non-fatal.
+  onRosterRequestRaised({ kind: "weekoff_rejection", sourceId: String(req.params.assignmentId), employeeId: String((emp as any).id), summary: "Employee rejected their week-off" });
   return res.json({ success: true, message: "Rejection recorded. Your reporting manager has been notified." });
 }));
 
