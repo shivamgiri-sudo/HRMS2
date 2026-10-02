@@ -71,6 +71,65 @@ export function clEmailFacts(row: Record<string, unknown>, date: string): FeedFa
   ];
 }
 
+export function satyaAllocFacts(row: Record<string, unknown>, date: string): FeedFact[] {
+  const c = code(row.emp_id);
+  const allocated = num(row.allocated);
+  if (!c || allocated <= 0) return [];
+  const connected = num(row.connected), orders = num(row.orders);
+  const out: FeedFact[] = [
+    { employeeCode: c, metricCode: "SATYA_ALLOCATED", date, value: allocated, sourceRecordCount: allocated },
+    { employeeCode: c, metricCode: "SATYA_CONNECTED", date, value: connected, sourceRecordCount: allocated },
+    { employeeCode: c, metricCode: "SATYA_ORDERS", date, value: orders, sourceRecordCount: allocated },
+  ];
+  if (connected > 0) out.push({ employeeCode: c, metricCode: "SATYA_CONVERSION_PCT", date, value: r2((orders / connected) * 100), numerator: orders, denominator: connected, sourceRecordCount: allocated });
+  return out;
+}
+
+export function satyaCallFacts(row: Record<string, unknown>, date: string): FeedFact[] {
+  const c = code(row.emp_id);
+  const calls = num(row.calls);
+  return c && calls > 0 ? [{ employeeCode: c, metricCode: "SATYA_CALLS", date, value: calls, sourceRecordCount: calls }] : [];
+}
+
+export function awFacts(row: Record<string, unknown>, date: string): FeedFact[] {
+  const c = code(row.emp_id);
+  const calls = num(row.calls);
+  if (!c || calls <= 0) return [];
+  const connected = num(row.connected);
+  const out: FeedFact[] = [
+    { employeeCode: c, metricCode: "AW_CALLS", date, value: calls, sourceRecordCount: calls },
+    { employeeCode: c, metricCode: "AW_CONNECTED", date, value: connected, sourceRecordCount: calls },
+    { employeeCode: c, metricCode: "AW_CONNECT_PCT", date, value: r2(Math.min(100, (connected / calls) * 100)), numerator: connected, denominator: calls, sourceRecordCount: calls },
+  ];
+  if (connected > 0 && num(row.talk_s) > 0) out.push({ employeeCode: c, metricCode: "AW_AVG_TALK_SEC", date, value: r2(num(row.talk_s) / connected), numerator: num(row.talk_s), denominator: connected, sourceRecordCount: calls });
+  if (num(row.login_s) > 0) out.push({ employeeCode: c, metricCode: "AW_LOGIN_HOURS", date, value: r2(num(row.login_s) / 3600), sourceRecordCount: calls });
+  return out;
+}
+
+export function clChatFacts(row: Record<string, unknown>, date: string): FeedFact[] {
+  const c = code(row.emp_id);
+  const chats = num(row.chats);
+  if (!c || chats <= 0) return [];
+  const out: FeedFact[] = [{ employeeCode: c, metricCode: "CL_CHATS", date, value: chats, sourceRecordCount: chats }];
+  if (row.avg_rating != null && Number.isFinite(Number(row.avg_rating)) && Number(row.avg_rating) > 0) out.push({ employeeCode: c, metricCode: "CL_CHAT_RATING", date, value: r2(num(row.avg_rating)), sourceRecordCount: chats });
+  if (row.avg_wait_s != null && Number.isFinite(Number(row.avg_wait_s))) out.push({ employeeCode: c, metricCode: "CL_CHAT_WAIT_SEC", date, value: r2(num(row.avg_wait_s)), sourceRecordCount: chats });
+  return out;
+}
+
+export function clOutboundFacts(row: Record<string, unknown>, date: string): FeedFact[] {
+  const c = code(row.emp_id);
+  const dials = num(row.dials);
+  if (!c || dials <= 0) return [];
+  const connected = num(row.connected);
+  const out: FeedFact[] = [
+    { employeeCode: c, metricCode: "CL_OB_DIALS", date, value: dials, sourceRecordCount: dials },
+    { employeeCode: c, metricCode: "CL_OB_CONNECTED", date, value: connected, sourceRecordCount: dials },
+    { employeeCode: c, metricCode: "CL_OB_CONNECT_PCT", date, value: r2(Math.min(100, (connected / dials) * 100)), numerator: connected, denominator: dials, sourceRecordCount: dials },
+  ];
+  if (connected > 0 && row.avg_talk_s != null && Number.isFinite(Number(row.avg_talk_s))) out.push({ employeeCode: c, metricCode: "CL_OB_AVG_TALK_SEC", date, value: r2(num(row.avg_talk_s)), sourceRecordCount: dials });
+  return out;
+}
+
 // ── feed definitions ──────────────────────────────────────────────────────────────────────────
 
 type FeedDef = {
@@ -125,6 +184,79 @@ export const FEEDS: FeedDef[] = [
       return rows as Record<string, unknown>[];
     },
     toFacts: clEmailFacts,
+  },
+  {
+    key: "satya_allocation",
+    processCode: "SATYA_RETAIL",
+    fetch: async (date) => {
+      const pool = await masmisPool();
+      const [rows] = await pool.execute(
+        `SELECT UPPER(TRIM(COALESCE(NULLIF(mas_id, ''), agent_id))) AS emp_id,
+                COUNT(DISTINCT CONCAT_WS('|', uid, unique_flag)) AS allocated,
+                COUNT(DISTINCT CASE WHEN LOWER(TRIM(disposition)) = 'connected' THEN CONCAT_WS('|', uid, unique_flag) END) AS connected,
+                COUNT(DISTINCT CASE WHEN LOWER(TRIM(sub_disposition)) LIKE 'order placed%' THEN CONCAT_WS('|', uid, unique_flag) END) AS orders
+           FROM db_masmis.satya_allocation
+          WHERE STR_TO_DATE(report_date, '%e-%b-%y') = ? AND COALESCE(NULLIF(mas_id, ''), NULLIF(agent_id, '')) IS NOT NULL
+          GROUP BY UPPER(TRIM(COALESCE(NULLIF(mas_id, ''), agent_id)))`, [date]);
+      return rows as Record<string, unknown>[];
+    },
+    toFacts: satyaAllocFacts,
+  },
+  {
+    key: "satya_cdr",
+    processCode: "SATYA_RETAIL",
+    fetch: async (date) => {
+      const pool = await masmisPool();
+      const [rows] = await pool.execute(
+        `SELECT UPPER(TRIM(agent_name)) AS emp_id, COUNT(*) AS calls FROM db_masmis.satya_cdr
+          WHERE STR_TO_DATE(report_date, '%e-%b-%y') = ? AND agent_name IS NOT NULL AND TRIM(agent_name) <> ''
+          GROUP BY UPPER(TRIM(agent_name))`, [date]);
+      return rows as Record<string, unknown>[];
+    },
+    toFacts: satyaCallFacts,
+  },
+  {
+    key: "aw_agent_day",
+    processCode: "APPRICIATE_WEALTH",
+    fetch: async (date) => {
+      const pool = await masmisPool();
+      const part = (t: string) => `SELECT UPPER(TRIM(emp_id)) AS emp_id, CAST(NULLIF(total_calls, '') AS UNSIGNED) AS calls, CAST(NULLIF(connected_calls, '') AS UNSIGNED) AS connected,
+              TIME_TO_SEC(NULLIF(total_talk_time, '')) AS talk_s, TIME_TO_SEC(NULLIF(total_login_time, '')) AS login_s
+         FROM db_masmis.${t} WHERE STR_TO_DATE(call_date, '%e-%b-%y') = ? AND emp_id IS NOT NULL AND TRIM(emp_id) <> ''`;
+      const [rows] = await pool.execute(
+        `SELECT emp_id, SUM(calls) AS calls, SUM(connected) AS connected, SUM(talk_s) AS talk_s, SUM(login_s) AS login_s
+           FROM (${part("aw_billing")} UNION ALL ${part("aw_out")}) u GROUP BY emp_id`, [date, date]);
+      return rows as Record<string, unknown>[];
+    },
+    toFacts: awFacts,
+  },
+  {
+    key: "cl_chat",
+    processCode: "CLOVIA",
+    fetch: async (date) => {
+      const pool = await masmisPool();
+      const [rows] = await pool.execute(
+        `SELECT UPPER(TRIM(mas_id)) AS emp_id, COUNT(*) AS chats,
+                AVG(CAST(NULLIF(star_rating_value, '') AS DECIMAL(5,2))) AS avg_rating, AVG(TIME_TO_SEC(NULLIF(wait_time, ''))) AS avg_wait_s
+           FROM db_masmis.cl_chat WHERE STR_TO_DATE(report_date, '%e-%b-%y') = ? AND mas_id IS NOT NULL AND TRIM(mas_id) <> ''
+          GROUP BY UPPER(TRIM(mas_id))`, [date]);
+      return rows as Record<string, unknown>[];
+    },
+    toFacts: clChatFacts,
+  },
+  {
+    key: "cl_outbound",
+    processCode: "CLOVIA",
+    fetch: async (date) => {
+      const pool = await masmisPool();
+      const [rows] = await pool.execute(
+        `SELECT UPPER(TRIM(agent)) AS emp_id, COUNT(*) AS dials, SUM(CASE WHEN status = 'Connected' THEN 1 ELSE 0 END) AS connected,
+                AVG(CASE WHEN status = 'Connected' THEN CAST(NULLIF(length_sec, '') AS UNSIGNED) END) AS avg_talk_s
+           FROM db_masmis.cl_outbound WHERE STR_TO_DATE(call_date, '%c/%e/%y') = ? AND agent IS NOT NULL AND TRIM(agent) <> ''
+          GROUP BY UPPER(TRIM(agent))`, [date]);
+      return rows as Record<string, unknown>[];
+    },
+    toFacts: clOutboundFacts,
   },
 ];
 

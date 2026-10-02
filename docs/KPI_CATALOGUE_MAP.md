@@ -1,6 +1,6 @@
 # KPI Catalogue Map
 
-Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 processes, 597 KPIs. Do not edit by hand: edit the seed and re-run `npm run kpi:catalogue-map` (in `backend/`).
+Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 processes, 605 KPIs. Do not edit by hand: edit the seed and re-run `npm run kpi:catalogue-map` (in `backend/`).
 
 ## Audiences
 
@@ -23,10 +23,10 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 | Bellavita (`bellavita`) | BELLA_VITA | 51 | 49 | 38 | 13 |
 | GNC (`gnc`) | GNC, GUARDIAN_HC | 45 | 43 | 35 | 13 |
 | Neemans (`neemans`) | NEEMANS | 41 | 37 | 32 | 14 |
-| Appreciate Wealth (`appreciate_health`) | APPRICIATE_WEALTH, BSS_OB_NOIDA_923 | 28 | 26 | 24 | 0 |
+| Appreciate Wealth (`appreciate_health`) | APPRICIATE_WEALTH, BSS_OB_NOIDA_923 | 32 | 30 | 28 | 0 |
 | Housing Owner (`housing_owner`) | HOUSING_OWNER, HOUSING_COM | 27 | 25 | 23 | 0 |
 | Housing Premium (`housing_premium`) | HOUSING_PREMIUM, HOUSING_COM | 27 | 25 | 23 | 0 |
-| Clovia (`clovia`) | CLOVIA | 36 | 34 | 26 | 13 |
+| Clovia (`clovia`) | CLOVIA | 40 | 38 | 30 | 13 |
 | Birlanu (`birlanu`) | BIRLANU | 23 | 20 | 16 | 0 |
 | Satya Retail (`satya_retail`) | SATYA_RETAIL, BSS_OB_NOIDA_1045, IDAM, VST | 21 | 19 | 17 | 0 |
 | Lawyer Panel - Feedback (`lp_feedback`) | ERESOLUTION, BSS_OB_NOIDA_1005 | 24 | 22 | 20 | 0 |
@@ -201,7 +201,11 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 | KPI | Theme | Unit | Better | Grain | Source | Formula | Fresh | Dimensions | Audience |
 |---|---|---|---|---|---|---|---|---|---|
 | Calling achievement % | outbound | percent | higher | both | db_masmis.aw_out / aw_billing (appreciate-wealth-outbound-center) | calls / calling target | upload | date, agent, lob | agent, team_leader, process_manager, branch, head_office, admin |
-| Connectivity % | outbound | percent | higher | both | db_masmis.aw_out | connected / dials | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
+| Connectivity % | outbound | percent | higher | both | db_masmis.aw_billing + aw_out | connected / dials | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
+| Calls | outbound | count | higher | both | db_masmis.aw_billing + aw_out | SUM(total_calls) | upload | date, agent, lob | agent, team_leader, process_manager, branch, head_office, admin |
+| Connected calls | outbound | count | higher | both | db_masmis.aw_billing + aw_out | SUM(connected_calls) | upload | date, agent, lob | agent, team_leader, process_manager, branch, head_office, admin |
+| Average talk per connected call | outbound | seconds | lower | both | db_masmis.aw_billing + aw_out | SUM(total_talk_time) / connected calls | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
+| Login hours | workforce | hours | higher | employee | db_masmis.aw_billing + aw_out | SUM(total_login_time) / 3600 | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | AHT (with / without pickup) | outbound | seconds | lower | both | db_masmis.aw_billing | (talk + wrap) / calls | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Occupancy % | workforce | percent | higher | both | db_masmis.aw_billing (talk / wrap / idle / pause / login) | (talk + wrap) / (login - pause) | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Late login % | workforce | percent | lower | both | db_masmis.aw_billing login status | late logins / days | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
@@ -316,8 +320,12 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 | Emails assigned | email | count | higher | both | db_masmis.cl_email_raw | SUM(total_mail_assigned) | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Email touch % | email | percent | higher | both | db_masmis.cl_email_raw | touched / assigned | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Chat accepted within 60s % | chat | percent | higher | both | db_masmis.cl_chat | accepted <= 60s / chats | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
-| Chat customer rating | chat | ratio | higher | both | db_masmis.cl_chat | AVG(rating) | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
-| Outbound connect % (> 10s) | outbound | percent | higher | both | db_masmis.cl_outbound | dials with talk > 10s / dials | upload | date, hour, agent, campaign | agent, team_leader, process_manager, branch, head_office, admin |
+| Chat customer rating | chat | ratio | higher | both | db_masmis.cl_chat | AVG(star_rating_value) | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
+| Chats handled | chat | count | higher | both | db_masmis.cl_chat | COUNT(chats) per agent-day | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
+| Chat wait to accept | chat | seconds | lower | both | db_masmis.cl_chat | AVG(wait_time) | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
+| Outbound connect % (> 10s) | outbound | percent | higher | both | db_masmis.cl_outbound | connected dials / dials | upload | date, hour, agent, campaign | agent, team_leader, process_manager, branch, head_office, admin |
+| Outbound dials | outbound | count | higher | both | db_masmis.cl_outbound | COUNT(dials) per agent-day | upload | date, agent, campaign | agent, team_leader, process_manager, branch, head_office, admin |
+| Outbound average talk | outbound | seconds | lower | both | db_masmis.cl_outbound | AVG(length_sec) of connected dials | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Attendance % | workforce | percent | higher | both | kpi_daily_actual ATTENDANCE_PCT <- attendance_daily_record | P/PRESENT = 100, half day = 50; week-off, holiday, leave skipped | daily | date, agent, team, branch | agent, team_leader, process_manager, wfm, branch, head_office, admin |
 | Login hours | workforce | hours | higher | employee | attendance_daily_record.dialler_minutes | dialler_minutes / 60 | daily | date, agent | agent, team_leader, process_manager, wfm, branch, head_office, admin |
 | Late login % | workforce | percent | lower | both | attendance_daily_record.late_mark | late days / present days | daily | date, agent, team | agent, team_leader, process_manager, wfm, branch, head_office, admin |
@@ -366,11 +374,11 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 
 | KPI | Theme | Unit | Better | Grain | Source | Formula | Fresh | Dimensions | Audience |
 |---|---|---|---|---|---|---|---|---|---|
-| Shops allocated | allocation | count | higher | both | db_masmis.satya_allocation | COUNT(allocation rows) (Morning vs Absentee) | upload | date, agent, beat, warehouse | agent, team_leader, process_manager, branch, head_office, admin |
-| Calls made | outbound | count | higher | both | db_masmis.satya_cdr | COUNT(unique_flag 1 or 2) | upload | date, agent, beat | agent, team_leader, process_manager, branch, head_office, admin |
-| Connected | outbound | count | higher | both | db_masmis.satya_cdr | COUNT(connected) | upload | date, agent, beat | agent, team_leader, process_manager, branch, head_office, admin |
-| Orders placed | sales | count | higher | both | db_masmis.satya_cdr | sub_disposition = 'Order Placed' | upload | date, agent, beat | agent, team_leader, process_manager, branch, head_office, admin |
-| Order conversion % | sales | percent | higher | both | db_masmis.satya_cdr | orders / connected | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
+| Shops allocated | allocation | count | higher | both | db_masmis.satya_allocation | COUNT(DISTINCT uid + unique_flag) per agent-day | upload | date, agent, beat, warehouse | agent, team_leader, process_manager, branch, head_office, admin |
+| Calls made | outbound | count | higher | both | db_masmis.satya_cdr | COUNT(call rows) per agent-day | upload | date, agent, beat | agent, team_leader, process_manager, branch, head_office, admin |
+| Connected | outbound | count | higher | both | db_masmis.satya_allocation | COUNT(DISTINCT uid + unique_flag where disposition = Connected) | upload | date, agent, beat | agent, team_leader, process_manager, branch, head_office, admin |
+| Orders placed | sales | count | higher | both | db_masmis.satya_allocation | COUNT(DISTINCT uid + unique_flag where sub_disposition = Order Placed) | upload | date, agent, beat | agent, team_leader, process_manager, branch, head_office, admin |
+| Order conversion % | sales | percent | higher | both | db_masmis.satya_allocation | orders / connected | upload | date, agent | agent, team_leader, process_manager, branch, head_office, admin |
 | Pending shops | allocation | count | lower | process | db_masmis.satya_allocation | allocated - attempted (excl. VDCL sentinel) | upload | date, beat | process_manager, branch, head_office, admin |
 | Attendance % | workforce | percent | higher | both | kpi_daily_actual ATTENDANCE_PCT <- attendance_daily_record | P/PRESENT = 100, half day = 50; week-off, holiday, leave skipped | daily | date, agent, team, branch | agent, team_leader, process_manager, wfm, branch, head_office, admin |
 | Login hours | workforce | hours | higher | employee | attendance_daily_record.dialler_minutes | dialler_minutes / 60 | daily | date, agent | agent, team_leader, process_manager, wfm, branch, head_office, admin |
@@ -753,10 +761,10 @@ Generated from `backend/src/modules/kpi-catalogue/kpi-catalogue.seed.ts`. 21 pro
 | bellavita | 37 | 37 | 51 | 7 | 7 | 50 | 51 | 0 | 51 |
 | gnc | 34 | 34 | 45 | 7 | 7 | 44 | 45 | 0 | 45 |
 | neemans | 31 | 31 | 41 | 7 | 7 | 40 | 41 | 0 | 41 |
-| appreciate_health | 23 | 23 | 28 | 7 | 7 | 27 | 28 | 0 | 28 |
+| appreciate_health | 27 | 27 | 32 | 7 | 7 | 31 | 32 | 0 | 32 |
 | housing_owner | 22 | 22 | 27 | 7 | 7 | 26 | 27 | 0 | 27 |
 | housing_premium | 22 | 22 | 27 | 7 | 7 | 26 | 27 | 0 | 27 |
-| clovia | 25 | 25 | 36 | 7 | 7 | 35 | 36 | 0 | 36 |
+| clovia | 29 | 29 | 40 | 7 | 7 | 39 | 40 | 0 | 40 |
 | birlanu | 15 | 15 | 23 | 7 | 7 | 22 | 23 | 0 | 23 |
 | satya_retail | 16 | 16 | 21 | 7 | 7 | 20 | 21 | 0 | 21 |
 | lp_feedback | 19 | 19 | 24 | 7 | 7 | 23 | 24 | 0 | 24 |
