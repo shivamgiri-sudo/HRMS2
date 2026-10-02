@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { RequestKind } from "./roster-requests.types.js";
+import { parseDbTimestamp } from "./roster-requests.sla.js";
 import { userIdOfEmployee, wfmRecipientUserIds } from "../wfm/team-roster-audit.js";
 
 type Exec = { execute: (sql: string, params?: unknown[]) => Promise<any> };
@@ -104,7 +105,8 @@ export interface RaisedRequest {
 
 /** Same 24h rule as computeSla's `urgent` state. */
 export function pendingPriority(shiftDate: string, now: Date = new Date()): "high" | "normal" {
-  const shift = new Date(`${String(shiftDate).slice(0, 10)}T00:00:00Z`).getTime();
+  // Shift days are IST: parse as IST midnight (same as computeSla), not UTC midnight.
+  const shift = parseDbTimestamp(String(shiftDate).slice(0, 10));
   if (Number.isNaN(shift)) return "normal";
   return (shift - now.getTime()) / 3_600_000 <= 24 ? "high" : "normal";
 }

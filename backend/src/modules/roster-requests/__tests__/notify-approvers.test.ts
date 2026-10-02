@@ -34,6 +34,11 @@ describe("pendingPriority", () => {
     expect(pendingPriority("2026-10-02", NOW)).toBe("high");
     expect(pendingPriority("2026-10-05", NOW)).toBe("normal");
   });
+  it("treats the shift day as IST midnight, not UTC midnight", () => {
+    // 2026-10-03 00:00 IST is 2026-10-02T18:30Z: 23.5h after this instant => high.
+    // (UTC midnight would be 29h away => normal.)
+    expect(pendingPriority("2026-10-03", new Date("2026-10-01T19:00:00Z"))).toBe("high");
+  });
 });
 
 describe("approverUserIdsForRequest", () => {
