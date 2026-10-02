@@ -204,9 +204,16 @@ export async function resolveDispute(p: ResolveDisputeParams): Promise<ResolveDi
   const setClause = new_shift_template_id
     ? "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = ?, dispute_resolution = ?, shift_template_id = ?"
     : "acknowledgement_status = 'acknowledged', dispute_resolved_by = ?, dispute_resolved_at = ?, dispute_resolution = ?";
+  // dispute_resolved_by has FK -> employees(id): store the resolver's EMPLOYEE id (NULL when none).
+  // The acting user id stays in the audit log below.
+  let resolverEmployeeId: string | null = null;
+  if (userId && userId !== "system") {
+    const [empRows] = await db.execute<RowDataPacket[]>("SELECT id FROM employees WHERE user_id = ? LIMIT 1", [userId]);
+    resolverEmployeeId = Array.isArray(empRows) && empRows[0]?.id ? String(empRows[0].id) : null;
+  }
   const setParams = new_shift_template_id
-    ? [userId, now, resolution.trim(), new_shift_template_id, assignmentId]
-    : [userId, now, resolution.trim(), assignmentId];
+    ? [resolverEmployeeId, now, resolution.trim(), new_shift_template_id, assignmentId]
+    : [resolverEmployeeId, now, resolution.trim(), assignmentId];
 
   await db.execute(`UPDATE roster_daily_assignment SET ${setClause} WHERE id = ?`, setParams);
 

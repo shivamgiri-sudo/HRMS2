@@ -41,7 +41,8 @@ beforeEach(() => {
   Object.values(m).forEach((f) => f.mockReset());
   liveRow = { id: "wra-1", is_week_off: 0 };
   cycleRow = row;
-  execute.mockImplementation(async (sql: string) => {
+  execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+    if (/FROM employees WHERE user_id/.test(sql)) return [params?.[0] === "u1" ? [{ id: "emp-u1" }] : [], []];
     if (/SELECT rda\.\*/.test(sql)) return [[cycleRow], []];
     if (/FROM wfm_shift_template/.test(sql)) return [[{ id: "t-new", start_time: "14:00:00", end_time: "23:00:00" }], []];
     if (/SELECT[\s\S]*FROM wfm_roster_assignment/.test(sql)) return [liveRow ? [liveRow] : [], []];
@@ -83,16 +84,29 @@ describe("resolveDispute", () => {
     const r = await resolveDispute({ assignmentId: "rda-1", userId: "u1", resolution: " moved ", newShiftTemplateId: "t-new", canOwn: allow });
     const [sql, params] = rdaUpdate()!;
     expect(sql).toMatch(/shift_template_id = \?/);
-    expect(params).toEqual(["u1", expect.any(String), "moved", "t-new", "rda-1"]);
+    expect(params).toEqual(["emp-u1", expect.any(String), "moved", "t-new", "rda-1"]);
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ employeeIds: ["e1"], kind: "dispute", sourceId: "rda-1" }));
     expect(r).toMatchObject({ previousShiftTemplateId: "t-old", shiftTemplateId: "t-new", resolution: "moved" });
+  });
+
+  it("writes the resolver's EMPLOYEE id (FK to employees), not the user id", async () => {
+    await resolveDispute({ assignmentId: "rda-1", userId: "u1", resolution: "keep", canOwn: allow });
+    const [, params] = rdaUpdate()!;
+    expect(params[0]).toBe("emp-u1");
+    expect(params[0]).not.toBe("u1");
+  });
+
+  it("writes NULL when the resolver has no employee record", async () => {
+    await resolveDispute({ assignmentId: "rda-1", userId: "u-noemp", resolution: "keep", canOwn: allow });
+    const [, params] = rdaUpdate()!;
+    expect(params[0]).toBeNull();
   });
 
   it("keeps the original shift when no new shift is given", async () => {
     await resolveDispute({ assignmentId: "rda-1", userId: "u1", resolution: "keep", canOwn: allow });
     const [sql, params] = rdaUpdate()!;
     expect(sql).not.toMatch(/shift_template_id = \?/);
-    expect(params).toEqual(["u1", expect.any(String), "keep", "rda-1"]);
+    expect(params).toEqual(["emp-u1", expect.any(String), "keep", "rda-1"]);
   });
 });
 
