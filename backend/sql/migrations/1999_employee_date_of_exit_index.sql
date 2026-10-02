@@ -1,4 +1,4 @@
--- Migration 453: index employees.date_of_exit.
+-- Migration 1999: index employees.date_of_exit.
 --
 -- The HR and CEO dashboards (headcount movement, attrition by branch / process / tenure, 12-month
 -- exit history) filter and group on date_of_exit. With no index the scan walks all ~59k wide
