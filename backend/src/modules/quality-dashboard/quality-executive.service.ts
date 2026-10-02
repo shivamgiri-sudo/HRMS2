@@ -56,6 +56,8 @@ export class QualityExecutiveService {
   private readonly summaryCache = new TtlCache<ExecutiveSummaryResponse>({
     maxEntries: 32,
     defaultTtlMs: EXECUTIVE_SUMMARY_TTL_MS,
+    // ~18s cold against the audit database; serve the previous result while it refreshes.
+    defaultStaleMs: 30 * 60_000,
   });
 
   constructor(private db: DbPoolLike) {}

@@ -42,6 +42,8 @@ const SYSTEM_DASHBOARD_TTL_MS = 45_000;
 const systemDashboardCache = new TtlCache<Awaited<ReturnType<typeof loadSystemDashboardRows>>>({
   maxEntries: 4,
   defaultTtlMs: SYSTEM_DASHBOARD_TTL_MS,
+  // Stale-while-revalidate: the table scans take ~7s cold, so a Super Admin visit after the TTL gets the last result at once.
+  defaultStaleMs: 30 * 60_000,
 });
 
 /** Test seam: forget the cached system-dashboard rows. */

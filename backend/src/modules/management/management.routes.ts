@@ -29,7 +29,7 @@ router.use(requireAuth);
 // number of open tabs. Keyed on the RESOLVED scope, never on the user, so a narrower
 // entitlement can never be served a wider one's payload.
 const WORKFORCE_DASHBOARD_TTL_MS = 30_000;
-export const workforceDashboardCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: WORKFORCE_DASHBOARD_TTL_MS });
+export const workforceDashboardCache = new TtlCache<unknown>({ maxEntries: 100, defaultTtlMs: WORKFORCE_DASHBOARD_TTL_MS, defaultStaleMs: 30 * 60_000 });
 
 /**
  * Whether the caller may see salary, PF/ESIC and payroll cost figures.

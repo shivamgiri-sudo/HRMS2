@@ -22,6 +22,7 @@ import { executeDashboardMetrics, isMetricConfiguredForDashboard } from "./dashb
 import { dashboardSummarySchema } from "../../shared/dashboardMetricContract.js";
 import { cacheInstance as dashboardMetricsCache } from "../../lib/cache/quality-cache.js";
 import { sharedInFlight } from "./metrics-in-flight.js";
+import { TtlCache } from "../../shared/ttlCache.js";
 import { cachedRoleInsights } from "./role-insights/index.js";
 import { canSeeFinanceFigures, istToday } from "./role-insights/helpers.js";
 import { loadRunInsights } from "./role-insights/providers/payrollRun.js";
@@ -37,6 +38,8 @@ import {
 } from "../../shared/attendanceStatus.js";
 
 const router = Router();
+/** Outer stale-while-revalidate layer for the summary bundle: a cold SUPER_ADMIN bundle takes ~10s, so repeat visits are served instantly while one refresh runs. */
+const summaryMetricsSwr = new TtlCache<{ metrics: Record<string, unknown>; at: string }>({ maxEntries: 300, defaultTtlMs: 60_000, defaultStaleMs: 30 * 60_000 });
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 router.use(requireAuth);
 
@@ -231,6 +234,16 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
     });
   }
 
+  // The run analytics take ~9s cold; identical for everyone with the same scope and run, so share the result
+  // and keep serving the previous one while it refreshes (stale-while-revalidate).
+  const opKey = `payroll-op:${runId}:${scope.level}:${scope.branchIds.join(",")}:${scope.processIds.join(",")}:${scope.employeeIds.join(",")}`;
+  const { value: opSummary } = await payrollOperationalCache.getOrCompute(opKey, () => computeOperationalSummary(scope, runId));
+  return res.json(opSummary);
+}));
+
+const payrollOperationalCache = new TtlCache<unknown>({ maxEntries: 60, defaultTtlMs: 60_000, defaultStaleMs: 30 * 60_000 });
+
+async function computeOperationalSummary(scope: DashboardScope, runId: string) {
   // salary_prep_run has no `run_label` and no `closed_at` — neither has ever existed in
   // any migration, so this endpoint raised ER_BAD_FIELD_ERROR and returned 500 on every
   // payroll dashboard load. The label is derived below; `auto_closed_at` is the real
@@ -512,7 +525,7 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
   // intentional and left intact; both stay in unavailableSources with a real reason.
   // If those panels are wanted, they belong on a month- or org-scoped endpoint.
 
-  return res.json({
+  return {
     success: true,
     data: {
       currentMonth,
@@ -560,8 +573,8 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
       },
       generatedAt: new Date().toISOString(),
     },
-  });
-}));
+  };
+}
 
 router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: any) => {
   const dashboardCode = req.params.dashboardCode as DashboardCode;
@@ -616,16 +629,21 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
   // start, every request in that window ran the entire metric bundle itself — SUPER_ADMIN alone is
   // eight metrics, several with multi-second scans — so a few open dashboards stampeded the DB into
   // 502s. Concurrent callers for the same key now await the one computation already in flight.
-  const metricsPromise = sharedInFlight(
-    metricsCacheKey,
-    () => dashboardMetricsCache.getOrSet(
+  const metricsPromise = summaryMetricsSwr.getOrCompute(metricsCacheKey, async () => {
+    // Stamp the bundle with the moment it was computed, so a stale-while-revalidate answer says how old it is.
+    const computedAt = new Date();
+    const metrics = await sharedInFlight(
       metricsCacheKey,
-      () => executeDashboardMetrics(dashboardCode, scope, generatedAt) as Promise<Record<string, unknown>>,
-      90,
-    ),
-  );
+      () => dashboardMetricsCache.getOrSet(
+        metricsCacheKey,
+        () => executeDashboardMetrics(dashboardCode, scope, computedAt) as Promise<Record<string, unknown>>,
+        90,
+      ),
+    );
+    return { metrics, at: computedAt.toISOString() };
+  }).then((r) => r.value);
 
-  const [{ workItems, workItemsStatus }, metrics] = await Promise.all([
+  const [{ workItems, workItemsStatus }, { metrics, at: metricsAt }] = await Promise.all([
     workItemsPromise,
     metricsPromise,
   ]);
@@ -636,7 +654,8 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
     workItems,
     workItemsStatus,
     metrics,
-    generatedAt: generatedAt.toISOString(),
+    // When the metrics were computed (may be older than this request when served stale while refreshing).
+    generatedAt: metricsAt,
   });
   return res.json({ success: true, data });
 }));

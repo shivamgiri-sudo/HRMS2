@@ -191,7 +191,11 @@ function startServer() {
       void import("./modules/dashboards/role-insights/index.js").then(async (m) => {
         await m.warmRoleInsights(["CEO_DASHBOARD", "SUPER_ADMIN_DASHBOARD", "OPERATIONS_DASHBOARD"], { canSeeFinance: true, spacingMs: 8_000 });
         await m.warmRoleInsights(["HR_DASHBOARD", "WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "PAYROLL_HR_DASHBOARD", "QUALITY_DASHBOARD", "RECRUITER_DASHBOARD", "IT_MANAGER_DASHBOARD"], { canSeeFinance: false, spacingMs: 8_000 });
-      });
+        // The older org-wide feeds the dashboards still read (14s / 7s cold) - same cache keys the routes use.
+        const [routes, svc] = await Promise.all([import("./modules/management/management.routes.js"), import("./modules/management/management.service.js")]);
+        await routes.workforceDashboardCache.getOrCompute("workforce:ORG_ALL::", () => svc.managementService.getWorkforceDashboard([], [], "ORG_ALL"));
+        await svc.managementService.getSystemDashboard();
+      }).catch((err) => console.error("[warm] role dashboards:", err instanceof Error ? err.message : err));
     }, 300_000).unref();
     // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to
     // avoid the race where nginx sends a request on a reused connection at the exact
