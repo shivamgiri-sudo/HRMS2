@@ -621,7 +621,7 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
     () => dashboardMetricsCache.getOrSet(
       metricsCacheKey,
       () => executeDashboardMetrics(dashboardCode, scope, generatedAt) as Promise<Record<string, unknown>>,
-      30,
+      90,
     ),
   );
 

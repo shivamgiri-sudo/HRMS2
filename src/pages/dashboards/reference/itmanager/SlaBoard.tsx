@@ -8,7 +8,7 @@ const LIGHT = { critical: "bg-rose-500 kit-alert-dot", high: "bg-amber-400", nor
 const LABEL = { critical: "BREACH", high: "AT RISK", normal: "OPEN", info: "CLEAR" } as const;
 
 /**
- * Ops-board lanes: one dark card per queue with a status light, the number, oldest age and breach count.
+ * Ops-board lanes: one card per queue with a status light, the number, oldest age and breach count.
  * Distinct from the card grid used elsewhere on purpose: IT reads this at a glance like a NOC wall.
  */
 export function SlaBoard({ actions, loading }: { actions?: InsightAction[]; loading?: boolean }) {
@@ -16,16 +16,16 @@ export function SlaBoard({ actions, loading }: { actions?: InsightAction[]; load
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="SLA board">
       {(actions ?? []).map((a) => (
-        <Link key={a.id} to={a.href} className="group rounded-2xl bg-slate-900 p-4 text-white ring-1 ring-slate-700 transition hover:ring-cyan-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-400">
+        <Link key={a.id} to={a.href} className="kit-card kit-lift group p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-500">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400">{a.group ?? "Queue"}</span>
-            <span className="flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider text-slate-300"><i className={cn("h-2.5 w-2.5 rounded-full", LIGHT[a.severity])} />{LABEL[a.severity]}</span>
+            <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{a.group ?? "Queue"}</span>
+            <span className="flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider text-slate-600"><i className={cn("h-2.5 w-2.5 rounded-full", LIGHT[a.severity])} />{LABEL[a.severity]}</span>
           </div>
-          <p className="mt-2 text-[13px] font-semibold text-slate-200">{a.label}</p>
-          <p className="kit-num mt-2 text-[40px] font-black leading-none">{a.count === null ? "—" : a.count.toLocaleString("en-IN")}</p>
-          <p className="mt-2 flex flex-wrap gap-x-3 text-[11px] text-slate-400">
+          <p className="mt-2 text-[13px] font-semibold text-slate-800">{a.label}</p>
+          <p className="kit-num mt-2 text-[40px] font-black leading-none text-slate-900">{a.count === null ? "—" : a.count.toLocaleString("en-IN")}</p>
+          <p className="mt-2 flex flex-wrap gap-x-3 text-[11px] text-slate-500">
             {a.oldestDays !== null && a.oldestDays !== undefined ? <span>oldest {a.oldestDays}d</span> : null}
-            {a.overdue ? <span className="font-bold text-rose-300">{a.overdue} overdue</span> : null}
+            {a.overdue ? <span className="font-bold text-rose-600">{a.overdue} overdue</span> : null}
             {a.hint ? <span className="truncate">{a.hint}</span> : null}
           </p>
         </Link>

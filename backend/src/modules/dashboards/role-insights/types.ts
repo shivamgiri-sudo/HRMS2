@@ -93,6 +93,10 @@ export interface RoleInsights {
   tables: InsightTable[];
   signals: InsightSignal[];
   sectionErrors: Record<string, string>;
+  /** Sections still computing in the background; the client polls until this is empty. */
+  pending?: string[];
+  /** True when this answer is a previous result being refreshed behind the scenes. */
+  stale?: boolean;
 }
 
 export interface InsightContext {

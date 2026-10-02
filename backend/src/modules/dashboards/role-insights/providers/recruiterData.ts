@@ -124,13 +124,19 @@ export function loadOffers(ctx: InsightContext): Promise<OfferDetail[]> {
 async function fetchOffers(ctx: InsightContext): Promise<OfferDetail[]> {
   const sc = await candidateScope(ctx);
   const from = addDays(ctx.today, -90);
-  const r = await rows(
-    `SELECT o.status, o.date_of_joining, o.approved_at, o.submitted_at, c.full_name, COALESCE((SELECT pm.process_name FROM process_master pm WHERE pm.id = c.applied_for_process LIMIT 1), c.applied_for_process) AS applied_for_process, c.applied_for_branch,
-            EXISTS (SELECT 1 FROM employees e WHERE e.candidate_id = o.candidate_id AND e.date_of_joining <= ?) AS joined
-       FROM ats_employment_offer o JOIN ats_candidate c ON c.id = o.candidate_id
-      WHERE o.status IN ('submitted', 'bh_approved') AND COALESCE(o.date_of_joining, DATE(o.created_at)) >= ? AND ${sc.sql}`,
-    [ctx.today, from, ...sc.params],
-  );
+  // `joined` used to be a correlated EXISTS on employees.candidate_id (no index): one 59k-row scan per offer,
+  // ~20s for 90 days of offers. One set-based read of the joiners replaces it.
+  const [r, joinedRows] = await Promise.all([
+    rows(
+      `SELECT o.candidate_id, o.status, o.date_of_joining, o.approved_at, o.submitted_at, c.full_name, COALESCE((SELECT pm.process_name FROM process_master pm WHERE pm.id = c.applied_for_process LIMIT 1), c.applied_for_process) AS applied_for_process, c.applied_for_branch
+         FROM ats_employment_offer o JOIN ats_candidate c ON c.id = o.candidate_id
+        WHERE o.status IN ('submitted', 'bh_approved') AND COALESCE(o.date_of_joining, DATE(o.created_at)) >= ? AND ${sc.sql}`,
+      [from, ...sc.params],
+    ),
+    rows(`SELECT candidate_id FROM employees WHERE candidate_id IS NOT NULL AND date_of_joining >= ? AND date_of_joining <= ?`, [addDays(from, -120), ctx.today]),
+  ]);
+  const joinedIds = new Set(joinedRows.map((j) => String(j.candidate_id)));
+  for (const o of r) o.joined = joinedIds.has(String(o.candidate_id)) ? 1 : 0;
   return r.map((o) => ({
     status: String(o.status), doj: ymd(o.date_of_joining), approvedAt: ymd(o.approved_at), submittedAt: ymd(o.submitted_at),
     joined: Number(o.joined) === 1, name: o.full_name ?? null, process: o.applied_for_process ?? null, branch: o.applied_for_branch ?? null,

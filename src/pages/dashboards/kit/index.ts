@@ -4,6 +4,7 @@ export { PulseTile, PulseGrid, type PulseTileProps } from "./PulseTile";
 export { ActionCenter } from "./ActionCenter";
 export { SignalList } from "./SignalList";
 export { Panel, LazySection, SectionTitle, DashSkeleton } from "./Panel";
+export { InsightStatus } from "./InsightStatus";
 export { Sparkline } from "./Sparkline";
 export { TrendChart, BarsChart, RankedBars, DonutChart, FunnelChart, HeatStrip, HealthRing, ChartEmpty, Legend } from "./charts";
 export { SeriesPanel, TablePanel, KpiTiles, InsightGrid } from "./InsightsRenderer";

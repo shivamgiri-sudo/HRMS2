@@ -185,6 +185,14 @@ function startServer() {
     setTimeout(() => { void import("./modules/onfido-process/onfido-cache-warmer.js").then((m) => m.startOnfidoCacheWarmer()); }, 240_000).unref();
     // ATS dashboards aggregate ~40k wide rows (15-20s cold); warm the cache after boot so the first visit is instant.
     setTimeout(() => { void import("./modules/ats/dashboard.warm.js").then((m) => m.warmAtsDashboards()); }, 260_000).unref();
+    // Role dashboards: compute the org-wide insights once after the other warmers, one dashboard at a time,
+    // so the first CEO / HR / Ops visit after a deploy is served from memory instead of a cold 8-12s load.
+    setTimeout(() => {
+      void import("./modules/dashboards/role-insights/index.js").then(async (m) => {
+        await m.warmRoleInsights(["CEO_DASHBOARD", "SUPER_ADMIN_DASHBOARD", "OPERATIONS_DASHBOARD"], { canSeeFinance: true, spacingMs: 8_000 });
+        await m.warmRoleInsights(["HR_DASHBOARD", "WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "PAYROLL_HR_DASHBOARD", "QUALITY_DASHBOARD", "RECRUITER_DASHBOARD", "IT_MANAGER_DASHBOARD"], { canSeeFinance: false, spacingMs: 8_000 });
+      });
+    }, 300_000).unref();
     // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to
     // avoid the race where nginx sends a request on a reused connection at the exact
     // moment Node is closing it (produces a spurious 502).

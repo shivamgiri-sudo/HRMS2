@@ -18,11 +18,22 @@ export type Accent = "indigo" | "emerald" | "rose" | "amber" | "cyan" | "violet"
 
 /** Hero gradients — one per role family so each dashboard is recognisable at a glance. */
 export const HERO_GRADIENT: Record<Accent, string> = {
-  indigo:  "from-[#0b1f44] via-[#1e2f7a] to-[#4338ca]",
-  emerald: "from-[#052e2b] via-[#065f46] to-[#0d9488]",
-  rose:    "from-[#3b0a1f] via-[#9f1239] to-[#e11d48]",
-  amber:   "from-[#3a1d05] via-[#b45309] to-[#f59e0b]",
-  cyan:    "from-[#082f49] via-[#0e7490] to-[#06b6d4]",
-  violet:  "from-[#2e1065] via-[#5b21b6] to-[#8b5cf6]",
-  slate:   "from-[#0f172a] via-[#1e293b] to-[#475569]",
+  indigo:  "from-white via-indigo-50/70 to-indigo-100/70",
+  emerald: "from-white via-emerald-50/70 to-emerald-100/70",
+  rose:    "from-white via-rose-50/70 to-rose-100/70",
+  amber:   "from-white via-amber-50/70 to-amber-100/70",
+  cyan:    "from-white via-cyan-50/70 to-cyan-100/70",
+  violet:  "from-white via-violet-50/70 to-violet-100/70",
+  slate:   "from-white via-slate-50 to-slate-100",
+};
+
+/** Solid accent used for the hero's left edge and icon chip. */
+export const HERO_ACCENT: Record<Accent, { bar: string; chip: string; eyebrow: string }> = {
+  indigo:  { bar: "bg-indigo-500",  chip: "bg-indigo-100 text-indigo-700",   eyebrow: "text-indigo-700" },
+  emerald: { bar: "bg-emerald-500", chip: "bg-emerald-100 text-emerald-700", eyebrow: "text-emerald-700" },
+  rose:    { bar: "bg-rose-500",    chip: "bg-rose-100 text-rose-700",       eyebrow: "text-rose-700" },
+  amber:   { bar: "bg-amber-500",   chip: "bg-amber-100 text-amber-700",     eyebrow: "text-amber-700" },
+  cyan:    { bar: "bg-cyan-500",    chip: "bg-cyan-100 text-cyan-700",       eyebrow: "text-cyan-700" },
+  violet:  { bar: "bg-violet-500",  chip: "bg-violet-100 text-violet-700",   eyebrow: "text-violet-700" },
+  slate:   { bar: "bg-slate-500",   chip: "bg-slate-200 text-slate-700",     eyebrow: "text-slate-600" },
 };

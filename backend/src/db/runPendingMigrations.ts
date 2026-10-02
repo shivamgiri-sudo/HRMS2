@@ -1266,6 +1266,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1994_ops_nudge_log.sql", // Registered 2026-10-02. ops_nudge_log: per-attempt log for Ops Control Tower joiner WhatsApp nudges (manual + 24h auto); drives cooldown and last-nudged/count display.
   "migrations/1998_kpi_upload_feed_metrics_2.sql", // Registered 2026-10-02. Metric codes for Satya, Appreciate Wealth, Clovia chat/outbound feeds. INSERT IGNORE, additive.
   "migrations/1999_employee_date_of_exit_index.sql", // Registered 2026-10-02. Index on employees.date_of_exit: the HR and CEO dashboards group/filter on it for attrition and headcount movement; without it the scan over ~59k wide rows took 4-26s under load. Index-only and PREPARE-guarded, so a lock timeout defers to the next boot instead of blocking startup.
+  "migrations/2000_employee_candidate_id_index.sql", // Registered 2026-10-02. Index on employees.candidate_id: the correlated EXISTS / NOT EXISTS used by recruiter and ATS code scanned ~59k wide rows per probe (Recruiter offers query ~21s). Index-only and PREPARE-guarded, so a lock timeout defers to the next boot.
 ];
 
 export type MigrationHealth = {

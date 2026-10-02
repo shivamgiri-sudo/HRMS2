@@ -20,7 +20,9 @@ export function useRoleInsights(dashboardCode: string, params: { branchId?: stri
       return ((res as { data?: RoleInsights }).data ?? res) as RoleInsights;
     },
     enabled,
-    staleTime: 60_000,
-    retry: 1,
+    staleTime: 30_000,
+    retry: 2,
+    // Sections the server is still computing arrive on later polls; stop as soon as none are pending.
+    refetchInterval: (query) => ((query.state.data?.pending?.length ?? 0) > 0 ? 1_500 : false),
   });
 }

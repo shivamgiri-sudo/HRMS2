@@ -27,10 +27,10 @@ export function toSystems(insights: RoleInsights | undefined): SystemTile[] {
 }
 
 export const LIGHT = {
-  ok: { dot: "bg-emerald-400", ring: "ring-emerald-400/40", text: "text-emerald-300", label: "Operational" },
-  warn: { dot: "bg-amber-400", ring: "ring-amber-400/40", text: "text-amber-300", label: "Degraded" },
-  down: { dot: "bg-rose-500 kit-alert-dot", ring: "ring-rose-500/50", text: "text-rose-300", label: "Failing" },
-  unknown: { dot: "bg-slate-500", ring: "ring-slate-500/40", text: "text-slate-300", label: "Unknown" },
+  ok: { dot: "bg-emerald-500", ring: "ring-emerald-200", text: "text-emerald-700", label: "Operational" },
+  warn: { dot: "bg-amber-500", ring: "ring-amber-300", text: "text-amber-700", label: "Degraded" },
+  down: { dot: "bg-rose-500 kit-alert-dot", ring: "ring-rose-300", text: "text-rose-700", label: "Failing" },
+  unknown: { dot: "bg-slate-400", ring: "ring-slate-200", text: "text-slate-600", label: "Unknown" },
 } as const;
 
 export function countLights(systems: SystemTile[]) {
