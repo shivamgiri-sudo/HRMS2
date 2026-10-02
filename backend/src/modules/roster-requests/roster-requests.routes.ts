@@ -65,6 +65,22 @@ export async function assertImpactScope(req: AuthenticatedRequest, impact: Impac
   }
 }
 
+/**
+ * computeImpact + scope check. For a non-org-wide caller a nonexistent request answers with the SAME 403 as
+ * an out-of-scope one, so the endpoint is not an existence oracle. Org-wide users keep the true 404.
+ */
+export async function scopedImpact(req: AuthenticatedRequest, kind: RequestKind, id: string): Promise<ImpactResult> {
+  let impact: ImpactResult;
+  try {
+    impact = await computeImpact(kind, id);
+  } catch (err: any) {
+    if (err?.statusCode === 404 && !(await hasRole(req.authUser!.id, ...ORG_WIDE_EXEMPT_ROLES))) throw new HttpFail(403, OUT_OF_SCOPE_MSG);
+    throw err;
+  }
+  await assertImpactScope(req, impact);
+  return impact;
+}
+
 /** Role + scope + apply for one request. Throws HttpFail (or the decide service's statusCode errors). */
 async function decideOne(req: AuthenticatedRequest, kind: RequestKind, id: string, input: DecideInput) {
   if (!(REQUEST_KINDS as readonly string[]).includes(kind)) throw new HttpFail(400, "Unsupported request kind");
@@ -74,7 +90,7 @@ async function decideOne(req: AuthenticatedRequest, kind: RequestKind, id: strin
   if (!(await hasRole(req.authUser!.id, ...rolesForKindAction(kind, input.action)))) {
     throw new HttpFail(403, "You do not have permission to decide this request");
   }
-  await assertImpactScope(req, await computeImpact(kind, id));
+  await scopedImpact(req, kind, id);
   return decideRosterRequest(kind, id, input, { userId: req.authUser!.id, req });
 }
 
@@ -100,14 +116,11 @@ router.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const q = parseImpactQuery(req.query as Record<string, unknown>);
     if (!q) return res.status(400).json({ success: false, error: "kind (swap|weekoff_rejection|dispute|conflict) and id are required" });
-    // A 404 from computeImpact carries statusCode and is mapped by the global errorHandler.
-    const impact = await computeImpact(q.kind, q.id);
     try {
-      await assertImpactScope(req, impact);
+      return res.json({ success: true, data: await scopedImpact(req, q.kind, q.id) });
     } catch (err) {
       return sendFailure(res, err);
     }
-    return res.json({ success: true, data: impact });
   }),
 );
 
@@ -222,7 +235,7 @@ router.get(
     const q = parseImpactQuery({ kind: req.params.kind, id: req.params.id });
     if (!q) return res.status(400).json({ success: false, error: "kind (swap|weekoff_rejection|dispute|conflict) and id are required" });
     try {
-      await assertImpactScope(req, await computeImpact(q.kind, q.id));
+      await scopedImpact(req, q.kind, q.id);
     } catch (err) {
       return sendFailure(res, err);
     }

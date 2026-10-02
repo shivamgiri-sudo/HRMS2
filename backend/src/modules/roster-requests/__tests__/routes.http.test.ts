@@ -211,3 +211,33 @@ describe("GET /pending-cells", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("no existence oracle (404 vs 403)", () => {
+  const nf = () => Object.assign(new Error("Request not found"), { statusCode: 404 });
+  beforeEach(() => { m.impact.mockRejectedValue(nf()); });
+
+  it("impact: non-org-wide gets the out-of-scope 403 body for a missing id", async () => {
+    m.impact.mockResolvedValueOnce(impactOk);
+    m.canAccessEmployee.mockResolvedValue(false);
+    const oos = await request(appFor(["manager"])).get("/api/roster-requests/impact?kind=swap&id=exists");
+    const missing = await request(appFor(["manager"])).get("/api/roster-requests/impact?kind=swap&id=nope");
+    expect(missing.status).toBe(403);
+    expect(missing.body).toEqual(oos.body);
+  });
+  it("impact: org-wide keeps the true 404", async () => {
+    expect((await request(appFor(["admin"])).get("/api/roster-requests/impact?kind=swap&id=nope")).status).toBe(404);
+  });
+  it("history: 403 for non-org-wide, 404 for org-wide", async () => {
+    expect((await request(appFor(["manager"])).get("/api/roster-requests/swap/nope/history")).status).toBe(403);
+    expect((await request(appFor(["admin"])).get("/api/roster-requests/swap/nope/history")).status).toBe(404);
+  });
+  it("decide: 403 for non-org-wide, 404 for org-wide, never applies", async () => {
+    expect((await request(appFor(["manager"])).post("/api/roster-requests/swap/nope/decide").send({ action: "approve" })).status).toBe(403);
+    expect((await request(appFor(["admin"])).post("/api/roster-requests/swap/nope/decide").send({ action: "approve" })).status).toBe(404);
+    expect(m.decide).not.toHaveBeenCalled();
+  });
+  it("bulk-decide: per-item status/error matches out-of-scope for non-org-wide", async () => {
+    const res = await request(appFor(["manager"])).post("/api/roster-requests/bulk-decide").send({ action: "approve", items: [{ kind: "swap", id: "nope" }] });
+    expect(res.body.data.results[0]).toMatchObject({ ok: false, status: 403, error: "out of scope" });
+  });
+});
