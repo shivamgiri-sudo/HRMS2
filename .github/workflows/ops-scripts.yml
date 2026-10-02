@@ -50,6 +50,7 @@ on:
           - privacy-encryption-verify
           - bank-account-encrypt-backfill
           - resend-address-bgv-links
+          - roster-requests-verify
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -169,6 +170,16 @@ jobs:
               # a column whose ciphertext does not match its plaintext must not have its
               # plaintext retired.
               npx tsx scripts/privacy-encryption-verify.ts
+              ;;
+            roster-requests-verify)
+              # Read-only: SELECTs only, in a READ ONLY session. Checks the Roster Requests hub
+              # tables (migration 1995), their schema_migrations row, row counts, collations and
+              # counterpart_status. It has no apply mode, so apply is refused here and by the script.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::roster-requests-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              node scripts/roster-requests-verify.mjs
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
