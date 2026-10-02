@@ -12,6 +12,8 @@ import { computeImpact } from "./roster-requests.impact.js";
 import { ALLOWED_ACTIONS, decideRosterRequest } from "./roster-requests.decide.js";
 import { listDecisions } from "./roster-requests.decision-log.js";
 import { listAutoRules, upsertAutoRule } from "./roster-requests.auto-rule.js";
+import { listPendingCells, parsePendingCellsQuery } from "./roster-requests.pending-cells.js";
+import { employeeScope } from "../wfm-extensions/employee-scope.js";
 import { REQUEST_KINDS, type DecideInput, type ImpactResult, type RequestKind } from "./roster-requests.types.js";
 
 const router = Router();
@@ -21,6 +23,7 @@ const HUB_ROLES = ["admin", "hr", "wfm", "manager", "assistant_manager", "team_l
 const WEEKOFF_ROLES = ["admin", "hr", "wfm", "manager", "branch_head"];
 const SWAP_CONFLICT_ROLES = ["admin", "hr", "wfm", "manager", "assistant_manager", "team_leader"];
 const AUTO_RULE_WRITE_ROLES = ["admin", "hr", "wfm", "ho_wfm"];
+const IMPACT_ROLES = ["admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager"];
 const MAX_BULK_ITEMS = 50;
 
 /**
@@ -93,7 +96,7 @@ router.use(requireAuth);
 
 router.get(
   "/impact",
-  requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager"),
+  requireRole(...IMPACT_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const q = parseImpactQuery(req.query as Record<string, unknown>);
     if (!q) return res.status(400).json({ success: false, error: "kind (swap|weekoff_rejection|dispute|conflict) and id are required" });
@@ -105,6 +108,19 @@ router.get(
       return sendFailure(res, err);
     }
     return res.json({ success: true, data: impact });
+  }),
+);
+
+// Roster-cell pending badges. Static path: registered before the /:kind/:id routes.
+router.get(
+  "/pending-cells",
+  requireRole(...IMPACT_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const q = parsePendingCellsQuery(req.query as Record<string, unknown>);
+    if (!q) return res.status(400).json({ success: false, error: "from and to are required as YYYY-MM-DD with from <= to" });
+    const userId = req.authUser!.id;
+    const scope = (await hasRole(userId, ...ORG_WIDE_EXEMPT_ROLES)) ? { sql: "1=1", params: [] as unknown[] } : await employeeScope(userId);
+    return res.json({ success: true, data: await listPendingCells(q, scope) });
   }),
 );
 

@@ -10,6 +10,8 @@ const m = vi.hoisted(() => ({
   canAccessEmployee: vi.fn(),
   userCanAccessProcess: vi.fn(),
   audit: vi.fn(),
+  cells: vi.fn(),
+  employeeScope: vi.fn(),
 }));
 let actor: { id: string; roles: string[] };
 
@@ -39,6 +41,11 @@ vi.mock("../roster-requests.decide.js", () => ({
 }));
 vi.mock("../roster-requests.decision-log.js", () => ({ listDecisions: async () => [{ id: 1 }] }));
 vi.mock("../roster-requests.auto-rule.js", () => ({ listAutoRules: m.list, upsertAutoRule: m.upsert }));
+vi.mock("../roster-requests.pending-cells.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../roster-requests.pending-cells.js")>()),
+  listPendingCells: m.cells,
+}));
+vi.mock("../../wfm-extensions/employee-scope.js", () => ({ employeeScope: m.employeeScope }));
 
 import { rosterRequestsRouter, rolesForKindAction } from "../roster-requests.routes.js";
 
@@ -155,5 +162,52 @@ describe("auto-rules", () => {
     const res = await request(appFor(["manager"])).get("/api/roster-requests/auto-rules");
     expect(res.status).toBe(200);
     expect(m.list).toHaveBeenCalledWith(["p1"]);
+  });
+});
+
+describe("GET /pending-cells", () => {
+  const url = "/api/roster-requests/pending-cells";
+  const cell = { employeeId: "e1", date: "2026-10-03", kind: "swap", id: "s1" };
+
+  beforeEach(() => {
+    m.cells.mockResolvedValue([cell]);
+    m.employeeScope.mockResolvedValue({ sql: "e.branch_id = ?", params: ["b1"] });
+  });
+
+  it("400 on missing or invalid dates", async () => {
+    const app = appFor(["manager"]);
+    expect((await request(app).get(url)).status).toBe(400);
+    expect((await request(app).get(`${url}?from=2026-10-01&to=bad`)).status).toBe(400);
+    expect((await request(app).get(`${url}?from=2026-10-07&to=2026-10-01`)).status).toBe(400);
+    expect(m.cells).not.toHaveBeenCalled();
+  });
+
+  it("403 for a role outside the impact role list", async () => {
+    const res = await request(appFor(["employee"])).get(`${url}?from=2026-10-01&to=2026-10-07`);
+    expect(res.status).toBe(403);
+  });
+
+  it("org-wide users get every cell (no scope predicate)", async () => {
+    const res = await request(appFor(["admin"])).get(`${url}?from=2026-10-01&to=2026-10-07&processId=p1`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, data: [cell] });
+    expect(m.cells).toHaveBeenCalledWith(
+      { from: "2026-10-01", to: "2026-10-07", processId: "p1", branchId: null },
+      { sql: "1=1", params: [] },
+    );
+    expect(m.employeeScope).not.toHaveBeenCalled();
+  });
+
+  it("other users are restricted by employeeScope", async () => {
+    const res = await request(appFor(["manager"])).get(`${url}?from=2026-10-01&to=2026-10-07`);
+    expect(res.status).toBe(200);
+    expect(m.employeeScope).toHaveBeenCalledWith("u1");
+    expect(m.cells.mock.calls[0][1]).toEqual({ sql: "e.branch_id = ?", params: ["b1"] });
+  });
+
+  it("is not captured by the parametrised routes", async () => {
+    const res = await request(appFor(["manager"])).get(`${url}?from=2026-10-01&to=2026-10-07`);
+    expect(m.impact).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
   });
 });
