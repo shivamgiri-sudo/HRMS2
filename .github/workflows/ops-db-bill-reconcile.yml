@@ -3,6 +3,7 @@ name: Ops db_bill Process Reconcile (manual)
 # Compares db_bill (legacy billing master, read-only) with HRMS employee -> process assignment.
 #   discover   : read-only report of db_bill Process / ClientName / CostCenter groups and how those employees sit in HRMS.
 #   trace      : read-only: where the agents found in each process's upload tables sit in HRMS (process / cost centre / LOB).
+#   ppv2-sources : read-only: which servers / schemas Process Performance V2 reads, and per-table freshness.
 #   schema     : read-only: column names / row counts / value shapes of db_masmis upload tables (no content).
 #   gaps       : read-only analysis of active HRMS employees with no process and what db_bill's cost centre says.
 #   apply-gaps : fills ONLY blank employees.process_id from an unambiguous cost centre. Never overwrites an assignment.
@@ -21,6 +22,7 @@ on:
           - gaps
           - trace
           - schema
+          - ppv2-sources
           - apply-gaps
       confirm:
         description: "To apply-gaps, type apply-gaps. Ignored otherwise."
@@ -71,5 +73,6 @@ jobs:
             gaps)       npx tsx scripts/db-bill-process-gaps.ts ;;
             trace)      npx tsx scripts/staff-process-trace.ts ;;
             schema)     npx tsx scripts/masmis-schema-peek.ts ;;
+            ppv2-sources) npx tsx scripts/ppv2-source-check.ts ;;
             apply-gaps) npx tsx scripts/db-bill-process-gaps.ts --apply ;;
           esac
