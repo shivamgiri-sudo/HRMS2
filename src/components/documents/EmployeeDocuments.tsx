@@ -31,6 +31,8 @@ const SELF_SERVICE_TYPES = [
   { value: "pan_card", label: "PAN Card" },
   { value: "aadhaar_card", label: "Aadhaar" },
   { value: "bank_passbook", label: "Bank Passbook" },
+  { value: "investment_proof", label: "Investment Proof (tax)" },
+  { value: "declaration_form", label: "Tax Declaration" },
 ];
 
 const DOCUMENT_TYPES = [
@@ -39,6 +41,8 @@ const DOCUMENT_TYPES = [
   { value: "resume", label: "Resume" },
   { value: "offer_letter", label: "Offer Letter" },
   { value: "contract", label: "Contract" },
+  { value: "form_16", label: "Form 16" },
+  { value: "tax_certificate", label: "Tax Certificate" },
   { value: "other", label: "Others" },
 ];
 

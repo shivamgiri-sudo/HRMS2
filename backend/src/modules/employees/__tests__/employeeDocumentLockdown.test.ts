@@ -28,3 +28,18 @@ describe("employee document lockdown", () => {
     expect(mayDownloadJoiningDocuments({ isAdmin: false, isSelf: true, roles: ["employee", "hr"] })).toBe(true);
   });
 });
+
+describe("tax paperwork stays with the owner", async () => {
+  const { isOwnerReadableDocType, isSelfServiceDocType } = await import("../employee-document-category.js");
+  it("Form 16 / tax certificate / investment proof / declaration are owner-readable; KYC and contracts are not", () => {
+    for (const t of ["form_16", "Form_16", "tax_certificate", "investment_proof", "declaration_form"]) expect(isOwnerReadableDocType(t)).toBe(true);
+    for (const t of ["contract", "pan_card", "aadhaar", "offer_letter", "other", ""]) expect(isOwnerReadableDocType(t)).toBe(false);
+  });
+  it("an employee may self-upload investment proofs and declarations, not Form 16", () => {
+    expect(isSelfServiceDocType("investment_proof")).toBe(true);
+    expect(isSelfServiceDocType("declaration_form")).toBe(true);
+    expect(isSelfServiceDocType("form_16")).toBe(false);
+    expect(isSelfServiceDocType("pan_card")).toBe(true);
+    expect(isSelfServiceDocType("contract")).toBe(false);
+  });
+});

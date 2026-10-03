@@ -13,6 +13,8 @@ import { findByStoredFilename, logDocumentAccess } from "../document-vault/docum
 import { isHoldActive } from "../privacy-engine/privacyHold.service.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
 import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
+import { db } from "../../db/mysql.js";
+import { isOwnerReadableDocType } from "../employees/employee-document-category.js";
 
 /**
  * Vault categories whose owner may NOT open their own file. The employee uploads these (KYC, joining
@@ -21,6 +23,20 @@ import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
  * keep the owner bypass below.
  */
 export const OWNER_ACCESS_BLOCKED_CATEGORIES: ReadonlySet<string> = new Set(["employee-documents"]);
+
+/** True when the stored file is the owner's tax paperwork (Form 16 etc.), which they may open. */
+async function isOwnerReadableTaxFile(storedFilename: string): Promise<boolean> {
+  try {
+    const [rows] = await db.execute(
+      "SELECT doc_type FROM employee_documents WHERE file_url LIKE ? LIMIT 1",
+      [`%/${storedFilename.replace(/[%_\\]/g, "")}`],
+    );
+    const type = (rows as Array<{ doc_type?: string }>)[0]?.doc_type;
+    return !!type && isOwnerReadableDocType(String(type));
+  } catch {
+    return false; // fail closed: an unreadable lookup never widens access
+  }
+}
 
 export type VaultAction = "view" | "download" | "delete" | "token_generate" | "token_consume";
 
@@ -121,10 +137,10 @@ export async function authorizeDocumentAccess(opts: DocumentAuthOptions): Promis
   // those two id spaces are distinct in this schema (employees.user_id is the FK
   // between them). Comparing against actorUserId here used to mean this bypass
   // could never actually match a real employee.
+  const ownsItem = item.owner_employee_id != null && item.owner_employee_id === opts.actorEmployeeId;
   const isOwner =
-    item.owner_employee_id != null &&
-    item.owner_employee_id === opts.actorEmployeeId &&
-    !OWNER_ACCESS_BLOCKED_CATEGORIES.has(String(item.category));
+    ownsItem &&
+    (!OWNER_ACCESS_BLOCKED_CATEGORIES.has(String(item.category)) || (await isOwnerReadableTaxFile(opts.storedFilename)));
 
   if (!isOwner && !allowedRoles.has(opts.actorRole)) {
     await logDocumentAccess({

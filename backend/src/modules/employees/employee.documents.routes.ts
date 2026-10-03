@@ -10,8 +10,8 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { createHash } from "crypto";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { selfOrAdminHr, hasRole } from "../../shared/accessGuard.js";
-import { docCategoryFor, isSelfServiceDocType } from "./employee-document-category.js";
+import { selfOrAdminHr, hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
+import { docCategoryFor, isSelfServiceDocType, isOwnerReadableDocType } from "./employee-document-category.js";
 import { guardEmployeeScope } from "./employeeScopeGuard.js";
 import { registerUpload } from "../document-vault/documentVault.service.js";
 
@@ -63,7 +63,13 @@ router.get("/:employeeId", selfOrAdminHr("employeeId"), h(async (req: Authentica
     [req.params.employeeId]
   );
   const mayOpenFiles = await hasRole(req.authUser!.id, ...DOCUMENT_FILE_ROLES);
-  res.json({ success: true, data: mayOpenFiles ? rows : (rows as RowDataPacket[]).map((r) => withoutFileUrl(r)) });
+  // The owner still gets the file for tax paperwork issued to / submitted by them (Form 16 etc.).
+  res.json({
+    success: true,
+    data: mayOpenFiles
+      ? rows
+      : (rows as RowDataPacket[]).map((r) => (isOwnerReadableDocType(String(r.document_type ?? "")) ? r : withoutFileUrl(r))),
+  });
 }));
 
 // POST /api/employee-docs/:employeeId/upload — multipart upload (self or admin/hr only)
@@ -206,7 +212,26 @@ router.patch("/:employeeId/:docId/verify", requireRole("admin", "hr", "super_adm
 }));
 
 // GET /api/employee-docs/:employeeId/:docId/download — download with original filename
-router.get("/:employeeId/:docId/download", requireRole(...DOCUMENT_FILE_ROLES), guardEmployeeScope("employeeId"), h(async (req: AuthenticatedRequest, res: Response) => {
+// The owner may download their own tax paperwork (Form 16 etc.); every other document needs an
+// HR / payroll role inside scope. ownTaxDoc marks the first case so the role gates are skipped for it only.
+async function markOwnTaxDoc(req: any, _res: Response, next: any) {
+  try {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (emp && emp.id === req.params.employeeId) {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        "SELECT doc_type FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1",
+        [req.params.docId, req.params.employeeId],
+      );
+      const type = (rows as RowDataPacket[])[0]?.doc_type;
+      if (type && isOwnerReadableDocType(String(type))) req.ownTaxDoc = true;
+    }
+    next();
+  } catch (err) { next(err); }
+}
+const unlessOwnTaxDoc = (mw: (req: any, res: any, next: any) => unknown) =>
+  (req: any, res: any, next: any) => (req.ownTaxDoc ? next() : mw(req, res, next));
+
+router.get("/:employeeId/:docId/download", markOwnTaxDoc, unlessOwnTaxDoc(requireRole(...DOCUMENT_FILE_ROLES)), unlessOwnTaxDoc(guardEmployeeScope("employeeId")), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT doc_name, file_url FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1",
     [req.params.docId, req.params.employeeId]

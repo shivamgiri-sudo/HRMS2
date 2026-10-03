@@ -28,5 +28,20 @@ export function docCategoryFor(documentType: string): EmployeeDocCategory {
  * letters…) stays an HR-controlled upload.
  */
 export function isSelfServiceDocType(documentType: string): boolean {
-  return docCategoryFor(documentType) !== 'other';
+  if (docCategoryFor(documentType) !== 'other') return true;
+  // Tax submissions the employee makes themselves. Form 16 / tax certificates are issued by the
+  // employer, so those stay HR uploads.
+  const t = String(documentType ?? '').trim().toLowerCase();
+  return t === 'investment_proof' || t === 'declaration_form';
+}
+
+/**
+ * Tax paperwork the employee is entitled to keep: Form 16 / tax certificate issued to them and the
+ * investment proofs / declarations they submitted. Unlike KYC and contracts (HR opens those), the
+ * owner may view and download these.
+ */
+const OWNER_READABLE = new Set(['form_16', 'form16', 'form 16', 'form_130', 'tax_certificate', 'investment_proof', 'declaration_form']);
+
+export function isOwnerReadableDocType(documentType: string): boolean {
+  return OWNER_READABLE.has(String(documentType ?? '').trim().toLowerCase());
 }

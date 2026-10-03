@@ -12,13 +12,15 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findByStoredFilename, logDocumentAccess, isHoldActive, canViewEmployee } = vi.hoisted(() => ({
+const { findByStoredFilename, logDocumentAccess, isHoldActive, canViewEmployee, dbExecute } = vi.hoisted(() => ({
+  dbExecute: vi.fn(),
   findByStoredFilename: vi.fn(),
   logDocumentAccess: vi.fn(),
   isHoldActive: vi.fn(),
   canViewEmployee: vi.fn(),
 }));
 vi.mock("../../../shared/enterpriseScope.js", () => ({ canViewEmployee }));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
 vi.mock("../../document-vault/documentVault.service.js", () => ({ findByStoredFilename, logDocumentAccess }));
 vi.mock("../../privacy-engine/privacyHold.service.js", () => ({ isHoldActive }));
@@ -50,6 +52,7 @@ describe("authorizeDocumentAccess owner bypass", () => {
     logDocumentAccess.mockReset().mockResolvedValue(undefined);
     isHoldActive.mockReset().mockResolvedValue(null);
     canViewEmployee.mockReset().mockResolvedValue(true);
+    dbExecute.mockReset().mockResolvedValue([[]]);
   });
 
   it("denies the owning employee when only actorUserId (not actorEmployeeId) is passed — the pre-fix shape", async () => {
@@ -78,6 +81,24 @@ describe("authorizeDocumentAccess owner bypass", () => {
       });
       expect(`${action}: ${result.allowed} ${result.reasonCode}`).toBe(`${action}: false INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL`);
     }
+  });
+
+  it("allows the owner to open their own tax paperwork (Form 16) even in the employee-documents category", async () => {
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    dbExecute.mockResolvedValue([[{ doc_type: "form_16" }]]);
+    const result = await authorizeDocumentAccess({
+      actorUserId: USER_ID, actorEmployeeId: EMPLOYEE_ID, actorRole: "employee", storedFilename: "abc.pdf", action: "download",
+    });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("a failed tax-file lookup never widens access (fails closed)", async () => {
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    dbExecute.mockRejectedValue(new Error("db down"));
+    const result = await authorizeDocumentAccess({
+      actorUserId: USER_ID, actorEmployeeId: EMPLOYEE_ID, actorRole: "employee", storedFilename: "abc.pdf", action: "download",
+    });
+    expect(result.allowed).toBe(false);
   });
 
   it("allows the owning employee to view their own pii document in an owner-readable category once actorEmployeeId is supplied", async () => {
