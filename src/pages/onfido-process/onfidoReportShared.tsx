@@ -302,7 +302,7 @@ export function matrixIsEmpty(m: Matrix | null | undefined): boolean {
  */
 export function qualityPctStyle(pct: number | null | undefined): CSSProperties | undefined {
   if (pct === null || pct === undefined) return undefined;
-  if (pct > 1) return { background: "#b91c1c", color: "#fff", fontWeight: 700 };
-  if (pct > 0.75) return { background: "#f59e0b", color: "#111827", fontWeight: 700 };
-  return { background: "#15803d", color: "#fff", fontWeight: 700 };
+  if (pct > 1) return { background: "#b91c1c", color: "#fff" };
+  if (pct > 0.75) return { background: "#f59e0b", color: "#111827" };
+  return { background: "#15803d", color: "#fff" };
 }
