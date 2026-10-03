@@ -55,6 +55,7 @@ on:
           - sbi-card-demo-seed
           - sbi-card-demo-remove
           - holiday-mapping-audit
+          - kit-esign-diagnose
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -204,6 +205,10 @@ jobs:
             holiday-mapping-audit)
               # Read-only in both modes.
               npx tsx scripts/holiday-mapping-audit.ts 2026-10-02
+              ;;
+            kit-esign-diagnose)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/kit-esign-diagnose.ts MAS63661
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"

@@ -505,6 +505,18 @@ export async function dispatchJoiningKit(
     providerUrl = r.providerUrl ?? null;
     providerReferenceId = r.providerReferenceId ?? null;
     txStatus = String(r.status ?? "initiated");
+    // A session the vendor already reports as failed, or one with no usable URL, is a
+    // dead link: emailing it sends the employee to eMudhra's "Invalid Page". Treat it
+    // like any other provider failure so HR sees it and the kit is not marked sent.
+    if (
+      !providerUrl ||
+      !/^https?:/i.test(providerUrl) ||
+      /fail|error|reject|declin|cancel|expire/i.test(txStatus)
+    ) {
+      throw new Error(
+        `eSign provider returned an unusable session (status "${txStatus}", url ${providerUrl ? "present" : "missing"})`,
+      );
+    }
   } catch (e) {
     // Deliberately NOT retried: the vendor records clientTransactionId on first
     // receipt, so a resend returns 409 permanently and the first attempt may
@@ -513,6 +525,14 @@ export async function dispatchJoiningKit(
     await db
       .execute(
         `UPDATE employee_joining_esign_kit SET status = 'failed', blocked_reason = 'provider_error' WHERE id = ?`,
+        [kitId],
+      )
+      .catch(() => undefined);
+    // The token was minted before the provider call; retire it so a dead link is never live.
+    await db
+      .execute(
+        `UPDATE employee_joining_document_public_token SET token_status = 'superseded'
+          WHERE kit_id = ? AND token_status = 'active'`,
         [kitId],
       )
       .catch(() => undefined);
