@@ -58,7 +58,7 @@ describe("Ops Control Tower page by role", () => {
     access.roles.add("hr");
     const html = renderPage();
     for (const label of ["Penny drop missing", "DigiLocker pending", "F&amp;F pending", "Documents pending"]) expect(html).toContain(label);
-    expect(html).toContain("mandatory joining documents pending");
+    expect(html).toContain("Joining docs"); // matrix column (was a full-width section)
     expect(html).not.toContain("Showing the bank and penny-drop items");
   });
 
@@ -144,5 +144,27 @@ describe("Tax Documents panel", () => {
     const out = seed([{ id: "t1", document_name: "Form 16 FY26", document_type: "form_16", file_url: "/api/files/employee-documents/x.pdf", verified: 1, uploaded_at: "2026-06-01T00:00:00Z" }]);
     expect(out).toContain("View document");
     expect(out).toContain("Download document");
+  });
+});
+
+describe("Ops Control Tower branch matrix", () => {
+  it("renders every branch as one row with all metric columns, keeps section ids, and links counts to records", async () => {
+    const { OpsBranchMatrix, MATRIX_COLUMNS } = await import("@/pages/ops/OpsBranchMatrix");
+    const out = renderToStaticMarkup(<OpsBranchMatrix data={summary as never} columns={MATRIX_COLUMNS} showRoster onOpen={() => undefined} />);
+    expect(out).toContain("NOIDA");
+    for (const id of ["mismatch", "fnf", "noc", "digilocker", "esign", "appt", "penny-drop", "account-details", "docs-pending", "bgv", "it-prov", "admin-prov", "wfm-prov", "roster"]) {
+      expect(out).toContain(`id="${id}"`);
+    }
+    expect(out).toContain("NOIDA: 6 Joining docs");
+    expect(out).toContain("Grand total");
+  });
+
+  it("payroll-only column set shows only the bank columns", async () => {
+    const { OpsBranchMatrix, MATRIX_COLUMNS } = await import("@/pages/ops/OpsBranchMatrix");
+    const cols = MATRIX_COLUMNS.filter((c) => ["account-details", "penny-drop"].includes(c.id));
+    const out = renderToStaticMarkup(<OpsBranchMatrix data={summary as never} columns={cols} showRoster={false} onOpen={() => undefined} />);
+    expect(out).toContain("Bank details");
+    expect(out).not.toContain("F&amp;F");
+    expect(out).not.toContain('id="roster"');
   });
 });

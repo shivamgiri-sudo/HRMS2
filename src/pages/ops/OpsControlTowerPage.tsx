@@ -16,16 +16,13 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { OpsDetailDrawer, type Selected } from "./OpsDetailDrawer";
 import { OpsAnalyticsPanel } from "./OpsAnalyticsPanel";
-import { countSeverity, formatDate, formatDateTime, SEVERITY_CLASS } from "./opsControlTowerFormat";
+import { MATRIX_COLUMNS, OpsBranchMatrix } from "./OpsBranchMatrix";
+import { countSeverity, formatDateTime, SEVERITY_CLASS } from "./opsControlTowerFormat";
 import {
   JOIN_BUCKETS,
   type BranchRef,
-  type CountBlock,
-  type DateBlock,
   type DetailBlockKey,
-  type DetailRow,
   type JoiningBlock,
-  type MismatchBlock,
   type OpsControlTowerSummary,
 } from "./opsControlTowerTypes";
 
@@ -69,57 +66,8 @@ function SectionShell({
   );
 }
 
-const CountCell = ({ n, onClick, mediumAt = 3, highAt = 8 }: { n: number; onClick?: () => void; mediumAt?: number; highAt?: number }) => {
-  const sev = countSeverity(n, mediumAt, highAt);
-  const cls = `font-mono font-semibold ${SEVERITY_CLASS[sev]} ${n > 0 && onClick ? "cursor-pointer hover:underline" : ""}`;
-  return n > 0 && onClick ? (
-    <button type="button" className={cls} onClick={onClick} aria-label={`${n} — view records`}>{n}</button>
-  ) : (
-    <span className={cls}>{n}</span>
-  );
-};
 
 // ── The 8 sections ───────────────────────────────────────────────────────────────────────────
-function MismatchSection({ block, onOpen }: { block: MismatchBlock; onOpen: (b: BranchRef) => void }) {
-  return (
-    <SectionShell id="mismatch" title="Attendance mismatched" meaning="Biometric punch disagrees with roster/shift, still unresolved." source="attendance_reconciliation_issue">
-      <Table head={<><th className="px-4 py-2">Branch</th><th className="px-4 py-2 text-right">Mismatched</th><th className="px-4 py-2 text-right">Correction done — last date</th></>}>
-        {block.branches.map((r) => (
-          <tr key={r.branchId} className="border-b last:border-0">
-            <td className="px-4 py-2 font-medium text-slate-900">{r.branchName}</td>
-            <td className="px-4 py-2 text-right"><CountCell n={r.count} onClick={() => onOpen(r)} mediumAt={5} highAt={12} /></td>
-            <td className={`px-4 py-2 text-right font-mono text-xs ${r.stale ? "font-semibold text-red-600" : "text-slate-500"}`}>{formatDate(r.correctionLastDateMs)}</td>
-          </tr>
-        ))}
-        <tr className="border-t-2 bg-slate-50 font-semibold">
-          <td className="px-4 py-2">Grand Total</td>
-          <td className="px-4 py-2 text-right font-mono">{block.grandTotal}</td>
-          <td className="px-4 py-2 text-right">—</td>
-        </tr>
-      </Table>
-    </SectionShell>
-  );
-}
-
-function RosterDateSection({ block }: { block: DateBlock }) {
-  return (
-    <SectionShell id="roster" title="Roster uploaded — last date" meaning="Most recent committed roster upload per branch (same data as the Roster Upload Tracker)." source="wfm_roster_import_batch.committed_at">
-      <Table head={<><th className="px-4 py-2">Branch</th><th className="px-4 py-2 text-right">Roster uploaded — last date</th></>}>
-        {block.branches.map((r) => (
-          <tr key={r.branchId} className="border-b last:border-0">
-            <td className="px-4 py-2 font-medium text-slate-900">{r.branchName}</td>
-            <td className={`px-4 py-2 text-right font-mono text-xs ${r.stale ? "font-semibold text-red-600" : "text-slate-600"}`}>{formatDate(r.lastDateMs)}</td>
-          </tr>
-        ))}
-        <tr className="border-t-2 bg-slate-50 font-semibold">
-          <td className="px-4 py-2">Grand Total</td>
-          <td className="px-4 py-2 text-right text-xs">{block.branches.filter((b) => b.stale).length ? `${block.branches.filter((b) => b.stale).length} branch(es) overdue` : "All current"}</td>
-        </tr>
-      </Table>
-    </SectionShell>
-  );
-}
-
 function JoiningSection({ block }: { block: JoiningBlock }) {
   return (
     <SectionShell id="joining" title="Joining count" meaning={`Employees who joined on the selected date, by how many days after their employee code was created ("Same day" = 0, "-2" = 2 days after).`} source="DATEDIFF(date_of_joining, employees.created_at)">
@@ -139,27 +87,6 @@ function JoiningSection({ block }: { block: JoiningBlock }) {
           <td className="px-3 py-2">Grand Total</td>
           <td className="px-3 py-2 text-right font-mono">{block.grandTotal}</td>
           {JOIN_BUCKETS.map((b) => <td key={b} className="px-3 py-2 text-right font-mono">{block.grandBuckets[b]}</td>)}
-        </tr>
-      </Table>
-    </SectionShell>
-  );
-}
-
-interface SimpleSectionDef { id: string; title: string; meaning: string; source: string; block: DetailBlockKey; mediumAt?: number; highAt?: number }
-
-function SimpleCountSection({ def, block, onOpen }: { def: SimpleSectionDef; block: CountBlock; onOpen: (b: BranchRef, block: DetailBlockKey, title: string) => void }) {
-  return (
-    <SectionShell id={def.id} title={def.title} meaning={def.meaning} source={def.source}>
-      <Table head={<><th className="px-4 py-2">Branch</th><th className="px-4 py-2 text-right">{def.title}</th></>}>
-        {block.branches.map((r) => (
-          <tr key={r.branchId} className="border-b last:border-0">
-            <td className="px-4 py-2 font-medium text-slate-900">{r.branchName}</td>
-            <td className="px-4 py-2 text-right"><CountCell n={r.count} onClick={() => onOpen(r, def.block, def.title)} mediumAt={def.mediumAt} highAt={def.highAt} /></td>
-          </tr>
-        ))}
-        <tr className="border-t-2 bg-slate-50 font-semibold">
-          <td className="px-4 py-2">Grand Total</td>
-          <td className="px-4 py-2 text-right font-mono">{block.grandTotal}</td>
         </tr>
       </Table>
     </SectionShell>
@@ -193,49 +120,20 @@ export default function OpsControlTowerPage() {
     queryKey: ["ops-control-tower", date],
     queryFn: () => hrmsApi.get<OpsControlTowerSummary>(`${BASE}?date=${date}`),
     refetchInterval: REFRESH_MS,
+    staleTime: 60_000,
+    placeholderData: (prev) => prev, // switching Today/Yesterday keeps the table on screen instead of blanking it
   });
   const data = query.data;
 
   const openSimple = (b: BranchRef, block: DetailBlockKey, title: string) => setSelected({ block, branchId: b.branchId, branchName: b.branchName, title });
-  const openMismatch = (b: BranchRef) => setSelected({ block: "attendance-mismatch", branchId: b.branchId, branchName: b.branchName, title: "Attendance mismatched" });
-
-  const SIMPLE_DEFS: SimpleSectionDef[] = [
-    { id: "fnf", title: "F&F pending", meaning: "Exited employees whose full-and-final settlement has not been paid.", source: "full_final_calculation.status", block: "fnf-pending", mediumAt: 3, highAt: 8 },
-    { id: "noc", title: "NOC pending", meaning: "Exit clearance certificates not yet issued — asset return or signatory sign-off outstanding.", source: "noc_case.status", block: "noc-pending", mediumAt: 2, highAt: 6 },
-    { id: "digilocker", title: "DigiLocker documents pending", meaning: "New joiners (last 30 days) whose Aadhaar/PAN pull via DigiLocker has not completed.", source: "ats_onboarding_bridge.digilocker_status", block: "digilocker-pending", mediumAt: 5, highAt: 15 },
-    { id: "esign", title: "eSign overdue — joining kit (Day 3)", meaning: "Joining-kit documents not e-signed within 3 days of the employee code being created.", source: "ats_onboarding_bridge vs created_at + 3d", block: "esign-pending", mediumAt: 5, highAt: 15 },
-    { id: "appt", title: "Appointment letter eSigned before Day 7", meaning: "Employees whose appointment letter should have been e-signed within 7 days of their code being created, and has not.", source: "appointment_letter_issue vs created_at + 7d", block: "appointment-letter", mediumAt: 2, highAt: 6 },
-    { id: "penny-drop", title: "Employee ID created but Penny Drop is missing", meaning: "New joiners (last 30 days) whose bank account has not been penny-drop verified successfully.", source: "bank_penny_drop_log.penny_drop_status", block: "penny-drop-missing", mediumAt: 5, highAt: 15 },
-    { id: "account-details", title: "Employee ID created — no Account details in HRMS yet", meaning: "New joiners with no bank account details captured in HRMS at all.", source: "employee_bank_detail (row missing)", block: "account-details-missing", mediumAt: 5, highAt: 15 },
-    { id: "docs-pending", title: "Employee ID created — mandatory joining documents pending", meaning: "New joiners (last 30 days) with at least one mandatory joining document still not uploaded or verified.", source: "employee_joining_document_checklist.status", block: "docs-pending", mediumAt: 5, highAt: 15 },
-    { id: "bgv", title: "Employee ID created — BGV is pending", meaning: "New joiners whose background verification report is not yet marked clear.", source: "candidate_bgv_report.overall_status", block: "bgv-pending", mediumAt: 5, highAt: 15 },
-    { id: "it-prov", title: "Employee ID created — IT Provisioning is pending", meaning: "New joiners with an open IT provisioning task (domain/email/biometric) at joining.", source: "it_provisioning_request (assigned_role = branch_it)", block: "it-provisioning-pending", mediumAt: 3, highAt: 10 },
-    { id: "admin-prov", title: "Employee ID created — Admin Provisioning is pending", meaning: "New joiners with an open Admin provisioning task (biometric/ID card etc.) at joining.", source: "it_provisioning_request (assigned_role = admin)", block: "admin-provisioning-pending", mediumAt: 3, highAt: 10 },
-    { id: "wfm-prov", title: "Employee ID created — WFM Provisioning is pending", meaning: "New joiners with an open WFM provisioning task at joining.", source: "it_provisioning_request (assigned_role = wfm)", block: "wfm-provisioning-pending", mediumAt: 3, highAt: 10 },
-  ];
-
-  const BLOCK_DATA: Record<string, CountBlock | undefined> = data ? {
-    "fnf-pending": data.fnfPending,
-    "noc-pending": data.nocPending,
-    "digilocker-pending": data.digilockerPending,
-    "esign-pending": data.esignPending,
-    "appointment-letter": data.appointmentLetter,
-    "penny-drop-missing": data.pennyDropMissing,
-    "account-details-missing": data.accountDetailsMissing,
-    "docs-pending": data.docsPending,
-    "bgv-pending": data.bgvPending,
-    "it-provisioning-pending": data.itProvisioningPending,
-    "admin-provisioning-pending": data.adminProvisioningPending,
-    "wfm-provisioning-pending": data.wfmProvisioningPending,
-  } : {};
 
   return (
     <DashboardLayout>
-      <div className="max-w-full space-y-5 p-6">
+      <div className="w-full space-y-3 p-3 md:p-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">Operations</p>
-            <h1 className="text-2xl font-bold text-slate-900">Ops Control Tower</h1>
+            <h1 className="text-xl font-bold text-slate-900">Ops Control Tower</h1>
             <p className="text-sm text-slate-600">Every onboarding and operational deliverable, branch-wise. Click any number for the real records behind it.</p>
           </div>
           {data && <span className="whitespace-nowrap rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 font-mono text-xs text-amber-700">As of {formatDateTime(data.nowMs)}</span>}
@@ -264,7 +162,7 @@ export default function OpsControlTowerPage() {
         {query.isLoading && !data && (
           <div role="status" aria-busy="true" className="flex items-center gap-3 rounded-lg border bg-white p-5 text-sm text-slate-600">
             <RefreshCw className="h-4 w-4 animate-spin" aria-hidden />
-            <span>Loading branch data… the first load of the day can take up to a minute; after that it opens instantly.</span>
+            <span>Loading branch data… the first load after a restart can take a little while; after that it opens instantly.</span>
           </div>
         )}
 
@@ -276,7 +174,7 @@ export default function OpsControlTowerPage() {
 
         {data && (
           <>
-            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 lg:grid-cols-5">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 2xl:grid-cols-8">
               {show("mismatch") && <SummaryTile label="Attendance mismatched" n={data.attendanceMismatch.grandTotal} sub={`${data.attendanceMismatch.branches.filter((b) => b.count > 0).length} branches`} onClick={() => document.getElementById("mismatch")?.scrollIntoView({ behavior: "smooth" })} />}
               {show("joining") && <SummaryTile label="Joined this date" n={data.joining.grandTotal} sub={`${data.joining.grandBuckets["Same day"]} same day`} onClick={() => document.getElementById("joining")?.scrollIntoView({ behavior: "smooth" })} />}
               {show("fnf") && <SummaryTile label="F&F pending" n={data.fnfPending.grandTotal} sub="not yet paid" onClick={() => document.getElementById("fnf")?.scrollIntoView({ behavior: "smooth" })} />}
@@ -296,13 +194,8 @@ export default function OpsControlTowerPage() {
 
             {!payrollOnly && <OpsAnalyticsPanel data={data} onOpen={openSimple} />}
 
-            {!payrollOnly && <MismatchSection block={data.attendanceMismatch} onOpen={openMismatch} />}
-            {!payrollOnly && <RosterDateSection block={data.rosterUploaded} />}
+            <OpsBranchMatrix data={data} columns={MATRIX_COLUMNS.filter((c) => show(c.id))} showRoster={show("roster")} onOpen={openSimple} />
             {!payrollOnly && <JoiningSection block={data.joining} />}
-            {SIMPLE_DEFS.filter((def) => show(def.id)).map((def) => {
-              const block = BLOCK_DATA[def.block];
-              return block ? <SimpleCountSection key={def.id} def={def} block={block} onOpen={openSimple} /> : null;
-            })}
           </>
         )}
       </div>

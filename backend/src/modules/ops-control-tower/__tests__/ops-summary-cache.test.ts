@@ -77,3 +77,29 @@ describe("cachedSummary", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("refreshSummary (warmer)", () => {
+  it("computes when empty, never blocks readers while refreshing, and shares one in-flight run", async () => {
+    const { refreshSummary } = await import("../ops-summary-cache.js");
+    clearSummaryCache();
+    let n = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const load = vi.fn(async () => { n += 1; if (n > 1) await gate; return n; });
+    await refreshSummary("k", load);
+    expect(await cachedSummary("k", load)).toBe(1);
+
+    // age it past half-TTL, then refresh: a slow load runs in the background
+    const realNow = Date.now;
+    Date.now = () => realNow() + SUMMARY_TTL_MS;
+    try {
+      const p1 = refreshSummary("k", load);
+      const p2 = refreshSummary("k", load);
+      expect(await cachedSummary("k", load)).toBe(1); // stale value served instantly, not blocked on the refresh
+      release();
+      await Promise.all([p1, p2]);
+      expect(load).toHaveBeenCalledTimes(2); // second refresh shared the in-flight one
+      expect(await cachedSummary("k", load)).toBe(2);
+    } finally { Date.now = realNow; }
+  });
+});

@@ -11,7 +11,9 @@
 // Failures are never cached, so a bad moment does not stick. The summary carries its own `nowMs`, so the
 // page's "As of" label always tells the truth about how old the numbers are.
 export const SUMMARY_TTL_MS = 60_000;
-export const SUMMARY_STALE_MS = 10 * 60_000;
+// Served-while-refreshing window. The summary takes 12-40 s to compute, so a long stale window keeps the page
+// instant even after quiet periods; the page's "As of" label shows the true age of what it is looking at.
+export const SUMMARY_STALE_MS = 60 * 60_000;
 const MAX_ENTRIES = 8;
 
 interface Entry<T> { at: number; value?: T; inflight?: Promise<T> }
@@ -53,4 +55,19 @@ export async function cachedSummary<T>(key: string, load: () => Promise<T>, now 
     if (oldest) cache.delete(oldest[0]);
   }
   return start();
+}
+
+/**
+ * Recompute a key now (used by the background warmer) so the next caller gets a fresh value instantly.
+ * Shares an in-flight computation instead of starting a second one.
+ */
+export async function refreshSummary<T>(key: string, load: () => Promise<T>): Promise<void> {
+  const entry = cache.get(key) as Entry<T> | undefined;
+  if (entry?.inflight) { await entry.inflight.catch(() => undefined); return; }
+  if (entry?.value !== undefined && Date.now() - entry.at < SUMMARY_TTL_MS / 2) return;
+  // Evaluate "now" just past the TTL so a cached value is served stale (callers are never blocked) while the
+  // single background computation starts; with no cached value this computes and awaits it.
+  await cachedSummary(key, load, (entry?.at ?? 0) + SUMMARY_TTL_MS + 1).catch(() => undefined);
+  const running = (cache.get(key) as Entry<T> | undefined)?.inflight;
+  if (running) await running.catch(() => undefined);
 }
