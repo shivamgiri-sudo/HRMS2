@@ -52,6 +52,8 @@ on:
           - resend-address-bgv-links
           - roster-requests-verify
           - sbi-card-verify
+          - sbi-card-demo-seed
+          - sbi-card-demo-remove
           - holiday-mapping-audit
       mode:
         description: "dry-run reports what it would do and writes nothing"
@@ -191,6 +193,13 @@ jobs:
                 exit 1
               fi
               node scripts/sbi-card-verify.mjs
+              ;;
+            sbi-card-demo-seed|sbi-card-demo-remove)
+              # Synthetic SBI Card dashboard data, tagged data_source='DEMO_SEED' so it can be removed exactly. dry-run reports only;
+              # apply writes (seed) or deletes the tagged rows (remove). Refuses to seed over real rows for the demo's dates.
+              SUB="seed"; [ "${{ inputs.script }}" = "sbi-card-demo-remove" ] && SUB="remove"
+              if [ "$MODE" = "dry-run" ]; then SUB="dry-run"; fi
+              npx tsx scripts/sbi-card-demo-seed.ts --mode=$SUB
               ;;
             holiday-mapping-audit)
               # Read-only in both modes.
