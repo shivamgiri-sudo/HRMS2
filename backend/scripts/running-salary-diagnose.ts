@@ -51,5 +51,7 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
   console.log("\n== recurring deductions that reduce net ==");
   console.table(await q(`SELECT 'advance' k, COALESCE(SUM(ROUND(amount/recovery_months,2)),0) v FROM salary_advance_log WHERE employee_id=? AND status='active'`, [id]));
   console.table(await q(`SELECT 'loan_emi' k, COALESCE(SUM(deduction_per_month),0) v FROM employee_loans WHERE employee_id=? AND status='active'`, [id]));
+  console.log("== every employee_loans row for this employee ==");
+  console.table(await q(`SELECT * FROM employee_loans WHERE employee_id = ? ORDER BY start_date`, [id]));
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
