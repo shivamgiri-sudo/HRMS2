@@ -4818,7 +4818,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
   return (
     <Shell>
       <div className="onfido-central-theme">
-        <div className="space-y-5">
+        <div className="space-y-3">
           <OnfidoHero<ViewKey>
             tabs={VIEW_TABS}
             view={view}
@@ -4880,12 +4880,12 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           </div>
           )}
 
-          <OnfidoFreshnessStrip />
           <ExportSheetContext.Provider value={exportSheets}>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <OnfidoExportButton targetRef={exportRef} filename={`onfido_${view}`} label="Export (Excel)" />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <OnfidoFreshnessStrip />
+            <span style={{ marginLeft: "auto" }}><OnfidoExportButton targetRef={exportRef} filename={`onfido_${view}`} label="Export (Excel)" /></span>
           </div>
-          <div ref={exportRef} className="space-y-5">
+          <div ref={exportRef} className="space-y-4">
           {view === "trends" && <TrendsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "outliers" && <OnfidoOutliersView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "alerts" && <AlertsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
