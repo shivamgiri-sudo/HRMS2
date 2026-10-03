@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
-import { CreditCard, PhoneCall, PhoneIncoming, Headphones, Handshake, Percent, Wallet, Users, Banknote, Layers } from "lucide-react";
+import { CreditCard, PhoneCall, PhoneIncoming, Headphones, Handshake, Percent, Gauge, Wallet, Users, Banknote, Layers } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardHero, DateRangeToolbar, KpiCard, SectionCard, Spinner, currentMonthRange } from "./DashboardKit";
 import { TOOLTIP_PROPS, fmtShortDay } from "./lpCallShared";
 import type { SbiCardData, SbiDailyRow, SbiFunnel } from "./sbiCardTypes";
 import { Empty, SortTable, inr, nz, pctTxt, ratio } from "./SbiCardShared";
+import { SbiCardCollectionsTab } from "./SbiCardCollectionsTab";
 import { SbiCardAgentsTab } from "./SbiCardAgentsTab";
 import { SbiCardAccountsTab, SbiCardCampaignsTab, SbiCardDowntimeTab, SbiCardKpiTab } from "./SbiCardOtherTabs";
 
@@ -15,9 +16,9 @@ import { SbiCardAccountsTab, SbiCardCampaignsTab, SbiCardDowntimeTab, SbiCardKpi
  * Dialer MIS / Agent MIS / Account File / Downtime Tracker; empty sections say so rather than showing zeros.
  */
 const API = "/api/process-performance/sbi-card-dashboard";
-type TabKey = "overview" | "campaigns" | "agents" | "accounts" | "downtime" | "kpi";
+type TabKey = "overview" | "collections" | "campaigns" | "agents" | "accounts" | "downtime" | "kpi";
 const TABS: Array<{ key: TabKey; label: string }> = [
-  { key: "overview", label: "Overview" }, { key: "campaigns", label: "Campaigns / Buckets" }, { key: "agents", label: "Agents & Teams" },
+  { key: "overview", label: "Overview" }, { key: "collections", label: "Collections Ops" }, { key: "campaigns", label: "Campaigns / Buckets" }, { key: "agents", label: "Agents & Teams" },
   { key: "accounts", label: "Accounts" }, { key: "downtime", label: "Downtime" }, { key: "kpi", label: "KPI Metrics" },
 ];
 const C = { dials: "#3b82f6", connects: "#22c55e", ptp: "#f59e0b", rate: "#7c3aed" };
@@ -70,7 +71,7 @@ export function SbiCardDashboard() {
       contactRatePct: ratio(contacts, sum(daily, "accounts")), connectRatePct: ratio(connects, dials), ptpRatePct: ratio(ptp, contacts), scoped: true };
   }, [data, daily, campaign]);
 
-  const hasData = !!data && (data.daily.length > 0 || data.byCampaign.length > 0 || data.agents.length > 0 || data.summary.dials > 0);
+  const hasData = !!data && (data.daily.length > 0 || data.byCampaign.length > 0 || data.agents.length > 0 || data.agentTime.agents.length > 0 || data.summary.dials > 0);
 
   return (
     <div className="space-y-4">
@@ -97,15 +98,18 @@ export function SbiCardDashboard() {
         <>
           {tab === "overview" && (!hasData ? <Empty>No SBI Card data for {from} to {to}. Upload the Dialer MIS, Agent MIS or Account File from Process Performance → SBI Card → Uploaders, or the Bulk Upload Hub.</Empty> : (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
                 <KpiCard icon={Layers} tone="sky" label="Accounts" value={nz(kpis.accounts)} />
                 <KpiCard icon={PhoneCall} tone="blue" label="Dials" value={nz(kpis.dials)} />
                 <KpiCard icon={PhoneIncoming} tone="cyan" label="Answers" value={nz(kpis.answers)} />
                 <KpiCard icon={Headphones} tone="emerald" label="Connects" value={nz(kpis.connects)} />
                 <KpiCard icon={Handshake} tone="amber" label="PTP" value={nz(kpis.ptp)} sub={`PAD ${nz(kpis.pad)} · OTP ${nz(kpis.otp)}`} />
-                <KpiCard icon={Percent} tone="violet" label="Contact rate" value={pctTxt(kpis.contactRatePct)} />
+                <KpiCard icon={Percent} tone="violet" label="Contact rate" value={pctTxt(kpis.contactRatePct)} sub="contacts / accounts called" />
                 <KpiCard icon={Percent} tone="indigo" label="Connect rate" value={pctTxt(kpis.connectRatePct)} />
                 <KpiCard icon={Percent} tone="teal" label="PTP rate" value={pctTxt(kpis.ptpRatePct)} />
+                <KpiCard icon={Gauge} tone={data.summary.penetrationTarget !== null && data.summary.penetration < data.summary.penetrationTarget ? "rose" : "emerald"} label="Penetration"
+                  value={data.summary.scheduled > 0 ? data.summary.penetration.toFixed(2) : "—"} sub={data.summary.penetrationTarget !== null ? `dials per account · target ${data.summary.penetrationTarget}` : "dials per scheduled account"} />
+                <KpiCard icon={Percent} tone="cyan" label="Completion" value={data.summary.scheduled > 0 ? pctTxt(data.summary.completionPct) : "—"} sub="called / scheduled" />
                 <KpiCard icon={Banknote} tone="rose" label="Amount collected" value={inr(data.summary.amountCollected)} sub={kpis.scoped ? "all campaigns" : undefined} />
                 <KpiCard icon={Users} tone="sky" label="Agents active" value={nz(data.summary.agentsActive)} sub={kpis.scoped ? "all campaigns" : undefined} />
               </div>
@@ -149,8 +153,9 @@ export function SbiCardDashboard() {
               </SectionCard>
             </div>
           ))}
+          {tab === "collections" && <SbiCardCollectionsTab ops={data.collections} time={data.agentTime} />}
           {tab === "campaigns" && <SbiCardCampaignsTab rows={data.byCampaign} />}
-          {tab === "agents" && <SbiCardAgentsTab agents={data.agents} teams={data.teams} />}
+          {tab === "agents" && <SbiCardAgentsTab agents={data.agents} teams={data.teams} time={data.agentTime} />}
           {tab === "accounts" && <SbiCardAccountsTab accounts={data.accounts} />}
           {tab === "downtime" && <SbiCardDowntimeTab rows={data.downtime} />}
         </>

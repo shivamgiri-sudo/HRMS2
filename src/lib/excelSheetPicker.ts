@@ -92,3 +92,72 @@ export function describeCampaignRead(r: CampaignSheetsResult): string {
   return `${r.rows.length} rows from ${r.campaigns} campaign(s), ${r.sheetsSkipped} empty/unmatched sheet(s) skipped`
     + (r.blankRowsDropped ? `, ${r.blankRowsDropped} blank row(s) dropped` : "");
 }
+
+/** The report day printed above the header of a dialer export: "Time range: 2026-09-28 00:00:00 to 2026-09-28 23:59:59" -> "2026-09-28". */
+export function detectTimeRangeDate(sheet: XLSX.WorkSheet, scanRows = HEADER_SCAN_ROWS): string | null {
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, blankrows: true });
+  for (let i = 0; i < Math.min(rows.length, scanRows); i++) {
+    for (const cell of rows[i] ?? []) {
+      const m = /time\s*range\s*:?\s*(\d{4}-\d{2}-\d{2})/i.exec(String(cell ?? ""));
+      if (m) return m[1]!;
+    }
+  }
+  return null;
+}
+
+/** Excel serial (days since 1899-12-30, fraction = time of day) -> "YYYY-MM-DD HH:mm:ss"; null when not a plausible 2010+ date. */
+export function serialToDateTime(n: number): string | null {
+  if (!Number.isFinite(n) || n < 40179 || n > 80000) return null;
+  const secs = Math.round(n * 86400);
+  const d = new Date(Date.UTC(1899, 11, 30) + secs * 1000);
+  return d.toISOString().replace("T", " ").slice(0, 19);
+}
+
+/** Latest "YYYY-MM-DD" among the given date / date-time strings (the snapshot day of an export that carries call times). */
+export function latestDay(values: Array<string | null | undefined>): string | null {
+  let best: string | null = null;
+  for (const v of values) {
+    const d = typeof v === "string" ? /^(\d{4}-\d{2}-\d{2})/.exec(v)?.[1] : undefined;
+    if (d && (!best || d > best)) best = d;
+  }
+  return best;
+}
+
+/** Call-time columns of the SBI account file whose cells are re-read as raw Excel serials so no locale format reaches the importer. */
+export const SBI_ACCOUNT_DATETIME_HEADERS = ["CALLBACK_DT", "CALL1_DT", "CALL2_DT", "CALL3_DT", "CALL4_DT", "CALL5_DT", "CALL6_DT"];
+
+/**
+ * Extra header spellings used ONLY to find the header row of exports whose headers drift (the backend column plan does the real mapping,
+ * see backend report-column-plan.ts). Without these a renamed header row would score too low to be picked over a title row.
+ */
+export const HEADER_HINTS: Record<string, string[]> = {
+  SBI_CARD_APR: [
+    "Agent ID", "Employee ID", "Emp ID", "Employee Code", "Agent Code", "User ID", "Agent Name", "Employee Name", "Total Calls", "Calls Handled",
+    "Login Duration", "Total Login Time", "Wait Time", "Idle Time", "Talk Time", "Wrap Time", "Dispo Time", "Pause Time", "Break Time", "Dead Time",
+    "First Login", "Last Logout", "Avg Handle Time", "AHT",
+  ],
+};
+
+/**
+ * SBI Card day-end exports are named MAS_AHM_FLOW_NEW_DDMMYYYY / MAS_AHM_FLOW_MANUAL_DDMMYYYY (client mail of 24-Sep-2026): the file name
+ * carries the report day and which flow it is. The same ddmmyyyy stamp ends the call-table names.
+ */
+export function parseExportName(fileName: string): { date: string | null; flow: "NEW" | "MANUAL" | null } {
+  const base = fileName.replace(/\.[A-Za-z0-9]+$/, "");
+  const flow = /FLOW[_-]MANUAL/i.test(base) ? "MANUAL" : /FLOW[_-]NEW/i.test(base) ? "NEW" : null;
+  const m = /(\d{2})(\d{2})(\d{4})(?!\d)/.exec(base);
+  let date: string | null = null;
+  if (m) { const [d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3])]; if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12 && y >= 2020 && y <= 2100) date = `${m[3]}-${m[2]}-${m[1]}`; }
+  return { date, flow };
+}
+
+/** Rows whose phone-like cells hold a full, unmasked 10-digit number (SBI Card requires reporting exports to be masked). */
+export function countUnmaskedPhones(rows: Array<Record<string, unknown>>): number {
+  let n = 0;
+  for (const r of rows) {
+    for (const [k, v] of Object.entries(r)) {
+      if (/mobile|phone|contact/i.test(k) && /^\+?\d{10,12}$/.test(String(v ?? "").trim())) { n += 1; break; }
+    }
+  }
+  return n;
+}

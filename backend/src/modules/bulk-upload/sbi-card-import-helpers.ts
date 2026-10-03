@@ -1,4 +1,4 @@
-import { parseFlexibleDate, parseClockTime, parseLooseNumber, cleanText, isScientificNotation } from "./dalmia-import-helpers.js";
+import { parseFlexibleDate, parseFlexibleDateTime, parseClockTime, parseLooseNumber, cleanText, isScientificNotation } from "./dalmia-import-helpers.js";
 import type { SbiCol } from "./sbi-card-schema.js";
 
 export { cleanText };
@@ -32,6 +32,12 @@ export function parseSbiDate(raw: unknown): string | null {
   // A blank day counter (Excel serial 1..31) renders as "1/1/00".."31/1/00", which a two-digit-year reader turns into 2000-01-xx
   // (seen live on the Master / Overall rollup sheets). No SBI Card report predates 2010, so anything earlier is not a real day.
   return d && d >= "2010-01-01" ? d : null;
+}
+
+/** A call / callback timestamp -> "YYYY-MM-DD HH:mm:ss" (Excel serials and Date objects included), null when blank or pre-2010. */
+export function parseSbiDateTime(raw: unknown): string | null {
+  const v = raw instanceof Date ? (Number.isNaN(raw.getTime()) ? null : raw.toISOString().replace("T", " ").slice(0, 19)) : parseFlexibleDateTime(raw);
+  return v && v >= "2010-01-01" ? v : null;
 }
 
 /** "9:00:46" / "18:40" / Excel day fraction -> "HH:mm:ss" or null. */

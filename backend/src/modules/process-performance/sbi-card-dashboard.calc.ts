@@ -16,24 +16,28 @@ export const pct = (num: number, den: number): number => (den > 0 ? round1((num 
 const n0 = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
 export interface DialerRow {
-  date: string; campaign: string; accountsCalled: number | null; totalAccounts: number | null; dials: number | null; answers: number | null;
+  date: string; campaign: string; accountsCalled: number | null; accountsScheduled?: number | null; totalAccounts: number | null; dials: number | null; answers: number | null;
   connects: number | null; ptp: number | null; pad: number | null; otp: number | null; totalContacts: number | null;
 }
 export interface DialerTotals {
   accounts: number; dials: number; answers: number; connects: number; ptp: number; pad: number; otp: number;
   contacts: number; contactRatePct: number; connectRatePct: number; ptpRatePct: number;
+  /** The client's workbook definitions: Penetration = Dials / Accounts Scheduled (dials per account), Completion = Accounts Called / Accounts Scheduled. */
+  scheduled: number; called: number; penetration: number; completionPct: number;
 }
 export interface DailyOut { date: string; campaign: string; accounts: number; dials: number; answers: number; connects: number; ptp: number; pad: number; otp: number; contacts: number; contactRatePct: number; ptpRatePct: number }
 export interface CampaignOut { campaign: string; accounts: number; dials: number; answers: number; connects: number; ptp: number; pad: number; otp: number; contactRatePct: number; ptpRatePct: number }
 
 export function totalsOf(rows: DialerRow[]): DialerTotals {
   const t = { accounts: 0, dials: 0, answers: 0, connects: 0, ptp: 0, pad: 0, otp: 0, contacts: 0 };
+  let scheduled = 0; let called = 0;
   for (const r of rows) {
     t.accounts += n0(r.accountsCalled ?? r.totalAccounts); t.dials += n0(r.dials); t.answers += n0(r.answers);
-    t.connects += n0(r.connects); t.ptp += n0(r.ptp); t.pad += n0(r.pad); t.otp += n0(r.otp); t.contacts += n0(r.totalContacts);
+    scheduled += n0(r.accountsScheduled); called += n0(r.accountsCalled); t.connects += n0(r.connects); t.ptp += n0(r.ptp); t.pad += n0(r.pad); t.otp += n0(r.otp); t.contacts += n0(r.totalContacts);
   }
   return {
-    ...t, contactRatePct: pct(t.contacts, t.accounts), connectRatePct: pct(t.connects, t.dials), ptpRatePct: pct(t.ptp, t.contacts),
+    ...t, scheduled, called, penetration: scheduled > 0 ? Math.round((t.dials / scheduled) * 100) / 100 : 0, completionPct: pct(called, scheduled),
+    contactRatePct: pct(t.contacts, t.accounts), connectRatePct: pct(t.connects, t.dials), ptpRatePct: pct(t.ptp, t.contacts),
   };
 }
 

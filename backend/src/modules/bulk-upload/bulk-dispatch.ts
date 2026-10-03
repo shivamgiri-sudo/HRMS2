@@ -393,6 +393,12 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_sbi_card_apr_batch") {
+    const { importSbiCardAgentTimeBatch } = await import("./sbi-card-bulk.service.js");
+    const data = await importSbiCardAgentTimeBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_sbi_card_downtime_batch") {
     const { importSbiCardDowntimeBatch } = await import("./sbi-card-bulk.service.js");
     const data = await importSbiCardDowntimeBatch(id, userId);

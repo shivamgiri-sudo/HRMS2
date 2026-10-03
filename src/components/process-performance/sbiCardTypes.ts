@@ -5,6 +5,7 @@ export interface SbiFunnel {
 export interface SbiSummary extends SbiFunnel {
   contactRatePct: number | null; connectRatePct: number | null; ptpRatePct: number | null;
   amountCollected: number; agentsActive: number;
+  scheduled: number; penetration: number; completionPct: number | null; penetrationTarget: number | null;
 }
 export interface SbiDailyRow extends SbiFunnel { date: string; campaign: string; contacts?: number; contactRatePct: number | null; ptpRatePct: number | null }
 export interface SbiCampaignRow extends SbiFunnel { campaign: string; contactRatePct: number | null; ptpRatePct: number | null }
@@ -23,8 +24,65 @@ export interface SbiAccounts {
   byDelq: Array<{ delq: string; count: number; totalDue: number }>;
   byBillingCycle: Array<{ cycle: string; count: number }>;
 }
+export type SbiDimKey = "cd" | "program" | "flow" | "tier" | "nrr" | "recencyBand" | "balanceBand" | "delq" | "region" | "productClass" | "accountClass" | "cibilBand" | "vintageBand" | "callTable" | "billingCycle" | "customerType";
+export interface SbiDimRow {
+  key: string; accounts: number; exposure: number; worked: number; untouched: number; coveragePct: number; attemptsPerAccount: number;
+  ptpAccounts: number; ptpPct: number; overduePtp: number; exhausted: number; dnc: number;
+}
+export interface SbiWorkItem { accountNo: string; delq: string | null; region: string | null; totalDue: number; attempts: number; lastActionCode: string | null; due: string | null }
+export interface SbiBucket { accounts: number; exposure: number }
+export type SbiPositionStage = "promised" | "lapsed" | "exhausted" | "untouched" | "inProgress";
+export interface SbiCollections {
+  snapshotDate: string | null;
+  headline: {
+    accounts: number; exposure: number; worked: number; untouched: number; untouchedExposure: number; coveragePct: number;
+    attemptsTotal: number; attemptsPerAccount: number; attemptsPerWorked: number; ptpAccounts: number; ptpPct: number; ptpExposure: number;
+    overduePtp: number; overduePtpExposure: number; ptpDueSoon: number; callbacksOverdue: number; callbacksUpcoming: number;
+    exhausted: number; exhaustedExposure: number; dnc: number; dncExposure: number;
+    dncDialled: number; dncDialledAttempts: number; stalePayers: number; stalePayersExposure: number; dpiAccrued: number;
+  };
+  position: Array<{ stage: SbiPositionStage; accounts: number; exposure: number }>;
+  contactability: {
+    attempts: number; noConversation: number; noConversationPct: number;
+    stuck: { accounts: number; exposure: number }; voicemailRepeat: { accounts: number; exposure: number }; wrongNumber: { accounts: number; exposure: number };
+    byDate: Array<{ date: string; attempts: number; noConversationPct: number }>;
+    clientContact: { attempts: number; pct: number; notCounted: { attempts: number; pct: number; codes: Array<{ code: string; label: string; attempts: number }> } };
+    evidence: { hourDeadP: number | null; hourPtpP: number | null; agentPtpP: number | null };
+    agentSpread: { agents: number; p25: number; median: number; p75: number; best: { agentId: string; ptpPct: number } | null; worst: { agentId: string; ptpPct: number } | null } | null;
+  };
+  dispositions: Array<{ code: string; label: string; listed: boolean; attempts: number; sharePct: number }>;
+  compliance: {
+    windowLabel: string;
+    window: { attempts: number; outside: number; outsidePct: number; before: number; after: number };
+    redialedAfterExclusion: { accounts: number; attempts: number; byCode: Array<{ code: string; label: string; accounts: number }> };
+    welfare: { suicideThreat: SbiBucket; deceased: SbiBucket; dispute: SbiBucket; refusal: SbiBucket };
+    intent: { settlement: SbiBucket; hardship: SbiBucket; languageBarrier: SbiBucket; paidAlready: SbiBucket };
+    unlisted: { attempts: number; pct: number; codes: Array<{ code: string; attempts: number }> };
+  };
+  lastAction: Array<{ code: string; accounts: number; exposure: number }>;
+  attemptDepth: Array<{ attempts: string; accounts: number; exposure: number; ptpAccounts: number; ptpPct: number }>;
+  byHour: Array<{ hour: number; attempts: number; ptp: number; ptpPct: number; noConversationPct: number }>;
+  agents: Array<{ agentId: string; name: string | null; attempts: number; accountsTouched: number; ptp: number; ptpPct: number }>;
+  dimensions: Record<SbiDimKey, SbiDimRow[]>;
+  dimensionSignal: Record<SbiDimKey, { ptpP: number | null; coverageP: number | null }>;
+  worklists: { untouched: SbiWorkItem[]; overduePtp: SbiWorkItem[]; overdueCallbacks: SbiWorkItem[] };
+}
+export interface SbiAgentTimeAgent {
+  employeeId: string; name: string | null; days: number; calls: number; loginHours: number; talkHours: number; dispoHours: number;
+  waitHours: number; pauseHours: number; utilisationPct: number | null; occupancyPct: number | null; pausePct: number | null; waitPct: number | null;
+  achtSec: number | null; callsPerLoginHour: number | null; firstLogin: string | null; lastLogout: string | null; flags: string[];
+}
+export interface SbiAgentTime {
+  agents: SbiAgentTimeAgent[];
+  summary: {
+    agents: number; days: number; calls: number; loginHours: number; utilisationPct: number | null; occupancyPct: number | null;
+    pausePct: number | null; waitPct: number | null; achtSec: number | null; callsPerLoginHour: number | null; flagged: number;
+  };
+  pauseCodes: Array<{ code: string; hours: number; sharePct: number | null }>;
+  daily: Array<{ date: string; agents: number; calls: number; utilisationPct: number | null; occupancyPct: number | null; pausePct: number | null; achtSec: number | null }>;
+}
 export interface SbiCardData {
   range: { from: string; to: string }; campaigns: string[]; summary: SbiSummary;
   daily: SbiDailyRow[]; byCampaign: SbiCampaignRow[]; agents: SbiAgentRow[]; teams: SbiTeamRow[];
-  downtime: SbiDowntimeRow[]; accounts: SbiAccounts;
+  downtime: SbiDowntimeRow[]; accounts: SbiAccounts; collections: SbiCollections; agentTime: SbiAgentTime;
 }

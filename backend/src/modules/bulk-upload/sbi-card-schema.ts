@@ -36,13 +36,27 @@ export const SBI_AGENT_HEADERS = [
 ] as const;
 
 /**
- * Account-level dialer export. Only the columns the dashboard or an audit needs are kept -- customer name (EMBO_NAME), employer /
- * residence / additional phone numbers and the per-call history are deliberately NOT stored. MOBILE_NO is kept as given.
+ * Account-level dialer export. Only the columns the dashboard or an audit needs are kept -- customer name (EMBO_NAME) and the employer /
+ * residence / additional / per-call phone numbers are deliberately NOT stored; the per-call time, disposition and agent id are. MOBILE_NO is kept as given.
  */
 export const SBI_ACCOUNT_HEADERS = [
   "ACCOUNT_NO", "Report Date", "BILLING_CYCLE", "DELQ1", "CIBIL_SCORE", "CREDIT_LIMIT", "CUR_BAL", "CUR_BAL_PLUS_DPI",
   "TOTAL_AMOUNT_DUE", "TOTAL_CUR_DUE", "DATE_LAST_PMT", "LAST_ACTION_CODE", "LAST_PTP_DATE", "MOBILE_NO", "VINTAGE", "REGION",
   "AGENCY_NAME", "CALL_TABLE_NAME", "DIAL_CNT",
+  "Flow", "CD", "NRR", "BLOCK_1", "BLOCK_2", "NTC_FLAG", "NEW_TO_CARD_FLAG", "PROMO_CODE", "PRODUCT_CLASS_FLAG", "ACCOUNTS_CLASS", "DONOTCALL", "CALLBACK_DT",
+  ...[1, 2, 3, 4, 5, 6].flatMap((n) => [`CALL${n}_DT`, `DISP${n}_C`, `AGENT${n}_ID`]),
+] as const;
+
+/** Call attempts kept per account (time, disposition code, dialer agent id); the dialled phone numbers are not. */
+export const SBI_ATTEMPTS = [1, 2, 3, 4, 5, 6] as const;
+
+/**
+ * Dialer "Agent Time Detail" (APR) export. "Login" (first login clock) and "LOGIN" (login pause-code time) differ only by case
+ * in the file; the % columns are derived and not read. Durations are h:mm:ss, ACHT is plain seconds.
+ */
+export const SBI_APR_HEADERS = [
+  "ID", "Report Date", "USER", "CALLS", "TIME CLOCK", "LOGIN TIME", "WAIT", "TALK", "DISPO", "PAUSE", "DEAD", "CUSTOMER",
+  "Login", "Logout", "ACHT", "DISMX", "LAGGED", "LB", "LOGIN", "MB", "QB", "TB", "WB",
 ] as const;
 
 export const SBI_DOWNTIME_HEADERS = [

@@ -64,3 +64,16 @@ describe("resolveRange", () => {
     expect(resolveRange(undefined, undefined, undefined, now)).toEqual({ from: "2026-08-01", to: "2026-08-19" });
   });
 });
+
+describe("penetration and completion (client workbook definitions)", () => {
+  it("penetration = dials / accounts scheduled, completion = accounts called / scheduled", () => {
+    const t = totalsOf([d({ accountsScheduled: 100, accountsCalled: 90, dials: 300 }), d({ campaign: "B", accountsScheduled: 100, accountsCalled: 80, dials: 250 })]);
+    expect(t.scheduled).toBe(200);
+    expect(t.penetration).toBe(2.75);
+    expect(t.completionPct).toBe(85);
+  });
+  it("is zero, not NaN, when nothing was scheduled", () => {
+    const t = totalsOf([d({ accountsScheduled: null })]);
+    expect([t.penetration, t.completionPct]).toEqual([0, 0]);
+  });
+});

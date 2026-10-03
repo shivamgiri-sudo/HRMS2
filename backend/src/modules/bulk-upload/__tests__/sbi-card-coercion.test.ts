@@ -3,7 +3,7 @@ import {
   numOrNull, intOrNull, parseSbiDate, parseSbiTime, parseSeconds, parseDowntimeMinutes, dateFromCallTable, cleanTeam, cleanId,
 } from "../sbi-card-import-helpers.js";
 import { isRollupCampaign } from "../sbi-card-schema.js";
-import { dialerMisSpec, agentMisSpec, accountFileSpec, downtimeSpec, penEstimationSpec } from "../sbi-card-bulk.service.js";
+import { dialerMisSpec, agentMisSpec, agentTimeSpec, accountFileSpec, downtimeSpec, penEstimationSpec } from "../sbi-card-bulk.service.js";
 import { canonicalizeRow } from "../dalmia-import-helpers.js";
 
 const ctx = { processId: "p", batchId: "b", userId: "u" };
@@ -90,5 +90,48 @@ describe("row mappers", () => {
     expect(run(penEstimationSpec, { Penetration: 3 })).toEqual({ skip: true });
     expect(run(penEstimationSpec, { "CALL TABLES": "GRAND TOTAL", Download: 2353 })).toEqual({ skip: true });
     expect(("values" in r && r.values.length) + 2).toBe(penEstimationSpec.columns.length);
+  });
+});
+
+describe("account file collections-ops columns", () => {
+  const base = { ACCOUNT_NO: "ACC1", "Report Date": "2026-09-25", DELQ1: 2, CD: 2, NRR: "r", DONOTCALL: "Y", ACCOUNTS_CLASS: "PTP",
+    CALL1_DT: "2026-09-20 19:36:00", DISP1_C: "voml", AGENT1_ID: 1030, CALL2_DT: "", DISP2_C: "", CALLBACK_DT: "2026-09-28 11:00:00" };
+  it("keeps one value per column and stores attempts as time + code + agent id", () => {
+    const res = run(accountFileSpec, base);
+    if (!("values" in res)) throw new Error("expected values");
+    expect(res.values.length).toBe(accountFileSpec.columns.length - 2); // id and process_id are added by the runner
+    expect(res.values).toContain("2026-09-20 19:36:00");
+    expect(res.values).toContain("VOML");
+    expect(res.values).toContain("1030");
+    expect(res.values).toContain("2026-09-28 11:00:00");
+  });
+  it("never stores a dialled phone number", () => {
+    const res = run(accountFileSpec, { ...base, CALL1_PHONE: "9451922761", ADDITIONAL_PHONE_1: "9427778680", EMBO_NAME: "Customer 00001" });
+    if (!("values" in res)) throw new Error("expected values");
+    const flat = JSON.stringify(res.values);
+    expect(flat).not.toContain("9451922761");
+    expect(flat).not.toContain("9427778680");
+    expect(flat).not.toContain("Customer 00001");
+  });
+});
+
+describe("agent time (APR) importer", () => {
+  const agent = { USER: "VIKAS KUMAR OJHA", ID: "MAS62973", "Report Date": "2026-09-28", CALLS: "59", "TIME CLOCK": "0:00:00", "LOGIN TIME": "8:59:30",
+    WAIT: "2:14:27", TALK: "3:07:03", DISPO: "0:21:21", PAUSE: "3:16:39", DEAD: "0:00:11", CUSTOMER: "3:06:52", Login: "10:04:03", Logout: "19:03:41",
+    ACHT: "212", DISMX: "0:47:12", LAGGED: "0:00:00", LB: "0:37:40", LOGIN: "0:18:30", MB: "0:00:00", QB: "0:00:00", TB: "0:15:43", WB: "0:00:00" };
+  it("reads durations as seconds, clocks as times, and tells Login (clock) from LOGIN (pause code)", () => {
+    const res = run(agentTimeSpec, agent);
+    if (!("values" in res)) throw new Error("expected values");
+    expect(res.values.length).toBe(agentTimeSpec.columns.length - 2);
+    expect(res.values.slice(0, 4)).toEqual(["2026-09-28", "MAS62973", "VIKAS KUMAR OJHA", 59]);
+    expect(res.values).toContain(32370);   // LOGIN TIME 8:59:30
+    expect(res.values).toContain(212);     // ACHT is plain seconds
+    expect(res.values).toContain("10:04:03");
+    expect(res.values).toContain(1110);    // LOGIN pause code 0:18:30
+  });
+  it("skips the TOTALS footer and blank rows, errors on a missing day", () => {
+    expect(run(agentTimeSpec, { USER: "TOTALS", ID: "19", CALLS: "1884" })).toEqual({ skip: true });
+    expect(run(agentTimeSpec, { USER: "", ID: "" })).toEqual({ skip: true });
+    expect("error" in run(agentTimeSpec, { ...agent, "Report Date": "" })).toBe(true);
   });
 });

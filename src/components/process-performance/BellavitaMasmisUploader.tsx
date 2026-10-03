@@ -82,6 +82,7 @@ const RPC_BY_TYPE: Record<string, string> = {
   SBI_CARD_ACCOUNT_FILE: "import_sbi_card_account_file_batch",
   SBI_CARD_DOWNTIME: "import_sbi_card_downtime_batch",
   SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch",
+  SBI_CARD_APR: "import_sbi_card_apr_batch",
 };
 
 /** Same normalization every aw-*-bulk.service.ts backend importer uses: lowercase,
@@ -91,7 +92,7 @@ const RPC_BY_TYPE: Record<string, string> = {
  * Allocation, all 3 original Neemans uploaders) where the real header was
  * present but spelled/cased/spaced differently than the catalog's required_columns
  * entry. Normalizing removes that whole class of false rejection. */
-import { pickSheetWithHeader, readCampaignSheets, describeCampaignRead, dropBlankRows, isSbiCardCode, SHEET_NAME_AS_CAMPAIGN_CODES } from "@/lib/excelSheetPicker";
+import { pickSheetWithHeader, readCampaignSheets, describeCampaignRead, dropBlankRows, isSbiCardCode, SHEET_NAME_AS_CAMPAIGN_CODES, detectTimeRangeDate, serialToDateTime, latestDay, SBI_ACCOUNT_DATETIME_HEADERS, HEADER_HINTS, parseExportName, countUnmaskedPhones } from "@/lib/excelSheetPicker";
 
 function normalizeHeaderKey(k: string): string {
   return k.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -196,9 +197,12 @@ export function BellavitaMasmisUploader({
   const [dragOver, setDragOver] = useState(false);
   const [showAllLog, setShowAllLog] = useState(false);
   const [lastBatchId, setLastBatchId] = useState<string | null>(null);
-  // SBI Card account files carry no report date; the operator picks the snapshot date (defaults to today).
+  // SBI Card account files and dialer APR exports carry no Report Date column. The day is read from the file (latest call time /
+  // "Time range:" line) and pre-filled; the operator can change it, and it defaults to today when the file has neither.
   const [reportDate, setReportDate] = useState(() => new Date().toLocaleDateString("en-CA"));
-  const needsReportDate = templateCode === "SBI_CARD_ACCOUNT_FILE";
+  const [reportDateEdited, setReportDateEdited] = useState(false);
+  const [detectedDate, setDetectedDate] = useState<string | null>(null);
+  const needsReportDate = templateCode === "SBI_CARD_ACCOUNT_FILE" || templateCode === "SBI_CARD_APR";
   const [downloadingErrorsId, setDownloadingErrorsId] = useState<string | null>(null);
   const [downloadingAllId, setDownloadingAllId] = useState<string | null>(null);
   const coverageQ = useUploadCoverage([templateCode]);
@@ -339,10 +343,32 @@ export function BellavitaMasmisUploader({
 
   function pickFile(f: File | null) {
     setFile(f);
+    setDetectedDate(null);
+    setReportDateEdited(false);
+    if (f && needsReportDate) void detectReportDate(f);
     setPhase("idle");
     setResult(null);
     setMessage(null);
     setLastBatchId(null);
+  }
+
+  /** Reads the snapshot day out of the file: the latest call time (account file) or the "Time range:" line (dialer APR). */
+  async function detectReportDate(f: File) {
+    try {
+      const lower = f.name.toLowerCase();
+      const wb = lower.endsWith(".csv") ? XLSX.read(await f.text(), { type: "string" }) : XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: "array" });
+      const picked = pickBestSheet(wb, template);
+      const sheet = wb.Sheets[picked.name];
+      if (!sheet) return;
+      let day: string | null = parseExportName(f.name).date;
+      if (day) { /* the day-end export is named for its day (MAS_AHM_FLOW_NEW_DDMMYYYY) */ }
+      else if (templateCode === "SBI_CARD_APR") day = detectTimeRangeDate(sheet);
+      else {
+        const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: true, range: picked.headerRow });
+        day = latestDay(raw.flatMap((r) => SBI_ACCOUNT_DATETIME_HEADERS.map((h) => (typeof r[h] === "number" ? serialToDateTime(r[h] as number) : null))));
+      }
+      if (day) { setDetectedDate(day); setReportDate(day); }
+    } catch { /* detection is a convenience; the date picker still works */ }
   }
 
   /** Picks the sheet whose header row best matches this template's expected
@@ -358,7 +384,7 @@ export function BellavitaMasmisUploader({
    * consistent with this uploader's existing tolerant-header philosophy. */
   function pickBestSheet(workbook: XLSX.WorkBook, tmpl: UploadTemplate | null): { name: string; headerRow: number } {
     const expected = new Set(
-      [...(tmpl?.required_columns || []), ...(tmpl?.optional_columns || [])].map(normalizeHeaderKey),
+      [...(tmpl?.required_columns || []), ...(tmpl?.optional_columns || []), ...(HEADER_HINTS[String(tmpl?.upload_type_code || "").toUpperCase()] ?? [])].map(normalizeHeaderKey),
     );
     // The header row may sit below a title row (e.g. SBI Card Dialer MIS has it on row 2) and empty "-"
     // sheets never win over a sheet with matching headers -- see pickSheetWithHeader.
@@ -382,11 +408,30 @@ export function BellavitaMasmisUploader({
     const rows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[picked.name]!, {
       defval: "", raw: false, range: picked.headerRow,
     });
+    if (code === "SBI_CARD_ACCOUNT_FILE") {
+      // Re-read call / callback times as raw Excel serials so the importer never sees a locale-formatted date.
+      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[picked.name]!, { defval: "", raw: true, range: picked.headerRow });
+      rows.forEach((r, i) => {
+        for (const h of SBI_ACCOUNT_DATETIME_HEADERS) {
+          const v = raw[i]?.[h];
+          const iso = typeof v === "number" ? serialToDateTime(v) : null;
+          if (iso) r[h] = iso;
+        }
+      });
+    }
     if (needsReportDate) {
       for (const r of rows) if (getNormalized(r, "Report Date") === "") r["Report Date"] = reportDate;
     }
+    let piiNote: string | null = null;
+    if (code === "SBI_CARD_ACCOUNT_FILE") {
+      // MAS_AHM_FLOW_NEW_<date> / MAS_AHM_FLOW_MANUAL_<date>: the same account can be in both, so the flow is part of its identity.
+      const flow = parseExportName(f.name).flow;
+      if (flow) for (const r of rows) if (getNormalized(r, "Flow") === "") r["Flow"] = flow;
+      const unmasked = countUnmaskedPhones(rows);
+      if (unmasked > 0) piiNote = `Warning: ${unmasked} row(s) carry full, unmasked contact numbers. SBI Card requires reporting exports to be masked; HRMS does not store contact numbers, but please use the masked reporting export for uploads.`;
+    }
     // Blank spacer rows would otherwise be staged as "X is required" errors.
-    return { rows: isSbiCardCode(code) ? (dropBlankRows(rows, required, normalizeHeaderKey).rows as Record<string, string>[]) : rows, summary: null };
+    return { rows: isSbiCardCode(code) ? (dropBlankRows(rows, required, normalizeHeaderKey).rows as Record<string, string>[]) : rows, summary: piiNote };
   }
 
   async function handleUpload() {
@@ -479,6 +524,7 @@ export function BellavitaMasmisUploader({
 
       let imported = 0;
       let errored = errorRows;
+      let mappingNotes = "";
       if (isBatchJobStarted(importRes)) {
         const final = await pollBatchJob(`/api/bulk-upload/batches/${batch.id}/import-status`, {
           onProgress: (s) => setMessage(`Importing... ${s.progress?.processed ?? 0}/${s.progress?.total ?? "?"}`),
@@ -486,13 +532,14 @@ export function BellavitaMasmisUploader({
         if (final.phase === "failed") throw new Error(final.error || final.message || "Import failed.");
         const data = (final.result as { data?: any })?.data ?? {};
         imported = Number(data.importedRows ?? data.imported_rows ?? final.progress?.succeeded ?? 0);
+        if (Array.isArray(data.notes) && data.notes.length > 0) mappingNotes = (data.notes as string[]).join(" ");
         errored += Number(data.errorRows ?? data.error_rows ?? final.progress?.failed ?? 0);
       }
 
       setResult({ imported, errors: errored });
       void refreshCoverage([templateCode]);
       setPhase("done");
-      setMessage(readSummary);
+      setMessage([readSummary, mappingNotes].filter(Boolean).join(" ") || null);
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       loadLog();
@@ -517,9 +564,11 @@ export function BellavitaMasmisUploader({
             <label className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
               Report date for this account file
               <input type="date" value={reportDate} max={new Date().toLocaleDateString("en-CA")} disabled={busy}
-                onChange={(e) => setReportDate(e.target.value)}
+                onChange={(e) => { setReportDate(e.target.value); setReportDateEdited(true); }}
                 className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" />
-              <span className="text-slate-400">Used for rows without a Report Date column.</span>
+              <span className="text-slate-400">
+                {detectedDate && !reportDateEdited ? `Read from the file (${detectedDate}). ` : ""}Used for rows without a Report Date column.
+              </span>
             </label>
           )}
           <div

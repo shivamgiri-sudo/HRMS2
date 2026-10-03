@@ -1,14 +1,16 @@
 import { randomUUID } from "crypto";
+import { parseDurationSeconds } from "./dalmia-import-helpers.js";
+import { SBI_APR_COLUMNS, aprLoginResolver } from "./sbi-card-apr-columns.js";
 import { runSbiBatch, type SbiBatchSpec } from "./sbi-card-batch-runner.js";
 import {
   SBI_DIALER_COLS, SBI_DIALER_HEADERS, SBI_AGENT_COLS, SBI_AGENT_HEADERS, SBI_ACCOUNT_HEADERS, SBI_DOWNTIME_HEADERS,
-  SBI_PEN_HEADERS, isRollupCampaign,
+  SBI_PEN_HEADERS, SBI_APR_HEADERS, SBI_ATTEMPTS, isRollupCampaign,
 } from "./sbi-card-schema.js";
 import {
   cleanText, cleanTeam, cleanId, coerceCol, decOrNull, intOrNull, parseSbiDate, parseSbiTime, parseSeconds,
-  parseDowntimeMinutes, dateFromCallTable,
+  parseDowntimeMinutes, dateFromCallTable, parseSbiDateTime,
 } from "./sbi-card-import-helpers.js";
-import { refreshSbiKpiFromAgentMis, refreshSbiKpiFromDialerMis } from "../process-performance/sbi-card-kpi-sync.js";
+import { refreshSbiKpiFromAccountFile, refreshSbiKpiFromAgentTime, refreshSbiKpiFromAgentMis, refreshSbiKpiFromDialerMis } from "../process-performance/sbi-card-kpi-sync.js";
 
 /**
  * SBI Card Collections importers (process_master 'SBI Card Collections', code SBI_CARD). Each is an upsert on its table's natural key
@@ -77,36 +79,53 @@ export const agentMisSpec: SbiBatchSpec = {
 
 const todayIso = (): string => new Date().toISOString().slice(0, 10);
 
+const ACCOUNT_OPS_COLS = [
+  "flow", "cd", "nrr", "block_1", "block_2", "ntc_flag", "new_to_card_flag", "promo_code", "product_class", "account_class", "donotcall", "callback_dt",
+  ...SBI_ATTEMPTS.flatMap((n) => [`call${n}_dt`, `disp${n}_c`, `agent${n}_id`]),
+];
+/** The two day-end exports: MAS_AHM_FLOW_NEW_<date> and MAS_AHM_FLOW_MANUAL_<date>. Part of the account's identity for the day. */
+const flowOf = (v: unknown): string => (/^manual/i.test(String(v ?? "").trim()) ? "MANUAL" : "NEW");
+const flag = (v: unknown, len = 5): string | null => cleanText(v)?.slice(0, len).toUpperCase() ?? null;
+
 /** Account-level dialer export/import file. Natural key: ACCOUNT_NO + report date (column "Report Date", default: today). */
 export const accountFileSpec: SbiBatchSpec = {
   table: "sbi_card_account_file",
   columns: [
     "id", "process_id", "report_date", "account_no", "billing_cycle", "delq1", "cibil_score", "credit_limit", "cur_bal", "cur_bal_plus_dpi",
     "total_amount_due", "total_cur_due", "date_last_pmt", "last_action_code", "last_ptp_date", "mobile_no", "vintage", "region",
-    "agency_name", "call_table_name", "dial_cnt", ...TAIL,
+    "agency_name", "call_table_name", "dial_cnt", ...ACCOUNT_OPS_COLS, ...TAIL,
   ],
   updateColumns: [
     "billing_cycle", "delq1", "cibil_score", "credit_limit", "cur_bal", "cur_bal_plus_dpi", "total_amount_due", "total_cur_due",
     "date_last_pmt", "last_action_code", "last_ptp_date", "mobile_no", "vintage", "region", "agency_name", "call_table_name", "dial_cnt",
+    ...ACCOUNT_OPS_COLS.filter((c) => c !== "flow"),
   ],
   headers: SBI_ACCOUNT_HEADERS,
   dateOf: dateOfSecond,
+  afterImport: refreshSbiKpiFromAccountFile,
   mapRow(data, _rowNo, ctx) {
     const acct = cleanId(data["ACCOUNT_NO"]);
     if (!acct) return { error: 'a usable "ACCOUNT_NO" is required (Excel may have rounded it into scientific notation)' };
     const reportRaw = data["Report Date"];
     const reportDate = reportRaw === undefined || String(reportRaw).trim() === "" ? todayIso() : parseSbiDate(reportRaw);
     if (!reportDate) return { error: `"Report Date" is not a readable date` };
-    const mobile = String(data["MOBILE_NO"] ?? "").replace(/[^\d+]/g, "");
+    // SBI Card's PII restriction: reporting exports carry masked contact numbers, and HRMS has no use for one. Never persisted.
     return {
       values: [
         reportDate, acct.slice(0, 40), cleanText(data["BILLING_CYCLE"])?.slice(0, 20) ?? null, cleanText(data["DELQ1"])?.slice(0, 20) ?? null,
         intOrNull(data["CIBIL_SCORE"]), decOrNull(data["CREDIT_LIMIT"]), decOrNull(data["CUR_BAL"]), decOrNull(data["CUR_BAL_PLUS_DPI"]),
         decOrNull(data["TOTAL_AMOUNT_DUE"]), decOrNull(data["TOTAL_CUR_DUE"]), parseSbiDate(data["DATE_LAST_PMT"]),
-        cleanText(data["LAST_ACTION_CODE"])?.slice(0, 30) ?? null, parseSbiDate(data["LAST_PTP_DATE"]), mobile ? mobile.slice(0, 20) : null,
+        cleanText(data["LAST_ACTION_CODE"])?.slice(0, 30) ?? null, parseSbiDate(data["LAST_PTP_DATE"]), null,
         cleanText(data["VINTAGE"])?.slice(0, 30) ?? null, cleanText(data["REGION"])?.slice(0, 50) ?? null,
         cleanText(data["AGENCY_NAME"])?.slice(0, 100) ?? null, cleanText(data["CALL_TABLE_NAME"])?.slice(0, 100) ?? null,
-        intOrNull(data["DIAL_CNT"]), ...tail(ctx.batchId, ctx.userId),
+        intOrNull(data["DIAL_CNT"]),
+        flowOf(data["Flow"]), intOrNull(data["CD"]), flag(data["NRR"]), flag(data["BLOCK_1"], 10), flag(data["BLOCK_2"], 10), flag(data["NTC_FLAG"]),
+        flag(data["NEW_TO_CARD_FLAG"]), flag(data["PROMO_CODE"], 20), flag(data["PRODUCT_CLASS_FLAG"], 20), flag(data["ACCOUNTS_CLASS"], 30),
+        flag(data["DONOTCALL"]), parseSbiDateTime(data["CALLBACK_DT"]),
+        ...SBI_ATTEMPTS.flatMap((n) => [
+          parseSbiDateTime(data[`CALL${n}_DT`]), flag(data[`DISP${n}_C`], 20), cleanId(data[`AGENT${n}_ID`])?.slice(0, 20) ?? null,
+        ]),
+        ...tail(ctx.batchId, ctx.userId),
       ],
     };
   },
@@ -171,9 +190,70 @@ export const penEstimationSpec: SbiBatchSpec = {
   },
 };
 
+const APR_SECONDS = [
+  ["TIME CLOCK", "time_clock_sec"], ["LOGIN TIME", "login_sec"], ["WAIT", "wait_sec"], ["TALK", "talk_sec"], ["DISPO", "dispo_sec"],
+  ["PAUSE", "pause_sec"], ["DEAD", "dead_sec"], ["CUSTOMER", "customer_sec"], ["ACHT", "acht_sec"], ["DISMX", "dismx_sec"], ["LAGGED", "lagged_sec"],
+  ["LB", "pause_lb_sec"], ["MB", "pause_mb_sec"], ["QB", "pause_qb_sec"], ["TB", "pause_tb_sec"], ["WB", "pause_wb_sec"],
+] as const;
+/** The dialer's "-" / blank cells are no value; a duration is h:mm:ss or plain seconds, never negative. */
+const aprSeconds = (v: unknown): number | null => (String(v ?? "").trim() === "-" ? null : parseDurationSeconds(v));
+
+/**
+ * Dialer Agent Time Detail (APR). One row per agent per day; the day is "Report Date" (the uploader reads it from the export's
+ * "Time range:" line). The TOTALS footer and rows without an ID are skipped. Natural key: ID + report date.
+ */
+export const agentTimeSpec: SbiBatchSpec = {
+  table: "sbi_card_agent_time",
+  columns: [
+    "id", "process_id", "report_date", "employee_id", "agent_name", "calls", ...APR_SECONDS.map((c) => c[1]),
+    "first_login_time", "last_logout_time", "pause_login_sec", ...TAIL,
+  ],
+  updateColumns: [
+    "agent_name", "calls", ...APR_SECONDS.map((c) => c[1]), "first_login_time", "last_logout_time", "pause_login_sec",
+  ],
+  headers: SBI_APR_HEADERS,
+  columnSpecs: SBI_APR_COLUMNS,
+  planOptions: { minRecognised: 6, resolvers: { login: aprLoginResolver } },
+  dateOf: dateOfSecond,
+  afterImport: refreshSbiKpiFromAgentTime,
+  mapRow(data, _rowNo, ctx) {
+    const user = cleanText(data["USER"]);
+    if (user && /^totals?$/i.test(user)) return { skip: true };
+    const id = cleanId(data["ID"]);
+    if (!id) return String(data["ID"] ?? "").trim() === "" && !user ? { skip: true } : { error: 'a usable "ID" (employee code) is required' };
+    const date = parseSbiDate(data["Report Date"]);
+    if (!date) return { error: '"Report Date" is not a readable date (the uploader reads it from the "Time range:" line, else the date picker)' };
+    const loginCode = data["LOGIN"] ?? data["Login_1"] ?? data["LOGIN_1"];
+    const notes: string[] = [];
+    const sec = Object.fromEntries(APR_SECONDS.map(([h]) => [h, aprSeconds(data[h])])) as Record<string, number | null>;
+    const states = ["WAIT", "TALK", "DISPO", "PAUSE", "DEAD"].map((h) => sec[h]).filter((v): v is number => v !== null);
+    const stateSum = states.reduce((a, b) => a + b, 0);
+    // Columns the export dropped are derived where the dialer's own arithmetic allows it, and said so.
+    if (data["LOGIN TIME"] === undefined && states.length >= 3) { sec["LOGIN TIME"] = stateSum; notes.push("LOGIN TIME was not in the file; derived from wait + talk + dispo + pause + dead"); }
+    const calls = intOrNull(data["CALLS"]);
+    if (data["ACHT"] === undefined && calls && calls > 0 && sec["TALK"] !== null) {
+      sec["ACHT"] = Math.round(((sec["TALK"] ?? 0) + (sec["DISPO"] ?? 0)) / calls); notes.push("ACHT was not in the file; derived as (talk + dispo) / calls");
+    }
+    const login = sec["LOGIN TIME"];
+    if (data["LOGIN TIME"] !== undefined && login !== null && login > 0 && states.length >= 4 && Math.abs(stateSum - login) > Math.max(300, login * 0.05)) {
+      notes.push("State times (wait + talk + dispo + pause + dead) do not add up to LOGIN TIME; the columns may be mislabeled or shifted");
+    }
+    return {
+      values: [
+        date, id.slice(0, 30), user?.slice(0, 150) ?? null, calls,
+        ...APR_SECONDS.map(([h]) => sec[h] ?? null),
+        parseSbiTime(data["Login"]), parseSbiTime(data["Logout"]), aprSeconds(loginCode),
+        ...tail(ctx.batchId, ctx.userId),
+      ],
+      notes,
+    };
+  },
+};
+
 const run = (spec: SbiBatchSpec) => (batchId: string, userId: string) => runSbiBatch(batchId, userId, spec, randomUUID);
 export const importSbiCardDialerMisBatch = run(dialerMisSpec);
 export const importSbiCardAgentMisBatch = run(agentMisSpec);
 export const importSbiCardAccountFileBatch = run(accountFileSpec);
 export const importSbiCardDowntimeBatch = run(downtimeSpec);
 export const importSbiCardPenEstimationBatch = run(penEstimationSpec);
+export const importSbiCardAgentTimeBatch = run(agentTimeSpec);
