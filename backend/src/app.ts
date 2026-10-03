@@ -370,6 +370,7 @@ import { pennyDropRouter } from "./modules/onboarding/penny-drop.routes.js";
 import { nameValidationRouter } from "./modules/onboarding/name-validation.routes.js";
 import { digiLockerRouter } from "./modules/onboarding/digilocker.routes.js";
 import { employeeReactivationRouter } from "./modules/employees/employee-reactivation.routes.js";
+import { rejoinDossierRouter } from "./modules/employees/rejoin-dossier.routes.js";
 import { employeeVerifyRouter } from "./modules/employees/employee.verify.routes.js";
 import { salaryIncrementRouter } from "./modules/salary-increment/salaryIncrement.routes.js";
 import { breakDeskRouter } from "./modules/break-management/break-desk.routes.js";
@@ -651,6 +652,7 @@ app.use("/api/employees", listEndpointLimiter, employeeJoiningDocumentsRouter);
 // running a script on the server.
 app.use("/api/employees", joiningKitRouter);
 app.use("/api/employees", employeeReactivationRouter);
+app.use("/api/employees", rejoinDossierRouter);
 app.use("/api/bgv/employee", employeeBgvRouter);
 app.use("/api/rm-change", rmChangeRouter);
 app.use("/api/statutory-change-requests", statutoryApprovalRouter);
