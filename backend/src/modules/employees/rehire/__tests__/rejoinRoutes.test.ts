@@ -12,6 +12,10 @@ vi.mock("../../../../shared/enterpriseScope.js", () => ({
   buildEmployeeScopeCondition: vi.fn(() => ({ sql: "1=1", params: [] })),
 }));
 
+const { runRejoinFollowUps } = vi.hoisted(() => ({ runRejoinFollowUps: vi.fn() }));
+vi.mock("../rejoinFollowUps.js", () => ({ runRejoinFollowUps }));
+vi.mock("../rejoinFollowUps.deps.js", () => ({ realFollowUpDeps: { marker: "deps" } }));
+
 const { loadRehireFacts, activateRejoin } = vi.hoisted(() => ({ loadRehireFacts: vi.fn(), activateRejoin: vi.fn() }));
 vi.mock("../rehireFacts.js", async (orig) => ({ ...(await orig<typeof import("../rehireFacts.js")>()), loadRehireFacts }));
 vi.mock("../rejoinActivation.js", async (orig) => ({ ...(await orig<typeof import("../rejoinActivation.js")>()), activateRejoin }));
@@ -37,6 +41,7 @@ const initiateBody = { employee_id: "11111111-1111-4111-8111-111111111111", prop
 
 beforeEach(() => {
   dbExecute.mockReset(); getConnection.mockReset(); canViewEmployee.mockReset(); loadRehireFacts.mockReset(); activateRejoin.mockReset();
+  runRejoinFollowUps.mockReset(); runRejoinFollowUps.mockResolvedValue([{ step: "auth", ok: true }]);
   canViewEmployee.mockResolvedValue(true);
   dbExecute.mockResolvedValue([[], []]);
 });
@@ -157,6 +162,59 @@ describe("POST /reactivation/:id/branch-action", () => {
     const res = await request(app()).post("/api/employees/reactivation/r1/branch-action").send({ action: "approved", remarks: "Reviewed history, accepting the risk", absconding_acknowledged: true });
     expect(res.status).toBe(200);
     expect(activateRejoin).toHaveBeenCalledOnce();
+  });
+
+  it("runs the follow-ups only AFTER the approval commits, and returns their outcome", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    const c = conn();
+    activateRejoin.mockResolvedValue({ status: "eligible", reasons: [], requiresFreshOnboarding: false, requiresAbscondingAck: false });
+    const order: string[] = [];
+    c.commit.mockImplementation(async () => { order.push("commit"); });
+    runRejoinFollowUps.mockImplementation(async () => { order.push("followups"); return [{ step: "auth", ok: true }]; });
+    const res = await request(app()).post("/api/employees/reactivation/r1/branch-action").send({ action: "approved", remarks: "fine to rejoin" });
+    expect(res.status).toBe(200);
+    expect(order).toEqual(["commit", "followups"]);
+    expect(runRejoinFollowUps).toHaveBeenCalledWith(
+      expect.anything(), { marker: "deps" },
+      { requestId: "r1", employeeId: "e1", approverId: "bh1", rejoinDate: "2026-09-20" },
+    );
+    expect(res.body.followUps).toEqual([{ step: "auth", ok: true }]);
+  });
+
+  it("a failing follow-up does not change the outcome: still 200, the failure is reported", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    conn();
+    activateRejoin.mockResolvedValue({ status: "eligible", reasons: [], requiresFreshOnboarding: false, requiresAbscondingAck: false });
+    runRejoinFollowUps.mockResolvedValue([{ step: "it_provisioning", ok: false, detail: "IT down" }]);
+    const res = await request(app()).post("/api/employees/reactivation/r1/branch-action").send({ action: "approved", remarks: "fine to rejoin" });
+    expect(res.status).toBe(200);
+    expect(res.body.followUps[0].ok).toBe(false);
+  });
+
+  it("even if the follow-up runner itself throws, the approval stands", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    conn();
+    activateRejoin.mockResolvedValue({ status: "eligible", reasons: [], requiresFreshOnboarding: false, requiresAbscondingAck: false });
+    runRejoinFollowUps.mockRejectedValue(new Error("boom"));
+    const res = await request(app()).post("/api/employees/reactivation/r1/branch-action").send({ action: "approved", remarks: "fine to rejoin" });
+    expect(res.status).toBe(200);
+    expect(res.body.followUps).toEqual([]);
+  });
+
+  it("does not run follow-ups on a rejection", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    conn();
+    await request(app()).post("/api/employees/reactivation/r1/branch-action").send({ action: "rejected", remarks: "poor record" });
+    expect(runRejoinFollowUps).not.toHaveBeenCalled();
+  });
+
+  it("does not run follow-ups when activation refuses", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    conn();
+    const { RejoinBlockedError } = await import("../rejoinActivation.js");
+    activateRejoin.mockRejectedValue(new RejoinBlockedError({ status: "blocked", reasons: [], requiresFreshOnboarding: false, requiresAbscondingAck: false }, "Left through termination"));
+    await request(app()).post("/api/employees/reactivation/r1/branch-action").send({ action: "approved", remarks: "fine to rejoin" });
+    expect(runRejoinFollowUps).not.toHaveBeenCalled();
   });
 });
 
