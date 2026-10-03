@@ -24,6 +24,8 @@ import { formatISTDate } from "@/lib/utils";
 interface WithdrawalRequest {
   id: string;
   request_ref?: string;
+  reference_number?: string | null;
+  sla_due_at?: string | null;
   status: string;
   withdrawal_reason: string;
   withdrawal_scope_json: string | null;
@@ -86,10 +88,7 @@ export default function NativeDPDPWithdrawal() {
   };
 
   const handleSubmit = async () => {
-    if (!reason.trim()) {
-      setSubmitError("Please provide a reason for your withdrawal request.");
-      return;
-    }
+    // The reason is optional: withdrawing consent must be as easy as giving it (DPDP Act s.6(4)).
     setSubmitting(true);
     setSubmitError("");
     setSubmitSuccess("");
@@ -98,24 +97,30 @@ export default function NativeDPDPWithdrawal() {
         .filter(([, v]) => v)
         .map(([k]) => k);
 
-      await hrmsApi.post("/api/privacy/dpdp-withdrawal/request", {
-        reason,
+      const res = await hrmsApi.post<{ data?: { request_ref?: string; sla_due_at?: string | null } }>("/api/privacy/dpdp-withdrawal/request", {
+        reason: reason.trim() || undefined,
         scope_json: scopeJson.length ? scopeJson : null,
         channel: "self",
       });
 
-      setSubmitSuccess("Your withdrawal request has been submitted and is pending review.");
+      const ref = res?.data?.request_ref;
+      const due = res?.data?.sla_due_at;
+      setSubmitSuccess(
+        `Your withdrawal request has been received${ref ? ` — reference ${ref}` : ""}.` +
+        `${due ? ` We aim to decide by ${formatISTDate(due)}.` : ""} You will see the decision on this page and in your inbox.`
+      );
       setReason("");
       setSelectedScope({});
       await fetchRequests();
     } catch (err: any) {
-      setSubmitError(
-        err?.response?.data?.message ?? "Failed to submit request. Please try again."
-      );
+      // hrmsApi rejects with an Error carrying the server's message (e.g. "You already have an open request…").
+      setSubmitError(err?.message || "Failed to submit request. Please try again.");
     } finally {
       setSubmitting(false);
     }
   };
+
+  const openRequest = requests.find((r) => r.status === "submitted" || r.status === "in_review");
 
   const formatDate = (d: string) =>
     d ? formatISTDate(d) : "-";
@@ -151,13 +156,26 @@ export default function NativeDPDPWithdrawal() {
             <CardTitle className="text-base">New Withdrawal Request</CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
+            <div role="note" className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+              You can withdraw your consent at any time, and you do not have to give a reason. Some information
+              must still be kept or used where the law requires it or for your employment (for example payroll,
+              tax and provident-fund records). We will tell you which parts we can restrict, and why for any we cannot.
+            </div>
+            {openRequest && (
+              <Alert role="status">
+                <AlertDescription>
+                  You already have an open request ({openRequest.reference_number ?? openRequest.request_ref ?? "in progress"}).
+                  You can submit another once it has been decided.
+                </AlertDescription>
+              </Alert>
+            )}
             {submitError && (
-              <Alert variant="destructive">
+              <Alert variant="destructive" role="alert">
                 <AlertDescription>{submitError}</AlertDescription>
               </Alert>
             )}
             {submitSuccess && (
-              <Alert className="border-green-200 bg-green-50 text-green-800">
+              <Alert role="status" className="border-green-200 bg-green-50 text-green-800">
                 <AlertDescription>{submitSuccess}</AlertDescription>
               </Alert>
             )}
@@ -165,11 +183,11 @@ export default function NativeDPDPWithdrawal() {
             {/* Reason */}
             <div className="space-y-1.5">
               <Label htmlFor="reason" className="text-sm font-medium">
-                Reason / purpose <span className="text-red-500">*</span>
+                Reason <span className="text-gray-400 font-normal">(optional)</span>
               </Label>
               <Textarea
                 id="reason"
-                placeholder="Describe why you are requesting data withdrawal or restriction..."
+                placeholder="You may tell us why, but you do not have to."
                 rows={4}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
@@ -196,7 +214,7 @@ export default function NativeDPDPWithdrawal() {
               </div>
             </div>
 
-            <Button onClick={handleSubmit} disabled={submitting} className="w-full sm:w-auto">
+            <Button onClick={handleSubmit} disabled={submitting || !!openRequest} className="w-full sm:w-auto">
               {submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -232,7 +250,9 @@ export default function NativeDPDPWithdrawal() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Reference</TableHead>
                       <TableHead>Submitted</TableHead>
+                      <TableHead>Decision due</TableHead>
                       <TableHead>Scope</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Restriction Applied</TableHead>
@@ -242,8 +262,14 @@ export default function NativeDPDPWithdrawal() {
                   <TableBody>
                     {requests.map((r) => (
                       <TableRow key={r.id}>
+                        <TableCell className="text-sm font-mono whitespace-nowrap">
+                          {r.reference_number ?? r.request_ref ?? "-"}
+                        </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
                           {formatDate(r.created_at)}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {r.status === "submitted" || r.status === "in_review" ? formatDate(r.sla_due_at ?? "") : "-"}
                         </TableCell>
                         <TableCell className="text-sm max-w-[180px] truncate">
                           {parseScopeJson(r.withdrawal_scope_json)}
@@ -264,7 +290,7 @@ export default function NativeDPDPWithdrawal() {
                             <span className="text-gray-400">No</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-sm text-gray-600 max-w-[200px] truncate">
+                        <TableCell className="text-sm text-gray-600 max-w-[260px] whitespace-normal break-words">
                           {r.review_remarks ?? "-"}
                         </TableCell>
                       </TableRow>

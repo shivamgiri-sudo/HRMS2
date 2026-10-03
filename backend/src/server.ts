@@ -64,6 +64,7 @@ import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
 // block at its former start site below for what is missing and how to restore it.
 import { startMiraTriageScheduler } from "./modules/ai/mira-triage-scheduler.js";
 import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
+import { startWithdrawalSlaCron } from "./modules/privacy/dpdp-withdrawal-sla.cron.js";
 import { startHelpdeskSlaCron } from "./modules/helpdesk/helpdesk-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
@@ -314,6 +315,8 @@ function startServer() {
         // Idempotent safety net — skips already-imported leads, no-ops if META_MARKETING_ACCESS_TOKEN unset.
         startMetaLeadSyncScheduler();
         startBreachSlaCron();
+        // Escalates DPDP withdrawal requests that passed their decision deadline.
+        startWithdrawalSlaCron();
         startRetentionCron();
         // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from
         // GET /helpdesk/dashboard in 4829f0a6 — without this, sla_breached flags
