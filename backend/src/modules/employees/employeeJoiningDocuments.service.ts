@@ -95,8 +95,13 @@ const PAYROLL_SCOPE_ROLES = ["payroll_hr", "payroll"];
 // is pending against their checklist but not open or download the stored files - HR / payroll do that.
 const SECURE_DOWNLOAD_ROLES = new Set(["admin", "super_admin", "hr", "manager", "payroll_hr", "payroll"]);
 
-export function mayDownloadJoiningDocuments(access: { isAdmin: boolean; roles: string[] }): boolean {
-  return access.isAdmin || access.roles.some((role) => SECURE_DOWNLOAD_ROLES.has(role));
+export function mayDownloadJoiningDocuments(access: { isAdmin: boolean; isSelf?: boolean; roles: string[] }): boolean {
+  if (access.isAdmin) return true;
+  // HR / payroll open stored files, including their own record's.
+  if (access.roles.some((role) => SECURE_DOWNLOAD_ROLES.has(role) && role !== "manager")) return true;
+  // "manager" opens their team's files, but not their own: being a manager must not bypass the
+  // owner restriction on their own documents.
+  return !access.isSelf && access.roles.includes("manager");
 }
 const PAYROLL_DOCUMENT_CODES = new Set(["EPF_DECLARATION", "EMPLOYMENT_CONTRACT"]);
 

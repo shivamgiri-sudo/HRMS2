@@ -20,4 +20,11 @@ describe("employee document lockdown", () => {
     }
     expect(mayDownloadJoiningDocuments({ isAdmin: true, roles: [] })).toBe(true);
   });
+
+  it("a manager opens their team's files but not their own (no owner bypass via the manager role)", () => {
+    expect(mayDownloadJoiningDocuments({ isAdmin: false, isSelf: false, roles: ["employee", "manager"] })).toBe(true);
+    expect(mayDownloadJoiningDocuments({ isAdmin: false, isSelf: true, roles: ["employee", "manager"] })).toBe(false);
+    // HR / payroll keep access to their own record's files
+    expect(mayDownloadJoiningDocuments({ isAdmin: false, isSelf: true, roles: ["employee", "hr"] })).toBe(true);
+  });
 });

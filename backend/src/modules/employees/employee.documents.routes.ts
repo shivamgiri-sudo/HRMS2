@@ -214,6 +214,12 @@ router.get("/:employeeId/:docId/download", requireRole(...DOCUMENT_FILE_ROLES), 
   const doc = (rows as RowDataPacket[])[0];
   if (!doc) return res.status(404).json({ success: false, message: "Document not found" });
 
+  // Some rows are registered without a stored file (file_url empty). Without this guard the join
+  // below resolved to the uploads directory itself and sendFile surfaced a misleading "Route not found".
+  if (!String(doc.file_url ?? "").trim()) {
+    return res.status(404).json({ success: false, message: "No file is stored for this document" });
+  }
+
   // Resolve physical file path from the stored URL
   const filename = path.basename(String(doc.file_url ?? ""));
   const filePath = path.join(UPLOADS_ROOT, "employee-documents", filename);
