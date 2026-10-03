@@ -56,6 +56,7 @@ on:
           - sbi-card-demo-remove
           - holiday-mapping-audit
           - kit-esign-diagnose
+          - running-salary-diagnose
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -209,6 +210,10 @@ jobs:
             kit-esign-diagnose)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/kit-esign-diagnose.ts MAS63661
+              ;;
+            running-salary-diagnose)
+              # Read-only in both modes: SELECTs and a pure calculation, no writes.
+              npx tsx scripts/running-salary-diagnose.ts MAS47814
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
