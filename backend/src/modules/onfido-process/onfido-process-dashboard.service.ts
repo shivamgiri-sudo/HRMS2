@@ -787,6 +787,7 @@ const ALLOWED_FILTER_COLUMNS = new Set([
   "task_type",
   "analyst_email",
   "docupedia_document_name",
+  "document_name",
   "error_category",
   "error_breakdown",
   // has_error powers the "errors only" raw-table view (a real, standalone table
@@ -4365,7 +4366,8 @@ export async function getDocRawTrend(
 }
 
 export type DocRawDimension =
-  "ims_client_name" | "tl_name" | "am_name" | "task_type" | "analyst_email";
+  | "ims_client_name" | "tl_name" | "am_name" | "task_type" | "analyst_email"
+  | "document_name";
 export interface DocRawBreakdownRow {
   label: string;
   taskCount: number;
@@ -4385,6 +4387,7 @@ const DOC_RAW_DIMENSION_EXPR: Record<DocRawDimension, string> = {
   am_name: "am_name",
   task_type: DOC_TASK_TYPE_LABEL_EXPR,
   analyst_email: "analyst_email",
+  document_name: "document_name",
 };
 
 export async function getDocRawBreakdown(

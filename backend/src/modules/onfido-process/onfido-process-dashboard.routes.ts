@@ -1023,6 +1023,7 @@ const DOC_RAW_DIMENSIONS = new Set([
   "am_name",
   "task_type",
   "analyst_email",
+  "document_name",
 ]);
 router.get(
   "/doc-raw/overview",
