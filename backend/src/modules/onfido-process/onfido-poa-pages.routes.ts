@@ -16,6 +16,14 @@ import {
   getPoaTrailPage,
   type PoaPageFilters,
 } from "./onfido-poa-pages.service.js";
+import {
+  getPoaExternalBreakdownV2,
+  getPoaInternalBreakdown,
+  POA_EXTERNAL_BREAKDOWN_DIMENSIONS,
+  POA_INTERNAL_BREAKDOWN_DIMENSIONS,
+  type PoaExternalBreakdownDimension,
+  type PoaInternalBreakdownDimension,
+} from "./onfido-poa-breakdown.service.js";
 
 function readFilters(req: Request): PoaPageFilters {
   const q = req.query as Record<string, unknown>;
@@ -48,4 +56,24 @@ export function mountPoaPageRoutes(
   router.get("/poa-pages/internal", ...guard, pageHandler(getPoaInternalPage));
   router.get("/poa-pages/external", ...guard, pageHandler(getPoaExternalPage));
   router.get("/poa-pages/trail", ...guard, pageHandler(getPoaTrailPage));
+  router.get("/poa-pages/internal-breakdown/:dimension", ...guard, (req, res, next) => {
+    const dim = req.params.dimension;
+    if (!POA_INTERNAL_BREAKDOWN_DIMENSIONS.has(dim)) {
+      res.status(400).json({ success: false, message: "Unknown dimension" });
+      return;
+    }
+    getPoaInternalBreakdown(readFilters(req), dim as PoaInternalBreakdownDimension)
+      .then((data) => res.json({ success: true, data }))
+      .catch(next);
+  });
+  router.get("/poa-pages/external-breakdown/:dimension", ...guard, (req, res, next) => {
+    const dim = req.params.dimension;
+    if (!POA_EXTERNAL_BREAKDOWN_DIMENSIONS.has(dim)) {
+      res.status(400).json({ success: false, message: "Unknown dimension" });
+      return;
+    }
+    getPoaExternalBreakdownV2(readFilters(req), dim as PoaExternalBreakdownDimension)
+      .then((data) => res.json({ success: true, data }))
+      .catch(next);
+  });
 }
