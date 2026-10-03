@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_REPAIR_DAYS, enumerateDates, validateRepairRange,
   AUTO_HEAL_DAYS, MAX_BACKFILL_DAYS, addDays, autoHealWindow, coveragePct, daysBetween, isIsoDate, isLowCoverage, jobTone,
   summariseMissing, validateBackfillRange,
 } from "../attendance-heal.logic.js";
@@ -73,5 +74,20 @@ describe("jobTone", () => {
     expect(jobTone(ago(80), "completed", now, 24)).toBe("bad");
     expect(jobTone(null, null, now, 24)).toBe("unknown");
     expect(jobTone(ago(1), "failed", now, 24)).toBe("bad");
+  });
+});
+
+describe("repair range", () => {
+  it("lists every date inclusive, oldest first", () => {
+    expect(enumerateDates("2026-08-30", "2026-09-02")).toEqual(["2026-08-30", "2026-08-31", "2026-09-01", "2026-09-02"]);
+    expect(enumerateDates("2026-08-01", "2026-08-01")).toEqual(["2026-08-01"]);
+  });
+  it("allows up to 14 past days and refuses more, today, reversed or invalid ranges", () => {
+    expect(validateRepairRange("2026-08-01", "2026-08-14", TODAY).ok).toBe(true);
+    expect(validateRepairRange("2026-08-01", "2026-08-15", TODAY).ok).toBe(false);
+    expect(validateRepairRange("2026-09-30", "2026-10-03", TODAY).ok).toBe(false);
+    expect(validateRepairRange("2026-08-05", "2026-08-01", TODAY).ok).toBe(false);
+    expect(validateRepairRange("nope", "2026-08-01", TODAY).ok).toBe(false);
+    expect(MAX_REPAIR_DAYS).toBe(14);
   });
 });

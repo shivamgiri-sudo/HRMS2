@@ -100,3 +100,23 @@ export function jobTone(lastRunAt: Date | null, status: string | null, nowMs: nu
   if (ageH <= expectedEveryHours * 3) return "warn";
   return "bad";
 }
+
+/** Every date from `from` to `to` inclusive, oldest first. */
+export function enumerateDates(from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
+  return out;
+}
+
+/** Longest range one repair run may cover: each day takes minutes, and a run should finish within its job. */
+export const MAX_REPAIR_DAYS = 14;
+
+/** Range rules for the on-server repair script: real dates, ordered, entirely in the past, at most MAX_REPAIR_DAYS. */
+export function validateRepairRange(from: unknown, to: unknown, today: string): { ok: boolean; message?: string } {
+  const base = validateBackfillRange(from, to, today);
+  if (!base.ok) return { ok: false, message: base.message };
+  if (daysBetween(from as string, to as string) + 1 > MAX_REPAIR_DAYS) {
+    return { ok: false, message: `a repair run covers at most ${MAX_REPAIR_DAYS} days; run it in smaller ranges` };
+  }
+  return { ok: true };
+}
