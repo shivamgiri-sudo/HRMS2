@@ -33,6 +33,10 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, getConnection
 const { activateRejoin } = vi.hoisted(() => ({ activateRejoin: vi.fn() }));
 vi.mock("../rehire/rejoinActivation.js", async (orig) => ({ ...(await orig<typeof import("../rehire/rejoinActivation.js")>()), activateRejoin }));
 
+// Post-commit follow-ups (auth cache, LMS, IT tasks) are covered in rehire/; keep their real wiring out of this file.
+vi.mock("../rehire/rejoinFollowUps.js", () => ({ runRejoinFollowUps: vi.fn(async () => []) }));
+vi.mock("../rehire/rejoinFollowUps.deps.js", () => ({ realFollowUpDeps: {} }));
+
 // Transactional connection for branch-action: SELECT ... FOR UPDATE returns the row, other statements succeed.
 function mockConn(row: Record<string, unknown>) {
   const c = {

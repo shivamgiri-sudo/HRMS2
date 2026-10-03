@@ -9,6 +9,8 @@ import { evaluateRehire } from "./rehire/rehireEligibility.js";
 import { loadRehireFacts } from "./rehire/rehireFacts.js";
 import { isFormerReport } from "./rehire/rehireAccess.js";
 import { activateRejoin, RejoinBlockedError } from "./rehire/rejoinActivation.js";
+import { runRejoinFollowUps, type FollowUpResult } from "./rehire/rejoinFollowUps.js";
+import { realFollowUpDeps } from "./rehire/rejoinFollowUps.deps.js";
 
 export const employeeReactivationRouter = Router();
 
@@ -382,7 +384,30 @@ employeeReactivationRouter.post(
         }
 
         await conn.commit();
-        return res.json({ success: true, message: body.action === "approved" ? "Rejoin approved; employee is active again" : "Rejoin request rejected" });
+
+        // After the commit, never inside the transaction: the follow-ups use the pool, and their failure
+        // must not undo an approval that is already durable.
+        let followUps: FollowUpResult[] = [];
+        if (body.action === "approved") {
+          const rawDate: unknown = request.proposed_joining_date;
+          const rejoinDate = rawDate instanceof Date ? rawDate.toISOString().slice(0, 10) : String(rawDate).slice(0, 10);
+          try {
+            followUps = await runRejoinFollowUps(pool, realFollowUpDeps, {
+              requestId: String(request.id),
+              employeeId: String(request.employee_id),
+              approverId: actionedBy,
+              rejoinDate,
+            });
+          } catch (e) {
+            console.error("[Reactivation] follow-ups failed after approval:", e);
+          }
+        }
+
+        return res.json({
+          success: true,
+          message: body.action === "approved" ? "Rejoin approved; employee is active again" : "Rejoin request rejected",
+          followUps,
+        });
       } catch (err) {
         await conn.rollback();
         throw err;
