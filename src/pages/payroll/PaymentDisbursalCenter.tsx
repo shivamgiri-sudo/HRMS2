@@ -1,5 +1,5 @@
 /**
- * Payment & Disbursal Center — /payroll/payment-disbursal
+ * Payment & Disbursal Center — /payroll/payment-center
  *
  * Merged hub combining Bank Payment Readiness and Disbursal Management into
  * a single URL-param-driven surface.
@@ -239,6 +239,73 @@ function fmtDateTime(v: string | null | undefined): string {
 // payroll_head / finance_head / payroll_admin are the roles that may lock and disburse a run
 // (payroll.service.updateRunStatus), so they must be able to open this tab and press the button.
 const DISBURSAL_WRITE_ROLES = ["payroll", "super_admin", "finance", "payroll_head", "finance_head", "payroll_admin"];
+
+/**
+ * Presentation only: a read-only strip showing where a run stands on the payment journey. Every value
+ * is derived from data the page already loads (readiness gate, run status, transfer item buckets); it
+ * performs no action and gates nothing - the backend still decides what is allowed.
+ */
+function PaymentJourney(props: {
+  gateClear: boolean | undefined;
+  runStatus: string | undefined;
+  exportedCount: number;
+  confirmedCount: number;
+  rejectedCount: number;
+  /** False when the transfer items failed to load: the export / return steps are then unknown, not "not done". */
+  itemsKnown: boolean;
+}) {
+  const status = String(props.runStatus ?? "").toLowerCase();
+  const approved = ["approved", "locked", "finalized", "disbursed"].includes(status);
+  const steps: Array<{ label: string; done: boolean; note?: string; unknown?: boolean }> = [
+    { label: "Bank details ready", done: props.gateClear === true },
+    { label: "Run approved", done: approved },
+    {
+      label: "File exported",
+      done: props.itemsKnown && props.exportedCount + props.confirmedCount + props.rejectedCount > 0,
+      unknown: !props.itemsKnown,
+    },
+    {
+      label: "Bank return imported",
+      done: props.itemsKnown && props.confirmedCount > 0,
+      note: props.itemsKnown && props.confirmedCount > 0 ? `${props.confirmedCount.toLocaleString("en-IN")} confirmed` : undefined,
+      unknown: !props.itemsKnown,
+    },
+    { label: "Run disbursed", done: status === "disbursed" },
+  ];
+  const current = steps.findIndex((st) => !st.done && !st.unknown);
+  return (
+    <ol
+      aria-label="Payment progress"
+      className="flex flex-wrap items-center gap-x-1 gap-y-2 rounded-md border bg-muted/30 px-3 py-2 text-xs"
+    >
+      {steps.map((st, i) => (
+        <li key={st.label} className="flex items-center gap-1">
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ${
+              st.done
+                ? "bg-emerald-100 text-emerald-800"
+                : i === current
+                  ? "bg-blue-100 text-blue-800 ring-1 ring-blue-300"
+                  : "bg-slate-100 text-slate-500"
+            }`}
+          >
+            {st.done ? <CheckCircle2 className="h-3 w-3" aria-hidden="true" /> : <CircleDot className="h-3 w-3" aria-hidden="true" />}
+            {st.label}
+            {st.unknown ? <span className="font-normal">· unknown (couldn't load)</span> : null}
+            {st.note ? <span className="font-normal">· {st.note}</span> : null}
+          </span>
+          {i < steps.length - 1 ? <span className="text-slate-300" aria-hidden="true">›</span> : null}
+        </li>
+      ))}
+      {props.rejectedCount > 0 ? (
+        <li className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">
+          <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+          {props.rejectedCount.toLocaleString("en-IN")} rejected by bank
+        </li>
+      ) : null}
+    </ol>
+  );
+}
 
 export default function PaymentDisbursalCenter() {
   const qc = useQueryClient();
@@ -768,7 +835,7 @@ export default function PaymentDisbursalCenter() {
   });
 
   // ── Disbursal queries ──────────────────────────────────────────────────────
-  const { data: disbData, isLoading: disbLoading } = useQuery<{
+  const { data: disbData, isLoading: disbLoading, isError: disbError, error: disbErr, refetch: refetchDisb } = useQuery<{
     data: DisbursalRow[];
   }>({
     queryKey: ["disbursal", selectedRunId],
@@ -845,6 +912,7 @@ export default function PaymentDisbursalCenter() {
   const sourceDown = summary && !summary.verification_source.available;
   const asOf = useMemo(() => fmtDateTime(summary?.as_of), [summary?.as_of]);
   const selectedRun = runs.find((r) => r.id === selectedRunId);
+  const bankRun = runs.find((r) => r.id === bankRunId);
 
   // ── Selection handlers ────────────────────────────────────────────────────
   const allVisibleSelected =
@@ -1736,6 +1804,14 @@ export default function PaymentDisbursalCenter() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {bankRunId && bankRun ? (
+                    <span
+                      className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700"
+                      title="The bank file can be generated once the run is approved"
+                    >
+                      Run status: {bankRun.status}
+                    </span>
+                  ) : null}
                   {/* Uses the same batch-recording export as the Salary Transfer controls below. The
                       previous link went to /payment-file, which writes no batch and does not skip people
                       already exported, so a second click could produce a second file with the same
@@ -1749,6 +1825,23 @@ export default function PaymentDisbursalCenter() {
                     {transferGenerating ? "Preparing file…" : "Download payment file"}
                   </Button>
                 </div>
+                {bankRunId ? (
+                  <PaymentJourney
+                    gateClear={summary?.gate_clear}
+                    runStatus={bankRun?.status}
+                    exportedCount={readyForDisbursalItems.length}
+                    confirmedCount={disbursedItems.length}
+                    rejectedCount={rejectedItems.length}
+                    itemsKnown={!transferItemsQ.isError}
+                  />
+                ) : null}
+                {!bankRunId ? (
+                  <p className="text-xs text-muted-foreground">Select a payroll run to enable the payment file.</p>
+                ) : sourceDown ? (
+                  <p className="text-xs text-amber-700">The bank-verification source is unavailable, so the file can't be generated right now.</p>
+                ) : summary && !summary.gate_clear ? (
+                  <p className="text-xs text-amber-700">The file is disabled until the unresolved bank-readiness items are cleared.</p>
+                ) : null}
                 <p className="text-xs text-muted-foreground">
                   Debit account, Pay Mod (I for ICICI beneficiaries, N otherwise) and every
                   column are computed server-side from the reference Salary Transfer File format.
@@ -2116,7 +2209,13 @@ export default function PaymentDisbursalCenter() {
                     </div>
                   );
                 })()}
-                {bankRunId && transferItems.length === 0 && !transferItemsQ.isLoading && (
+                {bankRunId && transferItemsQ.isError && (
+                  <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                    <span>Couldn't load the transfer items for this run{transferItemsQ.error instanceof Error && transferItemsQ.error.message ? `: ${transferItemsQ.error.message}` : ""}.</span>
+                    <Button size="sm" variant="outline" onClick={() => void transferItemsQ.refetch()}>Retry</Button>
+                  </div>
+                )}
+                {bankRunId && transferItems.length === 0 && !transferItemsQ.isLoading && !transferItemsQ.isError && (
                   <div className="rounded-md border p-6 text-center text-sm text-muted-foreground">
                     No transfer batches generated for this run yet.
                   </div>
@@ -2305,6 +2404,12 @@ export default function PaymentDisbursalCenter() {
 
                 {/* Status Tab */}
                 <TabsContent value="status">
+                  {disbError && (
+                    <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                      <span>Couldn't load the disbursal records{(disbErr as { message?: string } | null)?.message ? `: ${(disbErr as { message?: string }).message}` : ""}.</span>
+                      <Button size="sm" variant="outline" onClick={() => void refetchDisb()}>Retry</Button>
+                    </div>
+                  )}
                   <div className="rounded-md border overflow-auto mt-3">
                     <table className="w-full text-sm">
                       <thead className="bg-muted">
@@ -2379,7 +2484,7 @@ export default function PaymentDisbursalCenter() {
                                 {row.uploaded_at
                                   ? new Date(
                                       row.uploaded_at
-                                    ).toLocaleString()
+                                    ).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
                                   : "—"}
                               </td>
                             </tr>
