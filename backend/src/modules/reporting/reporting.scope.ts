@@ -35,6 +35,15 @@ export async function resolveBranchScope(userId: string): Promise<BranchScope> {
     return { isSuperAdmin: true, branchIds: [] };
   }
 
+  // Owner ruling 2026-10-01: ORG_WIDE_EXEMPT_ROLES (payroll_head, finance_head, accounts_head, finance,
+  // coo, cfo, department heads) are all-branch BY ROLE, not by whether an assignment row happens to exist
+  // for them - the same rule scopeAccess.isOrgWideUser applies. Requiring a scope_type='all' row as well
+  // clamped a payroll_head with no such row to a single branch in every report.
+  const orgWide = isOrgWide(roles);
+  if (orgWide) {
+    return { isSuperAdmin: false, branchIds: [] };
+  }
+
   const [scopeRows] = await db.execute<RowDataPacket[]>(
     `SELECT scope_type, branch_id
        FROM user_assignment_scope
@@ -42,11 +51,6 @@ export async function resolveBranchScope(userId: string): Promise<BranchScope> {
     [userId]
   );
   const scopes = scopeRows as { scope_type: string; branch_id: string | null }[];
-
-  const orgWide = isOrgWide(roles);
-  if (orgWide && scopes.some(s => s.scope_type === 'all')) {
-    return { isSuperAdmin: false, branchIds: [] };
-  }
 
   let branchIds = scopes
     .map(s => s.branch_id)
@@ -166,7 +170,9 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
   }[];
 
   const orgWide = isOrgWide(roles);
-  const hasAllScope = isSuperAdmin || (orgWide && scopes.some(s => s.scope_type === 'all'));
+  // All-branch by role for the org-wide roles (owner ruling 2026-10-01). An assignment row can narrow a user
+  // but never widen one, so a non-org-wide user holding an 'all' row is still clamped below.
+  const hasAllScope = isSuperAdmin || orgWide;
 
   // 4. Build dimension scopes
   function buildDim(
