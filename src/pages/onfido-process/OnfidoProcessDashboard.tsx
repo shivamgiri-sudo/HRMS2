@@ -10,6 +10,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import type { ExcelSheetSpec } from "@/lib/dashboardExcelExport";
 import { ExportSheetContext, OnfidoExportButton, useRegisterExportSheet } from "./OnfidoExportButton";
 import OnfidoOutliersView from "./OnfidoOutliersView";
+import { etmTrendTitle, pickEtmQueueSeries } from "./etmQueueSeries";
 import OnfidoFreshnessStrip from "./OnfidoFreshnessStrip";
 import { useHierarchyFilters } from "./useHierarchyFilters";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -199,7 +200,7 @@ interface DocRawOverview {
   taskCount: KpiValue; avgAht: KpiValue; avgQueueTime: KpiValue; escalationRate: KpiValue;
 }
 interface DocRawTrendPoint { bucket: string; taskCount: number; avgAht: number | null }
-type DocRawDimension = "ims_client_name" | "tl_name" | "am_name" | "task_type" | "analyst_email";
+type DocRawDimension = "ims_client_name" | "tl_name" | "am_name" | "task_type" | "analyst_email" | "document_name";
 interface DocRawBreakdownRow { label: string; taskCount: number; avgAht: number | null; escalationRate: number | null }
 interface DocTaskTypeTrendPoint { bucket: string; byTaskType: Record<string, { taskCount: number; avgAht: number | null }> }
 
@@ -390,15 +391,19 @@ function DarkTooltip({ active, payload, label }: { active?: boolean; payload?: {
   );
 }
 
-function ChartLegendRow() {
+function ChartLegendRow({ only }: { only?: "doc" | "poa" } = {}) {
   return (
     <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 12, color: "var(--muted-strong)" }}>
-      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ width: 10, height: 10, borderRadius: 3, background: "var(--blue)" }} /> DOC
-      </span>
-      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ width: 10, height: 10, borderRadius: 3, background: "var(--teal)" }} /> POA
-      </span>
+      {only !== "poa" && (
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: "var(--blue)" }} /> DOC
+        </span>
+      )}
+      {only !== "doc" && (
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: "var(--teal)" }} /> POA
+        </span>
+      )}
     </div>
   );
 }
@@ -2038,7 +2043,7 @@ function EtmView({
 
   const ov = overviewQuery.data?.data;
   const q = ov ? ov[queue] : undefined;
-  const points = trendQuery.data?.data ?? [];
+  const points = pickEtmQueueSeries(trendQuery.data?.data ?? [], queue);
   const breakdown = breakdownQuery.data?.data ?? [];
   const queueLabel = queue === "doc" ? "DOC ETM" : "POA ETM";
 
@@ -2056,7 +2061,7 @@ function EtmView({
 
       <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 style={{ marginBottom: 0 }}>{queueLabel} · Month-wise Trend</h3>
+          <h3 style={{ marginBottom: 0 }}>{etmTrendTitle(queueLabel, granularity)}</h3>
           <PillGroup
             value={granularity} onChange={setGranularity}
             options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
@@ -2072,16 +2077,13 @@ function EtmView({
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} fontWeight={700} />
-              </Bar>
-              <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} fontWeight={700} />
+              <Bar dataKey="count" name={queue === "doc" ? "DOC" : "POA"} fill={queue === "doc" ? "var(--blue)" : "var(--teal)"} radius={[4, 4, 0, 0]} maxBarSize={40}>
+                <LabelList dataKey="count" position="inside" fill="#fff" fontSize={10} fontWeight={700} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
-        {points.length > 0 && <ChartLegendRow />}
+        {points.length > 0 && <ChartLegendRow only={queue} />}
         </div>
       </div>
 
@@ -2959,7 +2961,7 @@ function DocRawView({
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
-  const dimLabel = { ims_client_name: "Client", tl_name: "TL", am_name: "AM", task_type: "Task Type", analyst_email: "Analyst" }[dimension];
+  const dimLabel = { ims_client_name: "Client", tl_name: "TL", am_name: "AM", task_type: "Task Type", analyst_email: "Analyst", document_name: "Document" }[dimension];
 
   return (
     <div className="space-y-4">
@@ -3017,6 +3019,7 @@ function DocRawView({
             options={[
               { key: "ims_client_name", label: "Client Wise" }, { key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" },
               { key: "task_type", label: "Task Type Wise" }, { key: "analyst_email", label: "Analyst Wise" },
+              { key: "document_name", label: "Document Wise" },
             ]}
           />
         </div>
@@ -3819,6 +3822,24 @@ function ClientDocSection({
       )}
 
       <div style={{ overflowX: "auto", maxHeight: 420, marginTop: 8 }}>
+        <table className="oc-table">
+          <thead><tr><th>{granularity === "weekly" ? "Week" : "Month"}</th><th className="oc-right">Tasks</th><th className="oc-right">Avg AHT</th></tr></thead>
+          <tbody>
+            {points.length === 0 && <tr className="oc-empty-row"><td colSpan={3}>{seriesQuery.isLoading ? "Loading…" : "No data"}</td></tr>}
+            {points.map((p) => (
+              <tr key={p.bucket}>
+                <td>{p.bucket}</td>
+                <td className="oc-right">{p.taskCount.toLocaleString("en-IN")}</td>
+                <td className="oc-right">{p.avgAht !== null ? `${p.avgAht}s` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="oc-card-sub" style={{ marginTop: 6 }}>{granularity === "weekly" ? "Week-wise" : "Month-wise"} Tasks and Avg AHT for {scopeText} — same series as the chart above.</div>
+
+      <div className="oc-card-sub" style={{ marginTop: 12, fontWeight: 700 }}>{noun} ranking (all {noun.toLowerCase()}s, selected period)</div>
+      <div style={{ overflowX: "auto", maxHeight: 420, marginTop: 4 }}>
         <table className="oc-table">
           <thead><tr><th>{noun} Name</th><th className="oc-right">Tasks</th><th className="oc-right">Avg AHT</th></tr></thead>
           <tbody>
