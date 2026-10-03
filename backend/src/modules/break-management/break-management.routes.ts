@@ -36,6 +36,21 @@ breakManagementRouter.get("/dashboard", h(async (req, res) => {
   return res.json({ success: true, data });
 }));
 
+// Shared per-employee break summary for other pages. Night-shift aware (each employee on their own working date).
+breakManagementRouter.get("/summary", h(async (req, res) => {
+  const query = z.object({
+    employee_ids: z.string().min(1).max(8000),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    branch_id: z.string().optional(),
+  }).parse(req.query);
+  const data = await breakManagementService.getEmployeeBreakSummaries({
+    employee_ids: query.employee_ids.split(","),
+    date: query.date ?? null,
+    branch_id: query.branch_id ?? null,
+  });
+  return res.json({ success: true, data });
+}));
+
 breakManagementRouter.get("/reports", h(async (req, res) => {
   const query = z.object({
     date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),

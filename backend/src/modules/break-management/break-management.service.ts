@@ -2142,6 +2142,71 @@ export const breakManagementService = {
     };
   },
 
+  /**
+   * Shared break summary for other pages (attendance, roster, team views, dashboards).
+   * Night-shift aware: each employee is summarised for THEIR working date unless a date is forced.
+   * Scoped by branch_id when given (the router pins non-org-wide callers to their own branch).
+   */
+  async getEmployeeBreakSummaries(input: { employee_ids: string[]; date?: string | null; branch_id?: string | null }) {
+    const ids = Array.from(new Set(input.employee_ids.map(String).filter(Boolean))).slice(0, 200);
+    if (ids.length === 0) return {};
+    const placeholders = ids.map(() => "?").join(", ");
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, branch_id, process_id FROM employees
+        WHERE id IN (${placeholders})${input.branch_id ? " AND branch_id = ?" : ""}`,
+      input.branch_id ? [...ids, input.branch_id] : ids,
+    );
+    const employees = empRows as any[];
+    await loadShiftMasters();
+
+    const dateByEmployee = new Map<string, string>();
+    for (const emp of employees) {
+      dateByEmployee.set(String(emp.id), await resolveShiftDateSmart(String(emp.id), input.date ?? null));
+    }
+    const dates = Array.from(new Set(dateByEmployee.values()));
+    const [sessionRows] = employees.length === 0 ? [[] as RowDataPacket[]] : await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, shift_date, status, break_start_time, COALESCE(duration_minutes, 0) AS duration_minutes
+         FROM break_sessions
+        WHERE employee_id IN (${employees.map(() => "?").join(", ")})
+          AND shift_date IN (${dates.map(() => "?").join(", ")})
+          AND status <> 'CANCELLED'`,
+      [...employees.map((emp) => emp.id), ...dates],
+    );
+
+    const settingsCache = new Map<string, BreakSettingsRow>();
+    const nowStamp = currentIstDateTime().dateTime;
+    const result: Record<string, {
+      shift_date: string; break_count: number; completed_break_minutes: number; active_break_minutes: number;
+      total_break_minutes: number; on_break: boolean; active_break_since: string | null;
+      daily_limit_minutes: number; exceeded: boolean;
+    }> = {};
+
+    for (const emp of employees) {
+      const id = String(emp.id);
+      const shiftDate = dateByEmployee.get(id)!;
+      const key = `${emp.branch_id ?? ""}|${emp.process_id ?? ""}`;
+      if (!settingsCache.has(key)) settingsCache.set(key, await getSettings(emp.branch_id ?? null, emp.process_id ?? null));
+      const settings = settingsCache.get(key)!;
+      const mine = (sessionRows as any[]).filter((row) => String(row.employee_id) === id && String(row.shift_date).slice(0, 10) === shiftDate);
+      const active = mine.find((row) => row.status === "ACTIVE");
+      const completed = mine.filter((row) => row.status !== "ACTIVE").reduce((sum, row) => sum + Number(row.duration_minutes ?? 0), 0);
+      const activeMinutes = active?.break_start_time ? minutesBetween(String(active.break_start_time), nowStamp).minutes : 0;
+      const limit = Number(settings.daily_total_allowed_minutes ?? HARD_MAX_DAILY_BREAK_MINUTES);
+      result[id] = {
+        shift_date: shiftDate,
+        break_count: mine.length,
+        completed_break_minutes: completed,
+        active_break_minutes: activeMinutes,
+        total_break_minutes: completed + activeMinutes,
+        on_break: Boolean(active),
+        active_break_since: active?.break_start_time ? String(active.break_start_time) : null,
+        daily_limit_minutes: limit,
+        exceeded: completed + activeMinutes > limit,
+      };
+    }
+    return result;
+  },
+
   async getDashboard(filters: { date?: string; branch_id?: string; process_id?: string }) {
     const shiftDate = resolveShiftDate(filters.date ?? null);
     const params: unknown[] = [shiftDate];
