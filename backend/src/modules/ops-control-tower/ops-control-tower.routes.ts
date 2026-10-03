@@ -8,6 +8,7 @@ import {
   resolveDashboardScopeForRequest,
 } from "../../shared/dashboardScope.js";
 import { blockAllowedForPayrollOnly, scopeSummaryToBranches } from "./ops-control-tower.logic.js";
+import { cachedSummary } from "./ops-summary-cache.js";
 import { hasRole } from "../../shared/accessGuard.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
@@ -122,7 +123,9 @@ opsControlTowerRouter.get("/", requireRole(...VIEW_ROLES), async (req, res) => {
       return;
     }
     const allowed = await allowedBranchIds(req);
-    res.json(scopeSummaryToBranches(await getOpsControlTowerSummary(dateParam ?? todayIST()), allowed));
+    const date = dateParam ?? todayIST();
+    // Cached org-wide; scoping to the caller's branches happens on the cached copy, never inside it.
+    res.json(scopeSummaryToBranches(await cachedSummary(date, () => getOpsControlTowerSummary(date)), allowed));
   } catch (err) {
     fail(res, err, "load the ops control tower");
   }

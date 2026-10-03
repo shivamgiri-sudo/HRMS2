@@ -261,6 +261,13 @@ export default function OpsControlTowerPage() {
           </Button>
         </div>
 
+        {query.isLoading && !data && (
+          <div role="status" aria-busy="true" className="flex items-center gap-3 rounded-lg border bg-white p-5 text-sm text-slate-600">
+            <RefreshCw className="h-4 w-4 animate-spin" aria-hidden />
+            <span>Loading branch data… the first load of the day can take up to a minute; after that it opens instantly.</span>
+          </div>
+        )}
+
         {query.isError && !data && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             {query.error instanceof Error ? query.error.message : "Could not load the ops control tower."}
