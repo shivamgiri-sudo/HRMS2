@@ -7,6 +7,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./onfido-process-dashboard.service.js";
 import * as clientDocSeries from "./onfido-client-doc-series.service.js";
 import { ensureDocTaskTypeColumn } from "./onfido-doc-task-type-column.js";
+import { getAuditSamplingReport } from "./onfido-audit-sampling.service.js";
 import { onfidoResponseCache } from "./onfido-response-cache.js";
 import {
   streamAttritionExitsCsv,
@@ -1243,7 +1244,7 @@ router.get(
   requireRole(...VIEWER_ROLES),
   h(async (req, res) => {
     const q = req.query as Record<string, string | undefined>;
-    const data = await svc.getAuditSampling(
+    const data = await getAuditSamplingReport(
       {
         from: q.from,
         to: q.to,

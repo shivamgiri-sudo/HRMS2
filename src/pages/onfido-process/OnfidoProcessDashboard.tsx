@@ -210,7 +210,7 @@ interface PoaOverview {
   classificationErrorRate: KpiValue; extractionErrorRate: KpiValue; dataComparisonErrorRate: KpiValue;
 }
 interface PoaTrendPoint { bucket: string; taskCount: number }
-type PoaDimension = "tl_name" | "am_name";
+type PoaDimension = "tl_name" | "am_name" | "aon" | "client";
 interface PoaBreakdownRow { label: string; taskCount: number; avgAht: number | null; errorRate: number | null }
 type PoaEntityDimension = "tl_name" | "am_name" | "analyst_email";
 interface PoaEntityMonthCell { taskCount: number; avgAht: number | null; poaErrPct: number | null; extPoaErrPct: number | null }
@@ -234,7 +234,7 @@ interface ClientDocRecordRow extends RawRecord { source_table: "ONFIDO_DOC_RAW" 
 
 interface PoaExternalOverview { taskCount: KpiValue; avgAht: KpiValue; errorRate: KpiValue; distinctClients: KpiValue }
 interface PoaExternalTrendPoint { bucket: string; taskCount: number; errorCount: number }
-type PoaExternalDimension = "ims_client_name" | "tl_name" | "am_name" | "location";
+type PoaExternalDimension = "ims_client_name" | "tl_name" | "am_name" | "aon" | "document";
 interface PoaExternalBreakdownRow { label: string; taskCount: number; avgAht: number | null; errorRate: number | null }
 
 interface GdMcnSlaOverview {
@@ -3057,7 +3057,7 @@ function PoaView({
   });
   const breakdownQuery = useQuery({
     queryKey: ["onfido-process", "poa-breakdown", range, dimension, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: PoaBreakdownRow[] }>(`/api/onfido-process/poa/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
+    queryFn: () => hrmsApi.get<{ data: PoaBreakdownRow[] }>(`/api/onfido-process/poa-pages/internal-breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
   });
   // Month-wise "Task & AHT + Int/Ext Err%" section (2026-09-17 feedback, POA page)
   // — Ext POA Err% comes from the separate POA External Dashboard table.
@@ -3100,7 +3100,9 @@ function PoaView({
   const points = trendQuery.data?.data ?? [];
   const ahtPoints = ahtTrendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
-  const dimLabel = { tl_name: "TL", am_name: "AM" }[dimension];
+  const dimLabel = { tl_name: "TL", am_name: "AM", aon: "AON", client: "Client" }[dimension];
+  // Raw-report drill-down columns that exist on onfido_poa_raw; AON lives only inside raw_data there.
+  const drillColumn = ({ tl_name: "tl_name", am_name: "am_name", client: "ims_client_name" } as Record<string, string>)[dimension];
   const poaMonthlyErrPct = useMemo(() => {
     const byBucket = new Map<string, { bucket: string; intErrPct: number | null; extErrPct: number | null }>();
     for (const r of poaQualityTrendQuery.data?.data ?? []) {
@@ -3326,17 +3328,20 @@ function PoaView({
           <PillGroup
             value={dimension}
             onChange={setDimension}
-            options={[{ key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" }]}
+            options={[
+              { key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" },
+              { key: "aon", label: "AON Wise" }, { key: "client", label: "Client Wise" },
+            ]}
           />
         </div>
-        <div className="oc-card-sub">Volume from POA Raw + Trial, error rate from POA Quality. Click a row for the raw POA reports behind it.</div>
+        <div className="oc-card-sub">Workload and Avg AHT from POA Raw, Error % from POA Quality (errors ÷ audits).{drillColumn ? " Click a row for the raw POA reports behind it." : " AON Error % is attributed through each analyst's AON."}</div>
         <div style={{ overflowX: "auto" }}>
           <table className="oc-table">
-            <thead><tr><th>{dimLabel}</th><th className="oc-right">Reports</th><th className="oc-right">Avg AHT</th><th className="oc-right">Error Rate</th></tr></thead>
+            <thead><tr><th>{dimLabel}</th><th className="oc-right">Workload (Reports)</th><th className="oc-right">Avg AHT</th><th className="oc-right">Error %</th></tr></thead>
             <tbody>
               {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
               {breakdown.map((r) => (
-                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label, column: dimension })}>
+                <tr key={r.label} className={drillColumn ? "oc-row-click" : undefined} onClick={drillColumn ? () => setDrilldown({ label: r.label, column: drillColumn }) : undefined}>
                   <td>{r.label}</td>
                   <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
                   <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
@@ -3769,13 +3774,14 @@ function PoaExternalView({
   });
   const breakdownQuery = useQuery({
     queryKey: ["onfido-process", "poa-external-breakdown", range, dimension, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: PoaExternalBreakdownRow[] }>(`/api/onfido-process/poa-external/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
+    queryFn: () => hrmsApi.get<{ data: PoaExternalBreakdownRow[] }>(`/api/onfido-process/poa-pages/external-breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
   });
 
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
-  const dimLabel = { ims_client_name: "Client", tl_name: "TL", am_name: "AM", location: "Location" }[dimension];
+  const dimLabel = { ims_client_name: "Client", tl_name: "TL", am_name: "AM", aon: "AON", document: "Document" }[dimension];
+  const drillColumn = ({ ims_client_name: "ims_client_name", tl_name: "tl_name", am_name: "am_name", aon: "aon_bucket" } as Record<string, string>)[dimension];
 
   return (
     <div className="space-y-4">
@@ -3825,18 +3831,19 @@ function PoaExternalView({
             onChange={setDimension}
             options={[
               { key: "ims_client_name", label: "Client Wise" }, { key: "tl_name", label: "TL Wise" },
-              { key: "am_name", label: "AM Wise" }, { key: "location", label: "Location" },
+              { key: "am_name", label: "AM Wise" }, { key: "aon", label: "AON Wise" },
+              { key: "document", label: "Document Wise" },
             ]}
           />
         </div>
-        <div className="oc-card-sub">Top 50 by report count. Click a row for the raw POA External reports behind it.</div>
+        <div className="oc-card-sub">Reports (tasks), Avg AHT and Error Rate per {dimLabel.toLowerCase()}.{drillColumn ? " Click a row for the raw POA External reports behind it." : ""}</div>
         <div style={{ overflowX: "auto" }}>
           <table className="oc-table">
-            <thead><tr><th>{dimLabel}</th><th className="oc-right">Reports</th><th className="oc-right">Avg AHT</th><th className="oc-right">Error Rate</th></tr></thead>
+            <thead><tr><th>{dimLabel}</th><th className="oc-right">Reports / Tasks</th><th className="oc-right">Avg AHT</th><th className="oc-right">Error Rate</th></tr></thead>
             <tbody>
               {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
               {breakdown.map((r) => (
-                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label })}>
+                <tr key={r.label} className={drillColumn ? "oc-row-click" : undefined} onClick={drillColumn ? () => setDrilldown({ label: r.label }) : undefined}>
                   <td>{r.label}</td>
                   <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
                   <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
@@ -3853,7 +3860,7 @@ function PoaExternalView({
           open={!!drilldown}
           title={`POA External — ${dimLabel}`}
           tableKey="ONFIDO_POA_EXTERNAL_RAW"
-          filterColumn={dimension}
+          filterColumn={drillColumn ?? dimension}
           filterValue={drilldown.label}
           range={range}
           onOpenChange={(v) => { if (!v) setDrilldown(null); }}
@@ -4348,8 +4355,17 @@ type DateRange = { from: string; to: string };
 const AUDIT_PAGE_SIZE = 100;
 
 interface AuditSamplingRow {
-  client: string; documentType: string; taskType: string;
-  totalAudited: number; errors: number; errPct: number | null; avgAht: number | null;
+  queue: "DOC" | "POA"; client: string; documentType: string; taskType: string;
+  tasksReceived: number; audits: number; samplingPct: number | null; errors: number; errPct: number | null;
+}
+interface AuditTaskTypeRow {
+  taskType: string; tasksReceived: number; audits: number; samplingPct: number | null; errors: number; errPct: number | null;
+}
+interface AuditPeriodRow {
+  queue: "DOC" | "POA"; period: string; tasksReceived: number; audits: number; samplingPct: number | null; errors: number; errPct: number | null;
+}
+interface AuditSamplingResponse {
+  rows: AuditSamplingRow[]; taskTypes: AuditTaskTypeRow[]; periods: AuditPeriodRow[]; untracedDocAudits: number;
 }
 
 function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tlFilter: string; amFilter: string }) {
@@ -4367,17 +4383,19 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
 
   const q = useQuery({
     queryKey: ["onfido-process", "audit-sampling", qs],
-    queryFn: () => hrmsApi.get<{ data: AuditSamplingRow[] }>(`/api/onfido-process/audit-sampling?${qs}`),
+    queryFn: () => hrmsApi.get<{ data: AuditSamplingResponse }>(`/api/onfido-process/audit-sampling?${qs}`),
   });
 
-  const rows = q.data?.data ?? [];
+  const data = q.data?.data;
+  const rows = data?.rows ?? [];
+  const taskTypes = data?.taskTypes ?? [];
+  const periods = data?.periods ?? [];
   const clients = [...new Set(rows.map((r) => r.client))].sort();
   const docTypes = [...new Set(rows.map((r) => r.documentType))].sort();
 
-  const filtered = rows.filter((r) => (!clientFilter || r.client === clientFilter) && (!docTypeFilter || r.documentType === docTypeFilter));
-
-  // The API returns one row per client x document type x task type (thousands). Render a page at a
-  // time; the Excel export still gets every filtered row through the export registry.
+  // The API returns one row per queue x client x document type x task type (thousands). Render a page at a
+  // time; the Excel export still gets every row through the export registry.
+  const filtered = rows;
   const [page, setPage] = useState(0);
   useEffect(() => { setPage(0); }, [range.from, range.to, tlFilter, amFilter, granularity, queueFilter, clientFilter, docTypeFilter]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / AUDIT_PAGE_SIZE));
@@ -4387,14 +4405,36 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
     name: "Audit Sampling",
     title: "Audit Sampling — DOC Check & POA",
     rows: filtered.map((r) => ({
+      "Queue": r.queue === "DOC" ? "DOC Check" : "POA",
       "Client": r.client, "Document Type": r.documentType, "Task Type": r.taskType,
-      "Audited": r.totalAudited, "Errors": r.errors, "Error %": r.errPct, "Avg AHT (s)": r.avgAht,
+      "Total Tasks Received": r.tasksReceived, "Audits": r.audits, "Sampling %": r.samplingPct,
+      "Errors": r.errors, "Error %": r.errPct,
     })),
   }), [filtered]);
   useRegisterExportSheet(exportSheet);
+  const taskTypeSheet = useMemo<ExcelSheetSpec | null>(() => (taskTypes.length === 0 ? null : {
+    name: "DOC Check Task Type Wise",
+    title: "Audit Sampling — DOC Check Task Type Wise",
+    rows: taskTypes.map((r) => ({
+      "Task Type": r.taskType, "Tasks Received": r.tasksReceived, "Audits": r.audits,
+      "Sampling %": r.samplingPct, "Errors": r.errors, "Error %": r.errPct,
+    })),
+  }), [taskTypes]);
+  useRegisterExportSheet(taskTypeSheet);
+  const periodSheet = useMemo<ExcelSheetSpec | null>(() => (periods.length === 0 ? null : {
+    name: "Audit Sampling Period",
+    title: `Audit Sampling — ${granularity[0].toUpperCase() + granularity.slice(1)}`,
+    rows: periods.map((r) => ({
+      "Queue": r.queue === "DOC" ? "DOC Check" : "POA", "Period": r.period,
+      "Tasks Received": r.tasksReceived, "Audits": r.audits, "Sampling %": r.samplingPct,
+      "Errors": r.errors, "Error %": r.errPct,
+    })),
+  }), [periods, granularity]);
+  useRegisterExportSheet(periodSheet);
 
   const errC = (v: number | null) => qualityPctStyle(v);
-
+  const fmtPct = (v: number | null) => (v !== null ? `${v.toFixed(1)}%` : "—");
+  const n = (v: number) => v.toLocaleString("en-IN");
 
   return (
     <div className="space-y-4">
@@ -4411,6 +4451,7 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
             </div>
           </div>
         </div>
+        <div className="oc-card-sub">Sampling % = Audits ÷ Tasks Received. DOC Check is internal QC only (external DOC audits are not included).</div>
 
         <div className="oc-filterbar" style={{ marginTop: 12 }}>
           <div className="oc-field">
@@ -4425,6 +4466,7 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
             <label>Client</label>
             <select className="oc-select" style={{ width: 180 }} value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}>
               <option value="">All Clients</option>
+              {clientFilter && !clients.includes(clientFilter) && <option value={clientFilter}>{clientFilter}</option>}
               {clients.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
@@ -4432,6 +4474,7 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
             <label>Document Type</label>
             <select className="oc-select" style={{ width: 200 }} value={docTypeFilter} onChange={(e) => setDocTypeFilter(e.target.value)}>
               <option value="">All Document Types</option>
+              {docTypeFilter && !docTypes.includes(docTypeFilter) && <option value={docTypeFilter}>{docTypeFilter}</option>}
               {docTypes.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
@@ -4448,10 +4491,11 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
                   <th>Client</th>
                   <th>Document Type</th>
                   <th>Task Type</th>
-                  <th className="oc-right">Audited</th>
+                  <th className="oc-right">Total Tasks Received</th>
+                  <th className="oc-right">Audits</th>
+                  <th className="oc-right">Sampling %</th>
                   <th className="oc-right">Errors</th>
                   <th className="oc-right">Error %</th>
-                  <th className="oc-right">Avg AHT (s)</th>
                 </tr>
               </thead>
               <tbody>
@@ -4460,10 +4504,11 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
                     <td>{r.client}</td>
                     <td>{r.documentType}</td>
                     <td>{r.taskType}</td>
-                    <td className="oc-right">{r.totalAudited.toLocaleString("en-IN")}</td>
-                    <td className="oc-right">{r.errors.toLocaleString("en-IN")}</td>
-                    <td className="oc-right" style={errC(r.errPct)}>{r.errPct !== null ? `${r.errPct.toFixed(1)}%` : "—"}</td>
-                    <td className="oc-right">{r.avgAht !== null ? r.avgAht.toFixed(0) : "—"}</td>
+                    <td className="oc-right">{n(r.tasksReceived)}</td>
+                    <td className="oc-right">{n(r.audits)}</td>
+                    <td className="oc-right">{fmtPct(r.samplingPct)}</td>
+                    <td className="oc-right">{n(r.errors)}</td>
+                    <td className="oc-right" style={errC(r.errPct)}>{fmtPct(r.errPct)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -4478,9 +4523,82 @@ function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tl
                 <button type="button" className="oc-pill-btn" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)}>Next</button>
               </span>
             </div>
+            {(data?.untracedDocAudits ?? 0) > 0 && queueFilter !== "POA" && (
+              <div style={{ marginTop: 8, fontSize: 11, color: "var(--muted)" }}>
+                {n(data!.untracedDocAudits)} DOC Check audit(s) could not be traced to a source task type and are not listed.
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {queueFilter !== "POA" && taskTypes.length > 0 && (
+        <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+          <h3>DOC Check — Task Type Wise</h3>
+          <div className="oc-card-sub">Valid source task types only (blank and task types with no tasks received are not shown).</div>
+          <div style={{ overflowX: "auto" }}>
+            <table className="oc-table" data-export-skip="true">
+              <thead>
+                <tr>
+                  <th>Task Type</th>
+                  <th className="oc-right">Tasks Received</th>
+                  <th className="oc-right">Audits</th>
+                  <th className="oc-right">Sampling %</th>
+                  <th className="oc-right">Errors</th>
+                  <th className="oc-right">Error %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {taskTypes.map((r) => (
+                  <tr key={r.taskType}>
+                    <td>{r.taskType}</td>
+                    <td className="oc-right">{n(r.tasksReceived)}</td>
+                    <td className="oc-right">{n(r.audits)}</td>
+                    <td className="oc-right">{fmtPct(r.samplingPct)}</td>
+                    <td className="oc-right">{n(r.errors)}</td>
+                    <td className="oc-right" style={errC(r.errPct)}>{fmtPct(r.errPct)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {periods.length > 0 && (
+        <div className="oc-card" style={{ "--hc": "var(--orange)" } as React.CSSProperties}>
+          <h3>{granularity[0].toUpperCase() + granularity.slice(1)} Sampling</h3>
+          <div className="oc-card-sub">All clients and document types for the selected TL / AM and date range.</div>
+          <div style={{ overflowX: "auto", maxHeight: 420 }}>
+            <table className="oc-table" data-export-skip="true">
+              <thead>
+                <tr>
+                  <th>Queue</th>
+                  <th>{granularity === "daily" ? "Day" : granularity === "weekly" ? "Week Commencing" : "Month"}</th>
+                  <th className="oc-right">Tasks Received</th>
+                  <th className="oc-right">Audits</th>
+                  <th className="oc-right">Sampling %</th>
+                  <th className="oc-right">Errors</th>
+                  <th className="oc-right">Error %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {periods.map((r) => (
+                  <tr key={`${r.queue}-${r.period}`}>
+                    <td>{r.queue === "DOC" ? "DOC Check" : "POA"}</td>
+                    <td>{r.period}</td>
+                    <td className="oc-right">{n(r.tasksReceived)}</td>
+                    <td className="oc-right">{n(r.audits)}</td>
+                    <td className="oc-right">{fmtPct(r.samplingPct)}</td>
+                    <td className="oc-right">{n(r.errors)}</td>
+                    <td className="oc-right" style={errC(r.errPct)}>{fmtPct(r.errPct)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
