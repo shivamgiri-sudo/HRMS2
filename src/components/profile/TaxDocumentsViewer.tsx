@@ -48,7 +48,9 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
     queryKey: ["my-tax-documents", employeeId],
     queryFn: async () => {
       const res = await hrmsApi.get<{success:boolean;data:any}>(`/api/employee-docs/${employeeId}`);
-      return res.data ?? [];
+      // /api/employee-docs returns every uploaded document (KYC, contracts...). This panel is for
+      // tax paperwork only; the rest are managed by HR and are not offered here.
+      return ((res.data ?? []) as Array<{ document_type?: string }>).filter((d) => TAX_DOCUMENT_TYPES.includes(String(d.document_type ?? "").toLowerCase()));
     },
     enabled: !!employeeId,
   });
@@ -140,26 +142,31 @@ export function TaxDocumentsViewer({ employeeId }: TaxDocumentsViewerProps) {
                       {format(new Date(doc.uploaded_at), "MMM d, yyyy")}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setViewingDocument(doc)}
-                          title="View document"
-                        >
-                          <Eye className="h-4 w-4 mr-1" />
-                          View
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDownload(doc.file_url, doc.document_name)}
-                          title="Download document"
-                        >
-                          <Download className="h-4 w-4 mr-1" />
-                          Download
-                        </Button>
-                      </div>
+                      {doc.file_url ? (
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setViewingDocument(doc)}
+                            title="View document"
+                          >
+                            <Eye className="h-4 w-4 mr-1" />
+                            View
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDownload(doc.file_url, doc.document_name)}
+                            title="Download document"
+                          >
+                            <Download className="h-4 w-4 mr-1" />
+                            Download
+                          </Button>
+                        </div>
+                      ) : (
+                        // The server withholds stored files from the owner: show status, not dead buttons.
+                        <Badge variant={doc.verified ? "default" : "outline"}>{doc.verified ? "Verified" : "Under review"}</Badge>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

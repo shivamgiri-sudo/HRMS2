@@ -117,3 +117,24 @@ describe("employee Documents tab", () => {
     expect(out).not.toContain("Pending from you");
   });
 });
+
+import { TaxDocumentsViewer } from "@/components/profile/TaxDocumentsViewer";
+
+describe("Tax Documents panel", () => {
+  const seed = (rows: unknown[]) => {
+    const qc = new QueryClient();
+    qc.setQueryData(["my-tax-documents", "e1"], rows);
+    return renderToStaticMarkup(<QueryClientProvider client={qc}><TaxDocumentsViewer employeeId="e1" /></QueryClientProvider>);
+  };
+  it("shows status instead of dead View/Download buttons when the server withholds the file", () => {
+    const out = seed([{ id: "t1", document_name: "Form 16 FY26", document_type: "form_16", file_url: null, verified: 0, uploaded_at: "2026-06-01T00:00:00Z" }]);
+    expect(out).toContain("Form 16 FY26");
+    expect(out).toContain("Under review");
+    expect(out).not.toContain("View document");
+  });
+  it("keeps View/Download when a file url is present (HR view)", () => {
+    const out = seed([{ id: "t1", document_name: "Form 16 FY26", document_type: "form_16", file_url: "/api/files/employee-documents/x.pdf", verified: 1, uploaded_at: "2026-06-01T00:00:00Z" }]);
+    expect(out).toContain("View document");
+    expect(out).toContain("Download document");
+  });
+});
