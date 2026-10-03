@@ -13,6 +13,7 @@ import {
   streamRecordsCsv,
 } from "./onfido-export.service.js";
 import { mountPoaPageRoutes } from "./onfido-poa-pages.routes.js";
+import { mountQualityPageRoutes } from "./onfido-quality-pages.routes.js";
 import { mountOverviewReportRoutes } from "./onfido-overview-report.routes.js";
 import { mountOutlierRoutes } from "./onfido-outlier.routes.js";
 import type { RowDataPacket } from "mysql2";
@@ -285,6 +286,9 @@ router.get(
 
 // POA Internal / External / Trail pages in the reference dashboard format (2026-09-18).
 mountPoaPageRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
+
+// Quality tab pages: Overall / Internal / External (internal and external kept apart).
+mountQualityPageRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
 
 // Overview / Analyst Performance / Utilization formats and their WFM inputs (2026-09-23).
 mountOverviewReportRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
