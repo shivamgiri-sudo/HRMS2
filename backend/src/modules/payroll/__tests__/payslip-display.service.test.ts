@@ -54,8 +54,10 @@ describe("payslip display service", () => {
         ],
         [],
       ])
-      // getPayslip() also fetches financial-year-to-date component totals
-      // (getYtdComponents) once run_month is known — a third db.execute call.
+      // getPayslip() also fetches financial-year-to-date totals once run_month is known:
+      // component sums, the months those cover, and the salary-line fallback for the rest.
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []]);
 
     const { payslipService } = await import("../payslip.service.js");
