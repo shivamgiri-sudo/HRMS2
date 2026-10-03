@@ -53,8 +53,8 @@ export function OpsAttendanceActions({ branchId, branchName, rows, canClose, can
   const close = async () => {
     setBusy(true);
     try {
-      const out = await hrmsApi.post<{ closed: number }>(`${BASE}/attendance/close`, { branchId, reason: reason.trim(), issueTypes: chosenTypes });
-      toast.success(`${out.closed} old item${out.closed === 1 ? "" : "s"} closed as reviewed`);
+      const out = await hrmsApi.post<{ closed: number; leftOpen: number; closableMonths: string[] }>(`${BASE}/attendance/close`, { branchId, reason: reason.trim(), issueTypes: chosenTypes });
+      toast.success(`${out.closed} old item${out.closed === 1 ? "" : "s"} closed as reviewed${out.leftOpen > 0 ? ` · ${out.leftOpen} older item${out.leftOpen === 1 ? "" : "s"} left open because payroll for their month is not closed yet` : ""}`);
       setPanel(null); setReason(""); setConfirmClose(false);
       refreshAll();
     } catch (e) {
@@ -113,7 +113,7 @@ export function OpsAttendanceActions({ branchId, branchName, rows, canClose, can
         <div className="space-y-2 rounded-md border bg-white p-3">
           <p className="font-semibold text-slate-800">Close old items in {branchName}</p>
           <p className="text-slate-600">
-            For items older than {AUTO_HEAL_DAYS} days that need no further action (for example a month payroll has already closed).
+            For items older than {AUTO_HEAL_DAYS} days in a month whose payroll is already closed (locked or finalized). Items in a month that payroll is still working on are always left open.
             This closes <strong>every</strong> such open item of the kinds ticked below in this branch, not only the ones listed. Your name and reason are recorded.
           </p>
           <div className="flex flex-wrap gap-x-4 gap-y-1">

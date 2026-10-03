@@ -56,7 +56,7 @@ const post = (path: string, body: unknown) => request(app).post(`/api/ops-contro
 beforeEach(() => {
   Object.values(m).forEach((f) => typeof f === "function" && (f as any).mockReset?.());
   m.allowed = null; m.fullTower = true; m.roles = ["hr"];
-  m.close.mockResolvedValue({ ok: true, closed: 12 });
+  m.close.mockResolvedValue({ ok: true, closed: 12, leftOpen: 3, closableMonths: ["2026-06", "2026-07"] });
   m.backfill.mockResolvedValue({ ok: true, data: { found: 5, processed: 5, failed: 0, payrollRunsInRange: [] } });
   m.health.mockResolvedValue({ generatedAt: "x", jobs: [], days: [], lowDays: 0, coverage: [
     { branchId: B1, branchName: "NOIDA", activeStaff: 10, days: [{ date: "d", records: 1, pct: 10, low: true }] },
@@ -88,9 +88,10 @@ describe("POST /attendance/close", () => {
     m.allowed = [B1];
     const r = await post("/attendance/close", { branchId: B1, reason: "Payroll closed for July" });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ closed: 12 });
+    expect(r.body).toEqual({ closed: 12, leftOpen: 3, closableMonths: ["2026-06", "2026-07"] });
     expect(m.close).toHaveBeenCalledWith({ branchId: B1, reason: "Payroll closed for July", actorId: "u1", issueTypes: undefined });
     expect(m.audit.mock.calls[0][0]).toMatchObject({ action_type: "ATTENDANCE_MISMATCH_CLOSED_AS_REVIEWED", entity_id: B1 });
+    expect(m.audit.mock.calls[0][0].change_summary).toMatchObject({ closed: 12, left_open: 3, months: ["2026-06", "2026-07"] });
   });
   it("refuses another branch, bad input, and roles that may not close", async () => {
     m.allowed = [B2];

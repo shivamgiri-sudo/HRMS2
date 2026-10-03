@@ -24,8 +24,30 @@ export function todayIst(): string {
 // ── Close as reviewed ────────────────────────────────────────────────────────────────────────
 
 export type CloseOutcome =
-  | { ok: true; closed: number }
+  | { ok: true; closed: number; leftOpen: number; closableMonths: string[] }
   | { ok: false; status: number; message: string };
+
+/** Payroll run states that mean the month is finished: its attendance can no longer change anyone's pay. */
+export const CLOSED_PAYROLL_STATUSES = ["locked", "finalized", "disbursed", "closed", "paid"];
+/** Runs in these states are ignored (they never went anywhere). */
+const IGNORED_PAYROLL_STATUSES = ["rejected", "cancelled"];
+
+/**
+ * Months whose attendance may be closed as reviewed: at least one payroll run is finished AND no run for that
+ * month is still open. A month with no run at all (payroll not started) or with a run still processing is NOT
+ * closable, because attendance gaps in it can still change what people are paid.
+ */
+export function closablePayrollMonths(runs: Array<{ month: string; status: string }>): string[] {
+  const closed = new Set<string>();
+  const open = new Set<string>();
+  for (const r of runs) {
+    const status = String(r.status ?? "").toLowerCase();
+    if (IGNORED_PAYROLL_STATUSES.includes(status)) continue;
+    if (CLOSED_PAYROLL_STATUSES.includes(status)) closed.add(r.month);
+    else open.add(r.month);
+  }
+  return [...closed].filter((m) => !open.has(m)).sort();
+}
 
 /**
  * Closes OLD open mismatch items for one branch as "reviewed, no action", recording who and why.
@@ -46,7 +68,24 @@ export async function closeOldAttendanceIssues(input: {
     return { ok: false, status: 400, message: "None of the chosen issue types can be closed here" };
   }
   const cutoff = addDays(input.today ?? todayIst(), -AUTO_HEAL_DAYS);
-  const params: unknown[] = [input.actorId, reason, input.branchId, cutoff];
+
+  // Only months whose payroll is finished. An August item while August payroll is still processing is a live
+  // pay problem, not history, and must not be hidden by a close.
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    `SELECT LEFT(CAST(run_month AS CHAR), 7) AS month, status FROM salary_prep_run WHERE run_month IS NOT NULL`,
+  );
+  const months = closablePayrollMonths((runRows as RowDataPacket[]).map((r) => ({ month: String(r.month), status: String(r.status) })));
+  const countOld = async (): Promise<number> => {
+    const [c] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM attendance_reconciliation_issue ari JOIN employees e ON e.id = ari.employee_id
+        WHERE ari.resolved_at IS NULL AND e.branch_id = ? AND e.active_status = 1 AND ari.issue_date < ?`,
+      [input.branchId, cutoff],
+    );
+    return Number((c as RowDataPacket[])[0]?.n ?? 0);
+  };
+  if (months.length === 0) return { ok: true, closed: 0, leftOpen: await countOld(), closableMonths: [] };
+
+  const params: unknown[] = [input.actorId, reason, input.branchId, cutoff, ...months];
   let typeSql = "";
   if (types.length > 0) { typeSql = ` AND ari.issue_type IN (${types.map(() => "?").join(",")})`; params.push(...types); }
   const [res] = await db.execute<ResultSetHeader>(
@@ -60,10 +99,11 @@ export async function closeOldAttendanceIssues(input: {
       WHERE ari.resolved_at IS NULL
         AND e.branch_id = ?
         AND e.active_status = 1
-        AND ari.issue_date < ?${typeSql}`,
+        AND ari.issue_date < ?
+        AND LEFT(CAST(ari.issue_date AS CHAR), 7) IN (${months.map(() => "?").join(",")})${typeSql}`,
     params,
   );
-  return { ok: true, closed: Number(res.affectedRows ?? 0) };
+  return { ok: true, closed: Number(res.affectedRows ?? 0), leftOpen: await countOld(), closableMonths: months };
 }
 
 // ── Backfill ─────────────────────────────────────────────────────────────────────────────────

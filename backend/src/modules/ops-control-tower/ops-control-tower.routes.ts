@@ -274,9 +274,9 @@ opsControlTowerRouter.post("/attendance/close", requireRole(...CLOSE_ROLES), asy
     void logSensitiveAction({
       actor_user_id: actorId, action_type: "ATTENDANCE_MISMATCH_CLOSED_AS_REVIEWED", module_key: "ops-control-tower",
       entity_type: "branch", entity_id: branchId,
-      change_summary: { closed: out.closed, issue_types: issueTypes ?? "all", reason: String(reason).slice(0, 200) }, req: req as any,
+      change_summary: { closed: out.closed, left_open: out.leftOpen, months: out.closableMonths, issue_types: issueTypes ?? "all", reason: String(reason).slice(0, 200) }, req: req as any,
     });
-    res.json({ closed: out.closed });
+    res.json({ closed: out.closed, leftOpen: out.leftOpen, closableMonths: out.closableMonths });
   } catch (err) {
     fail(res, err, "close the attendance items");
   }

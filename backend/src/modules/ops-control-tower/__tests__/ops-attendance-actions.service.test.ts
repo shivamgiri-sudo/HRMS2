@@ -5,11 +5,36 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute: (...a: unknown[]) => m.e
 vi.mock("../../../shared/timezone.js", () => ({ nowIST: () => "2026-10-03T16:00:00" }));
 vi.mock("../../wfm/attendance-heal.service.js", () => ({ healMissingAttendance: (...a: unknown[]) => m.heal(...a) }));
 
-const { closeOldAttendanceIssues, runBackfill, getSyncHealth } = await import("../ops-attendance-actions.service.js");
+const { closeOldAttendanceIssues, closablePayrollMonths, runBackfill, getSyncHealth } = await import("../ops-attendance-actions.service.js");
 
 beforeEach(() => { m.execute.mockReset(); m.heal.mockReset(); });
 
+describe("closablePayrollMonths", () => {
+  it("only months whose payroll is finished and has nothing still open", () => {
+    expect(closablePayrollMonths([
+      { month: "2026-06", status: "finalized" },
+      { month: "2026-07", status: "locked" },
+      { month: "2026-08", status: "processing" },
+    ])).toEqual(["2026-06", "2026-07"]);
+  });
+  it("a month with ANY run still open is not closable, even if another run is locked", () => {
+    expect(closablePayrollMonths([{ month: "2026-07", status: "locked" }, { month: "2026-07", status: "processing" }])).toEqual([]);
+  });
+  it("a month with no run, or only rejected / cancelled runs, is not closable", () => {
+    expect(closablePayrollMonths([{ month: "2026-09", status: "cancelled" }, { month: "2026-10", status: "rejected" }])).toEqual([]);
+    expect(closablePayrollMonths([])).toEqual([]);
+  });
+  it("a rejected run beside a locked one does not block the month", () => {
+    expect(closablePayrollMonths([{ month: "2026-07", status: "locked" }, { month: "2026-07", status: "rejected" }])).toEqual(["2026-07"]);
+  });
+  it("status matching is case-insensitive", () => {
+    expect(closablePayrollMonths([{ month: "2026-07", status: "LOCKED" }])).toEqual(["2026-07"]);
+  });
+});
+
 describe("closeOldAttendanceIssues", () => {
+  const RUNS = [[{ month: "2026-06", status: "finalized" }, { month: "2026-07", status: "locked" }, { month: "2026-08", status: "processing" }]];
+
   it("needs a real reason", async () => {
     for (const reason of ["", "  ", "no"]) {
       expect(await closeOldAttendanceIssues({ branchId: "b", reason, actorId: "u" })).toMatchObject({ ok: false, status: 400 });
@@ -17,28 +42,42 @@ describe("closeOldAttendanceIssues", () => {
     expect(await closeOldAttendanceIssues({ branchId: "b", reason: "x".repeat(501), actorId: "u" })).toMatchObject({ ok: false, status: 400 });
     expect(m.execute).not.toHaveBeenCalled();
   });
-  it("closes only items older than the 7-day automatic window, for active staff of that branch", async () => {
-    m.execute.mockResolvedValueOnce([{ affectedRows: 42 }]);
-    const out = await closeOldAttendanceIssues({ branchId: "b1", reason: "Payroll closed for July", actorId: "u1", today: "2026-10-03" });
-    expect(out).toEqual({ ok: true, closed: 42 });
-    const [sql, params] = m.execute.mock.calls[0];
+  it("closes only old items of active staff in months whose payroll is closed, and reports how many it left open", async () => {
+    m.execute.mockResolvedValueOnce(RUNS).mockResolvedValueOnce([{ affectedRows: 42 }]).mockResolvedValueOnce([[{ n: 900 }]]);
+    const out = await closeOldAttendanceIssues({ branchId: "b1", reason: "Payroll closed for the month", actorId: "u1", today: "2026-10-03" });
+    expect(out).toEqual({ ok: true, closed: 42, leftOpen: 900, closableMonths: ["2026-06", "2026-07"] });
+    const [sql, params] = m.execute.mock.calls[1];
     expect(String(sql)).toContain("ari.issue_date < ?");
     expect(String(sql)).toContain("e.active_status = 1");
     expect(String(sql)).toContain("ari.resolved_at IS NULL");
-    expect(params).toEqual(["u1", "Payroll closed for July", "b1", "2026-09-26"]);
+    expect(String(sql)).toContain("LEFT(CAST(ari.issue_date AS CHAR), 7) IN (?,?)");
+    expect(params).toEqual(["u1", "Payroll closed for the month", "b1", "2026-09-26", "2026-06", "2026-07"]);
+  });
+  it("August (payroll still processing) and September (no run yet) are never in the closable list", async () => {
+    m.execute.mockResolvedValueOnce(RUNS).mockResolvedValueOnce([{ affectedRows: 0 }]).mockResolvedValueOnce([[{ n: 0 }]]);
+    await closeOldAttendanceIssues({ branchId: "b1", reason: "reviewed by HR", actorId: "u1", today: "2026-10-03" });
+    const params = m.execute.mock.calls[1][1] as string[];
+    expect(params).not.toContain("2026-08");
+    expect(params).not.toContain("2026-09");
+  });
+  it("when no month is closed it closes nothing, writes nothing, and says how many remain", async () => {
+    m.execute.mockResolvedValueOnce([[{ month: "2026-08", status: "processing" }]]).mockResolvedValueOnce([[{ n: 300 }]]);
+    const out = await closeOldAttendanceIssues({ branchId: "b1", reason: "reviewed by HR", actorId: "u1", today: "2026-10-03" });
+    expect(out).toEqual({ ok: true, closed: 0, leftOpen: 300, closableMonths: [] });
+    expect(m.execute.mock.calls.some((c) => String(c[0]).includes("UPDATE attendance_reconciliation_issue"))).toBe(false);
   });
   it("uses an auto_fix_status value the ENUM allows ('skipped'), never a made-up one", async () => {
-    m.execute.mockResolvedValueOnce([{ affectedRows: 0 }]);
+    m.execute.mockResolvedValueOnce(RUNS).mockResolvedValueOnce([{ affectedRows: 0 }]).mockResolvedValueOnce([[{ n: 0 }]]);
     await closeOldAttendanceIssues({ branchId: "b1", reason: "reviewed by HR", actorId: "u1" });
-    const sql = String(m.execute.mock.calls[0][0]);
+    const sql = String(m.execute.mock.calls[1][0]);
     expect(sql).toContain("auto_fix_status = 'skipped'");
     expect(sql).not.toContain("closed_by_hr");
   });
   it("keeps only known issue types and refuses a list with none", async () => {
-    m.execute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    m.execute.mockResolvedValueOnce(RUNS).mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([[{ n: 0 }]]);
     await closeOldAttendanceIssues({ branchId: "b1", reason: "reviewed by HR", actorId: "u1", issueTypes: ["missing_adr", "'; DROP TABLE x; --"] });
-    expect(m.execute.mock.calls[0][1].slice(-1)).toEqual(["missing_adr"]);
-    expect(String(m.execute.mock.calls[0][0])).toContain("ari.issue_type IN (?)");
+    expect(m.execute.mock.calls[1][1].slice(-1)).toEqual(["missing_adr"]);
+    expect(String(m.execute.mock.calls[1][0])).toContain("ari.issue_type IN (?)");
     expect(await closeOldAttendanceIssues({ branchId: "b1", reason: "reviewed by HR", actorId: "u1", issueTypes: ["bogus"] })).toMatchObject({ ok: false, status: 400 });
   });
 });
