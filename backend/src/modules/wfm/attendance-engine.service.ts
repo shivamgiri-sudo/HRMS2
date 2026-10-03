@@ -484,9 +484,8 @@ export const attendanceEngineService = {
     let holidaySql = `
       SELECT lhm.id
       FROM leave_holiday_master lhm
-      WHERE lhm.holiday_date = ? AND lhm.active_status = 1
-        AND (lhm.branch_id IS NULL OR lhm.branch_id = ?)`;
-    const holidayParams: unknown[] = [date, branchId ?? null];
+      WHERE lhm.holiday_date = ? AND lhm.active_status = 1`;
+    const holidayParams: unknown[] = [date];
     if (dojExclusionEnabled && dateOfJoining) {
       holidaySql += ` AND lhm.holiday_date >= ?`;
       holidayParams.push(dateOfJoining);
@@ -508,16 +507,19 @@ export const attendanceEngineService = {
       holidaySql += ` AND lhm.holiday_date <= ?`;
       holidayParams.push(String(employmentEndDate).slice(0, 10));
     }
-    // Cost centre scope: if mapping exists, employee's cost centre must be mapped
+    // Branch / cost-centre scope (owner ruling 2026-10-03): a holiday with NO cost-centre mapping
+    // applies to its whole branch (or everyone when branch_id is NULL); a holiday WITH cost-centre
+    // mapping applies to exactly those cost centres, whatever branch the holiday row carries.
     holidaySql += `
         AND (
-          NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+          (NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+            AND (lhm.branch_id IS NULL OR lhm.branch_id = ?))
           OR EXISTS (
             SELECT 1 FROM holiday_cost_centre_mapping hccm
             WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = ?
           )
         )`;
-    holidayParams.push(costCentreId ?? null);
+    holidayParams.push(branchId ?? null, costCentreId ?? null);
     // Designation scope: if mapping exists, employee's designation must be mapped
     holidaySql += `
         AND (

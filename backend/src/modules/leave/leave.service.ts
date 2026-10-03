@@ -135,8 +135,10 @@ async function applyBalanceDeduction(
  * (attendance-engine.service.ts resolveOverridePriority, and the matching
  * classifier in shared/leaveChargeableDays.ts):
  *
- *   NOT EXISTS (any mapping row for this holiday)  => applies to everyone
- *   OR EXISTS  (a row matching the employee)       => applies to them
+ *   NOT EXISTS (any cost-centre row) => applies to the holiday's whole branch
+ *                                       (everyone when branch_id is NULL)
+ *   OR EXISTS  (a row matching the employee's cost centre) => applies to them,
+ *                                       whatever branch the holiday row carries
  *
  * So writing ZERO rows is meaningful — it is the "whole branch" case — and
  * writing rows is what narrows the holiday. The engine does not filter on

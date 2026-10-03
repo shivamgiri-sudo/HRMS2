@@ -729,8 +729,8 @@ const NON_WORKING_ASSIGNMENTS = new Set(["WEEK_OFF", "LEAVE", "HOLIDAY"]);
 const holidayAppliesSql = (dateCol: string): string => `EXISTS (
   SELECT 1 FROM leave_holiday_master lhm
    WHERE lhm.holiday_date = ${dateCol} AND lhm.active_status = 1
-     AND (lhm.branch_id IS NULL OR lhm.branch_id = e.branch_id)
-     AND (NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+     AND ((NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+           AND (lhm.branch_id IS NULL OR lhm.branch_id = e.branch_id))
           OR EXISTS (SELECT 1 FROM holiday_cost_centre_mapping hccm
                       WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = e.cost_centre_id))
      AND (NOT EXISTS (SELECT 1 FROM holiday_designation_mapping WHERE holiday_id = lhm.id)
