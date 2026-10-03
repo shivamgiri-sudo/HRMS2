@@ -37,6 +37,7 @@ router.get("/sbi-card-payout", requireRole(...PAYOUT_ROLES), h(async (req, res) 
     from: req.query.from ? String(req.query.from) : undefined,
     to: req.query.to ? String(req.query.to) : undefined,
     res: req.query.res, nm: req.query.nm, rb: req.query.rb,
+    segment: req.query.segment ? String(req.query.segment) : undefined, basis: req.query.basis ? String(req.query.basis) : undefined,
   });
   res.json({ success: true, data });
 }));

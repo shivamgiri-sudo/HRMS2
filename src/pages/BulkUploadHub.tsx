@@ -239,6 +239,7 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   SBI_CARD_DOWNTIME: "import_sbi_card_downtime_batch",
   SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch",
   SBI_CARD_APR: "import_sbi_card_apr_batch",
+  SBI_CARD_OUTCOME: "import_sbi_card_outcome_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {

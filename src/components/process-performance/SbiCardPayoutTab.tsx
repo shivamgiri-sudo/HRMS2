@@ -30,13 +30,15 @@ function Num({ label, value, onChange, hint, placeholder }: { label: string; val
 
 export function SbiCardPayoutTab({ from, to }: { from: string; to: string }) {
   const [res, setRes] = useState(""); const [nm, setNm] = useState(""); const [rb, setRb] = useState("");
+  const [segment, setSegment] = useState(""); const [basis, setBasis] = useState("");
   const [applied, setApplied] = useState({ res: "", nm: "", rb: "" });
   useEffect(() => { const t = setTimeout(() => setApplied({ res, nm, rb }), 350); return () => clearTimeout(t); }, [res, nm, rb]);
 
   const q = useQuery({
-    queryKey: ["sbi-card-payout", from, to, applied.res, applied.nm, applied.rb],
+    queryKey: ["sbi-card-payout", from, to, applied.res, applied.nm, applied.rb, segment, basis],
     queryFn: () => {
       const p = new URLSearchParams({ from, to });
+      if (segment) p.set("segment", segment); if (basis) p.set("basis", basis);
       if (applied.res !== "") p.set("res", applied.res); if (applied.nm !== "") p.set("nm", applied.nm); if (applied.rb !== "") p.set("rb", applied.rb);
       return hrmsApi.get<HrmsEnvelope<SbiPayoutData>>(`${API}?${p.toString()}`);
     },
@@ -58,6 +60,9 @@ export function SbiCardPayoutTab({ from, to }: { from: string; to: string }) {
   const s = d.scenario; const t = d.atTarget; const slab = d.slab;
   const inp = s.inputs;
   const gap = (a: number, b: number) => a - b;
+  const oc = d.outcome;
+  const BASIS: Record<string, string> = { stated: "percentages as SBI states them", accounts: "accounts (counts over the opening book)", amount: "amount (rupees over the opening book)" };
+  const ph = (own: number | null | undefined, target: number) => String(own ?? target);
 
   return (
     <div className="space-y-4">
@@ -83,14 +88,38 @@ export function SbiCardPayoutTab({ from, to }: { from: string; to: string }) {
       <section aria-label="Payout calculator" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900"><Calculator className="h-4 w-4" aria-hidden />Enter the achieved percentages</h3>
-          <button type="button" onClick={() => { setRes(""); setNm(""); setRb(""); }} className={`cursor-pointer rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 ${FOCUS}`}>Reset to targets</button>
+          <button type="button" onClick={() => { setRes(""); setNm(""); setRb(""); setSegment(""); setBasis(""); }} className={`cursor-pointer rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 ${FOCUS}`}>{oc ? "Reset to uploaded outcome" : "Reset to targets"}</button>
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Num label="Resolution %" value={res} onChange={setRes} placeholder={String(d.targets.resolutionPct)} hint={`Target ${d.targets.resolutionPct}. Kicker starts at 36.`} />
-          <Num label="Normalisation %" value={nm} onChange={setNm} placeholder={String(d.targets.normKickerStartPct)} hint={`Assumed ${d.targets.normKickerStartPct} at target. Kicker starts above 18.`} />
-          <Num label="Rollback %" value={rb} onChange={setRb} placeholder={String(d.targets.nrbPct - d.targets.normKickerStartPct)} hint={`Assumed ${d.targets.nrbPct - d.targets.normKickerStartPct} at target (NRB 28 − Normalisation 18).`} />
+          <Num label="Resolution %" value={res} onChange={setRes} placeholder={ph(oc?.resolutionPct, d.targets.resolutionPct)} hint={`Target ${d.targets.resolutionPct}. Kicker starts at 36.`} />
+          <Num label="Normalisation %" value={nm} onChange={setNm} placeholder={ph(oc?.normalisationPct, d.targets.normKickerStartPct)} hint={oc?.normalisationPct != null ? "From the uploaded outcome. Kicker starts above 18." : `Assumed ${d.targets.normKickerStartPct} at target. Kicker starts above 18.`} />
+          <Num label="Rollback %" value={rb} onChange={setRb} placeholder={ph(oc?.rollbackPct, d.targets.nrbPct - d.targets.normKickerStartPct)} hint={oc?.rollbackPct != null ? "From the uploaded outcome." : `Assumed ${d.targets.nrbPct - d.targets.normKickerStartPct} at target (NRB 28 − Normalisation 18).`} />
         </div>
-        {d.inputsAreTargets && <p className="mt-2 text-[11px] text-slate-500">Showing the client's targets. Type the achieved figures to see the payout.</p>}
+        {oc ? (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+            <span><b>Outcome loaded</b> · {oc.segment} · as at {fmtDate(oc.asOf)} · {oc.basis ? BASIS[oc.basis] : "no usable figures"}</span>
+            {!oc.complete && oc.basis && <span className="font-semibold text-amber-800">Some figures are missing in the file; the targets fill those fields.</span>}
+            {oc.segments.length > 1 && (
+              <label className="flex items-center gap-1.5">Segment
+                <select value={segment || oc.segment} onChange={(e) => setSegment(e.target.value)} className={`rounded border border-emerald-300 bg-white px-1.5 py-1 ${FOCUS}`}>
+                  {oc.segments.map((sg) => <option key={sg} value={sg}>{sg}</option>)}
+                </select>
+              </label>
+            )}
+            {oc.available.length > 1 && (
+              <label className="flex items-center gap-1.5">Basis
+                <select value={basis || oc.basis || ""} onChange={(e) => setBasis(e.target.value)} className={`rounded border border-emerald-300 bg-white px-1.5 py-1 ${FOCUS}`}>
+                  {oc.available.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </label>
+            )}
+            {d.inputsSource === "entered" && <span>Typed figures override the file field by field.</span>}
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-slate-500">
+            No outcome file for this range, so the client's targets are shown. Upload <b>Outcome (Res / NM / RB)</b> under SBI Card uploaders, or type the achieved figures.
+          </p>
+        )}
 
         <div className="mt-4 grid gap-3 lg:grid-cols-[1.1fr_1fr]">
           <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-900 p-5 text-white">

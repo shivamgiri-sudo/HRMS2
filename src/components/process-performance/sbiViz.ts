@@ -16,7 +16,7 @@ export const inrC = (n: number | null | undefined): string => {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
   const a = Math.abs(n);
   if (a >= 1e7) return `₹${(n / 1e7).toFixed(2)} Cr`;
-  if (a >= 1e5) return `₹${(n / 1e5).toFixed(1)} L`;
+  if (a >= 1e5) return `₹${(n / 1e5).toFixed(a < 1e6 * 1 ? 2 : 1)} L`;
   return `₹${Math.round(n).toLocaleString("en-IN")}`;
 };
 

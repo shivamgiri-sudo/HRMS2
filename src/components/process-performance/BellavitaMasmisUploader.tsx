@@ -83,6 +83,7 @@ const RPC_BY_TYPE: Record<string, string> = {
   SBI_CARD_DOWNTIME: "import_sbi_card_downtime_batch",
   SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch",
   SBI_CARD_APR: "import_sbi_card_apr_batch",
+  SBI_CARD_OUTCOME: "import_sbi_card_outcome_batch",
 };
 
 /** Same normalization every aw-*-bulk.service.ts backend importer uses: lowercase,
@@ -202,7 +203,7 @@ export function BellavitaMasmisUploader({
   const [reportDate, setReportDate] = useState(() => new Date().toLocaleDateString("en-CA"));
   const [reportDateEdited, setReportDateEdited] = useState(false);
   const [detectedDate, setDetectedDate] = useState<string | null>(null);
-  const needsReportDate = templateCode === "SBI_CARD_ACCOUNT_FILE" || templateCode === "SBI_CARD_APR";
+  const needsReportDate = templateCode === "SBI_CARD_ACCOUNT_FILE" || templateCode === "SBI_CARD_APR" || templateCode === "SBI_CARD_OUTCOME";
   const [downloadingErrorsId, setDownloadingErrorsId] = useState<string | null>(null);
   const [downloadingAllId, setDownloadingAllId] = useState<string | null>(null);
   const coverageQ = useUploadCoverage([templateCode]);

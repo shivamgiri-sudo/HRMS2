@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1224,
-  "columnCount": 17820,
+  "tableCount": 1225,
+  "columnCount": 17840,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -17338,6 +17338,28 @@
       "status",
       "rca",
       "remarks",
+      "data_source",
+      "source_reference",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "sbi_card_outcome": [
+      "id",
+      "process_id",
+      "report_date",
+      "segment",
+      "opening_accounts",
+      "opening_amount",
+      "resolved_accounts",
+      "normalised_accounts",
+      "rollback_accounts",
+      "resolved_amount",
+      "normalised_amount",
+      "rollback_amount",
+      "resolution_pct",
+      "normalisation_pct",
+      "rollback_pct",
       "data_source",
       "source_reference",
       "created_by",

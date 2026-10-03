@@ -87,3 +87,45 @@ describe("payout rate", () => {
     expect(revenueOf(7.5, 0)).toBe(0);
   });
 });
+
+import { outcomeToPercentages, pickOutcome, type OutcomeRow } from "../sbi-card-payout.calc.js";
+
+const row = (o: Partial<OutcomeRow> = {}): OutcomeRow => ({
+  date: "2026-09-28", segment: "CD3_HB", openingAccounts: 2353, openingAmount: 100_000_000, resolvedAccounts: 824, normalisedAccounts: 424, rollbackAccounts: 235,
+  resolvedAmount: 36_000_000, normalisedAmount: 19_000_000, rollbackAmount: 9_000_000, resolutionPct: null, normalisationPct: null, rollbackPct: null, ...o,
+});
+
+describe("outcome figures to percentages", () => {
+  it("derives from counts over the opening base", () => {
+    const p = outcomeToPercentages(row());
+    expect([p.basis, p.resolutionPct, p.normalisationPct, p.rollbackPct, p.complete]).toEqual(["accounts", 35.02, 18.02, 9.99, true]);
+  });
+  it("prefers the percentages SBI states, since that is what it pays on", () => {
+    const p = outcomeToPercentages(row({ resolutionPct: 35, normalisationPct: 18, rollbackPct: 10 }));
+    expect([p.basis, p.resolutionPct, p.normalisationPct, p.rollbackPct]).toEqual(["stated", 35, 18, 10]);
+    expect(p.available).toEqual(["stated", "accounts", "amount"]);
+  });
+  it("honours a requested basis when it exists, and falls back when it does not", () => {
+    expect(outcomeToPercentages(row({ resolutionPct: 35, normalisationPct: 18, rollbackPct: 10 }), "amount").basis).toBe("amount");
+    expect(outcomeToPercentages(row({ openingAmount: null }), "amount").basis).toBe("accounts");
+    expect(outcomeToPercentages(row({ resolvedAccounts: null, normalisedAccounts: null, rollbackAccounts: null, resolvedAmount: null, normalisedAmount: null, rollbackAmount: null })).basis).toBeNull();
+  });
+  it("reports an incomplete row instead of inventing the missing part", () => {
+    const p = outcomeToPercentages(row({ rollbackAccounts: null }));
+    expect([p.rollbackPct, p.complete]).toEqual([null, false]);
+  });
+});
+
+describe("choosing the outcome row", () => {
+  const rows = [row({ date: "2026-09-26" }), row({ date: "2026-09-28" }), row({ segment: "CD2_ALL", date: "2026-09-30" })];
+  it("takes the freshest row of the CD3 HB segment even when another segment is newer", () => {
+    const p = pickOutcome(rows);
+    expect([p.row?.segment, p.row?.date, p.segments]).toEqual(["CD3_HB", "2026-09-28", ["CD2_ALL", "CD3_HB"]]);
+  });
+  it("honours an asked-for segment however it is spelled", () => expect(pickOutcome(rows, "cd2 all").row?.segment).toBe("CD2_ALL"));
+  it("falls back to the only segment, then to the freshest, and to nothing", () => {
+    expect(pickOutcome([row({ segment: "North HB" })]).row?.segment).toBe("North HB");
+    expect(pickOutcome([row({ segment: "A", date: "2026-09-01" }), row({ segment: "B", date: "2026-09-05" })]).row?.segment).toBe("B");
+    expect(pickOutcome([]).row).toBeNull();
+  });
+});

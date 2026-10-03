@@ -98,7 +98,12 @@ export interface SbiPayoutData {
   targets: { resolutionPct: number; nrbPct: number; totalPct: number; pcAmount: number; normKickerStartPct: number };
   collected: { ftd: { date: string | null; amount: number }; mtd: { amount: number; days: number }; daily: Array<{ date: string; amount: number }>; pcProgressPct: number | null };
   slab: { rows: string[]; cols: string[]; matrix: number[][]; norm: { labels: string[]; pays: number[] }; res: { labels: string[]; pays: number[] } };
-  inputsAreTargets: boolean; scenario: SbiPayoutResult; atTarget: SbiPayoutResult;
+  inputsAreTargets: boolean; inputsSource: "entered" | "outcome" | "targets";
+  outcome: null | {
+    asOf: string; segment: string; segments: string[]; basis: "stated" | "accounts" | "amount" | null; available: Array<"stated" | "accounts" | "amount">; complete: boolean;
+    openingAccounts: number | null; openingAmount: number | null; resolutionPct: number | null; normalisationPct: number | null; rollbackPct: number | null;
+  };
+  scenario: SbiPayoutResult; atTarget: SbiPayoutResult;
   levers: Array<{ lever: string; label: string; addPoints: number; newRatePct: number; deltaPct: number; deltaAmount: number }>;
   reading: string[];
 }

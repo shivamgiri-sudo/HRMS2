@@ -121,3 +121,48 @@ export function levers(inputs: PayoutInputs, collected: number, step = 1): Lever
 
 /** Revenue = the rate on what was collected. */
 export const revenueOf = (ratePct: number, collected: number): number => Math.round((ratePct / 100) * collected);
+
+/* ------------------------------------------------------------------------------------------------------------------------------
+ * Outcome figures (sbi_card_outcome): one row per report date per segment, cumulative to that date.
+ * ---------------------------------------------------------------------------------------------------------------------------- */
+export interface OutcomeRow {
+  date: string; segment: string;
+  openingAccounts: number | null; openingAmount: number | null;
+  resolvedAccounts: number | null; normalisedAccounts: number | null; rollbackAccounts: number | null;
+  resolvedAmount: number | null; normalisedAmount: number | null; rollbackAmount: number | null;
+  resolutionPct: number | null; normalisationPct: number | null; rollbackPct: number | null;
+}
+export type OutcomeBasis = "stated" | "accounts" | "amount";
+export interface OutcomePercentages { resolutionPct: number | null; normalisationPct: number | null; rollbackPct: number | null; basis: OutcomeBasis | null; complete: boolean; available: OutcomeBasis[] }
+
+const share = (n: number | null, d: number | null): number | null => (n !== null && d !== null && d > 0 ? r2((n / d) * 100) : null);
+
+/**
+ * Percentages of one outcome row. "stated" = the percentages SBI printed; "accounts" / "amount" = derived from counts / amounts over the
+ * opening base. `prefer` picks a basis when it is available; otherwise stated beats accounts beats amount, because a figure the client
+ * states is the one the client will pay on. A component missing on the chosen basis is null (the caller fills it, and says so).
+ */
+export function outcomeToPercentages(row: OutcomeRow, prefer: OutcomeBasis | "auto" = "auto"): OutcomePercentages {
+  const stated = [row.resolutionPct, row.normalisationPct, row.rollbackPct];
+  const byAccounts = [share(row.resolvedAccounts, row.openingAccounts), share(row.normalisedAccounts, row.openingAccounts), share(row.rollbackAccounts, row.openingAccounts)];
+  const byAmount = [share(row.resolvedAmount, row.openingAmount), share(row.normalisedAmount, row.openingAmount), share(row.rollbackAmount, row.openingAmount)];
+  const sets: Array<[OutcomeBasis, Array<number | null>]> = [["stated", stated], ["accounts", byAccounts], ["amount", byAmount]];
+  const available = sets.filter(([, v]) => v.some((x) => x !== null)).map(([b]) => b);
+  const order: OutcomeBasis[] = prefer !== "auto" && available.includes(prefer) ? [prefer] : ["stated", "accounts", "amount"];
+  const basis = order.find((b) => available.includes(b)) ?? null;
+  if (!basis) return { resolutionPct: null, normalisationPct: null, rollbackPct: null, basis: null, complete: false, available };
+  const v = sets.find(([b]) => b === basis)![1];
+  return { resolutionPct: v[0]!, normalisationPct: v[1]!, rollbackPct: v[2]!, basis, complete: v.every((x) => x !== null), available };
+}
+
+const flat = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+/** The payout is for CD 3 > 25k North HB. Prefer the asked-for segment, then one that names CD3 + HB, then the only one, then the freshest. */
+export function pickOutcome(rows: OutcomeRow[], wanted?: string | null): { row: OutcomeRow | null; segments: string[] } {
+  const segments = [...new Set(rows.map((r) => r.segment))].sort();
+  if (rows.length === 0) return { row: null, segments };
+  const latest = (seg: string) => rows.filter((r) => r.segment === seg).sort((a, b) => b.date.localeCompare(a.date))[0]!;
+  const w = wanted ? segments.find((s) => flat(s) === flat(wanted)) : undefined;
+  const cd3hb = segments.find((s) => { const f = flat(s); return f.includes("cd3") && f.includes("hb"); });
+  const chosen = w ?? cd3hb ?? (segments.length === 1 ? segments[0] : [...segments].sort((a, b) => latest(b).date.localeCompare(latest(a).date))[0]);
+  return { row: chosen ? latest(chosen) : null, segments };
+}

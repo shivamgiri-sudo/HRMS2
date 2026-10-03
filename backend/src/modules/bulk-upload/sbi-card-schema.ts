@@ -59,6 +59,13 @@ export const SBI_APR_HEADERS = [
   "Login", "Logout", "ACHT", "DISMX", "LAGGED", "LB", "LOGIN", "MB", "QB", "TB", "WB",
 ] as const;
 
+/** Cycle outcome (Resolution / Normalisation / Rollback), cumulative to the report date, per segment. Counts, amounts and / or percentages. */
+export const SBI_OUTCOME_HEADERS = [
+  "Report Date", "Segment", "Opening Accounts", "Opening Amount", "Resolved Accounts", "Normalised Accounts", "Rollback Accounts",
+  "Resolved Amount", "Normalised Amount", "Rollback Amount", "Resolution %", "Normalisation %", "Rollback %",
+] as const;
+export const OUTCOME_DEFAULT_SEGMENT = "CD3_HB";
+
 export const SBI_DOWNTIME_HEADERS = [
   "Date", "Start Time", "Up Time", "Downtime Minutes", "Total Impacted Users", "Responsibility",
   "Downtime Description/ Issue Reason", "Site", "Status", "RCA (If Any)", "Remarks",

@@ -1,10 +1,11 @@
 import { randomUUID } from "crypto";
 import { parseDurationSeconds } from "./dalmia-import-helpers.js";
 import { SBI_APR_COLUMNS, aprLoginResolver } from "./sbi-card-apr-columns.js";
+import { SBI_OUTCOME_COLUMNS } from "./sbi-card-outcome-columns.js";
 import { runSbiBatch, type SbiBatchSpec } from "./sbi-card-batch-runner.js";
 import {
   SBI_DIALER_COLS, SBI_DIALER_HEADERS, SBI_AGENT_COLS, SBI_AGENT_HEADERS, SBI_ACCOUNT_HEADERS, SBI_DOWNTIME_HEADERS,
-  SBI_PEN_HEADERS, SBI_APR_HEADERS, SBI_ATTEMPTS, isRollupCampaign,
+  SBI_PEN_HEADERS, SBI_APR_HEADERS, SBI_OUTCOME_HEADERS, OUTCOME_DEFAULT_SEGMENT, SBI_ATTEMPTS, isRollupCampaign,
 } from "./sbi-card-schema.js";
 import {
   cleanText, cleanTeam, cleanId, coerceCol, decOrNull, intOrNull, parseSbiDate, parseSbiTime, parseSeconds,
@@ -250,6 +251,68 @@ export const agentTimeSpec: SbiBatchSpec = {
   },
 };
 
+/**
+ * A percentage cell: "35%" and 35 mean 35; Excel's own percent cells arrive as 0.35. Fractions are only trusted as fractions when EVERY
+ * percentage given on the row is at most 1, so a real "0.8%" next to a "35%" is not scaled up. Returns null for blank / junk.
+ */
+export function parsePctCells(raw: unknown[]): { values: Array<number | null>; scaledFromFraction: boolean } {
+  const nums = raw.map((v) => {
+    const t = String(v ?? "").trim();
+    if (!t || t === "-" || t.startsWith("#")) return null;
+    const hasPct = t.includes("%");
+    const n = Number(t.replace(/[%\s,]/g, ""));
+    return Number.isFinite(n) ? { n, hasPct } : null;
+  });
+  const given = nums.filter((x): x is { n: number; hasPct: boolean } => x !== null);
+  const fractions = given.length > 0 && given.every((x) => !x.hasPct && x.n >= 0 && x.n <= 1);
+  return { values: nums.map((x) => (x === null ? null : Math.round((fractions ? x.n * 100 : x.n) * 1000) / 1000)), scaledFromFraction: fractions };
+}
+
+/**
+ * Cycle outcome: Resolution / Normalisation / Rollback, cumulative to Report Date, per Segment. Natural key: date + segment.
+ * Either counts against Opening Accounts or the three percentages (or both) must be present, otherwise the row says what is missing.
+ */
+export const outcomeSpec: SbiBatchSpec = {
+  table: "sbi_card_outcome",
+  columns: [
+    "id", "process_id", "report_date", "segment", "opening_accounts", "opening_amount", "resolved_accounts", "normalised_accounts", "rollback_accounts",
+    "resolved_amount", "normalised_amount", "rollback_amount", "resolution_pct", "normalisation_pct", "rollback_pct", ...TAIL,
+  ],
+  updateColumns: [
+    "opening_accounts", "opening_amount", "resolved_accounts", "normalised_accounts", "rollback_accounts", "resolved_amount", "normalised_amount",
+    "rollback_amount", "resolution_pct", "normalisation_pct", "rollback_pct",
+  ],
+  headers: SBI_OUTCOME_HEADERS,
+  columnSpecs: SBI_OUTCOME_COLUMNS,
+  planOptions: { minRecognised: 3 },
+  dateOf: dateOfSecond,
+  mapRow(data, _rowNo, ctx) {
+    const present = SBI_OUTCOME_HEADERS.some((h) => cleanText(data[h]) !== null);
+    if (!present) return { skip: true };
+    const date = parseSbiDate(data["Report Date"]);
+    if (!date) return { error: '"Report Date" is required and must be a readable date (the uploader fills it from the date picker when the file has none)' };
+    const segment = (cleanText(data["Segment"]) ?? OUTCOME_DEFAULT_SEGMENT).slice(0, 100);
+    const open = intOrNull(data["Opening Accounts"]);
+    const counts = [intOrNull(data["Resolved Accounts"]), intOrNull(data["Normalised Accounts"]), intOrNull(data["Rollback Accounts"])];
+    const pcts = parsePctCells([data["Resolution %"], data["Normalisation %"], data["Rollback %"]]);
+    const havePct = pcts.values.some((v) => v !== null);
+    const haveCounts = open !== null && open > 0 && counts.some((c) => c !== null);
+    if (!havePct && !haveCounts) return { error: "give Opening Accounts with at least one of Resolved / Normalised / Rollback Accounts, or the Resolution / Normalisation / Rollback percentages" };
+    if (pcts.values.some((v) => v !== null && (v < 0 || v > 100))) return { error: "a percentage is outside 0-100" };
+    const notes: string[] = [];
+    if (pcts.scaledFromFraction) notes.push("percentages given as fractions (0.35) were read as percent (35%)");
+    const total = counts.reduce<number>((a, c) => a + (c ?? 0), 0);
+    if (haveCounts && total > (open ?? 0)) notes.push("Resolved + Normalised + Rollback accounts add up to more than Opening Accounts (outcomes overlap, or the opening base is wrong)");
+    return {
+      values: [
+        date, segment, open, decOrNull(data["Opening Amount"]), ...counts, decOrNull(data["Resolved Amount"]), decOrNull(data["Normalised Amount"]), decOrNull(data["Rollback Amount"]),
+        ...pcts.values, ...tail(ctx.batchId, ctx.userId),
+      ],
+      notes,
+    };
+  },
+};
+
 const run = (spec: SbiBatchSpec) => (batchId: string, userId: string) => runSbiBatch(batchId, userId, spec, randomUUID);
 export const importSbiCardDialerMisBatch = run(dialerMisSpec);
 export const importSbiCardAgentMisBatch = run(agentMisSpec);
@@ -257,3 +320,4 @@ export const importSbiCardAccountFileBatch = run(accountFileSpec);
 export const importSbiCardDowntimeBatch = run(downtimeSpec);
 export const importSbiCardPenEstimationBatch = run(penEstimationSpec);
 export const importSbiCardAgentTimeBatch = run(agentTimeSpec);
+export const importSbiCardOutcomeBatch = run(outcomeSpec);

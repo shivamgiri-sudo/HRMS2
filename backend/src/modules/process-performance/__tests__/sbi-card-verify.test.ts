@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error plain .mjs ops script
-import { evaluate, refuseWriteMode, AGENT_TIME_COLUMNS, ACCOUNT_FILE_NEW_COLUMNS } from "../../../../scripts/sbi-card-verify.mjs";
+import { evaluate, refuseWriteMode, AGENT_TIME_COLUMNS, ACCOUNT_FILE_NEW_COLUMNS, OUTCOME_COLUMNS } from "../../../../scripts/sbi-card-verify.mjs";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -23,6 +23,14 @@ describe("sbi-card-verify (read-only ops check)", () => {
     expect(evaluate({ ...healthy(), flows: { NEW: 1, WEIRD: 2 } }).ok).toBe(false);
     expect(evaluate({ ...healthy(), uniqueKeys: ["uq_sbi_card_account_file", "uq_sbi_card_account_file_flow"] }).ok).toBe(false);
   });
+  it("checks the outcome table, its migration row and its template once they are part of the facts", () => {
+    const withOutcome = { ...healthy(), outcomeColumns: [...OUTCOME_COLUMNS], outcomeMigrationRow: { filename: "migrations/2076_sbi_card_outcome.sql", success: 1 },
+      templates: { ...healthy().templates, SBI_CARD_OUTCOME: { active: 1, optional: ["Segment"] } }, counts: { account: 10, agentTime: 0, outcome: 0 } };
+    expect(evaluate(withOutcome).ok).toBe(true);
+    const broken = evaluate({ ...withOutcome, outcomeColumns: null, outcomeMigrationRow: null, templates: { ...withOutcome.templates, SBI_CARD_OUTCOME: null } });
+    expect(broken.ok).toBe(false);
+    expect(broken.checks.filter((c: { status: string }) => c.status === "FAIL").length).toBeGreaterThanOrEqual(3);
+  });
   it("has no apply mode", () => {
     expect(refuseWriteMode(["apply"])).toMatch(/read-only/);
     expect(refuseWriteMode([])).toBeNull();
@@ -30,5 +38,9 @@ describe("sbi-card-verify (read-only ops check)", () => {
   it("expects exactly the columns the migration adds", () => {
     const sql = readFileSync(resolve(__dirname, "../../../../sql/migrations/2075_sbi_collections_ops_and_apr.sql"), "utf8");
     for (const c of [...AGENT_TIME_COLUMNS.filter((x: string) => !["id", "created_at", "updated_at"].includes(x)), ...ACCOUNT_FILE_NEW_COLUMNS]) expect(sql).toContain(c);
+  });
+  it("expects exactly the outcome columns migration 2076 creates", () => {
+    const sql = readFileSync(resolve(__dirname, "../../../../sql/migrations/2076_sbi_card_outcome.sql"), "utf8");
+    for (const c of OUTCOME_COLUMNS.filter((x: string) => !["id", "created_at", "updated_at"].includes(x))) expect(sql).toContain(c);
   });
 });
