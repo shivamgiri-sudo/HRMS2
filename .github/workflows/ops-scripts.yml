@@ -51,6 +51,7 @@ on:
           - bank-account-encrypt-backfill
           - resend-address-bgv-links
           - roster-requests-verify
+          - sbi-card-verify
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -180,6 +181,15 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            sbi-card-verify)
+              # Read-only: SELECTs only, in a READ ONLY session. Checks the SBI Card collections-ops migration (2075): the agent-time
+              # table, the account-file columns and flow key, the schema_migrations row and the upload templates. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::sbi-card-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              node scripts/sbi-card-verify.mjs
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
