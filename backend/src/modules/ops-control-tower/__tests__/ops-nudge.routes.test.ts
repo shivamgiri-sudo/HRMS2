@@ -11,6 +11,7 @@ const m = vi.hoisted(() => ({
   enrich: vi.fn(),
   loader: vi.fn(),
   issueLink: vi.fn(),
+  emailLink: vi.fn(),
   audit: vi.fn(),
 }));
 
@@ -46,6 +47,7 @@ vi.mock('../ops-nudge.service.js', () => ({
   nudgeBranchPending: m.nudgeBranchPending,
   enrichDetailRows: m.enrich,
   issueOnboardingLink: m.issueLink,
+  emailOnboardingLink: m.emailLink,
   whatsappConfigured: () => false,
 }));
 
@@ -173,5 +175,46 @@ describe('POST /onboarding-link', () => {
     const a = m.audit.mock.calls[0][0];
     expect(a).toMatchObject({ action_type: 'ONBOARDING_LINK_ISSUED', entity_id: EMP, actor_user_id: 'u1' });
     expect(JSON.stringify(a.change_summary)).not.toContain('token=');
+  });
+});
+
+describe('POST /onboarding-link/email', () => {
+  const url = '/api/ops-control-tower/onboarding-link/email';
+  beforeEach(() => { m.emailLink.mockResolvedValue({ status: 'sent', sentTo: 'a@b.com' }); });
+
+  it('validates input', async () => {
+    expect((await request(app).post(url).send({ employeeId: 'x', issue: 'bgv-pending' })).status).toBe(400);
+    expect((await request(app).post(url).send({ employeeId: EMP, issue: 'fnf-pending' })).status).toBe(400);
+    expect(m.emailLink).not.toHaveBeenCalled();
+  });
+  it('404 for an unknown employee, 403 outside branch scope — nothing emailed either way', async () => {
+    m.employeeBranch.mockResolvedValue(null);
+    expect((await request(app).post(url).send({ employeeId: EMP, issue: 'bgv-pending' })).status).toBe(404);
+    m.employeeBranch.mockResolvedValue(B1); m.allowed = [B2];
+    expect((await request(app).post(url).send({ employeeId: EMP, issue: 'bgv-pending' })).status).toBe(403);
+    expect(m.emailLink).not.toHaveBeenCalled();
+  });
+  it('payroll_hr-only may email for bank issues but not others', async () => {
+    m.fullTower = false;
+    expect((await request(app).post(url).send({ employeeId: EMP, issue: 'bgv-pending' })).status).toBe(403);
+    expect((await request(app).post(url).send({ employeeId: EMP, issue: 'penny-drop-missing' })).status).toBe(200);
+  });
+  it('200 with the masked-safe recipient and an audit entry that carries no token', async () => {
+    m.allowed = [B1];
+    const r = await request(app).post(url).send({ employeeId: EMP, issue: 'digilocker-pending' });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ status: 'sent', sentTo: 'a@b.com' });
+    const a = m.audit.mock.calls[0][0];
+    expect(a).toMatchObject({ action_type: 'ONBOARDING_LINK_EMAILED', entity_id: EMP, actor_user_id: 'u1' });
+    expect(JSON.stringify(a.change_summary)).not.toContain('token');
+  });
+  it.each([
+    [{ status: 'no_email' }, 409], [{ status: 'no_link' }, 409], [{ status: 'not_found' }, 404],
+    [{ status: 'failed', error: '421 busy' }, 502],
+  ])('maps %j to HTTP %i', async (outcome, code) => {
+    m.emailLink.mockResolvedValue(outcome);
+    const r = await request(app).post(url).send({ employeeId: EMP, issue: 'bgv-pending' });
+    expect(r.status).toBe(code);
+    if (code === 502) expect(r.body.error).toContain('421 busy');
   });
 });

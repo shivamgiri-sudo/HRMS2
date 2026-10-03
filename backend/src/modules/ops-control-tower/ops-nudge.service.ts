@@ -219,8 +219,12 @@ export async function emailOnboardingLink(employeeId: string, nowMs = Date.now()
   if (!row) return { status: "not_found" };
   const to = String(row.cand_email || row.personal_email || row.emp_email || "").trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { status: "no_email" };
+  // ats.email.service's send() reports ok:true when SMTP is not configured (it only logs "skipped").
+  // A manual HR action must never say "sent" for that.
+  if (!env.SMTP_USER || !env.SMTP_PASS) return { status: "failed", error: "Email is not configured (SMTP)" };
   const issued = await issueOnboardingLink(employeeId, nowMs);
   if (!issued) return { status: "no_link" };
+  const hoursLeft = Math.max(1, Math.round((new Date(issued.expiresAt).getTime() - nowMs) / 3_600_000));
   const [cand] = await db.execute<RowDataPacket[]>(
     "SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1", [employeeId],
   );
@@ -229,6 +233,7 @@ export async function emailOnboardingLink(employeeId: string, nowMs = Date.now()
     to,
     candidateName: String(row.full_name ?? ""),
     onboardingLink: issued.link,
+    validFor: hoursLeft >= 48 ? `${Math.round(hoursLeft / 24)} days` : `${hoursLeft} hours`,
   });
   if (!res.ok) return { status: "failed", error: res.error ?? "Email delivery failed" };
   return { status: "sent", sentTo: to };

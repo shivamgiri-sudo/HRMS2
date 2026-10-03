@@ -84,8 +84,10 @@ describe("drawer row", () => {
 
   it("nudgeable rows offer Copy link next to Notify; non-nudgeable rows do not", () => {
     expect(html("docs-pending")).toContain("Copy link");
+    expect(html("docs-pending")).toContain("Email link");
     const plain = renderToStaticMarkup(<MemoryRouter><DetailRowItem block="fnf-pending" row={row} supported={false} pending={false} onNotify={() => undefined} /></MemoryRouter>);
     expect(plain).not.toContain("Copy link");
+    expect(plain).not.toContain("Email link");
   });
 
   it("bank row's primary action opens the Bank step", () => {
