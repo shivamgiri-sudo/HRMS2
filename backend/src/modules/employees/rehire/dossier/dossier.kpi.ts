@@ -28,8 +28,8 @@ export function achievementPct(actual: number, target: number | null, direction:
   return Math.min(100, (actual / target) * 100);
 }
 
-// kpi_process_config can hold several effective-dated rows per (process, metric); the ORDER BY puts the
-// newest first and the loop below keeps only the first row it sees per (period, metric).
+// The ORDER BY puts the newest config first and the loop below keeps only the first row per (period, metric).
+// Plan assumption corrected: repo SQL has UNIQUE (process_id, metric_id), so today there is one row per pair and the current target applies to every month; the dedupe is a guard only.
 const SCORE_SQL = `
   SELECT ks.period AS period, ks.metric_id AS metric_id, ks.actual_value AS actual_value,
          km.metric_name AS metric_name, km.direction AS direction,
