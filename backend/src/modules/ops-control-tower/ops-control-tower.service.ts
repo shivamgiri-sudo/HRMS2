@@ -43,13 +43,20 @@ function isMissingObject(err: unknown): boolean {
   );
 }
 
+/** A query slower than this is logged by name. */
+const SLOW_QUERY_MS = 2_000;
+
 async function query<T extends RowDataPacket>(
   label: string,
   sql: string,
   params: unknown[] = [],
 ): Promise<T[]> {
+  const startedAt = Date.now();
   try {
     const [rows] = await db.execute<RowDataPacket[]>(sql, params as never[]);
+    // The summary ran 12-41 s on production; naming the slow query is the first step to fixing it.
+    const ms = Date.now() - startedAt;
+    if (ms >= SLOW_QUERY_MS) logger.warn({ block: label, ms }, "[ops-control-tower] slow query");
     return rows as T[];
   } catch (err) {
     if (!isMissingObject(err)) throw err;

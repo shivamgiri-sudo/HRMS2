@@ -1,3 +1,4 @@
+import { inlineLimitPlaceholders } from "./limit-placeholders.js";
 import mysql, {
   type RowDataPacket,
   type FieldPacket,
@@ -296,21 +297,37 @@ async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
  */
 type ExecuteParams = Parameters<Pool["execute"]>[1];
 
+/** Same LIMIT/OFFSET rewrite for statements run on a connection taken for a transaction. Patched once per connection. */
+const patchedConnections = new WeakSet<object>();
+function patchConnectionExecute(conn: PoolConnection): void {
+  if (patchedConnections.has(conn)) return;
+  patchedConnections.add(conn);
+  const original = conn.execute.bind(conn) as (sql: string, params?: unknown) => Promise<unknown>;
+  (conn as unknown as { execute: unknown }).execute = (sql: string, params?: unknown[]) => {
+    const q = inlineLimitPlaceholders(sql, params);
+    return original(q.sql, q.params);
+  };
+}
+
 export const db = {
   execute<T extends QueryResult = RowDataPacket[]>(
     sql: string,
     params?: unknown[],
   ): Promise<[T, FieldPacket[]]> {
+    // A bound numeric LIMIT/OFFSET is rejected by this server ("Incorrect arguments to mysqld_stmt_execute");
+    // turn it into the literal integer first. See limit-placeholders.ts.
+    const q = inlineLimitPlaceholders(sql, params);
     return withTransientRetry(() =>
-      _pool.execute<T>(sql, params as ExecuteParams),
+      _pool.execute<T>(q.sql, q.params as ExecuteParams),
     );
   },
   executeRun(
     sql: string,
     params?: unknown[],
   ): Promise<[QueryResult, FieldPacket[]]> {
+    const q = inlineLimitPlaceholders(sql, params);
     return withTransientRetry(() =>
-      _pool.execute(sql, params as ExecuteParams),
+      _pool.execute(q.sql, q.params as ExecuteParams),
     );
   },
   async getConnection(): Promise<
@@ -322,6 +339,7 @@ export const db = {
     }
   > {
     const conn = await withTransientRetry(() => _pool.getConnection());
+    patchConnectionExecute(conn);
     return conn as unknown as PoolConnection & {
       execute<T extends QueryResult = RowDataPacket[]>(
         sql: string,
