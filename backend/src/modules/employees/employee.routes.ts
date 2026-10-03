@@ -1084,12 +1084,19 @@ const hrProfileGate = [
   requireScopedRole(["hr"], resolveEmployeeScope),
 ];
 
+// Bank and statutory details are payroll data: branch payroll_hr may correct them for their own
+// branch (requireScopedRole enforces the branch), but not the personal / KYC / family steps.
+const payrollProfileGate = [
+  requireRole("super_admin", "admin", "hr", "payroll_hr"),
+  requireScopedRole(["hr", "payroll_hr"], resolveEmployeeScope),
+];
+
 // PUT /api/employees/:employeeId/bank-details — HR entry for a manually-onboarded employee.
 // Same direct-write/pending-verification shape as PUT /me/bank-details (no penny-drop here —
 // that's candidate-journey-specific verification infra, out of scope for field parity).
 router.put(
   "/:employeeId/bank-details",
-  ...hrProfileGate,
+  ...payrollProfileGate,
   h(async (req: any, res: any) => {
     const empId = req.params.employeeId;
     const {
@@ -1196,6 +1203,7 @@ router.put(
       entity_id: empId,
       change_summary: {
         fields_updated: fields.filter((f) => f !== "employee_id"),
+        acted_on_behalf: true,
       },
       req,
     });
@@ -1207,7 +1215,7 @@ router.put(
 // PUT /api/employees/:employeeId/statutory-details — HR entry, mirrors PUT /me/statutory-details
 router.put(
   "/:employeeId/statutory-details",
-  ...hrProfileGate,
+  ...payrollProfileGate,
   h(async (req: any, res: any) => {
     const empId = req.params.employeeId;
     const {

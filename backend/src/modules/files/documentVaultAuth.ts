@@ -14,6 +14,14 @@ import { isHoldActive } from "../privacy-engine/privacyHold.service.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
 import { ORG_WIDE_EXEMPT_ROLES } from "../../shared/scopeAccess.js";
 
+/**
+ * Vault categories whose owner may NOT open their own file. The employee uploads these (KYC, joining
+ * documents) but HR / payroll review and open them; the profile only shows the employee a status and
+ * an upload slot for what is pending. Other categories (payslips, tax forms issued to the employee)
+ * keep the owner bypass below.
+ */
+export const OWNER_ACCESS_BLOCKED_CATEGORIES: ReadonlySet<string> = new Set(["employee-documents"]);
+
 export type VaultAction = "view" | "download" | "delete" | "token_generate" | "token_consume";
 
 export interface DocumentAuthOptions {
@@ -113,7 +121,10 @@ export async function authorizeDocumentAccess(opts: DocumentAuthOptions): Promis
   // those two id spaces are distinct in this schema (employees.user_id is the FK
   // between them). Comparing against actorUserId here used to mean this bypass
   // could never actually match a real employee.
-  const isOwner = item.owner_employee_id != null && item.owner_employee_id === opts.actorEmployeeId;
+  const isOwner =
+    item.owner_employee_id != null &&
+    item.owner_employee_id === opts.actorEmployeeId &&
+    !OWNER_ACCESS_BLOCKED_CATEGORIES.has(String(item.category));
 
   if (!isOwner && !allowedRoles.has(opts.actorRole)) {
     await logDocumentAccess({

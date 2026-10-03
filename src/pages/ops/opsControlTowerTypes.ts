@@ -58,6 +58,7 @@ export interface OpsControlTowerSummary {
   appointmentLetter: CountBlock;
   pennyDropMissing: CountBlock;
   accountDetailsMissing: CountBlock;
+  docsPending: CountBlock;
   bgvPending: CountBlock;
   itProvisioningPending: CountBlock;
   adminProvisioningPending: CountBlock;
@@ -73,6 +74,7 @@ export type DetailBlockKey =
   | "appointment-letter"
   | "penny-drop-missing"
   | "account-details-missing"
+  | "docs-pending"
   | "bgv-pending"
   | "it-provisioning-pending"
   | "admin-provisioning-pending"
@@ -126,6 +128,7 @@ export type DetailRow =
 
 export type NudgeableBlock =
   | "account-details-missing"
+  | "docs-pending"
   | "penny-drop-missing"
   | "digilocker-pending"
   | "esign-pending"

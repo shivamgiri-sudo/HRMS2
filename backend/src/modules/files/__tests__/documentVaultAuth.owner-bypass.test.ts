@@ -69,8 +69,19 @@ describe("authorizeDocumentAccess owner bypass", () => {
     expect(result.reasonCode).toBe("INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL");
   });
 
-  it("allows the owning employee to view their own pii document once actorEmployeeId is supplied", async () => {
-    findByStoredFilename.mockResolvedValue(PII_ITEM);
+  it("denies the owner their own uploaded employee-document (HR / payroll open it, not the employee)", async () => {
+    findByStoredFilename.mockResolvedValue(PII_ITEM); // category: "employee-documents"
+
+    for (const action of ["view", "download"] as const) {
+      const result = await authorizeDocumentAccess({
+        actorUserId: USER_ID, actorEmployeeId: EMPLOYEE_ID, actorRole: "employee", storedFilename: "abc.pdf", action,
+      });
+      expect(`${action}: ${result.allowed} ${result.reasonCode}`).toBe(`${action}: false INSUFFICIENT_ROLE_FOR_ACCESS_LEVEL`);
+    }
+  });
+
+  it("allows the owning employee to view their own pii document in an owner-readable category once actorEmployeeId is supplied", async () => {
+    findByStoredFilename.mockResolvedValue({ ...PII_ITEM, category: "payroll" });
 
     const result = await authorizeDocumentAccess({
       actorUserId: USER_ID,
@@ -124,6 +135,13 @@ describe("authorizeDocumentAccess owner bypass", () => {
       expect(result.allowed).toBe(false);
       expect(result.reasonCode).toBe("OUTSIDE_BRANCH_SCOPE");
     }
+  });
+
+  it("admin is branch-scoped like hr (owner ruling: admin sees its own branch / assignments)", async () => {
+    canViewEmployee.mockResolvedValue(false);
+    findByStoredFilename.mockResolvedValue(PII_ITEM);
+    const result = await authorizeDocumentAccess({ actorUserId: "u", actorRole: "admin", storedFilename: "abc.pdf", action: "view" });
+    expect(result.reasonCode).toBe("OUTSIDE_BRANCH_SCOPE");
   });
 
   it("org-wide roles and the DPO are never branch-checked", async () => {

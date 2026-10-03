@@ -10,6 +10,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -178,7 +179,13 @@ function SummaryTile({ label, n, sub, onClick }: { label: string; n: number; sub
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────────────────────
+// Sections a payroll_hr-only user may open (the server enforces the same list, PAYROLL_HR_BLOCKS).
+const PAYROLL_ONLY_SECTIONS = new Set(["account-details", "penny-drop"]);
+
 export default function OpsControlTowerPage() {
+  const { hasAnyRole } = useWorkforceAccess();
+  const payrollOnly = hasAnyRole("payroll_hr") && !hasAnyRole("super_admin", "admin", "hr", "hr_admin", "ceo", "branch_head", "operations_manager", "wfm", "payroll_head");
+  const show = (sectionId: string) => !payrollOnly || PAYROLL_ONLY_SECTIONS.has(sectionId);
   const [date, setDate] = useState(() => todayISO());
   const [selected, setSelected] = useState<Selected | null>(null);
 
@@ -200,6 +207,7 @@ export default function OpsControlTowerPage() {
     { id: "appt", title: "Appointment letter eSigned before Day 7", meaning: "Employees whose appointment letter should have been e-signed within 7 days of their code being created, and has not.", source: "appointment_letter_issue vs created_at + 7d", block: "appointment-letter", mediumAt: 2, highAt: 6 },
     { id: "penny-drop", title: "Employee ID created but Penny Drop is missing", meaning: "New joiners (last 30 days) whose bank account has not been penny-drop verified successfully.", source: "bank_penny_drop_log.penny_drop_status", block: "penny-drop-missing", mediumAt: 5, highAt: 15 },
     { id: "account-details", title: "Employee ID created — no Account details in HRMS yet", meaning: "New joiners with no bank account details captured in HRMS at all.", source: "employee_bank_detail (row missing)", block: "account-details-missing", mediumAt: 5, highAt: 15 },
+    { id: "docs-pending", title: "Employee ID created — mandatory joining documents pending", meaning: "New joiners (last 30 days) with at least one mandatory joining document still not uploaded or verified.", source: "employee_joining_document_checklist.status", block: "docs-pending", mediumAt: 5, highAt: 15 },
     { id: "bgv", title: "Employee ID created — BGV is pending", meaning: "New joiners whose background verification report is not yet marked clear.", source: "candidate_bgv_report.overall_status", block: "bgv-pending", mediumAt: 5, highAt: 15 },
     { id: "it-prov", title: "Employee ID created — IT Provisioning is pending", meaning: "New joiners with an open IT provisioning task (domain/email/biometric) at joining.", source: "it_provisioning_request (assigned_role = branch_it)", block: "it-provisioning-pending", mediumAt: 3, highAt: 10 },
     { id: "admin-prov", title: "Employee ID created — Admin Provisioning is pending", meaning: "New joiners with an open Admin provisioning task (biometric/ID card etc.) at joining.", source: "it_provisioning_request (assigned_role = admin)", block: "admin-provisioning-pending", mediumAt: 3, highAt: 10 },
@@ -214,6 +222,7 @@ export default function OpsControlTowerPage() {
     "appointment-letter": data.appointmentLetter,
     "penny-drop-missing": data.pennyDropMissing,
     "account-details-missing": data.accountDetailsMissing,
+    "docs-pending": data.docsPending,
     "bgv-pending": data.bgvPending,
     "it-provisioning-pending": data.itProvisioningPending,
     "admin-provisioning-pending": data.adminProvisioningPending,
@@ -231,6 +240,12 @@ export default function OpsControlTowerPage() {
           </div>
           {data && <span className="whitespace-nowrap rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 font-mono text-xs text-amber-700">As of {formatDateTime(data.nowMs)}</span>}
         </div>
+
+        {payrollOnly && (
+          <div role="note" className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+            Showing the bank and penny-drop items for your branch. Open a number to see the joiners, then use <strong>Enter bank details</strong> to fix it on their behalf.
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-white p-2.5">
           <label htmlFor="dateSel" className="text-xs text-slate-500">Joining date</label>
@@ -255,28 +270,29 @@ export default function OpsControlTowerPage() {
         {data && (
           <>
             <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 lg:grid-cols-5">
-              <SummaryTile label="Attendance mismatched" n={data.attendanceMismatch.grandTotal} sub={`${data.attendanceMismatch.branches.filter((b) => b.count > 0).length} branches`} onClick={() => document.getElementById("mismatch")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="Joined this date" n={data.joining.grandTotal} sub={`${data.joining.grandBuckets["Same day"]} same day`} onClick={() => document.getElementById("joining")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="F&F pending" n={data.fnfPending.grandTotal} sub="not yet paid" onClick={() => document.getElementById("fnf")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="NOC pending" n={data.nocPending.grandTotal} sub="clearance open" onClick={() => document.getElementById("noc")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="DigiLocker pending" n={data.digilockerPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("digilocker")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="eSign overdue" n={data.esignPending.grandTotal} sub={`past Day ${data.esignSlaDays}`} onClick={() => document.getElementById("esign")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="Appointment letter overdue" n={data.appointmentLetter.grandTotal} sub={`past Day ${data.appointmentLetterSlaDays}`} onClick={() => document.getElementById("appt")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="Roster not current" n={data.rosterUploaded.branches.filter((b) => b.stale).length} sub="branches overdue" onClick={() => document.getElementById("roster")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="Penny drop missing" n={data.pennyDropMissing.grandTotal} sub="new joiners" onClick={() => document.getElementById("penny-drop")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="Account details missing" n={data.accountDetailsMissing.grandTotal} sub="no bank details yet" onClick={() => document.getElementById("account-details")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="BGV pending" n={data.bgvPending.grandTotal} sub="not yet clear" onClick={() => document.getElementById("bgv")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="IT provisioning pending" n={data.itProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("it-prov")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="Admin provisioning pending" n={data.adminProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("admin-prov")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="WFM provisioning pending" n={data.wfmProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("wfm-prov")?.scrollIntoView({ behavior: "smooth" })} />
+              {show("mismatch") && <SummaryTile label="Attendance mismatched" n={data.attendanceMismatch.grandTotal} sub={`${data.attendanceMismatch.branches.filter((b) => b.count > 0).length} branches`} onClick={() => document.getElementById("mismatch")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("joining") && <SummaryTile label="Joined this date" n={data.joining.grandTotal} sub={`${data.joining.grandBuckets["Same day"]} same day`} onClick={() => document.getElementById("joining")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("fnf") && <SummaryTile label="F&F pending" n={data.fnfPending.grandTotal} sub="not yet paid" onClick={() => document.getElementById("fnf")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("noc") && <SummaryTile label="NOC pending" n={data.nocPending.grandTotal} sub="clearance open" onClick={() => document.getElementById("noc")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("digilocker") && <SummaryTile label="DigiLocker pending" n={data.digilockerPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("digilocker")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("esign") && <SummaryTile label="eSign overdue" n={data.esignPending.grandTotal} sub={`past Day ${data.esignSlaDays}`} onClick={() => document.getElementById("esign")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("appt") && <SummaryTile label="Appointment letter overdue" n={data.appointmentLetter.grandTotal} sub={`past Day ${data.appointmentLetterSlaDays}`} onClick={() => document.getElementById("appt")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("roster") && <SummaryTile label="Roster not current" n={data.rosterUploaded.branches.filter((b) => b.stale).length} sub="branches overdue" onClick={() => document.getElementById("roster")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("penny-drop") && <SummaryTile label="Penny drop missing" n={data.pennyDropMissing.grandTotal} sub="new joiners" onClick={() => document.getElementById("penny-drop")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("account-details") && <SummaryTile label="Account details missing" n={data.accountDetailsMissing.grandTotal} sub="no bank details yet" onClick={() => document.getElementById("account-details")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("docs-pending") && <SummaryTile label="Documents pending" n={data.docsPending.grandTotal} sub="mandatory, not yet uploaded" onClick={() => document.getElementById("docs-pending")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("bgv") && <SummaryTile label="BGV pending" n={data.bgvPending.grandTotal} sub="not yet clear" onClick={() => document.getElementById("bgv")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("it-prov") && <SummaryTile label="IT provisioning pending" n={data.itProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("it-prov")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("admin-prov") && <SummaryTile label="Admin provisioning pending" n={data.adminProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("admin-prov")?.scrollIntoView({ behavior: "smooth" })} />}
+              {show("wfm-prov") && <SummaryTile label="WFM provisioning pending" n={data.wfmProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("wfm-prov")?.scrollIntoView({ behavior: "smooth" })} />}
             </div>
 
-            <OpsAnalyticsPanel data={data} onOpen={openSimple} />
+            {!payrollOnly && <OpsAnalyticsPanel data={data} onOpen={openSimple} />}
 
-            <MismatchSection block={data.attendanceMismatch} onOpen={openMismatch} />
-            <RosterDateSection block={data.rosterUploaded} />
-            <JoiningSection block={data.joining} />
-            {SIMPLE_DEFS.map((def) => {
+            {!payrollOnly && <MismatchSection block={data.attendanceMismatch} onOpen={openMismatch} />}
+            {!payrollOnly && <RosterDateSection block={data.rosterUploaded} />}
+            {!payrollOnly && <JoiningSection block={data.joining} />}
+            {SIMPLE_DEFS.filter((def) => show(def.id)).map((def) => {
               const block = BLOCK_DATA[def.block];
               return block ? <SimpleCountSection key={def.id} def={def} block={block} onOpen={openSimple} /> : null;
             })}

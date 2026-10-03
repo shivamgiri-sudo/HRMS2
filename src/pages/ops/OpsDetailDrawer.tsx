@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Download, MessageCircle } from "lucide-react";
+import { Download, ExternalLink, MessageCircle, Wrench } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -21,6 +21,13 @@ const BASE = "/api/ops-control-tower";
 
 export interface Selected { block: DetailBlockKey; branchId: string; branchName: string; title: string }
 interface DetailResponse { rows: Row[]; nudge: { supported: boolean; whatsappConfigured: boolean } }
+
+/** docs-pending rows carry "N pending: A, B, C" in `status`; show just the names. */
+function pendingDocNames(row: Row): string[] {
+  const text = String((row as unknown as { status?: string }).status ?? "");
+  const names = text.includes(":") ? text.slice(text.indexOf(":") + 1) : text;
+  return names.split(",").map((n) => n.trim()).filter(Boolean);
+}
 
 function rowNote(block: DetailBlockKey, row: Row): string {
   switch (block) {
@@ -41,6 +48,53 @@ function downloadCsv(name: string, csv: string) {
   const a = document.createElement("a");
   a.href = url; a.download = name; a.click();
   URL.revokeObjectURL(url);
+}
+
+export function DetailRowItem({ block, row, supported, pending, onNotify }: {
+  block: DetailBlockKey; row: Row; supported: boolean; pending: boolean; onNotify: (employeeId: string) => void;
+}) {
+  const selected = { block };
+  return (
+    <li className={`rounded-md border p-2.5 ${neglected(row) ? "border-red-200 bg-red-50/40" : ""}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-slate-900">{row.employeeName || "—"}</div>
+          <div className="font-mono text-xs text-slate-500">{row.employeeCode}</div>
+          {selected.block === "docs-pending" ? (
+            <div className="mt-1 flex flex-wrap gap-1" aria-label="Pending documents">
+              {pendingDocNames(row).map((name) => (
+                <span key={name} className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800">{name}</span>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-slate-500">{rowNote(selected.block, row)}</div>
+          )}
+        </div>
+        <span className={`whitespace-nowrap rounded px-2 py-0.5 font-mono text-xs font-semibold ${AGE_CLASS[row.ageBucket ?? "0-2"]}`}>{row.daysOpen ?? 0}d</span>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        {rowLinks(selected.block, { employeeId: row.employeeId, candidateId: row.candidateId }).map((l) => (
+          l.primary ? (
+            <Button key={l.href} asChild size="sm" className="h-7 px-2.5 text-xs">
+              <Link to={l.href}><Wrench className="mr-1 h-3 w-3" aria-hidden /> {l.label}</Link>
+            </Button>
+          ) : (
+            <Link key={l.href} to={l.href} className="inline-flex items-center gap-0.5 text-blue-700 hover:underline">{l.label}<ExternalLink className="h-3 w-3" aria-hidden /></Link>
+          )
+        ))}
+        {supported && (
+          <>
+            <span className={neglected(row) ? "font-medium text-red-700" : "text-slate-500"}>{nudgeLabel(row.nudge)}</span>
+            <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-xs" disabled={pending || row.nudge?.due === false}
+              title={row.nudge?.due === false ? "Notified in the last 24h" : "Send WhatsApp reminder"}
+              onClick={() => onNotify(row.employeeId)}>
+              <MessageCircle className="mr-1 h-3 w-3" /> {(row.nudge?.count ?? 0) > 0 ? "Resend" : "Notify"}
+            </Button>
+          </>
+        )}
+      </div>
+    </li>
+  );
 }
 
 export function OpsDetailDrawer({ selected, onClose }: { selected: Selected | null; onClose: () => void }) {
@@ -119,33 +173,14 @@ export function OpsDetailDrawer({ selected, onClose }: { selected: Selected | nu
 
             <ul className="mt-3 space-y-2">
               {visible.map((row, i) => (
-                <li key={row.employeeId ?? i} className={`rounded-md border p-2.5 ${neglected(row) ? "border-red-200 bg-red-50/40" : ""}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-900">{row.employeeName || "—"}</div>
-                      <div className="font-mono text-xs text-slate-500">{row.employeeCode}</div>
-                      <div className="text-xs text-slate-500">{rowNote(selected!.block, row)}</div>
-                    </div>
-                    <span className={`whitespace-nowrap rounded px-2 py-0.5 font-mono text-xs font-semibold ${AGE_CLASS[row.ageBucket ?? "0-2"]}`}>{row.daysOpen ?? 0}d</span>
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                    {rowLinks(selected!.block, { employeeId: row.employeeId, candidateId: row.candidateId }).map((l) => (
-                      <Link key={l.href} to={l.href} className="text-blue-700 hover:underline">{l.label}</Link>
-                    ))}
-                    {supported && (
-                      <>
-                        <span className={neglected(row) ? "font-medium text-red-700" : "text-slate-500"}>{nudgeLabel(row.nudge)}</span>
-                        <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-xs" disabled={one.isPending || row.nudge?.due === false}
-                          title={row.nudge?.due === false ? "Notified in the last 24h" : "Send WhatsApp reminder"}
-                          onClick={() => one.mutate(row.employeeId)}>
-                          <MessageCircle className="mr-1 h-3 w-3" /> {(row.nudge?.count ?? 0) > 0 ? "Resend" : "Notify"}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </li>
+                <DetailRowItem key={row.employeeId ?? i} block={selected!.block} row={row} supported={supported}
+                  pending={one.isPending} onNotify={(id) => one.mutate(id)} />
               ))}
-              {visible.length === 0 && <p className="text-sm text-slate-400">No records.</p>}
+              {visible.length === 0 && (
+                <p className="rounded-md border border-dashed p-6 text-center text-sm text-slate-500">
+                  {rows.length === 0 ? "Nothing pending here — all caught up." : "No records match these filters."}
+                </p>
+              )}
             </ul>
           </>
         )}

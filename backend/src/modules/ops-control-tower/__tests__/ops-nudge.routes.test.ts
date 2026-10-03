@@ -4,6 +4,7 @@ import request from 'supertest';
 
 const m = vi.hoisted(() => ({
   allowed: null as null | string[],
+  fullTower: true,
   employeeBranch: vi.fn(),
   nudgeEmployee: vi.fn(),
   nudgeBranchPending: vi.fn(),
@@ -23,13 +24,17 @@ vi.mock('../../../shared/dashboardScope.js', () => ({
   resolveDashboardScopeForRequest: vi.fn(async () =>
     m.allowed === null ? { level: 'ORG_ALL', branchIds: [] } : { level: 'BRANCH_ALL', branchIds: m.allowed }),
 }));
-vi.mock('../ops-control-tower.logic.js', () => ({ scopeSummaryToBranches: (x: unknown) => x }));
+vi.mock('../ops-control-tower.logic.js', async (orig) => ({
+  ...(await orig<typeof import('../ops-control-tower.logic.js')>()),
+  scopeSummaryToBranches: (x: unknown) => x,
+}));
+vi.mock('../../../shared/accessGuard.js', () => ({ hasRole: vi.fn(async () => m.fullTower) }));
 vi.mock('../ops-control-tower.service.js', () => ({
   getOpsControlTowerSummary: vi.fn(),
   getAttendanceMismatchDetail: vi.fn(), getFnfPendingDetail: vi.fn(), getNocPendingDetail: vi.fn(),
   getDigilockerPendingDetail: (...a: unknown[]) => m.loader(...a),
   getEsignPendingDetail: vi.fn(), getAppointmentLetterDetail: vi.fn(), getPennyDropMissingDetail: vi.fn(),
-  getAccountDetailsMissingDetail: vi.fn(), getBgvPendingDetail: vi.fn(), getItProvisioningPendingDetail: vi.fn(),
+  getAccountDetailsMissingDetail: vi.fn(), getDocsPendingDetail: vi.fn(), getBgvPendingDetail: vi.fn(), getItProvisioningPendingDetail: vi.fn(),
   getAdminProvisioningPendingDetail: vi.fn(), getWfmProvisioningPendingDetail: vi.fn(),
 }));
 vi.mock('../ops-nudge.service.js', () => ({
@@ -53,6 +58,7 @@ const B2 = '33333333-3333-3333-3333-333333333333';
 beforeEach(() => {
   Object.values(m).forEach((f) => typeof f === 'function' && (f as any).mockReset?.());
   m.allowed = null;
+  m.fullTower = true;
   m.employeeBranch.mockResolvedValue(B1);
   m.nudgeEmployee.mockResolvedValue({ employeeId: EMP, status: 'sent' });
   m.nudgeBranchPending.mockResolvedValue([{ employeeId: 'a', status: 'sent' }, { employeeId: 'b', status: 'skipped_cooldown' }]);
@@ -111,5 +117,22 @@ describe('GET /:block/:branchId', () => {
   it('marks non-nudgeable blocks unsupported', async () => {
     const r = await request(app).get(`/api/ops-control-tower/fnf-pending/${B1}`);
     expect(r.body.nudge.supported).toBe(false);
+  });
+});
+
+describe('payroll_hr-only callers', () => {
+  beforeEach(() => { m.fullTower = false; });
+  it('may open and nudge bank / penny-drop blocks', async () => {
+    expect((await request(app).get(`/api/ops-control-tower/account-details-missing/${B1}`)).status).toBe(200);
+    const r = await request(app).post('/api/ops-control-tower/nudge').send({ employeeId: EMP, issue: 'penny-drop-missing' });
+    expect(r.status).toBe(200);
+  });
+  it('is refused every other block, on read and on nudge; nothing is sent', async () => {
+    expect((await request(app).get(`/api/ops-control-tower/digilocker-pending/${B1}`)).status).toBe(403);
+    expect((await request(app).get(`/api/ops-control-tower/fnf-pending/${B1}`)).status).toBe(403);
+    expect((await request(app).post('/api/ops-control-tower/nudge').send({ employeeId: EMP, issue: 'bgv-pending' })).status).toBe(403);
+    expect((await request(app).post('/api/ops-control-tower/nudge/bulk').send({ branchId: B1, issue: 'docs-pending' })).status).toBe(403);
+    expect(m.nudgeEmployee).not.toHaveBeenCalled();
+    expect(m.nudgeBranchPending).not.toHaveBeenCalled();
   });
 });

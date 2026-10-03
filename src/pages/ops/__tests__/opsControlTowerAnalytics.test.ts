@@ -17,7 +17,7 @@ function summary(over: Partial<OpsControlTowerSummary> = {}): OpsControlTowerSum
     attendanceMismatch: { branches: [{ branchId: "b1", branchName: "NOIDA", count: 2, stale: false, correctionLastDateMs: null }], grandTotal: 2 },
     rosterUploaded: { branches: [] }, joining: { branches: [], grandTotal: 0, grandBuckets: {} },
     fnfPending: empty, nocPending: empty, digilockerPending: empty, esignPending: empty, appointmentLetter: empty,
-    pennyDropMissing: empty, accountDetailsMissing: empty, bgvPending: empty,
+    pennyDropMissing: empty, accountDetailsMissing: empty, docsPending: empty, bgvPending: empty,
     itProvisioningPending: empty, adminProvisioningPending: empty, wfmProvisioningPending: empty,
     ...over,
   } as unknown as OpsControlTowerSummary;
@@ -26,7 +26,7 @@ function summary(over: Partial<OpsControlTowerSummary> = {}): OpsControlTowerSum
 describe("funnel", () => {
   it("lists joiner steps in journey order with totals", () => {
     const f = buildFunnel(summary({ digilockerPending: blk([["b1", "NOIDA", 5]]) }));
-    expect(f.map((s) => s.label)).toEqual(["Bank details", "Penny drop", "DigiLocker", "Joining-kit eSign", "Appointment letter", "BGV", "IT", "Admin", "WFM"]);
+    expect(f.map((s) => s.label)).toEqual(["Bank details", "Documents", "Penny drop", "DigiLocker", "Joining-kit eSign", "Appointment letter", "BGV", "IT", "Admin", "WFM"]);
     expect(f.find((s) => s.key === "digilocker-pending")?.total).toBe(5);
   });
   it("bottleneck is the biggest step, or null when nothing is pending", () => {
@@ -76,11 +76,19 @@ describe("drawer helpers", () => {
     expect(neglected(rows[1])).toBe(false);
     expect(neglected({ daysOpen: 20 })).toBe(false);
   });
+  it("links: HR/payroll fix-on-behalf deep links open the right profile-completion step", () => {
+    const hrefs = (b: Parameters<typeof rowLinks>[0]) => rowLinks(b, { employeeId: "e1" }).map((l) => l.href);
+    expect(hrefs("account-details-missing")).toContain("/employees/e1/complete-profile?step=bank");
+    expect(hrefs("penny-drop-missing")).toContain("/employees/e1/complete-profile?step=bank");
+    expect(hrefs("docs-pending")).toEqual(expect.arrayContaining(["/employees/e1/complete-profile?step=documents", "/employees/e1/joining-documents"]));
+    expect(hrefs("digilocker-pending")).toContain("/employees/e1/complete-profile?step=bgv");
+    expect(hrefs("fnf-pending")).toEqual(["/employees/e1/360"]);
+  });
   it("links: employee 360 always; joining docs for eSign; BGV report only with a candidate", () => {
     expect(rowLinks("fnf-pending", { employeeId: "e1" })).toEqual([{ label: "Employee 360", href: "/employees/e1/360" }]);
     expect(rowLinks("esign-pending", { employeeId: "e1" }).map((l) => l.href)).toContain("/employees/e1/joining-documents");
     expect(rowLinks("bgv-pending", { employeeId: "e1", candidateId: "c9" }).map((l) => l.href)).toContain("/bgv-report-view/c9");
-    expect(rowLinks("bgv-pending", { employeeId: "e1", candidateId: null })).toHaveLength(1);
+    expect(rowLinks("bgv-pending", { employeeId: "e1", candidateId: null }).map((l) => l.href).some((h) => h.startsWith("/bgv-report-view"))).toBe(false);
   });
   it("isNudgeableBlock matches the backend list", () => {
     expect(isNudgeableBlock("bgv-pending")).toBe(true);

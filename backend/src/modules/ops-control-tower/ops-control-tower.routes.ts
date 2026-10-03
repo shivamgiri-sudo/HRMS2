@@ -7,7 +7,8 @@ import {
   DashboardScopeConfigurationError,
   resolveDashboardScopeForRequest,
 } from "../../shared/dashboardScope.js";
-import { scopeSummaryToBranches } from "./ops-control-tower.logic.js";
+import { blockAllowedForPayrollOnly, scopeSummaryToBranches } from "./ops-control-tower.logic.js";
+import { hasRole } from "../../shared/accessGuard.js";
 import {
   getOpsControlTowerSummary,
   getAttendanceMismatchDetail,
@@ -18,6 +19,7 @@ import {
   getAppointmentLetterDetail,
   getPennyDropMissingDetail,
   getAccountDetailsMissingDetail,
+  getDocsPendingDetail,
   getBgvPendingDetail,
   getItProvisioningPendingDetail,
   getAdminProvisioningPendingDetail,
@@ -42,6 +44,7 @@ const VIEW_ROLES = [
   "operations_manager",
   "wfm",
   "payroll_head",
+  "payroll_hr",
 ];
 // Sending a WhatsApp to a joiner is outward-facing: narrower than the view list (wfm / ceo view only).
 const NUDGE_ROLES = [
@@ -52,9 +55,20 @@ const NUDGE_ROLES = [
   "branch_head",
   "operations_manager",
   "payroll_head",
+  "payroll_hr",
 ];
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
+
+
+// Roles that may use the whole tower. A caller holding only payroll_hr (from VIEW_ROLES) is limited
+// to PAYROLL_HR_BLOCKS - their branch scope still applies on top.
+const FULL_TOWER_ROLES = VIEW_ROLES.filter((r) => r !== "payroll_hr");
+async function mayUseBlock(req: import("express").Request, block: string): Promise<boolean> {
+  if (blockAllowedForPayrollOnly(block)) return true;
+  const userId = (req as any).authUser?.id as string | undefined;
+  return !!userId && (await hasRole(userId, ...FULL_TOWER_ROLES));
+}
 
 export const opsControlTowerRouter = Router();
 opsControlTowerRouter.use(requireAuth);
@@ -122,6 +136,7 @@ const DETAIL_BY_BLOCK: Record<string, Detail> = {
   "appointment-letter": getAppointmentLetterDetail,
   "penny-drop-missing": getPennyDropMissingDetail,
   "account-details-missing": getAccountDetailsMissingDetail,
+  "docs-pending": getDocsPendingDetail,
   "bgv-pending": getBgvPendingDetail,
   "it-provisioning-pending": getItProvisioningPendingDetail,
   "admin-provisioning-pending": getAdminProvisioningPendingDetail,
@@ -144,6 +159,10 @@ opsControlTowerRouter.get(
       const loader = DETAIL_BY_BLOCK[block];
       if (!loader) {
         res.status(404).json({ error: `Unknown block "${block}"` });
+        return;
+      }
+      if (!(await mayUseBlock(req, block))) {
+        res.status(403).json({ error: "Forbidden: this section is not available to your role" });
         return;
       }
       // The branchId comes from the URL, so it is only a request: it must sit inside the caller's scope.
@@ -175,6 +194,10 @@ opsControlTowerRouter.post("/nudge", requireRole(...NUDGE_ROLES), async (req, re
       res.status(400).json({ error: "issue is not nudgeable" });
       return;
     }
+    if (!(await mayUseBlock(req, issue))) {
+      res.status(403).json({ error: "Forbidden: this issue is not available to your role" });
+      return;
+    }
     const branchId = await employeeBranchId(employeeId);
     if (branchId === null) {
       res.status(404).json({ error: "Employee not found" });
@@ -202,6 +225,10 @@ opsControlTowerRouter.post("/nudge/bulk", requireRole(...NUDGE_ROLES), async (re
     }
     if (typeof issue !== "string" || !isNudgeableIssue(issue)) {
       res.status(400).json({ error: "issue is not nudgeable" });
+      return;
+    }
+    if (!(await mayUseBlock(req, issue))) {
+      res.status(403).json({ error: "Forbidden: this issue is not available to your role" });
       return;
     }
     const allowed = await allowedBranchIds(req);

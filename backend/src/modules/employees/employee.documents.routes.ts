@@ -42,18 +42,28 @@ const empDocUpload = multer({
   },
 });
 
+// Roles that may open / download a stored employee document (always branch-scoped for non-org-wide).
+const DOCUMENT_FILE_ROLES = ["super_admin", "admin", "hr", "payroll_hr", "payroll_head"] as const;
+
+export function withoutFileUrl<T extends object>(row: T): Omit<T, "file_url"> & { file_url: null } {
+  return { ...row, file_url: null };
+}
+
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
 
 // GET /api/employee-docs/:employeeId
+// The owner sees status only (type, name, verified, date). file_url is withheld from them: stored
+// documents are opened by HR / payroll, not by the employee. HR / admin inside scope get the URL.
 router.get("/:employeeId", selfOrAdminHr("employeeId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT id, employee_id, doc_type AS document_type, doc_name AS document_name, file_url, verified, created_at AS uploaded_at FROM employee_documents WHERE employee_id = ? ORDER BY created_at DESC",
     [req.params.employeeId]
   );
-  res.json({ success: true, data: rows });
+  const mayOpenFiles = await hasRole(req.authUser!.id, ...DOCUMENT_FILE_ROLES);
+  res.json({ success: true, data: mayOpenFiles ? rows : (rows as RowDataPacket[]).map((r) => withoutFileUrl(r)) });
 }));
 
 // POST /api/employee-docs/:employeeId/upload — multipart upload (self or admin/hr only)
@@ -196,7 +206,7 @@ router.patch("/:employeeId/:docId/verify", requireRole("admin", "hr", "super_adm
 }));
 
 // GET /api/employee-docs/:employeeId/:docId/download — download with original filename
-router.get("/:employeeId/:docId/download", selfOrAdminHr("employeeId"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/:employeeId/:docId/download", requireRole(...DOCUMENT_FILE_ROLES), guardEmployeeScope("employeeId"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT doc_name, file_url FROM employee_documents WHERE id = ? AND employee_id = ? LIMIT 1",
     [req.params.docId, req.params.employeeId]

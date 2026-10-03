@@ -91,7 +91,13 @@ function isReadableFile(candidate: string): boolean {
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx"]);
 const HR_SCOPE_ROLES = ["hr", "manager", "branch_head", "process_manager", "assistant_manager", "tl"];
 const PAYROLL_SCOPE_ROLES = ["payroll_hr", "payroll"];
-const SECURE_DOWNLOAD_ROLES = new Set(["admin", "super_admin", "hr", "manager", "payroll_hr", "payroll", "employee"]);
+// "employee" is deliberately absent: an employee (including the document's own owner) may upload what
+// is pending against their checklist but not open or download the stored files - HR / payroll do that.
+const SECURE_DOWNLOAD_ROLES = new Set(["admin", "super_admin", "hr", "manager", "payroll_hr", "payroll"]);
+
+export function mayDownloadJoiningDocuments(access: { isAdmin: boolean; roles: string[] }): boolean {
+  return access.isAdmin || access.roles.some((role) => SECURE_DOWNLOAD_ROLES.has(role));
+}
 const PAYROLL_DOCUMENT_CODES = new Set(["EPF_DECLARATION", "EMPLOYMENT_CONTRACT"]);
 
 /**
@@ -1077,11 +1083,13 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
     },
     permissions: {
       can_manage: access.canManage,
-      can_download: access.roles.some((role) => SECURE_DOWNLOAD_ROLES.has(role)) || access.isSelf || access.isAdmin,
+      can_download: mayDownloadJoiningDocuments(access),
       can_payroll_view: access.canPayroll,
       is_self: access.isSelf,
     },
-    checklist: checklistWithLinks,
+    checklist: mayDownloadJoiningDocuments(access)
+      ? checklistWithLinks
+      : checklistWithLinks.map((item) => (item.linked_doc ? { ...item, linked_doc: { ...item.linked_doc, file_url: "" } } : item)),
     audit: auditRows,
     signed_appointment_letters: signedAppointmentLetters,
   };
@@ -1603,8 +1611,9 @@ export async function getJoiningDocumentFileForAccess(params: {
   userAgent?: string | null;
 }) {
   const { file, access } = await fileAccessContext(params.fileId, params.actorUserId);
-  const canDownload = access.isAdmin || access.isSelf || access.roles.some((role) => SECURE_DOWNLOAD_ROLES.has(role));
-  const canPreview = access.canManage;
+  const canDownload = mayDownloadJoiningDocuments(access);
+  // The owner (employee) uploads; HR / payroll open. canManage includes self, so exclude a self-only caller.
+  const canPreview = access.canManage && !(access.isSelf && !mayDownloadJoiningDocuments(access));
 
   if (params.action === "preview" && !canPreview) {
     const err = new Error("Not authorized to preview this document") as Error & { statusCode?: number };

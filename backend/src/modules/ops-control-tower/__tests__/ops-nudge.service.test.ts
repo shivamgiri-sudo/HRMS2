@@ -13,6 +13,7 @@ vi.mock('../../communication/providers/provider.factory.js', () => ({
 vi.mock('../ops-control-tower.service.js', () => ({
   allBranches: vi.fn(async () => [{ branchId: 'b1', branchName: 'NOIDA' }]),
   getAccountDetailsMissingDetail: vi.fn(async () => [{ employeeId: 'e1' }, { employeeId: 'e2' }]),
+  getDocsPendingDetail: vi.fn(async () => []),
   getPennyDropMissingDetail: vi.fn(async () => [{ employeeId: 'e1' }]),
   getDigilockerPendingDetail: vi.fn(async () => []),
   getEsignPendingDetail: vi.fn(async () => []),
@@ -26,10 +27,12 @@ const NOW = new Date('2026-10-02T10:00:00Z').getTime();
 let recipient: Record<string, unknown> | null;
 let lastSent: string | null;
 let inserts: unknown[][];
+let updates: unknown[][];
+let bridgeAffected: number;
 
 beforeEach(() => {
   dbExecute.mockReset(); send.mockReset(); isConfigured.mockReset();
-  inserts = [];
+  inserts = []; updates = []; bridgeAffected = 1;
   recipient = { full_name: 'Asha Rao', branch_id: 'b1', emp_mobile: '9999999999', candidate_id: 'c1',
     cand_mobile: '8888888888', candidate_status: null, onboarding_token: 'tok', onboarding_token_expires_at: null, days_open: 4 };
   lastSent = null;
@@ -39,6 +42,7 @@ beforeEach(() => {
     if (sql.includes('FROM employees e')) return [recipient ? [recipient] : []];
     if (sql.includes('MAX(created_at) AS last_sent')) return [[{ last_sent: lastSent }]];
     if (sql.includes('INSERT INTO ops_nudge_log')) { inserts.push(params); return [{}]; }
+    if (sql.includes('UPDATE ats_onboarding_bridge')) { updates.push(params); return [{ affectedRows: bridgeAffected }]; }
     return [[]];
   });
 });
@@ -56,11 +60,35 @@ describe('nudgeEmployee', () => {
     expect(loggedStatus()).toEqual(['sent']);
   });
 
-  it('falls back to employee mobile and omits link when token expired', async () => {
+  it('falls back to employee mobile and re-issues a fresh link when the token expired', async () => {
     recipient = { ...recipient!, cand_mobile: null, onboarding_token_expires_at: '2026-01-01 00:00:00' };
     await call();
     expect(send.mock.calls[0][0]).toBe('9999999999');
+    expect(updates).toHaveLength(1);
+    const [fresh, expiry, candidateId] = updates[0] as [string, Date, string];
+    expect(candidateId).toBe('c1');
+    expect(fresh).not.toBe('tok');
+    expect(expiry.getTime()).toBe(NOW + 72 * 60 * 60 * 1000);
+    expect(send.mock.calls[0][2]).toContain(`https://hrms.test/onboard-full?token=${fresh}`);
+  });
+
+  it('does not touch a live token', async () => {
+    await call();
+    expect(updates).toHaveLength(0);
+  });
+
+  it('omits the link when the employee has no onboarding bridge row', async () => {
+    recipient = { ...recipient!, candidate_id: null, onboarding_token: null };
+    await call();
+    expect(updates).toHaveLength(0);
     expect(send.mock.calls[0][2]).not.toContain('onboard-full');
+  });
+
+  it('does not mint a token when the message is skipped for cooldown', async () => {
+    recipient = { ...recipient!, onboarding_token_expires_at: '2026-01-01 00:00:00' };
+    lastSent = new Date(NOW - 60 * 1000).toISOString();
+    expect((await call()).status).toBe('skipped_cooldown');
+    expect(updates).toHaveLength(0);
   });
 
   it('returns not_found without logging for an unknown employee', async () => {

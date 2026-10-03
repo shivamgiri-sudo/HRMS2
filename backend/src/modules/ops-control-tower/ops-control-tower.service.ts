@@ -643,6 +643,64 @@ export async function getPennyDropMissingDetail(
   }));
 }
 
+// ── 10b. Mandatory joining documents pending ───────────────────────────────────────────────
+// Source: employee_joining_document_checklist, the same table the Joining Documents Tracker reads.
+// A row is pending while it is mandatory and its status is not one of the closed values below
+// (the done list mirrors recalculateDocumentProgress in employeeJoiningDocuments.service.ts;
+// waived / not_applicable rows are deliberate exemptions, not open items).
+const CHECKLIST_CLOSED_STATUSES = [
+  "verified", "signed_verified", "completed", "esign_completed", "wet_signed_uploaded",
+  "waived", "not_applicable",
+];
+
+export async function getDocsPendingBlock(): Promise<CountBlock> {
+  const branches = await allBranches();
+  const rows = await query<RowDataPacket>(
+    "docs-pending",
+    `SELECT e.branch_id, COUNT(DISTINCT e.id) AS n
+       FROM employees e
+       JOIN employee_joining_document_checklist c ON c.employee_id = e.id
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY
+        AND c.mandatory = 1
+        AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
+      GROUP BY e.branch_id`,
+    [NEW_JOINER_WINDOW_DAYS, ...CHECKLIST_CLOSED_STATUSES],
+  );
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
+}
+
+/** Per-employee pending document names, newest-joiner last; status carries "N pending: A, B". */
+export async function getDocsPendingDetail(
+  branchId: string,
+): Promise<OnboardingDetailRow[]> {
+  const rows = await query<RowDataPacket>(
+    "docs-pending-detail",
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name,
+            COUNT(*) AS pending_count,
+            GROUP_CONCAT(c.document_name ORDER BY c.document_name SEPARATOR ', ') AS pending_names,
+            DATEDIFF(CURDATE(), e.created_at) AS days_open
+       FROM employees e
+       JOIN employee_joining_document_checklist c ON c.employee_id = e.id
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
+        AND c.mandatory = 1
+        AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
+      GROUP BY e.id, e.employee_code, e.full_name, e.created_at
+      ORDER BY e.created_at ASC
+      LIMIT 200`,
+    [branchId, NEW_JOINER_WINDOW_DAYS, ...CHECKLIST_CLOSED_STATUSES],
+  );
+  return rows.map((r) => ({
+    employeeId: String(r.employee_id),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
+    status: `${Number(r.pending_count)} pending: ${String(r.pending_names ?? "").slice(0, 160)}`,
+    daysOpen: Number(r.days_open ?? 0),
+  }));
+}
+
 // ── 10. Account details missing ─────────────────────────────────────────────────────────────
 // employee_bank_detail has no status column — the row's mere existence is the signal. Pending =
 // no bank-detail row for the employee at all (NOT the `verified` flag, which is a separate,
@@ -837,6 +895,7 @@ export interface OpsControlTowerSummary {
   appointmentLetter: CountBlock;
   pennyDropMissing: CountBlock;
   accountDetailsMissing: CountBlock;
+  docsPending: CountBlock;
   bgvPending: CountBlock;
   itProvisioningPending: CountBlock;
   adminProvisioningPending: CountBlock;
@@ -858,6 +917,7 @@ export async function getOpsControlTowerSummary(
     appointmentLetter,
     pennyDropMissing,
     accountDetailsMissing,
+    docsPending,
     bgvPending,
     itProvisioningPending,
     adminProvisioningPending,
@@ -873,6 +933,7 @@ export async function getOpsControlTowerSummary(
     getAppointmentLetterBlock(nowMs),
     getPennyDropMissingBlock(),
     getAccountDetailsMissingBlock(),
+    getDocsPendingBlock(),
     getBgvPendingBlock(),
     getItProvisioningPendingBlock(),
     getAdminProvisioningPendingBlock(),
@@ -892,6 +953,7 @@ export async function getOpsControlTowerSummary(
     appointmentLetter,
     pennyDropMissing,
     accountDetailsMissing,
+    docsPending,
     bgvPending,
     itProvisioningPending,
     adminProvisioningPending,

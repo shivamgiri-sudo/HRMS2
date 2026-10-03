@@ -278,7 +278,7 @@ export const navGroups: NavGroup[] = [
     items: [
       {
         label: "Ops Control Tower", href: "/ops/control-tower", icon: ic(LayoutDashboard), pageCode: "OPS_CONTROL_TOWER",
-        roles: ["super_admin","admin","ceo","hr","hr_admin","branch_head","operations_manager","wfm","payroll_head"],
+        roles: ["super_admin","admin","ceo","hr","hr_admin","branch_head","operations_manager","wfm","payroll_head","payroll_hr"],
         description: "Branch-wise: attendance mismatch, roster upload, joining, F&F, NOC, DigiLocker, eSign, appointment letter",
       },
       {

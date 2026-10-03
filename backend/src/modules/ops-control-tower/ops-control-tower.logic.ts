@@ -96,3 +96,16 @@ export function scopeSummaryToBranches<T extends Record<string, any>>(summary: T
   }
   return out as T;
 }
+
+/**
+ * Blocks a payroll_hr-only user may open or nudge: the bank / payment-readiness items payroll
+ * actually fixes. Everyone else on VIEW_ROLES keeps the whole tower.
+ */
+export const PAYROLL_HR_BLOCKS: ReadonlySet<string> = new Set([
+  'account-details-missing',
+  'penny-drop-missing',
+]);
+
+export function blockAllowedForPayrollOnly(block: string): boolean {
+  return PAYROLL_HR_BLOCKS.has(block);
+}

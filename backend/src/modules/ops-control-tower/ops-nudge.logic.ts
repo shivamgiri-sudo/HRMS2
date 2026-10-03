@@ -2,6 +2,7 @@
 
 export const NUDGEABLE_ISSUES = [
   'account-details-missing',
+  'docs-pending',
   'penny-drop-missing',
   'digilocker-pending',
   'esign-pending',
@@ -50,6 +51,7 @@ export function cooldownState(
 
 const TASK_TEXT: Record<NudgeableIssue, string> = {
   'account-details-missing': 'add your bank account details',
+  'docs-pending': 'upload your pending joining documents',
   'penny-drop-missing': 'complete your bank account verification',
   'digilocker-pending': 'complete your DigiLocker verification',
   'esign-pending': 'e-sign your joining documents',

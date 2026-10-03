@@ -3,7 +3,8 @@
 // resolved through the shared providerFactory: until a provider is configured (or while an admin
 // has paused the channel) every attempt is logged `skipped_unconfigured` and, because cooldown only
 // counts `sent` rows, nothing is "used up" — the first send after configuration goes out normally.
-import type { RowDataPacket } from "mysql2";
+import { randomUUID } from "crypto";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../logger.js";
@@ -11,6 +12,7 @@ import { providerFactory } from "../communication/providers/provider.factory.js"
 import {
   allBranches,
   getAccountDetailsMissingDetail,
+  getDocsPendingDetail,
   getAppointmentLetterDetail,
   getBgvPendingDetail,
   getDigilockerPendingDetail,
@@ -48,6 +50,7 @@ export const NUDGE_DETAIL_LOADERS: Record<
   (branchId: string) => Promise<Array<{ employeeId: string }>>
 > = {
   "account-details-missing": getAccountDetailsMissingDetail,
+  "docs-pending": getDocsPendingDetail,
   "penny-drop-missing": getPennyDropMissingDetail,
   "digilocker-pending": getDigilockerPendingDetail,
   "esign-pending": getEsignPendingDetail,
@@ -144,6 +147,35 @@ export function whatsappConfigured(): boolean {
   return typeof p.isConfigured === "function" ? p.isConfigured() : true;
 }
 
+/** Re-issued links stay valid this long — short enough to limit exposure, long enough to act on. */
+export const REISSUED_LINK_TTL_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Returns a usable onboarding token for the recipient. A live token is reused untouched (earlier
+ * emails keep working); a missing or expired one is replaced on the same ats_onboarding_bridge row
+ * the candidate flow already validates against. No bridge row (manually created employee) = null.
+ * Only runs after the cooldown / contact / provider checks, so it never mints a token for a
+ * message that is not going out.
+ */
+export async function ensureLiveOnboardingToken(
+  r: Pick<RecipientRow, "candidate_id" | "onboarding_token" | "onboarding_token_expires_at">,
+  nowMs: number,
+): Promise<string | null> {
+  if (!r.candidate_id) return null;
+  const live =
+    r.onboarding_token &&
+    (!r.onboarding_token_expires_at || new Date(r.onboarding_token_expires_at as string).getTime() > nowMs);
+  if (live) return r.onboarding_token;
+  const fresh = `${randomUUID()}-${randomUUID()}`;
+  const [res] = await db.execute<ResultSetHeader>(
+    `UPDATE ats_onboarding_bridge
+        SET onboarding_token = ?, onboarding_token_expires_at = ?
+      WHERE candidate_id = ?`,
+    [fresh, new Date(nowMs + REISSUED_LINK_TTL_MS), r.candidate_id],
+  );
+  return res.affectedRows > 0 ? fresh : null;
+}
+
 export async function nudgeEmployee(input: {
   employeeId: string;
   issue: NudgeableIssue;
@@ -176,10 +208,8 @@ export async function nudgeEmployee(input: {
     return { employeeId, status: "skipped_unconfigured" };
   }
 
-  const tokenLive =
-    r.onboarding_token &&
-    (!r.onboarding_token_expires_at || new Date(r.onboarding_token_expires_at as string).getTime() > nowMs);
-  const link = tokenLive ? `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${r.onboarding_token}` : null;
+  const token = await ensureLiveOnboardingToken(r, nowMs);
+  const link = token ? `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${token}` : null;
   const body = buildNudgeMessage(issue, { name: r.full_name, daysOpen: Number(r.days_open ?? 0), link });
 
   try {

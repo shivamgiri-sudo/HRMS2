@@ -85,7 +85,7 @@ export const peopleRouteElements = (
       {/* Profile completion — manual HR onboarding only captures a handful of fields;
           this guided flow closes the gap against the 10-step candidate journey */}
       <Route path="/employees/:employeeId/complete-profile" element={
-        <ProtectedRoute roles={['admin','super_admin','hr']}>
+        <ProtectedRoute roles={['admin','super_admin','hr','payroll_hr']}>
           <EmployeeProfileCompletion />
         </ProtectedRoute>
       } />

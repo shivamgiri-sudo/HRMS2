@@ -5,7 +5,7 @@ import type {
 } from "./opsControlTowerTypes";
 
 export const NUDGEABLE_BLOCKS: readonly NudgeableBlock[] = [
-  "account-details-missing", "penny-drop-missing", "digilocker-pending", "esign-pending", "appointment-letter", "bgv-pending",
+  "account-details-missing", "docs-pending", "penny-drop-missing", "digilocker-pending", "esign-pending", "appointment-letter", "bgv-pending",
 ];
 export const isNudgeableBlock = (b: string): b is NudgeableBlock => (NUDGEABLE_BLOCKS as readonly string[]).includes(b);
 
@@ -15,6 +15,7 @@ export interface FunnelStep { key: DetailBlockKey; label: string; sectionId: str
 export function buildFunnel(d: OpsControlTowerSummary): FunnelStep[] {
   return [
     { key: "account-details-missing", label: "Bank details", sectionId: "account-details", total: d.accountDetailsMissing.grandTotal },
+    { key: "docs-pending", label: "Documents", sectionId: "docs-pending", total: d.docsPending.grandTotal },
     { key: "penny-drop-missing", label: "Penny drop", sectionId: "penny-drop", total: d.pennyDropMissing.grandTotal },
     { key: "digilocker-pending", label: "DigiLocker", sectionId: "digilocker", total: d.digilockerPending.grandTotal },
     { key: "esign-pending", label: "Joining-kit eSign", sectionId: "esign", total: d.esignPending.grandTotal },
@@ -43,7 +44,7 @@ export function rankBranches(d: OpsControlTowerSummary, limit = 8): BranchRank[]
     ["fnf-pending", "F&F", d.fnfPending], ["noc-pending", "NOC", d.nocPending],
     ["digilocker-pending", "DigiLocker", d.digilockerPending], ["esign-pending", "eSign", d.esignPending],
     ["appointment-letter", "Appt. letter", d.appointmentLetter], ["penny-drop-missing", "Penny drop", d.pennyDropMissing],
-    ["account-details-missing", "Bank details", d.accountDetailsMissing], ["bgv-pending", "BGV", d.bgvPending],
+    ["account-details-missing", "Bank details", d.accountDetailsMissing], ["docs-pending", "Documents", d.docsPending], ["bgv-pending", "BGV", d.bgvPending],
     ["it-provisioning-pending", "IT", d.itProvisioningPending], ["admin-provisioning-pending", "Admin", d.adminProvisioningPending],
     ["wfm-provisioning-pending", "WFM", d.wfmProvisioningPending],
   ];
@@ -95,9 +96,16 @@ export function neglected(r: Partial<RowExtras>): boolean {
   return (r.daysOpen ?? 0) >= 3 && r.nudge !== undefined && r.nudge.count === 0;
 }
 
-export interface RowLink { label: string; href: string }
+export interface RowLink { label: string; href: string; /** The one action HR / payroll should take next; rendered as a button, listed first. */ primary?: boolean }
 export function rowLinks(block: DetailBlockKey, r: { employeeId: string; candidateId?: string | null }): RowLink[] {
   const links: RowLink[] = [{ label: "Employee 360", href: `/employees/${r.employeeId}/360` }];
+  // HR / payroll fix on behalf of the employee on the existing profile-completion page, which writes
+  // to the same tables the candidate flow does. ?step= opens the right tab.
+  const fix = (step: string, label: string) => links.unshift({ label, href: `/employees/${r.employeeId}/complete-profile?step=${step}`, primary: true });
+  if (block === "account-details-missing") fix("bank", "Enter bank details");
+  if (block === "penny-drop-missing") fix("bank", "Fix bank / penny drop");
+  if (block === "docs-pending") { fix("documents", "Upload documents"); links.push({ label: "Joining docs", href: `/employees/${r.employeeId}/joining-documents` }); }
+  if (block === "digilocker-pending" || block === "bgv-pending") fix("bgv", "Verification (DigiLocker / BGV)");
   if (block === "esign-pending") links.push({ label: "Joining docs", href: `/employees/${r.employeeId}/joining-documents` });
   if (block === "bgv-pending" && r.candidateId) links.push({ label: "BGV report", href: `/bgv-report-view/${r.candidateId}` });
   return links;
