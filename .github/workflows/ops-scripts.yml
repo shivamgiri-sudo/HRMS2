@@ -61,6 +61,7 @@ on:
           - deduction-duplicates-scan
           - salary-rows-review
           - dbbill-validate-flagged
+          - salary-assignment-deactivate-mas63386
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -235,6 +236,11 @@ jobs:
             dbbill-validate-flagged)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/dbbill-validate-flagged.ts
+              ;;
+            salary-assignment-deactivate-mas63386)
+              # Dry-runs unless given --apply. Apply deactivates ONE guarded row (active_status 1 -> 0).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/salary-assignment-deactivate-mas63386.ts $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
