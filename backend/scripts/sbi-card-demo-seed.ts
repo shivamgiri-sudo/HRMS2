@@ -265,8 +265,11 @@ export function toInserts(g: Generated, processId: string): Record<string, { col
   return out;
 }
 
+/** The dashboard finds the process BY CODE (migration 1985 merged the duplicate onto the real process, which took the code SBI_CARD). */
 async function processId(): Promise<string | null> {
-  const [r] = await db.execute<any[]>(`SELECT id FROM process_master WHERE process_name = ? AND active_status = 1 LIMIT 1`, [SBI_CARD_PROCESS_NAME]);
+  const [r] = await db.execute<any[]>(`SELECT id, process_name FROM process_master WHERE process_code = 'SBI_CARD' AND active_status = 1 LIMIT 1`);
+  const [byName] = await db.execute<any[]>(`SELECT id FROM process_master WHERE process_name = ? AND active_status = 1 LIMIT 1`, [SBI_CARD_PROCESS_NAME]);
+  console.log(`process by code SBI_CARD: ${r[0] ? `"${r[0].process_name}"` : "none"}; the uploaders look it up by name "${SBI_CARD_PROCESS_NAME}": ${byName[0] ? (byName[0].id === r[0]?.id ? "same process" : "a DIFFERENT process") : "NOT FOUND"}`);
   return r[0]?.id ?? null;
 }
 
@@ -290,7 +293,7 @@ async function main(): Promise<void> {
   const end = process.env.DEMO_END ? new Date(`${process.env.DEMO_END}T00:00:00Z`) : new Date();
   const dates = demoDates(end); const [from, to] = [dates[0], dates[dates.length - 1]];
   const pid = await processId();
-  if (!pid) throw new Error(`no active "${SBI_CARD_PROCESS_NAME}" process`);
+  if (!pid) throw new Error("no active process with code SBI_CARD");
   const gen = generate(dates); const ins = toInserts(gen, pid);
   const bad = Object.values(ins).flatMap((i) => i.errors);
   console.log(`demo window ${from}..${to}; rows to write: ${Object.entries(ins).map(([t, i]) => `${t.replace("sbi_card_", "")}=${i.values.length}`).join(" ")}`);
