@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1223,
-  "columnCount": 17759,
+  "columnCount": 17760,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -16259,7 +16259,8 @@
       "dispute_reason",
       "dispute_resolved_by",
       "dispute_resolved_at",
-      "dispute_resolution"
+      "dispute_resolution",
+      "disputed_at"
     ],
     "roster_decision_audit": [
       "id",

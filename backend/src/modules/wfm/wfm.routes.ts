@@ -1180,6 +1180,7 @@ wfmRouter.post("/my-weekoff/:assignmentId/reject", requireAuth, h(async (req: an
   const [rejectResult] = await dbConn.execute<ResultSetHeader>(
     `UPDATE wfm_roster_assignment
         SET employee_ack_status = 'rejected',
+            employee_ack_at = NOW(),
             employee_rejection_reason = ?,
             final_roster_status = 'pending_manager_action'
       WHERE id = ? AND employee_id = ? AND final_roster_status = 'pending_employee_ack'`,

@@ -21,6 +21,9 @@
  *      dispute_resolved_by -> employees.id). resolveDispute writes the deciding USER id there, so
  *      with that FK in place a dispute decision fails unless the user id is also an employees.id.
  *      Informational (WARN), not part of PASS/FAIL.
+ *   8. Migration 2074 (the hub's real "raised at"): does roster_daily_assignment.disputed_at exist
+ *      (FAIL when not), and how many open disputed rows still have it NULL / rejected week-offs have
+ *      employee_ack_at NULL (WARN when any: the backfill missed them, or a writer is not stamping).
  *
  * Exit code 1 when any FAIL check fails. Loads env exactly like the other ops scripts
  * (`dotenv/config`, honouring DOTENV_CONFIG_PATH set by .github/workflows/ops-scripts.yml).
@@ -41,6 +44,20 @@ export const INBOX_TYPES = ["ROSTER_REQUEST_DECIDED", "ROSTER_REQUEST_PENDING", 
 /** Tables whose `id` the hub compares with source_id / process_id of the new tables. */
 export const JOINED_ID_TABLES = ["employees", "process_master", "wfm_roster_swap_request", "wfm_roster_assignment", "roster_daily_assignment", "wfm_roster_conflict_log"];
 
+export const RAISED_AT_MIGRATION_FILE = "migrations/2074_roster_request_raised_at.sql";
+
+/** Read-only queries behind check 8. The two counts use only rows the hub would age. */
+export const RAISED_AT_SQL = {
+  disputedAtColumn:
+    "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_daily_assignment' AND COLUMN_NAME = 'disputed_at'",
+  employeeAckAtColumn:
+    "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_roster_assignment' AND COLUMN_NAME = 'employee_ack_at'",
+  disputedWithoutRaisedAt:
+    "SELECT COUNT(*) AS n FROM roster_daily_assignment WHERE acknowledgement_status = 'disputed' AND disputed_at IS NULL",
+  rejectedWithoutRaisedAt:
+    "SELECT COUNT(*) AS n FROM wfm_roster_assignment WHERE employee_ack_status = 'rejected' AND employee_ack_at IS NULL",
+};
+
 /** Refuses any write mode. Returns an error message, or null when the arguments are fine. */
 export function refuseWriteMode(argv) {
   const bad = argv.find((a) => /^(--)?apply$/i.test(String(a)) || /^--mode=apply$/i.test(String(a)));
@@ -55,6 +72,8 @@ export function refuseWriteMode(argv) {
  *   counts: { [table]: number | null }, inboxCounts: { [type]: number } | null,
  *   tableCollation: { [table]: string | null }, idCollation: { [table]: string | null },
  *   counterpartStatus: boolean, disputeResolverFk: boolean,
+ *   raisedAt: { disputedAtColumn: boolean, employeeAckAtColumn: boolean,
+ *               disputedWithoutRaisedAt: number | null, rejectedWithoutRaisedAt: number | null },
  * }
  */
 export function evaluate(facts) {
@@ -102,6 +121,19 @@ export function evaluate(facts) {
       "present: resolveDispute stores the deciding user id there, so a dispute decision fails with ER_NO_REFERENCED_ROW_2 unless that user id is also an employees.id");
   } else {
     add("fk_rda_dispute_resolver (dispute_resolved_by -> employees.id)", "INFO", "absent");
+  }
+
+  const ra = facts.raisedAt;
+  if (ra) {
+    add("roster_daily_assignment.disputed_at exists (migration 2074)", ra.disputedAtColumn ? "PASS" : "FAIL",
+      ra.disputedAtColumn ? "yes" : `missing: ${RAISED_AT_MIGRATION_FILE} has not run; dispute SLA age falls back to updated_at`);
+    if (!ra.employeeAckAtColumn) add("wfm_roster_assignment.employee_ack_at exists (migration 228)", "FAIL", "missing");
+    const nulls = (name, n, why) => {
+      if (n === null || n === undefined) return;
+      add(name, n > 0 ? "WARN" : "PASS", n > 0 ? `${n} (${why})` : "0");
+    };
+    nulls("disputed rows without disputed_at", ra.disputedWithoutRaisedAt, "backfill missed them or the dispute handler is not stamping it; SLA age falls back to updated_at");
+    nulls("rejected week-offs without employee_ack_at", ra.rejectedWithoutRaisedAt, "backfill missed them or the reject handler is not stamping it; SLA age falls back to updated_at");
   }
 
   const failed = checks.filter((c) => c.status === "FAIL");
@@ -155,7 +187,17 @@ async function collect(conn) {
   const disputeResolverFk = (await q(
     "SELECT COUNT(*) AS n FROM information_schema.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_daily_assignment' AND CONSTRAINT_NAME = 'fk_rda_dispute_resolver'"))[0].n > 0;
 
-  return { columns, migrationRow, counts, inboxCounts, tableCollation, idCollation, counterpartStatus, disputeResolverFk };
+  const one = async (sql) => Number((await q(sql))[0].n);
+  const disputedAtColumn = (await one(RAISED_AT_SQL.disputedAtColumn)) > 0;
+  const employeeAckAtColumn = (await one(RAISED_AT_SQL.employeeAckAtColumn)) > 0;
+  const raisedAt = {
+    disputedAtColumn,
+    employeeAckAtColumn,
+    disputedWithoutRaisedAt: disputedAtColumn ? await one(RAISED_AT_SQL.disputedWithoutRaisedAt) : null,
+    rejectedWithoutRaisedAt: employeeAckAtColumn ? await one(RAISED_AT_SQL.rejectedWithoutRaisedAt) : null,
+  };
+
+  return { columns, migrationRow, counts, inboxCounts, tableCollation, idCollation, counterpartStatus, disputeResolverFk, raisedAt };
 }
 
 async function main() {

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 // @ts-expect-error plain .mjs ops script, no type declarations
-import { EXPECTED_COLUMNS, HUB_TABLES, MIGRATION_FILE, evaluate, refuseWriteMode } from "../roster-requests-verify.mjs";
+import { EXPECTED_COLUMNS, HUB_TABLES, MIGRATION_FILE, RAISED_AT_MIGRATION_FILE, RAISED_AT_SQL, evaluate, refuseWriteMode } from "../roster-requests-verify.mjs";
 
 const backend = path.resolve(__dirname, "../..");
 const migration = readFileSync(path.join(backend, "sql", MIGRATION_FILE), "utf8");
@@ -28,6 +28,7 @@ const goodFacts = () => ({
   idCollation: { employees: "utf8mb4_unicode_ci", process_master: "utf8mb4_unicode_ci", wfm_roster_swap_request: "utf8mb4_unicode_ci" },
   counterpartStatus: true,
   disputeResolverFk: false,
+  raisedAt: { disputedAtColumn: true, employeeAckAtColumn: true, disputedWithoutRaisedAt: 0, rejectedWithoutRaisedAt: 0 },
 });
 
 describe("roster-requests-verify", () => {
@@ -92,5 +93,34 @@ describe("roster-requests-verify", () => {
     expect(branch).toContain("node scripts/roster-requests-verify.mjs");
     expect(branch).toMatch(/\[ "\$MODE" = "apply" \][\s\S]*exit 1/);
     expect(branch).not.toContain("--apply");
+  });
+
+  it("checks the raised-at columns of migration 2074 and counts rows the backfill missed", () => {
+    expect(RAISED_AT_MIGRATION_FILE).toBe("migrations/2074_roster_request_raised_at.sql");
+    const runner = readFileSync(path.join(backend, "src/db/runPendingMigrations.ts"), "utf8");
+    expect(runner).toContain(`"${RAISED_AT_MIGRATION_FILE}"`);
+
+    const good = evaluate(goodFacts());
+    expect(good.checks.find((c: any) => /disputed_at exists/.test(c.name))).toMatchObject({ status: "PASS" });
+    expect(good.checks.find((c: any) => /disputed rows without disputed_at/.test(c.name))).toMatchObject({ status: "PASS", detail: "0" });
+    expect(good.checks.find((c: any) => /rejected week-offs without employee_ack_at/.test(c.name))).toMatchObject({ status: "PASS", detail: "0" });
+
+    const missing = goodFacts();
+    missing.raisedAt = { disputedAtColumn: false, employeeAckAtColumn: true, disputedWithoutRaisedAt: null as any, rejectedWithoutRaisedAt: 0 };
+    const r = evaluate(missing);
+    expect(r.ok).toBe(false);
+    expect(r.checks.find((c: any) => /disputed_at exists/.test(c.name))).toMatchObject({ status: "FAIL" });
+
+    const unfilled = goodFacts();
+    unfilled.raisedAt = { disputedAtColumn: true, employeeAckAtColumn: true, disputedWithoutRaisedAt: 3, rejectedWithoutRaisedAt: 2 };
+    const u = evaluate(unfilled);
+    expect(u.ok).toBe(true);
+    expect(u.checks.filter((c: any) => c.status === "WARN" && /without/.test(c.name))).toHaveLength(2);
+  });
+
+  it("runs only SELECTs for the raised-at facts", () => {
+    for (const sql of Object.values(RAISED_AT_SQL) as string[]) expect(sql.trim()).toMatch(/^SELECT /);
+    expect(RAISED_AT_SQL.disputedWithoutRaisedAt).toMatch(/acknowledgement_status = 'disputed' AND disputed_at IS NULL/);
+    expect(RAISED_AT_SQL.rejectedWithoutRaisedAt).toMatch(/employee_ack_status = 'rejected' AND employee_ack_at IS NULL/);
   });
 });

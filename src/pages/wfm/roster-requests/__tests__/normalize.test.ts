@@ -22,6 +22,16 @@ describe("normalize", () => {
     const r = normalizeDispute({ id: "d1", employee_id: "e1", first_name: "A", last_name: "B", roster_date: "2026-10-04", dispute_reason: "wrong shift" } as any, now);
     expect(r).toMatchObject({ kind: "dispute", employeeName: "A B", reason: "wrong shift" });
   });
+  it("ages a dispute from disputed_at, falling back to updated_at", () => {
+    const base = { id: "d2", employee_id: "e1", roster_date: "2026-10-20", updated_at: "2026-10-02T09:00:00Z" };
+    expect(normalizeDispute({ ...base, disputed_at: "2026-09-28T10:00:00Z" } as any, now)).toMatchObject({ raisedAt: "2026-09-28T10:00:00Z", slaState: "overdue" });
+    expect(normalizeDispute({ ...base, disputed_at: null } as any, now)).toMatchObject({ raisedAt: "2026-10-02T09:00:00Z", slaState: "ok" });
+  });
+  it("ages a week-off rejection from employee_ack_at, falling back to updated_at", () => {
+    const base = { id: "w2", employee_id: "e1", roster_date: "2026-10-20", updated_at: "2026-10-02T09:00:00Z" };
+    expect(normalizeWeekoff({ ...base, employee_ack_at: "2026-09-28T10:00:00Z" } as any, now)).toMatchObject({ raisedAt: "2026-09-28T10:00:00Z", slaState: "overdue" });
+    expect(normalizeWeekoff({ ...base, employee_ack_at: null } as any, now)).toMatchObject({ raisedAt: "2026-10-02T09:00:00Z" });
+  });
   it("maps a conflict", () => {
     const r = normalizeConflict({ id: "c1", conflict_type: "overlap", conflict_date: "2026-10-04", employee_names: ["A"], employees_involved: ["e1"], description: "double booked", created_at: "2026-10-01T10:00:00Z", status: "open" } as any, now);
     expect(r).toMatchObject({ kind: "conflict", employeeName: "A" });

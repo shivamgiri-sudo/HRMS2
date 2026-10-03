@@ -28,3 +28,34 @@ describe("roster requests migration", () => {
     for (const s of statements) expect(s).toMatch(/^CREATE TABLE IF NOT EXISTS roster_request_/);
   });
 });
+
+describe("roster requests raised-at migration (2074)", () => {
+  const file = "2074_roster_request_raised_at.sql";
+  const sql = readFileSync(path.resolve(__dirname, `../../../../sql/migrations/${file}`), "utf8");
+
+  it("is scheduled by the migration runner manifest", () => {
+    // Same trap as 1995: an unlisted file under sql/migrations/ never runs, and the dispute handler
+    // would then write a column that does not exist.
+    const runner = readFileSync(path.resolve(__dirname, "../../../db/runPendingMigrations.ts"), "utf8");
+    const manifest = runner.slice(runner.indexOf("MIGRATION_MANIFEST"), runner.indexOf("export type MigrationHealth"));
+    expect(manifest).toContain(`"migrations/${file}"`);
+  });
+
+  it("adds roster_daily_assignment.disputed_at as a nullable column, guarded on information_schema", () => {
+    expect(sql).toContain("ALTER TABLE roster_daily_assignment ADD COLUMN disputed_at DATETIME NULL");
+    expect(sql).toMatch(/TABLE_NAME = 'roster_daily_assignment' AND COLUMN_NAME = 'disputed_at'/);
+    expect(sql).not.toMatch(/disputed_at DATETIME NULL DEFAULT/);
+  });
+
+  it("backfills only rows that need it, and runs no DDL against wfm_roster_assignment", () => {
+    expect(sql).toContain("SET disputed_at = updated_at WHERE acknowledgement_status = ''disputed'' AND disputed_at IS NULL");
+    expect(sql).toContain("SET employee_ack_at = updated_at WHERE employee_ack_status = ''rejected'' AND employee_ack_at IS NULL");
+    expect(sql).not.toMatch(/ALTER TABLE wfm_roster_assignment/);
+  });
+
+  it("splits into guard / prepare / execute statements only", () => {
+    const statements = splitSql(sql);
+    for (const s of statements) expect(s).toMatch(/^(SET @|PREPARE |EXECUTE |DEALLOCATE )/);
+    expect(statements.filter((s) => s.startsWith("EXECUTE"))).toHaveLength(3);
+  });
+});

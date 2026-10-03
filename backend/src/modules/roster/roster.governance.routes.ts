@@ -16,6 +16,7 @@ import { validateAmendmentInput } from "../wfm/roster-audit.helpers.js";
 import { recordAmendmentInDecisionAudit } from "../wfm/roster-audit.amendment.js";
 import type { RowDataPacket } from "mysql2";
 import { onRosterRequestRaised } from "../roster-requests/roster-requests.raise.js";
+import { columnExists } from "../../shared/schema-object-cache.js";
 import { ORG_WIDE_EXEMPT_ROLES, hasAnyRole } from "../../shared/scopeAccess.js";
 import { userCanAccessProcess, scopedProcessIdsForUser, getScope, canAccessProcess, allowedBranchIds } from "../wfm/branch-scope.js";
 
@@ -515,8 +516,12 @@ router.post("/assignments/:id/dispute", h(async (req: AuthenticatedRequest, res:
     });
   }
 
+  // disputed_at (migration 2074) is when the dispute was raised: the Roster Requests hub ages the
+  // request from it. updated_at moves on any later write to the row. Guarded so a database the
+  // migration has not reached yet still records the dispute.
+  const stampRaisedAt = (await columnExists("roster_daily_assignment", "disputed_at")) ? ", disputed_at = NOW()" : "";
   await db.execute(
-    "UPDATE roster_daily_assignment SET acknowledgement_status = 'disputed', dispute_reason = ? WHERE id = ?",
+    `UPDATE roster_daily_assignment SET acknowledgement_status = 'disputed', dispute_reason = ?${stampRaisedAt} WHERE id = ?`,
     [dispute_reason.trim(), req.params.id]
   );
   // Approver inbox items for the dispute (deferred, non-fatal). Disputes are never auto-approved.
@@ -575,10 +580,13 @@ router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Res
   if (!lob) return;
   const lobSql = lobAnd(lob, "e");
   params.push(...lobSql.params);
+  // disputed_at: when the dispute was raised (migration 2074); NULL for older rows and until the
+  // migration has run, and the hub then falls back to updated_at.
+  const disputedAt = (await columnExists("roster_daily_assignment", "disputed_at")) ? "rda.disputed_at" : "NULL AS disputed_at";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rda.id, rda.cycle_id, rda.employee_id, rda.roster_date,
             rda.shift_template_id, rda.is_week_off, rda.acknowledgement_status,
-            rda.dispute_reason, rda.dispute_resolved_at, rda.dispute_resolution, rda.updated_at,
+            rda.dispute_reason, rda.dispute_resolved_at, rda.dispute_resolution, rda.updated_at, ${disputedAt},
             e.employee_code, e.first_name, e.last_name, e.lob_id,
             wrc.process_id, wrc.week_start_date, wrc.week_end_date,
             wst.shift_name, wst.start_time, wst.end_time

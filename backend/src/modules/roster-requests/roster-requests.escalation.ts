@@ -66,7 +66,17 @@ const DUE = (raised: string, date: string) =>
   `(${raised} < NOW() - INTERVAL 48 HOUR OR ${date} <= CURDATE() + INTERVAL 1 DAY)
    AND ${date} >= CURDATE() - INTERVAL ${STALE_SHIFT_DAYS} DAY`;
 
-const LOADERS: Record<RequestKind, string> = {
+/**
+ * When a dispute was raised: disputed_at (migration 2074, stamped by the dispute-raise handler),
+ * falling back to updated_at for rows raised before it, and on a database the migration has not
+ * reached yet (the column check keeps the whole sweep from failing on an unknown column).
+ * Week-off rejections use employee_ack_at, the employee's response time, which the reject handler
+ * stamps; updated_at is the fallback for older rows.
+ */
+const DISPUTE_RAISED_AT = "COALESCE(rda.disputed_at, rda.updated_at)";
+const DISPUTE_RAISED_AT_LEGACY = "rda.updated_at";
+
+const loaders = (disputeRaisedAt: string): Record<RequestKind, string> => ({
   swap: `SELECT 'swap' AS kind, s.id AS source_id, s.requester_emp_id AS employee_id, e.branch_id, e.process_id,
                 s.created_at AS raised_at, DATE_FORMAT(s.swap_date, '%Y-%m-%d') AS shift_date
            FROM wfm_roster_swap_request s
@@ -83,12 +93,12 @@ const LOADERS: Record<RequestKind, string> = {
             AND ${DUE("COALESCE(wra.employee_ack_at, wra.updated_at)", "wra.roster_date")}
           LIMIT ${PER_KIND_LIMIT}`,
   dispute: `SELECT 'dispute' AS kind, rda.id AS source_id, rda.employee_id, e.branch_id, e.process_id,
-                rda.updated_at AS raised_at, DATE_FORMAT(rda.roster_date, '%Y-%m-%d') AS shift_date
+                ${disputeRaisedAt} AS raised_at, DATE_FORMAT(rda.roster_date, '%Y-%m-%d') AS shift_date
            FROM roster_daily_assignment rda
            JOIN employees e ON e.id = rda.employee_id
            LEFT JOIN roster_request_escalation x ON x.kind = 'dispute' AND x.source_id = rda.id
           WHERE rda.acknowledgement_status = 'disputed' AND rda.dispute_resolved_at IS NULL AND x.id IS NULL
-            AND ${DUE("rda.updated_at", "rda.roster_date")}
+            AND ${DUE(disputeRaisedAt, "rda.roster_date")}
           LIMIT ${PER_KIND_LIMIT}`,
   conflict: `SELECT 'conflict' AS kind, c.id AS source_id, c.employee_id, e.branch_id, e.process_id,
                 c.detected_at AS raised_at, DATE_FORMAT(c.conflict_date, '%Y-%m-%d') AS shift_date
@@ -97,13 +107,22 @@ const LOADERS: Record<RequestKind, string> = {
            LEFT JOIN roster_request_escalation x ON x.kind = 'conflict' AND x.source_id = c.id
           WHERE c.resolved = 0 AND x.id IS NULL AND ${DUE("c.detected_at", "c.conflict_date")}
           LIMIT ${PER_KIND_LIMIT}`,
-};
+});
+
+async function hasDisputedAtColumn(exec: Exec): Promise<boolean> {
+  const [rows] = await exec.execute(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_daily_assignment' AND COLUMN_NAME = 'disputed_at'`,
+  );
+  return Number((rows as RowDataPacket[])?.[0]?.n ?? 0) > 0;
+}
 
 const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : String(v ?? ""));
 
 async function loadCandidates(exec: Exec): Promise<EscalationCandidate[]> {
   const out: EscalationCandidate[] = [];
-  for (const sql of Object.values(LOADERS)) {
+  const disputeRaisedAt = (await hasDisputedAtColumn(exec)) ? DISPUTE_RAISED_AT : DISPUTE_RAISED_AT_LEGACY;
+  for (const sql of Object.values(loaders(disputeRaisedAt))) {
     const [rows] = await exec.execute(sql);
     for (const r of rows as RowDataPacket[]) {
       out.push({

@@ -39,10 +39,11 @@ describe("selectEscalations", () => {
   });
 });
 
-function fakeExec(opts: { claimAffected?: number; branchHeads?: string[]; wfm?: string[]; hr?: string[]; candidates?: any[] } = {}) {
+function fakeExec(opts: { claimAffected?: number; branchHeads?: string[]; wfm?: string[]; hr?: string[]; candidates?: any[]; disputedAtColumn?: boolean } = {}) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const execute = vi.fn(async (sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
+    if (/information_schema\.COLUMNS/i.test(sql)) return [[{ n: opts.disputedAtColumn === false ? 0 : 1 }], []];
     if (/INSERT IGNORE INTO roster_request_escalation/.test(sql)) return [{ affectedRows: opts.claimAffected ?? 1 }, []];
     if (/role_key = 'branch_head'/.test(sql)) return [(opts.branchHeads ?? ["u-bh"]).map((user_id) => ({ user_id })), []];
     if (/role_key = 'hr'/.test(sql)) return [(opts.hr ?? []).map((user_id) => ({ user_id })), []];
@@ -107,5 +108,28 @@ describe("runEscalationSweep", () => {
     const loads = exec.calls.filter((c) => /LEFT JOIN roster_request_escalation/.test(c.sql));
     expect(loads).toHaveLength(4);
     for (const l of loads) expect(l.sql).toMatch(/x\.id IS NULL/);
+  });
+
+  it("ages a dispute from disputed_at, falling back to updated_at for rows raised before the column", async () => {
+    const exec = fakeExec();
+    await runEscalationSweep(exec as any, NOW);
+    const load = exec.calls.find((c) => /FROM roster_daily_assignment/.test(c.sql))!;
+    expect(load.sql).toContain("COALESCE(rda.disputed_at, rda.updated_at) AS raised_at");
+    expect(load.sql).toContain("COALESCE(rda.disputed_at, rda.updated_at) < NOW() - INTERVAL 48 HOUR");
+  });
+
+  it("uses updated_at alone while the disputed_at column does not exist yet", async () => {
+    const exec = fakeExec({ disputedAtColumn: false });
+    await runEscalationSweep(exec as any, NOW);
+    const load = exec.calls.find((c) => /FROM roster_daily_assignment/.test(c.sql))!;
+    expect(load.sql).not.toContain("disputed_at");
+    expect(load.sql).toContain("rda.updated_at AS raised_at");
+  });
+
+  it("ages a week-off rejection from the employee's response time (employee_ack_at)", async () => {
+    const exec = fakeExec();
+    await runEscalationSweep(exec as any, NOW);
+    const load = exec.calls.find((c) => /FROM wfm_roster_assignment/.test(c.sql))!;
+    expect(load.sql).toContain("COALESCE(wra.employee_ack_at, wra.updated_at) AS raised_at");
   });
 });

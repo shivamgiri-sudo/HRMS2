@@ -38,11 +38,14 @@ const d10 = (v: unknown) => String(v ?? "").slice(0, 10);
 export const normalizeSwap = (s: any, now = new Date()) =>
   build("swap", String(s.id), { employeeId: s.requester_employee_id ?? null, employeeName: s.requester_name ?? "Employee", secondaryName: s.target_name ?? null, date: d10(s.swap_date), reason: s.reason ?? null, counterpartStatus: s.counterpart_status ?? null, raisedAt: String(s.created_at ?? ""), raw: s }, now);
 
+// Week-off rejection / dispute age from when the employee raised it (employee_ack_at is stamped on
+// reject, disputed_at on dispute — migration 2074); updated_at, which moves on any later write, is
+// only the fallback for rows raised before those were recorded.
 export const normalizeWeekoff = (w: any, now = new Date()) =>
-  build("weekoff_rejection", String(w.id), { employeeId: w.employee_id ?? null, employeeName: w.employee_name ?? "Employee", secondaryName: null, date: d10(w.roster_date), reason: w.employee_rejection_reason ?? null, raisedAt: String(w.updated_at ?? w.created_at ?? ""), raw: w }, now);
+  build("weekoff_rejection", String(w.id), { employeeId: w.employee_id ?? null, employeeName: w.employee_name ?? "Employee", secondaryName: null, date: d10(w.roster_date), reason: w.employee_rejection_reason ?? null, raisedAt: String(w.employee_ack_at ?? w.updated_at ?? w.created_at ?? ""), raw: w }, now);
 
 export const normalizeDispute = (r: any, now = new Date()) =>
-  build("dispute", String(r.id), { employeeId: r.employee_id ?? null, employeeName: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() || "Employee", secondaryName: null, date: d10(r.roster_date), reason: r.dispute_reason ?? null, raisedAt: String(r.updated_at ?? r.roster_date ?? ""), raw: r }, now);
+  build("dispute", String(r.id), { employeeId: r.employee_id ?? null, employeeName: `${r.first_name ?? ""} ${r.last_name ?? ""}`.trim() || "Employee", secondaryName: null, date: d10(r.roster_date), reason: r.dispute_reason ?? null, raisedAt: String(r.disputed_at ?? r.updated_at ?? r.roster_date ?? ""), raw: r }, now);
 
 export const normalizeConflict = (c: any, now = new Date()) =>
   build("conflict", String(c.id), { employeeId: c.employees_involved?.[0] ?? null, employeeName: c.employee_names?.[0] ?? "Employee", secondaryName: null, date: d10(c.conflict_date), reason: c.description ?? c.conflict_type ?? null, raisedAt: String(c.created_at ?? ""), raw: c }, now);

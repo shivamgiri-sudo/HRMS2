@@ -50,3 +50,27 @@ describe("request producers notify approvers and trigger auto-approve", () => {
     expect(raiseAt).toBeLessThan(handler.indexOf("Dispute raised. Your manager has been notified."));
   });
 });
+
+describe("requests record when they were raised", () => {
+  const handler = (src: string, route: string) => {
+    const start = src.indexOf(route);
+    return src.slice(start, src.indexOf("}));", start));
+  };
+  it("dispute raise stamps disputed_at (when the column exists) in the same UPDATE", () => {
+    const h = handler(read("../../roster/roster.governance.routes.ts"), '"/assignments/:id/dispute"');
+    expect(h).toMatch(/columnExists\("roster_daily_assignment", "disputed_at"\)/);
+    expect(h).toContain('", disputed_at = NOW()"');
+    expect(h).toMatch(/acknowledgement_status = 'disputed', dispute_reason = \?\$\{stampRaisedAt\} WHERE id = \?/);
+    expect(h).toContain("Dispute raised. Your manager has been notified.");
+  });
+  it("week-off reject stamps employee_ack_at, the employee's response time", () => {
+    const h = handler(read("../../wfm/wfm.routes.ts"), '"/my-weekoff/:assignmentId/reject"');
+    expect(h).toMatch(/SET employee_ack_status = 'rejected',\s*employee_ack_at = NOW\(\),/);
+    expect(h).toContain("Rejection recorded. Your reporting manager has been notified.");
+  });
+  it("the manager review queue returns disputed_at", () => {
+    const h = handler(read("../../roster/roster.governance.routes.ts"), '"/manager-review-queue"');
+    expect(h).toMatch(/rda\.disputed_at|NULL AS disputed_at/);
+    expect(h).toMatch(/columnExists\("roster_daily_assignment", "disputed_at"\)/);
+  });
+});
