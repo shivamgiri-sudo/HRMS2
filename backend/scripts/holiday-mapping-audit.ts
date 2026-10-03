@@ -39,6 +39,7 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
 
     const ccIds = (cc as any[]).map((r) => r.cost_centre_id).filter(Boolean);
     if (ccIds.length === 0) continue;
+    const ph = ccIds.map(() => "?").join(",");
     const desIds = new Set((des as any[]).map((r) => r.designation_id));
 
     const emps = await q(
@@ -50,7 +51,7 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
          FROM employees e
          LEFT JOIN branch_master bm ON bm.id = e.branch_id
          LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id AND adr.record_date = ?
-        WHERE e.cost_centre_id IN (?)`, [DATE, DATE, ccIds]);
+        WHERE e.cost_centre_id IN (${ccIds.map(() => "?").join(",")})`, [DATE, DATE, ...ccIds]);
 
     const reasons = new Map<string, number>();
     const bad: any[] = [];
@@ -75,10 +76,10 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
       `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, ccm.active_status,
               (SELECT COUNT(*) FROM employees e WHERE e.cost_centre_id = ccm.id) emps
          FROM cost_centre_master ccm
-        WHERE ccm.id NOT IN (?)
-          AND (ccm.cost_centre_code IN (SELECT cost_centre_code FROM cost_centre_master WHERE id IN (?))
-            OR ccm.cost_centre_name IN (SELECT cost_centre_name FROM cost_centre_master WHERE id IN (?)))`,
-      [ccIds, ccIds, ccIds]);
+        WHERE ccm.id NOT IN (${ph})
+          AND (ccm.cost_centre_code IN (SELECT cost_centre_code FROM cost_centre_master WHERE id IN (${ph}))
+            OR ccm.cost_centre_name IN (SELECT cost_centre_name FROM cost_centre_master WHERE id IN (${ph})))`,
+      [...ccIds, ...ccIds, ...ccIds]);
     console.log("\nsame code/name cost centres NOT in mapping:");
     console.table(dup);
   }
