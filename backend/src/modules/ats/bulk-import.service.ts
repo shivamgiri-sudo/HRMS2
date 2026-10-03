@@ -574,6 +574,17 @@ async function importOneCandidate(
     ]
   );
 
+  // Tag the row so reports can tell a bulk-loaded candidate from a real registration. Best effort: the
+  // tag table arrives with migration 1963, and a missing tag must not fail the import itself.
+  try {
+    await db.execute(
+      `INSERT IGNORE INTO ats_candidate_import_tag (candidate_id, batch) VALUES (?, ?)`,
+      [candidateDbId, importBatchId ?? "bulk-import"],
+    );
+  } catch {
+    // table not created yet — nothing to tag
+  }
+
   await db.execute(
     `INSERT INTO ats_candidate_stage_log (id, candidate_id, to_stage, stage_date, remarks, updated_by)
      VALUES (UUID(), ?, ?, ?, 'Historical import', ?)`,

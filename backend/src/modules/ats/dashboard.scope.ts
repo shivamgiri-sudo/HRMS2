@@ -44,6 +44,45 @@ export function recruiterNameSql(alias = ''): string {
   return `COALESCE(NULLIF(TRIM(${p}recruiter_name), ''), NULLIF(TRIM(${p}recruiter_assigned_name), ''))`;
 }
 
+/* ── Legacy-import tag (ats_candidate_import_tag, migration 1963) ─────────────────────────────────
+ * The 2026-06 bulk load left ~32.5k candidates with no source or recruiter. They are tagged in a
+ * side table so charts can say "Legacy import" instead of Unspecified / Unassigned. The helpers fall
+ * back to the plain expressions until the table is known to exist, so a deploy that runs before the
+ * migration (or a failed migration) degrades to the old labels rather than breaking the dashboards. */
+let importTagReady = false;
+let importTagCheckedAt = 0;
+export async function refreshImportTag(): Promise<void> {
+  if (Date.now() - importTagCheckedAt < 300_000) return;
+  importTagCheckedAt = Date.now();
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'ats_candidate_import_tag' LIMIT 1`);
+    importTagReady = (rows as unknown[]).length > 0;
+  } catch {
+    importTagReady = false;
+  }
+}
+
+/** True for candidates tagged as part of the legacy bulk import. Always-false SQL until the table exists. */
+export function legacyImportSql(alias = ''): string {
+  if (!importTagReady) return '0';
+  const p = alias ? `${alias}.` : '';
+  return `EXISTS (SELECT 1 FROM ats_candidate_import_tag _imp WHERE _imp.candidate_id = ${p}id)`;
+}
+
+/** sourcing_channel, except a tagged legacy-import row with no source reads 'Legacy import'. */
+export function sourceValueSql(alias = ''): string {
+  const p = alias ? `${alias}.` : '';
+  if (!importTagReady) return `${p}sourcing_channel`;
+  return `CASE WHEN ${legacyImportSql(alias)} AND TRIM(COALESCE(${p}sourcing_channel, '')) = '' THEN 'Legacy import' ELSE ${p}sourcing_channel END`;
+}
+
+/** Recruiter shown on a dashboard: the real one, else 'Legacy import' for tagged rows, else NULL (Unassigned). */
+export function recruiterLabelSql(alias = ''): string {
+  if (!importTagReady) return recruiterNameSql(alias);
+  return `COALESCE(${recruiterNameSql(alias)}, CASE WHEN ${legacyImportSql(alias)} THEN 'Legacy import' END)`;
+}
+
 /** Groups recruiter spellings (case, "· MAS12345" suffix, aliases) and picks one display name per person. */
 export function recruiterNamer(rawNames: readonly string[]): (raw: unknown) => string {
   const groups = new Map<string, string[]>();

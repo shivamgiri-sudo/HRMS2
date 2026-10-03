@@ -1,7 +1,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import { getJoinedInfo, joinedIdSql } from './dashboard.joined.js';
-import { branchDisplay, branchFilter, processDisplay, recruiterNamer, recruiterNameSql, reportingScope, sourceDisplay } from './dashboard.scope.js';
+import { branchDisplay, branchFilter, processDisplay, recruiterNamer, recruiterLabelSql, sourceValueSql, refreshImportTag, reportingScope, sourceDisplay } from './dashboard.scope.js';
 
 /**
  * ATS dashboard overview — server-side aggregates for /ats/dashboard.
@@ -112,14 +112,15 @@ async function compute(period: OverviewPeriod, branch: string) {
   const brSql = bf ? `AND ${bf.sql}` : '';
   const brArgs = bf ? bf.params : [];
 
+  await refreshImportTag();
   const joinedInfo = await getJoinedInfo();
   const jsql = joinedIdSql('id', joinedInfo.ids);
   const [rows, dims, heat, aging, tth, offers, bgv, queue, dup] = await Promise.all([
     getCube(),
     // Recruiter / source / process / gender need columns the cube omits; engaged candidates only (~8k rows).
     safe('dims', () => q<{ ch: string; pr: string; rc: string; g: string; status: string; stage: string; jn: number; n: number }>(
-      `SELECT sourcing_channel AS ch, applied_for_process AS pr,
-              COALESCE(${recruiterNameSql()},'Unassigned') AS rc, gender AS g, status, current_stage AS stage, (${jsql.sql}) AS jn, COUNT(*) AS n
+      `SELECT ${sourceValueSql()} AS ch, applied_for_process AS pr,
+              COALESCE(${recruiterLabelSql()},'Unassigned') AS rc, gender AS g, status, current_stage AS stage, (${jsql.sql}) AS jn, COUNT(*) AS n
        FROM ats_candidate WHERE active_status = 1 AND ${reportingScope('ats_candidate')} AND status <> ? ${win} ${brSql}
        GROUP BY ch, pr, rc, g, status, stage, jn`, [...jsql.params, LEAD, ...brArgs]), []),
     safe('heat', () => q<{ dow: number; hr: number; n: number }>(

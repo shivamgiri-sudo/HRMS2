@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1222,
-  "columnCount": 17756,
+  "tableCount": 1223,
+  "columnCount": 17759,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -1044,6 +1044,11 @@
       "ip_address",
       "user_agent",
       "accessed_at"
+    ],
+    "ats_candidate_import_tag": [
+      "candidate_id",
+      "batch",
+      "tagged_at"
     ],
     "ats_candidate_portal_access": [
       "id",
