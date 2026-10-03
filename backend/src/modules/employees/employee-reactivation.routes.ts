@@ -7,6 +7,7 @@ import { canViewEmployee, resolveUserBusinessScope, buildEmployeeScopeCondition 
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { evaluateRehire } from "./rehire/rehireEligibility.js";
 import { loadRehireFacts } from "./rehire/rehireFacts.js";
+import { isFormerReport } from "./rehire/rehireAccess.js";
 import { activateRejoin, RejoinBlockedError } from "./rehire/rejoinActivation.js";
 
 export const employeeReactivationRouter = Router();
@@ -250,16 +251,8 @@ employeeReactivationRouter.post(
       }
 
       // A reporting manager may raise only for someone who reported to them.
-      if (role === "manager") {
-        const [mgrRows] = await pool.execute<(RowDataPacket & { is_manager: number })[]>(
-          `SELECT COUNT(*) AS is_manager FROM employees e
-             JOIN employees m ON m.id = e.reporting_manager_id
-            WHERE e.id = ? AND m.user_id = ?`,
-          [body.employee_id, initiatedBy],
-        );
-        if (!Number(mgrRows[0]?.is_manager)) {
-          return res.status(403).json({ success: false, message: "You can raise a rejoin only for an employee who reported to you" });
-        }
+      if (role === "manager" && !(await isFormerReport(pool, body.employee_id, initiatedBy))) {
+        return res.status(403).json({ success: false, message: "You can raise a rejoin only for an employee who reported to you" });
       }
 
       const loaded = await loadRehireFacts(pool, body.employee_id, body.proposed_joining_date);
