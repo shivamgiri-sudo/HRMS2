@@ -9,6 +9,7 @@ import {
 } from "../../shared/dashboardScope.js";
 import { blockAllowedForPayrollOnly, scopeSummaryToBranches } from "./ops-control-tower.logic.js";
 import { cachedSummary } from "./ops-summary-cache.js";
+import { closeOldAttendanceIssues, getSyncHealth, runBackfill } from "./ops-attendance-actions.service.js";
 import { hasRole } from "../../shared/accessGuard.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
@@ -61,6 +62,10 @@ const NUDGE_ROLES = [
   "payroll_head",
   "payroll_hr",
 ];
+// Closing old mismatch items as reviewed is a data-quality call, not a payroll one.
+const CLOSE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "payroll_head"];
+// Backfilling writes attendance records, which payroll reads: narrower again.
+const BACKFILL_ROLES = ["super_admin", "admin", "payroll_head"];
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
 
@@ -217,6 +222,105 @@ opsControlTowerRouter.post("/nudge", requireRole(...NUDGE_ROLES), async (req, re
     res.json(await nudgeEmployee({ employeeId, issue, trigger: "manual", actorId: (req as any).authUser?.id ?? null }));
   } catch (err) {
     fail(res, err, "send the nudge");
+  }
+});
+
+// GET /api/ops-control-tower/sync-health - is the attendance PIPELINE healthy? Last runs of the jobs that create
+// attendance records, and per-branch coverage (share of active staff with a record) for the last 7 days, so a
+// cut-off run shows up as a dip in the pipeline instead of as a pile of employee names.
+opsControlTowerRouter.get("/sync-health", requireRole(...VIEW_ROLES), async (req, res) => {
+  try {
+    if (!(await mayUseBlock(req, "attendance-mismatch"))) {
+      res.status(403).json({ error: "Forbidden: this section is not available to your role" });
+      return;
+    }
+    const allowed = await allowedBranchIds(req);
+    const health = await getSyncHealth();
+    const coverage = allowed === null ? health.coverage : health.coverage.filter((b) => allowed.has(b.branchId));
+    res.json({ ...health, coverage, lowDays: coverage.reduce((n, b) => n + b.days.filter((d) => d.low).length, 0) });
+  } catch (err) {
+    fail(res, err, "load the sync health");
+  }
+});
+
+// POST /api/ops-control-tower/attendance/close { branchId, reason, issueTypes? } - close OLD mismatch items for a
+// branch as reviewed (who + why recorded). Items inside the 7-day automatic window are refused by the service.
+opsControlTowerRouter.post("/attendance/close", requireRole(...CLOSE_ROLES), async (req, res) => {
+  try {
+    const { branchId, reason, issueTypes } = req.body ?? {};
+    if (typeof branchId !== "string" || !ID_PATTERN.test(branchId)) {
+      res.status(400).json({ error: "branchId must be a valid id" });
+      return;
+    }
+    if (issueTypes !== undefined && (!Array.isArray(issueTypes) || issueTypes.some((t: unknown) => typeof t !== "string"))) {
+      res.status(400).json({ error: "issueTypes must be a list of strings" });
+      return;
+    }
+    if (!(await mayUseBlock(req, "attendance-mismatch"))) {
+      res.status(403).json({ error: "Forbidden: this section is not available to your role" });
+      return;
+    }
+    const allowed = await allowedBranchIds(req);
+    if (allowed !== null && !allowed.has(branchId)) {
+      res.status(403).json({ error: "Forbidden: this branch is outside your branch / assigned scope" });
+      return;
+    }
+    const actorId = (req as any).authUser?.id as string;
+    const out = await closeOldAttendanceIssues({ branchId, reason: String(reason ?? ""), actorId, issueTypes });
+    if (!out.ok) {
+      res.status(out.status).json({ error: out.message });
+      return;
+    }
+    void logSensitiveAction({
+      actor_user_id: actorId, action_type: "ATTENDANCE_MISMATCH_CLOSED_AS_REVIEWED", module_key: "ops-control-tower",
+      entity_type: "branch", entity_id: branchId,
+      change_summary: { closed: out.closed, issue_types: issueTypes ?? "all", reason: String(reason).slice(0, 200) }, req: req as any,
+    });
+    res.json({ closed: out.closed });
+  } catch (err) {
+    fail(res, err, "close the attendance items");
+  }
+});
+
+// POST /api/ops-control-tower/attendance/backfill { branchId, from, to, mode: preview|commit, confirm? }
+// Creates MISSING attendance records for a branch using the normal engine. Preview writes nothing and lists the
+// payroll runs for the months it touches; committing beyond the 7-day automatic window needs confirm "BACKFILL".
+opsControlTowerRouter.post("/attendance/backfill", requireRole(...BACKFILL_ROLES), async (req, res) => {
+  try {
+    const { branchId, from, to, mode, confirm } = req.body ?? {};
+    if (typeof branchId !== "string" || !ID_PATTERN.test(branchId)) {
+      res.status(400).json({ error: "branchId must be a valid id" });
+      return;
+    }
+    if (mode !== "preview" && mode !== "commit") {
+      res.status(400).json({ error: "mode must be preview or commit" });
+      return;
+    }
+    if (!(await mayUseBlock(req, "attendance-mismatch"))) {
+      res.status(403).json({ error: "Forbidden: this section is not available to your role" });
+      return;
+    }
+    const allowed = await allowedBranchIds(req);
+    if (allowed !== null && !allowed.has(branchId)) {
+      res.status(403).json({ error: "Forbidden: this branch is outside your branch / assigned scope" });
+      return;
+    }
+    const actorId = (req as any).authUser?.id as string;
+    const out = await runBackfill({ branchId, from, to, mode, confirm: typeof confirm === "string" ? confirm : undefined, actorId });
+    if (!out.ok) {
+      res.status(out.status).json({ error: out.message });
+      return;
+    }
+    if (mode === "commit") {
+      void logSensitiveAction({
+        actor_user_id: actorId, action_type: "ATTENDANCE_BACKFILL", module_key: "ops-control-tower",
+        entity_type: "branch", entity_id: branchId,
+        change_summary: { from, to, found: out.data.found, processed: out.data.processed, failed: out.data.failed, payroll_runs_in_range: out.data.payrollRunsInRange.length }, req: req as any,
+      });
+    }
+    res.json(out.data);
+  } catch (err) {
+    fail(res, err, "run the attendance backfill");
   }
 });
 

@@ -29,6 +29,7 @@ import { startDashboardSnapshotScheduler } from "./modules/dashboards/dashboard-
 import { startPerformanceScorecardSnapshotScheduler } from "./modules/performance-scorecard/performance-scorecard-snapshot.cron.js";
 import { startPerformanceIngestionScheduler, stopPerformanceIngestionScheduler } from "./modules/performance-ingestion/performance-scheduler.service.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
+import { startAttendanceHealWorker } from "./modules/wfm/attendance-heal.worker.js";
 import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-reconciliation.worker.js";
 // D-1 Daily Manager Intelligence Briefing Engine — dual-registered here AND in
 // workers/all-workers.ts, same convention as every other scheduler in this file
@@ -266,6 +267,8 @@ function startServer() {
         startCelebrationScheduler(); // birthday + work-anniversary posts & emails daily at 8 AM
         startCommunicationCleanup();
         startAttendanceEngineScheduler();
+        // Fills missing attendance records after every restart and every 6 h, so a deploy cannot leave a hole.
+        startAttendanceHealWorker();
         startAttendanceReconciliationWorker();
         // No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true — see daily-brief.cron.ts's
         // header for the dependency-timing evidence behind its default run time.

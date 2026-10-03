@@ -34,6 +34,8 @@ import { startFestivalGreetingScheduler, stopFestivalGreetingScheduler } from ".
 import { startDailyGamesScheduler, stopDailyGamesScheduler } from "../modules/engagement/daily-games.cron.js";
 import { startCommunicationCleanup, stopCommunicationCleanup } from "../modules/communication/cleanup.cron.js";
 import { startAttendanceEngineScheduler, stopAttendanceEngineScheduler } from "../modules/wfm/attendance-engine.cron.js";
+import { startAttendanceHealWorker, stopAttendanceHealWorker } from "../modules/wfm/attendance-heal.worker.js";
+import { startWithdrawalSlaCron, stopWithdrawalSlaCron } from "../modules/privacy/dpdp-withdrawal-sla.cron.js";
 import { startITProvisioningLockScheduler, stopITProvisioningLockScheduler } from "../modules/it-provisioning/it-provisioning.cron.js";
 import { startPortalSessionCleanupScheduler, stopPortalSessionCleanupScheduler } from "../modules/portal/portal-session-cleanup.cron.js";
 import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./employee-lifecycle.worker.js";
@@ -143,6 +145,17 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "attendance-engine",
     start: () => { startAttendanceEngineScheduler(); return Promise.resolve(); },
+  },
+  {
+    // Escalates DPDP withdrawal requests past their decision deadline to the DPO. Was started by server.ts only,
+    // so with WORKERS_PROCESS=external it ran nowhere.
+    name: "dpdp-withdrawal-sla",
+    start: () => { startWithdrawalSlaCron(); return Promise.resolve(); },
+  },
+  {
+    // Fills attendance records the nightly engine missed (a restart at 23:00 used to leave permanent holes).
+    name: "attendance-engine-heal",
+    start: () => { startAttendanceHealWorker(); return Promise.resolve(); },
   },
   {
     // Both were started at app.ts module scope and registered in no worker file,
@@ -627,6 +640,8 @@ function shutdown(): void {
   stopDailyGamesScheduler();
   stopCommunicationCleanup();
   stopAttendanceEngineScheduler();
+  stopAttendanceHealWorker();
+  stopWithdrawalSlaCron();
   stopCosecSyncWorker();
   stopRtaNightlyCron();
   stopEmployeeLifecycleWorker();

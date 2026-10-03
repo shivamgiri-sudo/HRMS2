@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { OpsDetailDrawer, type Selected } from "./OpsDetailDrawer";
 import { OpsAnalyticsPanel } from "./OpsAnalyticsPanel";
+import { OpsSyncHealth } from "./OpsSyncHealth";
 import { MATRIX_COLUMNS, OpsBranchMatrix } from "./OpsBranchMatrix";
 import { countSeverity, formatDateTime, SEVERITY_CLASS } from "./opsControlTowerFormat";
 import {
@@ -193,6 +194,8 @@ export default function OpsControlTowerPage() {
             </div>
 
             {!payrollOnly && <OpsAnalyticsPanel data={data} onOpen={openSimple} />}
+
+            {!payrollOnly && <OpsSyncHealth />}
 
             <OpsBranchMatrix data={data} columns={MATRIX_COLUMNS.filter((c) => show(c.id))} showRoster={show("roster")} onOpen={openSimple} />
             {!payrollOnly && <JoiningSection block={data.joining} />}

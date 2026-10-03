@@ -6,6 +6,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Copy, Download, ExternalLink, Mail, MessageCircle, Wrench } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { OpsAttendanceActions } from "./OpsAttendanceActions";
+import { BACKFILL_ROLES, CLOSE_ROLES, guideFor } from "./attendanceGuide";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { formatDate } from "./opsControlTowerFormat";
@@ -31,7 +34,7 @@ function pendingDocNames(row: Row): string[] {
 
 function rowNote(block: DetailBlockKey, row: Row): string {
   switch (block) {
-    case "attendance-mismatch": return String((row as unknown as AttendanceMismatchDetailRow).issueType ?? "").replace(/_/g, " ");
+    case "attendance-mismatch": return guideFor(String((row as unknown as AttendanceMismatchDetailRow).issueType ?? "")).label;
     case "fnf-pending": { const r = row as unknown as FnfDetailRow; return `${r.status} · ₹${Number(r.netPayable ?? 0).toLocaleString("en-IN")}`; }
     case "esign-pending": return `Day 3 was ${formatDate((row as unknown as SlaDetailRow).dueDateMs)}`;
     case "appointment-letter": return `Day 7 was ${formatDate((row as unknown as SlaDetailRow).dueDateMs)}`;
@@ -128,6 +131,9 @@ export function DetailRowItem({ block, row, supported, pending, onNotify }: {
 
 export function OpsDetailDrawer({ selected, onClose }: { selected: Selected | null; onClose: () => void }) {
   const qc = useQueryClient();
+  const { hasAnyRole } = useWorkforceAccess();
+  const canClose = hasAnyRole(...CLOSE_ROLES);
+  const canBackfill = hasAnyRole(...BACKFILL_ROLES);
   const [bucket, setBucket] = useState<BucketFilter>("all");
   const [nudgeF, setNudgeF] = useState<NudgeFilter>("all");
   const queryKey = ["ops-control-tower-detail", selected?.block, selected?.branchId];
@@ -170,6 +176,10 @@ export function OpsDetailDrawer({ selected, onClose }: { selected: Selected | nu
 
         {query.data && (
           <>
+            {selected?.block === "attendance-mismatch" && (
+              <OpsAttendanceActions branchId={selected.branchId} branchName={selected.branchName} rows={rows as never[]}
+                canClose={canClose} canBackfill={canBackfill} onChanged={() => void query.refetch()} />
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
               {BUCKETS.map((b) => (
                 <button key={b} type="button" onClick={() => setBucket(b)} aria-pressed={bucket === b}
