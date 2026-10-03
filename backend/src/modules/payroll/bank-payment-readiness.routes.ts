@@ -29,6 +29,7 @@ import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import multer from "multer";
 import { createHash } from "crypto";
+import { isRunClosed } from "./run-status.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
@@ -1018,6 +1019,28 @@ function handleSalaryTransferExport(reexport: boolean) {
     if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
     if (!(await hasExportScope(req.authUser!.id))) {
       return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+    }
+
+    // A bank file is a formed instruction to move money, so the run must have been approved (by a second
+    // person - PAYROLL_SELF_APPROVAL) first. Owner ruling 2026-10-03, "export first, finance after": the
+    // payroll head exports from here once the run is approved; finance signs off at lock / disburse.
+    // Before this the export had no run-status check at all, so a draft or still-calculating run could
+    // be exported. 'processing' and 'draft' are refused; approved and every closed status are allowed.
+    const [exportRunRows] = await db.execute<RowDataPacket[]>(
+      "SELECT status FROM salary_prep_run WHERE id = ? LIMIT 1",
+      [runId],
+    );
+    const exportRun = (exportRunRows as { status: string | null }[])[0];
+    if (!exportRun) return res.status(404).json({ success: false, message: "Payroll run not found" });
+    const exportStatus = String(exportRun.status ?? "").toLowerCase();
+    if (exportStatus !== "approved" && !isRunClosed(exportStatus)) {
+      return res.status(409).json({
+        success: false,
+        code: "RUN_NOT_APPROVED",
+        message:
+          `This run is '${exportRun.status}'. The bank file can be generated once the run is approved ` +
+          "(and then locked or disbursed). Ask a second approver to approve it first.",
+      });
     }
 
     let result;

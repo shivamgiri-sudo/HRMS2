@@ -236,7 +236,9 @@ function fmtDateTime(v: string | null | undefined): string {
 // Kept as one constant so the frontend gate can never silently drift from the backend
 // again — the Bank Readiness tab's own roles stay broader, this only narrows the
 // Disbursal tab's write controls (Upload, Manual Entry, Mark as Disbursed).
-const DISBURSAL_WRITE_ROLES = ["payroll", "super_admin", "finance"];
+// payroll_head / finance_head / payroll_admin are the roles that may lock and disburse a run
+// (payroll.service.updateRunStatus), so they must be able to open this tab and press the button.
+const DISBURSAL_WRITE_ROLES = ["payroll", "super_admin", "finance", "payroll_head", "finance_head", "payroll_admin"];
 
 export default function PaymentDisbursalCenter() {
   const qc = useQueryClient();
@@ -804,6 +806,9 @@ export default function PaymentDisbursalCenter() {
       "Disbursing a run is reserved for Finance or Payroll heads.",
     PAYROLL_SELF_APPROVAL:
       "You prepared this run, so it must be approved by someone else first.",
+    PAYROLL_TRANSFERS_OUTSTANDING:
+      "Some salary transfers for this run are not confirmed yet (exported, rejected or awaiting re-export). " +
+      "Import the bank's return file and clear them first, or have an authorised head record a break-glass reason.",
   };
 
   const markDisbursedMutation = useMutation({
@@ -1731,17 +1736,17 @@ export default function PaymentDisbursalCenter() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {/* Uses the same batch-recording export as the Salary Transfer controls below. The
+                      previous link went to /payment-file, which writes no batch and does not skip people
+                      already exported, so a second click could produce a second file with the same
+                      employees. This one records a batch and excludes anyone already exported. */}
                   <Button
-                    asChild
-                    disabled={!bankRunId || !summary?.gate_clear || !!sourceDown}
+                    disabled={!bankRunId || !summary?.gate_clear || !!sourceDown || transferGenerating}
                     variant={summary?.gate_clear ? "default" : "secondary"}
+                    onClick={() => void downloadSalaryTransferFile(false)}
                   >
-                    <a
-                      href={`/api/payroll/bank-readiness/payment-file?run_id=${bankRunId}`}
-                    >
-                      <Download className="h-4 w-4 mr-2" /> Download payment
-                      file
-                    </a>
+                    <Download className="h-4 w-4 mr-2" />
+                    {transferGenerating ? "Preparing file…" : "Download payment file"}
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">

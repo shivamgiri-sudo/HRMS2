@@ -17,7 +17,7 @@ router.use(requireAuth);
 // Returns all disbursal records for a payroll run.
 router.get(
   "/runs/:runId/disbursal",
-  requireRole("payroll", "super_admin", "finance"),
+  requireRole("payroll", "super_admin", "finance", "payroll_head", "finance_head", "payroll_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
     const scoped = await employeeScopeFor(req, "e");
@@ -39,7 +39,7 @@ router.get(
 // CSV body (text/plain or text/csv): header row + data rows with same column names.
 router.post(
   "/runs/:runId/disbursal-upload",
-  requireRole("payroll", "super_admin", "finance"),
+  requireRole("payroll", "super_admin", "finance", "payroll_head", "finance_head", "payroll_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
     const actorUserId = req.authUser!.id;
