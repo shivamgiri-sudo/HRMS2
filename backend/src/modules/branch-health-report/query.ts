@@ -599,6 +599,8 @@ export async function fetchLateStats(
       WHERE ra.roster_date = ?
         AND UPPER(COALESCE(ra.assignment_type, '')) NOT IN ('WEEK_OFF','LEAVE','HOLIDAY')
         AND ra.is_week_off = 0
+        AND NOT ${holidayAppliesSql("ra.roster_date")}
+        AND adr.attendance_status <> 'holiday'
         AND adr.clock_in_time IS NOT NULL
         AND COALESCE(ra.shift_start_time, wsm.start_time) IS NOT NULL
         AND TIME(adr.clock_in_time) > COALESCE(ra.shift_start_time, wsm.start_time)
@@ -717,6 +719,25 @@ const LEAVE_STATUSES = new Set([
 ]);
 const NON_WORKING_ASSIGNMENTS = new Set(["WEEK_OFF", "LEAVE", "HOLIDAY"]);
 
+/**
+ * SQL predicate: the company holiday applies to employee `e` on date `dateCol`. Same rule as
+ * attendance-engine resolveOverridePriority (branch, cost-centre and designation scope), so a
+ * holiday that attendance grades 'holiday' is also a non-working day here. The roster is not
+ * enough: a roster row can carry a working shift on a date that is a holiday for that employee,
+ * which used to inflate "planned" and shrinkage on holidays.
+ */
+const holidayAppliesSql = (dateCol: string): string => `EXISTS (
+  SELECT 1 FROM leave_holiday_master lhm
+   WHERE lhm.holiday_date = ${dateCol} AND lhm.active_status = 1
+     AND (lhm.branch_id IS NULL OR lhm.branch_id = e.branch_id)
+     AND (NOT EXISTS (SELECT 1 FROM holiday_cost_centre_mapping WHERE holiday_id = lhm.id)
+          OR EXISTS (SELECT 1 FROM holiday_cost_centre_mapping hccm
+                      WHERE hccm.holiday_id = lhm.id AND hccm.cost_centre_id = e.cost_centre_id))
+     AND (NOT EXISTS (SELECT 1 FROM holiday_designation_mapping WHERE holiday_id = lhm.id)
+          OR EXISTS (SELECT 1 FROM holiday_designation_mapping hdm
+                      WHERE hdm.holiday_id = lhm.id AND hdm.designation_id = e.designation_id))
+)`;
+
 const hhmm = (t: unknown): string => String(t ?? "").slice(0, 5);
 
 /**
@@ -739,6 +760,7 @@ export async function fetchShrinkage(
             COALESCE(ra.shift_start_time, st.start_time) AS shift_start,
             COALESCE(ra.shift_end_time, st.end_time)     AS shift_end,
             adr.clock_in_time, adr.attendance_status, adr.late_mark,
+            ${holidayAppliesSql("ra.roster_date")}       AS is_holiday,
             COALESCE(pm.process_name, 'Unassigned')      AS process_name
        FROM wfm_roster_assignment ra
        JOIN employees e ON e.id = ra.employee_id AND e.branch_id = ? AND e.active_status = 1
@@ -771,7 +793,12 @@ export async function fetchShrinkage(
   for (const r of rows as any[]) {
     const type = String(r.assignment_type ?? "").toUpperCase();
     const punched = r.clock_in_time != null;
-    if (NON_WORKING_ASSIGNMENTS.has(type) || Number(r.is_week_off) === 1) {
+    if (
+      NON_WORKING_ASSIGNMENTS.has(type) ||
+      Number(r.is_week_off) === 1 ||
+      Number(r.is_holiday) === 1 ||
+      String(r.attendance_status ?? "") === "holiday"
+    ) {
       if (punched && type !== "LEAVE") weekOffWorked += 1;
       if (type === "LEAVE") onLeave += 1;
       continue;
@@ -1291,6 +1318,8 @@ export async function fetchConsecutiveAbsence(
       WHERE ra.roster_date BETWEEN ? AND ?
         AND ra.is_week_off = 0
         AND UPPER(COALESCE(ra.assignment_type, '')) NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY')
+        AND NOT ${holidayAppliesSql("ra.roster_date")}
+        AND COALESCE(a.attendance_status, '') <> 'holiday'
         AND a.clock_in_time IS NULL
         AND COALESCE(a.attendance_status, '') NOT IN ('leave_approved', 'approved_leave', 'half_day_leave', 'leave')
       GROUP BY e.id, e.employee_code, e.full_name, e.first_name, pm.process_name, m.full_name
