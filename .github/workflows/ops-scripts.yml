@@ -52,6 +52,7 @@ on:
           - resend-address-bgv-links
           - roster-requests-verify
           - sbi-card-verify
+          - holiday-mapping-audit
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -190,6 +191,10 @@ jobs:
                 exit 1
               fi
               node scripts/sbi-card-verify.mjs
+              ;;
+            holiday-mapping-audit)
+              # Read-only in both modes.
+              npx tsx scripts/holiday-mapping-audit.ts 2026-10-02
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
