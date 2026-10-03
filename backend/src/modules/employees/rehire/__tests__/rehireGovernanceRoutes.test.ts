@@ -97,3 +97,100 @@ describe("GET /:id/rehire-eligibility", () => {
     expect(res.body.data.eligibility.reasons[0].code).toBe("TERMINATED");
   });
 });
+
+describe("POST /:id/rehire-block/flag", () => {
+  const body = { reason: "Fraudulent expense claims found after exit", flag_date: "2026-09-30" };
+
+  it("403s a role that cannot flag (branch_head, manager)", async () => {
+    for (const role of ["branch_head", "manager", "employee"]) {
+      authUser = { id: "u1", role, roles: [role] };
+      expect((await request(app()).post(`/api/employees/${EMP}/rehire-block/flag`).send(body)).status).toBe(403);
+    }
+  });
+
+  it("400s a short reason", async () => {
+    authUser = { id: "hr1", role: "hr", roles: ["hr"] };
+    const res = await request(app()).post(`/api/employees/${EMP}/rehire-block/flag`).send({ reason: "bad" });
+    expect(res.status).toBe(400);
+  });
+
+  it("403s an employee outside scope and writes nothing", async () => {
+    authUser = { id: "hr1", role: "hr", roles: ["hr"] };
+    canViewEmployee.mockResolvedValue(false);
+    const res = await request(app()).post(`/api/employees/${EMP}/rehire-block/flag`).send(body);
+    expect(res.status).toBe(403);
+    expect(dbExecute).not.toHaveBeenCalled();
+  });
+
+  it("404s an unknown employee", async () => {
+    authUser = { id: "hr1", role: "hr", roles: ["hr"] };
+    dbExecute.mockResolvedValue([[], []]);
+    expect((await request(app()).post(`/api/employees/${EMP}/rehire-block/flag`).send(body)).status).toBe(404);
+  });
+
+  it("upserts the flag, re-arms a previous lift, and audits", async () => {
+    authUser = { id: "hr1", role: "hr", roles: ["hr"] };
+    dbExecute.mockImplementation(async (sql: string) =>
+      String(sql).includes("SELECT id FROM employees") ? [[{ id: EMP }], []] : [{ affectedRows: 1 }, []]);
+    const res = await request(app()).post(`/api/employees/${EMP}/rehire-block/flag`).send(body);
+    expect(res.status).toBe(200);
+    const up = dbExecute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO employee_rehire_control"))!;
+    const sql = String(up[0]);
+    expect(sql).toMatch(/ON DUPLICATE KEY UPDATE/i);
+    expect(sql).toMatch(/block_lifted_at\s*=\s*NULL/i);
+    expect(up[1]).toEqual([EMP, body.reason, "2026-09-30", "hr1", null]);
+    expect(logSensitiveAction).toHaveBeenCalledWith(expect.objectContaining({
+      actor_user_id: "hr1", action_type: "REHIRE_DISCIPLINARY_FLAG_SET", entity_id: EMP, employee_id: EMP,
+    }));
+  });
+
+  it("defaults the flag date to today when none is given", async () => {
+    authUser = { id: "hr1", role: "hr", roles: ["hr"] };
+    dbExecute.mockImplementation(async (sql: string) =>
+      String(sql).includes("SELECT id FROM employees") ? [[{ id: EMP }], []] : [{ affectedRows: 1 }, []]);
+    await request(app()).post(`/api/employees/${EMP}/rehire-block/flag`).send({ reason: "Misconduct discovered on audit" });
+    const up = dbExecute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO employee_rehire_control"))!;
+    expect((up[1] as unknown[])[2]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe("POST /:id/rehire-block/lift", () => {
+  const body = { reason: "Cleared after legal review, written approval on file" };
+
+  it("403s everyone but super_admin — including admin and hr", async () => {
+    for (const role of ["admin", "hr", "branch_head"]) {
+      authUser = { id: "u1", role, roles: [role] };
+      expect((await request(app()).post(`/api/employees/${EMP}/rehire-block/lift`).send(body)).status).toBe(403);
+    }
+  });
+
+  it("400s a reason under 20 characters", async () => {
+    authUser = { id: "sa1", role: "super_admin", roles: ["super_admin"] };
+    expect((await request(app()).post(`/api/employees/${EMP}/rehire-block/lift`).send({ reason: "short reason" })).status).toBe(400);
+  });
+
+  it("409s when there is no active flag to lift", async () => {
+    authUser = { id: "sa1", role: "super_admin", roles: ["super_admin"] };
+    dbExecute.mockResolvedValue([[], []]);
+    expect((await request(app()).post(`/api/employees/${EMP}/rehire-block/lift`).send(body)).status).toBe(409);
+  });
+
+  it("409s when the flag was already lifted", async () => {
+    authUser = { id: "sa1", role: "super_admin", roles: ["super_admin"] };
+    dbExecute.mockResolvedValue([[{ disciplinary_flag: 1, block_lifted_at: "2026-09-01 10:00:00" }], []]);
+    expect((await request(app()).post(`/api/employees/${EMP}/rehire-block/lift`).send(body)).status).toBe(409);
+  });
+
+  it("lifts an active flag, records who and why, and audits", async () => {
+    authUser = { id: "sa1", role: "super_admin", roles: ["super_admin"] };
+    dbExecute.mockImplementation(async (sql: string) =>
+      String(sql).includes("FROM employee_rehire_control") ? [[{ disciplinary_flag: 1, block_lifted_at: null }], []] : [{ affectedRows: 1 }, []]);
+    const res = await request(app()).post(`/api/employees/${EMP}/rehire-block/lift`).send(body);
+    expect(res.status).toBe(200);
+    const up = dbExecute.mock.calls.find(([sql]) => String(sql).includes("UPDATE employee_rehire_control"))!;
+    expect(up[1]).toEqual(["sa1", body.reason, EMP]);
+    expect(logSensitiveAction).toHaveBeenCalledWith(expect.objectContaining({
+      actor_user_id: "sa1", action_type: "REHIRE_BLOCK_LIFTED", entity_id: EMP, reason: body.reason,
+    }));
+  });
+});
