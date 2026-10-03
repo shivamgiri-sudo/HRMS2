@@ -156,10 +156,20 @@ export default function NativeDPDPWithdrawal() {
             <CardTitle className="text-base">New Withdrawal Request</CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
-            <div role="note" className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
-              You can withdraw your consent at any time, and you do not have to give a reason. Some information
-              must still be kept or used where the law requires it or for your employment (for example payroll,
-              tax and provident-fund records). We will tell you which parts we can restrict, and why for any we cannot.
+            <div role="note" className="space-y-2 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+              <p>
+                You can withdraw your consent at any time, and you do not have to give a reason.
+              </p>
+              <p>
+                Withdrawing stops the <strong>optional</strong> uses of the data you choose below. Some information must still be
+                used and kept for your employment and for the law, such as payroll, tax, provident-fund and ESI records and
+                attendance used to pay wages. Payroll and employee records are kept for 8 years, and leave and attendance
+                records for 5 years, as our retention policy and the law require.
+              </p>
+              <p>
+                We aim to decide within 7 days. We will tell you which parts we can restrict, what we must keep and why. If you
+                disagree with the decision you can raise a grievance with the Grievance Officer.
+              </p>
             </div>
             {openRequest && (
               <Alert role="status">

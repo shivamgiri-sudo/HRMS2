@@ -63,24 +63,55 @@ describe("submitRequest", () => {
     expect(sqls().some((q) => q.includes("INSERT INTO dpdp_consent_withdrawal"))).toBe(false);
   });
   it("stores an empty reason as NULL, acknowledges the principal, and returns reference + deadline", async () => {
-    execute.mockResolvedValueOnce([[]]).mockResolvedValue([{}]); // no open request, then plain inserts
+    execute
+      .mockResolvedValueOnce([[]])                              // no open request
+      .mockResolvedValueOnce([[{ config_value: "240" }]])       // configured decision SLA (10 days)
+      .mockResolvedValue([{}]);
     const out = await svc.submitRequest(USER, "employee", ["biometric_data"], "", "self");
     expect(out.request_ref).toMatch(/^WDR-[0-9A-F]{8}$/);
     const insert = execute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO dpdp_consent_withdrawal"))!;
     expect((insert[1] as unknown[])[4]).toBeNull(); // withdrawal_reason
+    expect((insert[1] as unknown[])[6]).toBe(240);  // INTERVAL ? HOUR comes from dpdp_config
     expect(actions()).toEqual(expect.arrayContaining(["DPDP_WITHDRAWAL_SUBMITTED", "DPDP_WITHDRAWAL_ACKNOWLEDGED"]));
-    expect(notified().some((t) => t.includes(out.request_ref))).toBe(true);
+    expect(notified().some((t) => t.includes(out.request_ref) && t.includes("10 days"))).toBe(true);
   });
 });
 
 describe("state guards", () => {
   it("startReview refuses a request that is no longer 'submitted' and writes no hold or audit", async () => {
     execute
-      .mockResolvedValueOnce([{ affectedRows: 0 }])
+      .mockResolvedValueOnce([[{ requester_id: USER }]])   // who
+      .mockResolvedValueOnce([[{ ok: 1 }]])                // active employee
+      .mockResolvedValueOnce([{ affectedRows: 0 }])        // UPDATE
       .mockResolvedValueOnce([[{ status: "approved" }]]);
     await expect(svc.startReview(ID, HR)).rejects.toMatchObject({ statusCode: 409 });
     expect(sqls().some((q) => q.includes("INSERT INTO dpdp_processing_hold"))).toBe(false);
     expect(actions()).toEqual([]);
+  });
+
+  it("startReview places NO blanket hold for a current employee, and says so in the audit", async () => {
+    execute
+      .mockResolvedValueOnce([[{ requester_id: USER }]])
+      .mockResolvedValueOnce([[{ ok: 1 }]])                // active
+      .mockResolvedValue([{ affectedRows: 1 }]);
+    await svc.startReview(ID, HR);
+    expect(sqls().some((q) => q.includes("INSERT INTO dpdp_processing_hold"))).toBe(false);
+    const upd = execute.mock.calls.find((c) => String(c[0]).includes("SET status = 'in_review'"))!;
+    expect(String(upd[0])).toContain("hold_applied_at = NULL");
+    expect((upd[1] as unknown[])[1]).toBe(0);
+    expect(actions()).toEqual(["DPDP_WITHDRAWAL_REVIEW_STARTED"]);
+  });
+
+  it("startReview applies the hold for a former employee or candidate", async () => {
+    execute
+      .mockResolvedValueOnce([[{ requester_id: USER }]])
+      .mockResolvedValueOnce([[]])                         // not an active employee
+      .mockResolvedValue([{ affectedRows: 1 }]);
+    await svc.startReview(ID, HR);
+    expect(sqls().some((q) => q.includes("INSERT INTO dpdp_processing_hold"))).toBe(true);
+    const upd = execute.mock.calls.find((c) => String(c[0]).includes("SET status = 'in_review'"))!;
+    expect((upd[1] as unknown[])[1]).toBe(1);
+    expect(actions()).toEqual(["DPDP_WITHDRAWAL_REVIEW_STARTED", "DPDP_PROCESSING_HOLD_APPLIED"]);
   });
 
   it("reject refuses an already-approved request (the old UPDATE flipped it silently)", async () => {
