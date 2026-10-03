@@ -86,3 +86,19 @@ export interface SbiCardData {
   daily: SbiDailyRow[]; byCampaign: SbiCampaignRow[]; agents: SbiAgentRow[]; teams: SbiTeamRow[];
   downtime: SbiDowntimeRow[]; accounts: SbiAccounts; collections: SbiCollections; agentTime: SbiAgentTime;
 }
+
+/** GET /api/process-performance/sbi-card-payout (manager and above). */
+export interface SbiPayoutResult {
+  inputs: { resolutionPct: number; normalisationPct: number; rollbackPct: number };
+  totalPct: number; nrbPct: number; cells: { row: number; col: number; norm: number; res: number };
+  matrixPct: number; normKickerPct: number; resKickerPct: number; ratePct: number; revenue: { ftd: number; mtd: number };
+}
+export interface SbiPayoutData {
+  range: { from: string; to: string }; segment: string;
+  targets: { resolutionPct: number; nrbPct: number; totalPct: number; pcAmount: number; normKickerStartPct: number };
+  collected: { ftd: { date: string | null; amount: number }; mtd: { amount: number; days: number }; daily: Array<{ date: string; amount: number }>; pcProgressPct: number | null };
+  slab: { rows: string[]; cols: string[]; matrix: number[][]; norm: { labels: string[]; pays: number[] }; res: { labels: string[]; pays: number[] } };
+  inputsAreTargets: boolean; scenario: SbiPayoutResult; atTarget: SbiPayoutResult;
+  levers: Array<{ lever: string; label: string; addPoints: number; newRatePct: number; deltaPct: number; deltaAmount: number }>;
+  reading: string[];
+}
