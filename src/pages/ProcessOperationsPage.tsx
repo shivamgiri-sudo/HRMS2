@@ -5275,7 +5275,10 @@ export default function ProcessOperationsPage() {
       <div style={{ minHeight: "100vh", background: "radial-gradient(circle at 5% 2%,rgba(47,111,237,.09),transparent 24%),radial-gradient(circle at 96% 3%,rgba(15,159,143,.07),transparent 25%),linear-gradient(180deg,#f1f5fa 0,#f7f9fc 310px,#f4f7fa 100%)" }}>
 
         {/* ── Sticky shell: accent line + topbar ─────────────────────────── */}
-        <div className="md:sticky md:top-0" style={{ zIndex: 100, background: "#fff", boxShadow: "0 5px 22px rgba(10,34,55,.12)" }}>
+        {/* Stacks BELOW the app top bar (z-30), which holds the global search and its results list. At
+            zIndex 100 this header painted over that list, so searching from this page showed the
+            results behind the page. It also sticks under the top bar (not at 0) so the two don't overlap. */}
+        <div className="md:sticky md:top-[var(--topbar-height,64px)]" style={{ zIndex: 20, background: "#fff", boxShadow: "0 5px 22px rgba(10,34,55,.12)" }}>
           {/* Rainbow accent line */}
           <div style={{ height: 4, background: GAS_ACCENT }} />
 
