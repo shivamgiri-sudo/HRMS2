@@ -59,6 +59,7 @@ on:
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
+          - salary-rows-review
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -225,6 +226,10 @@ jobs:
             deduction-duplicates-scan)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/deduction-duplicates-scan.ts
+              ;;
+            salary-rows-review)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/salary-rows-review.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
