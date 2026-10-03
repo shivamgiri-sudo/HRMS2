@@ -126,7 +126,13 @@ export async function resolveFilledGaps(): Promise<number> {
 export async function runAutomaticHeal(): Promise<HealResult> {
   const today = nowIST().split("T")[0]!;
   const { from, to } = autoHealWindow(today);
-  return healMissingAttendance({ from, to, limit: MAX_PERSON_DAYS_PER_RUN, actor: "system:attendance-heal" });
+  const result = await healMissingAttendance({ from, to, limit: MAX_PERSON_DAYS_PER_RUN, actor: "system:attendance-heal" });
+  // healMissingAttendance returns early when nothing is missing, but records can also appear from elsewhere
+  // (the COSEC sync, a correction), leaving old "missing record" items open. Close those on every pass.
+  if (result.found === 0) {
+    await resolveFilledGaps().catch((err) => logger.warn({ err: (err as Error).message }, "[attendance-heal] closing filled gap items failed"));
+  }
+  return result;
 }
 
 export { addDays };

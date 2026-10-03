@@ -92,6 +92,18 @@ describe("resolveFilledGaps", () => {
   });
 });
 
+describe("runAutomaticHeal closes filled gap items even when nothing is missing", () => {
+  it("runs the closer when the window is already complete", async () => {
+    m.execute.mockResolvedValueOnce([[]]).mockResolvedValueOnce([{ affectedRows: 3 }]);
+    await runAutomaticHeal();
+    expect(m.execute.mock.calls.some((c) => String(c[0]).includes("UPDATE attendance_reconciliation_issue"))).toBe(true);
+  });
+  it("a failing closer never breaks the repair run", async () => {
+    m.execute.mockResolvedValueOnce([[]]).mockRejectedValueOnce(new Error("lock wait"));
+    await expect(runAutomaticHeal()).resolves.toMatchObject({ found: 0 });
+  });
+});
+
 describe("runAutomaticHeal", () => {
   it("covers the last 7 complete days ending yesterday", async () => {
     m.execute.mockResolvedValueOnce([[]]);
