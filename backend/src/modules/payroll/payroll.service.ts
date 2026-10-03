@@ -972,7 +972,8 @@ export const payrollService = {
     // Variable allowances intentionally excluded from PF base
     // Skipped entirely when employee has an approved PF opt-out (voluntary declaration).
     const pfBase = Math.min(basic, p.pfWageLimit);
-    const pfEmp = p.pfOptOut ? 0 : r2(pfBase * (p.pfEmployeePct / 100));
+    // Whole rupee, like db_bill's EPF (= ROUND(12% x Basic1) on every July row).
+    const pfEmp = p.pfOptOut ? 0 : Math.round(pfBase * (p.pfEmployeePct / 100));
 
     // Employer PF: EPF 3.67% + EPS 8.33% of min(Basic, ₹15,000 EPS ceiling)
     const epsCeiling = 15000;
@@ -988,7 +989,8 @@ export const payrollService = {
     // ceiling mid-period. Opt-out still wins over continuity — the && binds
     // tighter than the ||, so esicOptOut=true short-circuits regardless.
     const esicApplicable = !p.esicOptOut && (gross <= p.esicWageLimit || p.esicContinuityOverride === true);
-    const esicEmp = esicApplicable ? r2(gross * (p.esicEmployeePct / 100)) : 0;
+    // Whole rupee, like db_bill's ESIC (= ROUND(Gross1 x 0.75%) on all 674 July rows).
+    const esicEmp = esicApplicable ? Math.round(gross * (p.esicEmployeePct / 100)) : 0;
     const esicEmrPct = (p.esicEmployerPct ?? 3.25) / 100;
     const esicEmr = esicApplicable ? r2(gross * esicEmrPct) : 0;
 

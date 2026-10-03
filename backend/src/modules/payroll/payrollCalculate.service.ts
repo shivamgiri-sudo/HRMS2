@@ -2073,6 +2073,9 @@ export async function calculatePayrollRunScoped(
         ? (fixedHRA / monthlyGrossBase) * 100
         : (emp.hra_pct ?? 20);
 
+      // db_bill's IncomeTax is a whole rupee, so the net is one too.
+      tdsMonthly = Math.round(tdsMonthly);
+
       const calc = payrollService.calculateNetSalary({
         grossMonthlyCTC: grossAfterLwp,
         workingDays: att.working_days || defaultWorkingDays,
