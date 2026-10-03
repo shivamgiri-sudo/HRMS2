@@ -1282,7 +1282,7 @@ export default function NativeWorkInbox() {
       const res = await hrmsApi.get<{ success: boolean; items: PendingTask[]; summary: PendingSummary }>(
         "/api/inbox/my-pending",
       );
-      setItems(res.items ?? []);
+      setItems((res.items ?? []).map((i) => (i.risk in RISK_STYLES ? i : { ...i, risk: "on_track" as Risk })));
       setSummary(res.summary ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load pending tasks");
