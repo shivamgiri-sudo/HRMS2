@@ -3,16 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useWfmInputsAccess } from "./OnfidoManpowerPlanSheet";
-import { parseUtilizationCsv, type ImportRow } from "./onfidoUtilizationCsv";
-import { DASH, EmptyNote, SectionCard, fmtDate, fmtDateTime, fmtInt, fmtNum, fmtPct, fmtRatioPct } from "./onfidoReportShared";
+import { UTILIZATION_COLUMNS, parseUtilizationCsv, utilizationTemplateCsv, type ImportRow } from "./onfidoUtilizationCsv";
+import { DASH, EmptyNote, SectionCard, fmtDate, fmtDateTime, fmtInt, fmtNum, fmtRatioPct } from "./onfidoReportShared";
 
 /**
- * Utilization tab ("Utilization Format.xlsx"): one row per day with the sheet's columns,
- * order and formulas, plus an MTD row. Actual Task, POA Live, AHT, POA AHT, GD/MCN/SLA/APS and
- * Escalated Task come from the uploaded Onfido reports; Forecasted Task, Forecasted Task POA,
- * Manual FAR Case, Adhoc Time, Analyst QC, Facial checks, Cross training task POA and POA Live
- * Audits / POA PQ Audits are entered by WFM (row drawer, or CSV import). Any formula whose
- * inputs are missing shows "-".
+ * Utilization tab ("Utilization Format.xlsx"): one row per day, columns from UTILIZATION_COLUMNS.
+ * Import-driven: every WFM / calculated column shows the value that was uploaded, exactly as
+ * stored, or blank. Nothing here calculates, defaults or totals. Actual Task, POA Live, AHT,
+ * POA AHT, GD/MCN/SLA/APS and Escalated Task are read from the uploaded Onfido reports.
  */
 
 interface Inputs {
@@ -29,8 +27,7 @@ interface Day {
   gdRatio: number | null; mcnRatio: number | null; slaRatio: number | null; apsRatio: number | null;
   hasManualInputs: boolean; remarks: string | null; inputsUpdatedBy: string | null; inputsUpdatedAt: string | null;
 }
-interface Mtd { inputs: Inputs; derived: Derived; aht: number | null; poaAht: number | null; gdRatio: number | null; mcnRatio: number | null; slaRatio: number | null; apsRatio: number | null }
-interface Report { from: string; to: string; days: Day[]; throughDate: string | null; mtd: Mtd }
+interface Report { from: string; to: string; days: Day[]; throughDate: string | null }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTHS_BACK = 12;
@@ -51,27 +48,56 @@ function monthBounds(ym: string): DateRangeLocal {
 }
 interface DateRangeLocal { from: string; to: string }
 
-const dec = (v: number | null) => (v === null ? DASH : fmtNum(v, 1));
+/** An uploaded value exactly as stored (no rounding, no padding); blank when nothing was uploaded. */
+const stored = (v: number | null, suffix = "") => (v === null ? "" : `${v}${suffix}`);
 
-function Cells({ i, aht, poaAht, gd, mcn, sla, aps }: { i: Inputs; aht: number | null; poaAht: number | null; gd: number | null; mcn: number | null; sla: number | null; aps: number | null }) {
-  return (
-    <>
-      <td className="oc-right">{dec(i.forecastTask)}</td><td className="oc-right">{dec(i.forecastTaskPoa)}</td>
-      <td className="oc-right">{fmtInt(i.actualTask)}</td><td className="oc-right">{fmtInt(i.manualFarCases)}</td><td className="oc-right">{fmtInt(i.poaLive)}</td>
-      <td className="oc-right">{dec(i.adhocTime)}</td><td className="oc-right">{fmtInt(i.analystQc)}</td><td className="oc-right">{fmtInt(i.facialChecks)}</td>
-      <td className="oc-right">{fmtInt(i.crossTrainingTaskPoa)}</td><td className="oc-right">{fmtInt(i.poaLiveAuditsPq)}</td>
-      <td className="oc-right">{dec(aht)}</td><td className="oc-right">{dec(poaAht)}</td>
-      <td className="oc-right">{fmtRatioPct(gd)}</td><td className="oc-right">{fmtRatioPct(mcn)}</td><td className="oc-right">{fmtRatioPct(sla)}</td><td className="oc-right">{fmtRatioPct(aps)}</td>
-      <td className="oc-right">{fmtInt(i.escalatedTask)}</td>
-    </>
-  );
+function cellFor(col: (typeof UTILIZATION_COLUMNS)[number], d: Day): string {
+  if ("source" in col) {
+    switch (col.source) {
+      case "month": return d.month;
+      case "wc": return fmtDate(d.wc);
+      case "actualTask": return fmtInt(d.inputs.actualTask);
+      case "poaLive": return fmtInt(d.inputs.poaLive);
+      case "aht": return d.aht === null ? DASH : fmtNum(d.aht, 1);
+      case "poaAht": return d.poaAht === null ? DASH : fmtNum(d.poaAht, 1);
+      case "gd": return fmtRatioPct(d.gdRatio);
+      case "mcn": return fmtRatioPct(d.mcnRatio);
+      case "sla": return fmtRatioPct(d.slaRatio);
+      case "aps": return fmtRatioPct(d.apsRatio);
+      case "escalatedTask": return fmtInt(d.inputs.escalatedTask);
+    }
+  }
+  const pct = col.kind === "pct" ? "%" : "";
+  switch (col.field) {
+    case "inputDate": return fmtDate(d.date);
+    case "forecastTask": return stored(d.inputs.forecastTask);
+    case "forecastTaskPoa": return stored(d.inputs.forecastTaskPoa);
+    case "manualFarCases": return stored(d.inputs.manualFarCases);
+    case "adhocTime": return stored(d.inputs.adhocTime);
+    case "analystQc": return stored(d.inputs.analystQc);
+    case "facialChecks": return stored(d.inputs.facialChecks);
+    case "crossTrainingTaskPoa": return stored(d.inputs.crossTrainingTaskPoa);
+    case "poaLiveAuditsPq": return stored(d.inputs.poaLiveAuditsPq);
+    case "fixedUtilizationForecast": return stored(d.derived.utilizationForecast);
+    case "fixedUtilizationWithAdhoc": return stored(d.derived.utilizationWithAdhoc);
+    case "fixedUtilizationWithoutAdhoc": return stored(d.derived.utilizationWithoutAdhoc);
+    case "fixedUtilizationWithAdhocPct": return stored(d.derived.utilizationWithAdhocPct, pct);
+    case "fixedUtilizationWithoutAdhocPct": return stored(d.derived.utilizationWithoutAdhocPct, pct);
+    case "fixedPoaAnsweringPct": return stored(d.derived.poaAnsweringPct, pct);
+    case "fixedEscalatedPct": return stored(d.derived.escalatedPct, pct);
+    case "remarks": return d.remarks ?? "";
+    default: return "";
+  }
 }
 
-const HEADERS = [
-  "Forecasted Task", "Forecasted Task POA", "Actual Task", "Manual FAR Case", "POA Live", "Adhoc Time", "Analyst QC",
-  "Facial checks", "Cross training task POA", "POA Live Audits / POA PQ Audits", "AHT", "POA AHT", "GD%", "MCN%", "SLA", "APS",
-  "Escalated Task",
-];
+function downloadTemplate() {
+  const url = URL.createObjectURL(new Blob([utilizationTemplateCsv()], { type: "text/csv" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "utilization_template.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function OnfidoUtilizationReport() {
   const months = useMemo(monthOptions, []);
@@ -89,7 +115,7 @@ export default function OnfidoUtilizationReport() {
   return (
     <SectionCard
       title="Utilization" accent="var(--green)"
-      subtitle="Actual Task, POA Live, AHT, GD%, MCN%, SLA, APS and Escalated Task come from the uploaded reports. The other inputs, and the calculated columns, are uploaded by WFM as fixed values (Bulk upload); a calculated column with no uploaded value falls back to the sheet formula, and shows - when an input is missing."
+      subtitle="Every column is shown exactly as uploaded by WFM (Bulk upload); nothing is calculated here and a column with no uploaded value stays blank. Actual Task, POA Live, AHT, GD%, MCN%, SLA, APS and Escalated Task come from the uploaded reports."
       right={
         <div className="flex items-end gap-3">
           <div className="oc-field">
@@ -98,6 +124,7 @@ export default function OnfidoUtilizationReport() {
               {months.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </div>
+          <button type="button" className="oc-btn-ghost" onClick={downloadTemplate}>Download template</button>
           <ImportInputs disabled={!canEdit} onSaved={() => report.refetch()} />
           {!canEdit && !isCheckingCanEdit && (
             <span style={{ fontSize: 11, color: "var(--muted)" }}>
@@ -115,26 +142,16 @@ export default function OnfidoUtilizationReport() {
         <div style={{ overflowX: "auto", maxHeight: "70vh" }}>
           <table className="oc-table">
             <thead>
-              <tr><th>Date</th><th>Month</th><th>WC</th>{HEADERS.map((h) => <th key={h} className="oc-right">{h}</th>)}</tr>
+              <tr>{UTILIZATION_COLUMNS.map((c) => <th key={c.header} className={c.header === "Date" || c.header === "Month" || c.header === "WC" || c.header === "Remarks" ? undefined : "oc-right"}>{c.header}</th>)}</tr>
             </thead>
             <tbody>
               {data.days.map((d) => (
                 <tr key={d.date} className="oc-row-click" onClick={() => setSelected(d.date)}>
-                  <td>{fmtDate(d.date)}</td><td>{d.month}</td><td>{fmtDate(d.wc)}</td>
-                  <Cells i={d.inputs} aht={d.aht} poaAht={d.poaAht} gd={d.gdRatio} mcn={d.mcnRatio} sla={d.slaRatio} aps={d.apsRatio} />
+                  {UTILIZATION_COLUMNS.map((c) => <td key={c.header} className={c.header === "Date" || c.header === "Month" || c.header === "WC" || c.header === "Remarks" ? undefined : "oc-right"}>{cellFor(c, d)}</td>)}
                 </tr>
               ))}
-              <tr style={{ fontWeight: 700 }}>
-                <td>MTD</td><td>{data.days[0]?.month ?? DASH}</td><td>MTD</td>
-                <Cells i={data.mtd.inputs} aht={data.mtd.aht} poaAht={data.mtd.poaAht} gd={data.mtd.gdRatio} mcn={data.mtd.mcnRatio} sla={data.mtd.slaRatio} aps={data.mtd.apsRatio} />
-              </tr>
             </tbody>
           </table>
-        </div>
-      )}
-      {data && (
-        <div className="oc-card-sub" style={{ marginTop: 8 }}>
-          MTD covers {fmtDate(data.from)} to {data.throughDate ? fmtDate(data.throughDate) : DASH} (the last day with data). A total is shown only when every day it covers has that input.
         </div>
       )}
       <UtilizationDrawer day={day} canEdit={canEdit} onClose={() => setSelected(null)} onSaved={() => report.refetch()} />
@@ -144,13 +161,23 @@ export default function OnfidoUtilizationReport() {
 
 // ── Row drawer: full record + WFM input form ─────────────────────────────────
 
-type FormKey = "forecastTask" | "forecastTaskPoa" | "manualFarCases" | "adhocTime" | "analystQc" | "facialChecks" | "crossTrainingTaskPoa" | "poaLiveAuditsPq";
-const FORM_FIELDS: { key: FormKey; label: string; step: string }[] = [
-  { key: "forecastTask", label: "Forecasted Task", step: "any" }, { key: "forecastTaskPoa", label: "Forecasted Task POA", step: "any" },
-  { key: "manualFarCases", label: "Manual FAR Case", step: "1" }, { key: "adhocTime", label: "Adhoc Time", step: "any" },
-  { key: "analystQc", label: "Analyst QC", step: "1" }, { key: "facialChecks", label: "Facial checks", step: "1" },
-  { key: "crossTrainingTaskPoa", label: "Cross training task POA", step: "1" }, { key: "poaLiveAuditsPq", label: "POA Live Audits / POA PQ Audits", step: "1" },
-];
+type FormKey = Exclude<keyof ImportRow, "inputDate" | "remarks">;
+const FORM_FIELDS: { key: FormKey; label: string }[] = UTILIZATION_COLUMNS.flatMap((c) =>
+  "field" in c && c.kind !== "date" && c.kind !== "text" ? [{ key: c.field as FormKey, label: c.header }] : []);
+
+/** The stored value of one editable field, as text ("" when nothing was uploaded). */
+function storedField(d: Day, k: FormKey): string {
+  const v: Record<FormKey, number | null> = {
+    forecastTask: d.inputs.forecastTask, forecastTaskPoa: d.inputs.forecastTaskPoa, manualFarCases: d.inputs.manualFarCases,
+    adhocTime: d.inputs.adhocTime, analystQc: d.inputs.analystQc, facialChecks: d.inputs.facialChecks,
+    crossTrainingTaskPoa: d.inputs.crossTrainingTaskPoa, poaLiveAuditsPq: d.inputs.poaLiveAuditsPq,
+    fixedUtilizationForecast: d.derived.utilizationForecast, fixedUtilizationWithAdhoc: d.derived.utilizationWithAdhoc,
+    fixedUtilizationWithoutAdhoc: d.derived.utilizationWithoutAdhoc, fixedUtilizationWithAdhocPct: d.derived.utilizationWithAdhocPct,
+    fixedUtilizationWithoutAdhocPct: d.derived.utilizationWithoutAdhocPct, fixedPoaAnsweringPct: d.derived.poaAnsweringPct,
+    fixedEscalatedPct: d.derived.escalatedPct,
+  };
+  return stored(v[k]);
+}
 
 function UtilizationDrawer({ day, canEdit, onClose, onSaved }: { day: Day | null; canEdit: boolean; onClose: () => void; onSaved: () => void }) {
   return (
@@ -169,7 +196,7 @@ function UtilizationDrawer({ day, canEdit, onClose, onSaved }: { day: Day | null
 function DrawerBody({ day, canEdit, onSaved }: { day: Day; canEdit: boolean; onSaved: () => void }) {
   const qc = useQueryClient();
   const [form, setForm] = useState<Record<FormKey, string>>(() => Object.fromEntries(
-    FORM_FIELDS.map((f) => [f.key, day.inputs[f.key] === null ? "" : String(day.inputs[f.key])]),
+    FORM_FIELDS.map((f) => [f.key, storedField(day, f.key)]),
   ) as Record<FormKey, string>);
   const [remarks, setRemarks] = useState(day.remarks ?? "");
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
@@ -178,7 +205,7 @@ function DrawerBody({ day, canEdit, onSaved }: { day: Day; canEdit: boolean; onS
     onSuccess: async () => { setMessage({ tone: "ok", text: "Saved." }); await qc.invalidateQueries({ queryKey: ["onfido-process"] }); onSaved(); },
     onError: (e: unknown) => setMessage({ tone: "error", text: e instanceof Error ? e.message : "Could not save." }),
   });
-  const i = day.inputs; const d = day.derived;
+  const i = day.inputs;
   return (
     <div className="mt-4 space-y-5">
       <div>
@@ -186,25 +213,13 @@ function DrawerBody({ day, canEdit, onSaved }: { day: Day; canEdit: boolean; onS
         <table className="oc-table"><tbody>
           <tr><td>Actual Task (DOC tasks)</td><td className="oc-right">{fmtInt(i.actualTask)}</td></tr>
           <tr><td>POA Live (POA tasks)</td><td className="oc-right">{fmtInt(i.poaLive)}</td></tr>
-          <tr><td>AHT / POA AHT (sec)</td><td className="oc-right">{dec(day.aht)} / {dec(day.poaAht)}</td></tr>
+          <tr><td>AHT / POA AHT (sec)</td><td className="oc-right">{day.aht === null ? DASH : fmtNum(day.aht, 1)} / {day.poaAht === null ? DASH : fmtNum(day.poaAht, 1)}</td></tr>
           <tr><td>GD% / MCN% / SLA / APS</td><td className="oc-right">{fmtRatioPct(day.gdRatio)} / {fmtRatioPct(day.mcnRatio)} / {fmtRatioPct(day.slaRatio)} / {fmtRatioPct(day.apsRatio)}</td></tr>
           <tr><td>Escalated Task (DOC tasks flagged escalated)</td><td className="oc-right">{fmtInt(i.escalatedTask)}</td></tr>
         </tbody></table>
       </div>
       <div>
-        <div className="oc-kv-label">Calculated columns (uploaded value, else sheet formula)</div>
-        <table className="oc-table"><tbody>
-          <tr><td>Utilization Forecast = D + E x (220/75)</td><td className="oc-right">{dec(d.utilizationForecast)}</td></tr>
-          <tr><td>Utilization with Adhoc = G + H + I x (220/75) + J + K x 1.2 + M x (220/75) + N x (220/75)</td><td className="oc-right">{dec(d.utilizationWithAdhoc)}</td></tr>
-          <tr><td>Utilization without Adhoc = G + I x (220/75)</td><td className="oc-right">{dec(d.utilizationWithoutAdhoc)}</td></tr>
-          <tr><td>Utilization with Adhoc % = U / F</td><td className="oc-right">{fmtPct(d.utilizationWithAdhocPct)}</td></tr>
-          <tr><td>Utilization without Adhoc % = V / F</td><td className="oc-right">{fmtPct(d.utilizationWithoutAdhocPct)}</td></tr>
-          <tr><td>POA Answering = I / E</td><td className="oc-right">{fmtPct(d.poaAnsweringPct)}</td></tr>
-          <tr><td>Escalated % = Z / G</td><td className="oc-right">{fmtPct(d.escalatedPct, 2)}</td></tr>
-        </tbody></table>
-      </div>
-      <div>
-        <div className="oc-kv-label">Entered by WFM</div>
+        <div className="oc-kv-label">Uploaded values (saved exactly as provided)</div>
         {day.hasManualInputs
           ? <div style={{ fontSize: 12, color: "var(--muted)" }}>Last saved {fmtDateTime(day.inputsUpdatedAt)}{day.inputsUpdatedBy ? ` by ${day.inputsUpdatedBy}` : ""}</div>
           : <div style={{ fontSize: 12, color: "var(--muted)" }}>Nothing entered for this day yet.</div>}
@@ -213,7 +228,7 @@ function DrawerBody({ day, canEdit, onSaved }: { day: Day; canEdit: boolean; onS
             {FORM_FIELDS.map((f) => (
               <div className="oc-field" key={f.key}>
                 <label htmlFor={`ut-${f.key}`}>{f.label}</label>
-                <input id={`ut-${f.key}`} type="number" min={0} step={f.step} className="oc-input" value={form[f.key]} onChange={(e) => setForm((s) => ({ ...s, [f.key]: e.target.value }))} />
+                <input id={`ut-${f.key}`} type="text" inputMode="decimal" className="oc-input" value={form[f.key]} onChange={(e) => setForm((s) => ({ ...s, [f.key]: e.target.value }))} />
               </div>
             ))}
             <div className="oc-field col-span-2">
@@ -227,7 +242,7 @@ function DrawerBody({ day, canEdit, onSaved }: { day: Day; canEdit: boolean; onS
           </form>
         ) : (
           <table className="oc-table mt-2"><tbody>
-            {FORM_FIELDS.map((f) => <tr key={f.key}><td>{f.label}</td><td className="oc-right">{dec(i[f.key])}</td></tr>)}
+            {FORM_FIELDS.map((f) => <tr key={f.key}><td>{f.label}</td><td className="oc-right">{storedField(day, f.key)}</td></tr>)}
             <tr><td>Remarks</td><td className="oc-right">{day.remarks ?? DASH}</td></tr>
           </tbody></table>
         )}

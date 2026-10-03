@@ -16,6 +16,10 @@ interface FilterOptionsPayload {
   analysts?: AnalystOption[];
 }
 
+/** TLs who appear in the raw am_name column; never offered as an AM (mirrors the backend's NOT_AM_NAMES). */
+export const NOT_AM_NAMES: readonly string[] = ["Vicky Kumar"];
+const isNotAm = (name: string) => NOT_AM_NAMES.some((n) => n.toLowerCase() === name.trim().toLowerCase());
+
 const EMPTY_OPTIONS: FilterOptionsPayload = {
   tlNames: [],
   amNames: [],
@@ -112,7 +116,7 @@ export function useHierarchyFilters(range: { from: string; to: string }) {
     analystFilter,
     setAnalystFilter,
     tlOptions,
-    amOptions: options.amNames,
+    amOptions: options.amNames.filter((n) => !isNotAm(n)),
     analystOptions,
     clear,
   };

@@ -421,10 +421,8 @@ describe("utilization report assembly", () => {
     expect(d.inputs.actualTask).toBe(90);
     expect(d.inputs.forecastTask).toBe(100);
     expect(d.hasManualInputs).toBe(true);
-    expect(d.derived.utilizationForecast).toBeCloseTo(
-      100 + 30 * (220 / 75),
-      10,
-    );
+    // import-driven: nothing uploaded for the calculated columns, so they stay blank
+    expect(d.derived.utilizationForecast).toBeNull();
     expect(d.month).toBe("Jul-26");
     expect(d.wc).toBe("2026-06-29");
   });
@@ -448,35 +446,17 @@ describe("utilization report assembly", () => {
     expect(withData.derived.utilizationWithAdhocPct).toBeNull();
     const { throughDate, mtd } = buildMtd([withData, noData], 99, 190);
     expect(throughDate).toBe("2026-07-01");
-    expect(mtd.inputs.actualTask).toBe(90);
-    expect(mtd.derived.utilizationWithoutAdhoc).toBeCloseTo(
-      90 + 15 * (220 / 75),
-      10,
-    );
-    expect(mtd.derived.utilizationWithoutAdhocPct).toBeNull(); // no forecast entered
+    expect(mtd.inputs.actualTask).toBeNull();
+    expect(mtd.derived.utilizationWithoutAdhoc).toBeNull(); // no MTD formulas
   });
 
-  it("builds a bucketed utilization trend only from complete buckets", () => {
-    const a = buildUtilizationDay(
-      "2026-07-01",
-      { n: 90, aht: 100, esc: 0 },
-      { n: 15, aht: 190 },
-      undefined,
-      manual,
-    );
-    const b = buildUtilizationDay(
-      "2026-07-02",
-      { n: 80, aht: 100, esc: 0 },
-      { n: 15, aht: 190 },
-      undefined,
-      undefined,
-    );
-    expect(
-      utilizationTrend([a], "daily")[0].utilizationWithAdhocPct,
-    ).not.toBeNull();
-    expect(
-      utilizationTrend([a, b], "monthly")[0].utilizationWithAdhocPct,
-    ).toBeNull();
+  it("builds the utilization trend from uploaded % values only", () => {
+    const up = { ...manual, fixedUtilizationWithAdhocPct: 90 } as typeof manual;
+    const a = buildUtilizationDay("2026-07-01", { n: 90, aht: 100, esc: 0 }, { n: 15, aht: 190 }, undefined, up);
+    const b = buildUtilizationDay("2026-07-02", { n: 80, aht: 100, esc: 0 }, { n: 15, aht: 190 }, undefined, undefined);
+    expect(utilizationTrend([a], "daily")[0].utilizationWithAdhocPct).toBe(90);
+    expect(utilizationTrend([a, b], "monthly")[0].utilizationWithAdhocPct).toBe(90);
+    expect(utilizationTrend([b], "daily")[0].utilizationWithAdhocPct).toBeNull();
   });
 });
 
@@ -566,12 +546,13 @@ describe("WFM input validation", () => {
       parseUtilizationInputRow({ inputDate: "2026-07-01", forecastTask: "abc" })
         .ok,
     ).toBe(false);
+    // uploads are stored as provided: decimals in count columns and negatives are accepted
     expect(
       parseUtilizationInputRow({ inputDate: "2026-07-01", analystQc: 1.5 }).ok,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       parseUtilizationInputRow({ inputDate: "2026-07-01", adhocTime: -1 }).ok,
-    ).toBe(false);
+    ).toBe(true);
     expect(parseUtilizationInputRow({ inputDate: "nope" }).ok).toBe(false);
   });
 

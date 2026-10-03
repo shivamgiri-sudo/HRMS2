@@ -1682,6 +1682,36 @@ export function listAvailableTables() {
  * unioned with onfido_agent_daily_raw (the HR roster) so a TL/AM who only
  * shows up in one of the two sources still appears.
  */
+/**
+ * People who are TLs, not AMs, but appear in the raw files' am_name column. They are removed from
+ * every AM list / AM ranking (their rows stay under tl_name). The raw data cannot decide this by
+ * itself (the same name is present as both am_name and tl_name), hence the explicit list.
+ */
+export const NOT_AM_NAMES: readonly string[] = ["Vicky Kumar"];
+const NOT_AM_KEYS = new Set(NOT_AM_NAMES.map((n) => n.trim().toLowerCase()));
+export const isNotAm = (name: unknown): boolean =>
+  NOT_AM_KEYS.has(String(name ?? "").trim().toLowerCase());
+
+/** Attrition % for the stack ranking: on-floor attrition over mean daily on-floor HC. Blank when no valid denominator or the result is impossible (>100%). */
+export function stackRankingAttritionPct(
+  attrition: number,
+  onfloorHcDays: number,
+  onfloorDays: number,
+): number | null {
+  if (!(onfloorHcDays > 0) || !(onfloorDays > 0)) return null;
+  const avgHc = onfloorHcDays / onfloorDays;
+  if (!(avgHc > 0)) return null;
+  const pct = Math.round((attrition / avgHc) * 1000) / 10;
+  return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : null;
+}
+
+/** Shrinkage % for the stack ranking: UL over scheduled; blank when nothing was scheduled or the result is impossible (>100%). */
+export function stackRankingShrinkagePct(ul: number, scheduled: number): number | null {
+  if (!(scheduled > 0)) return null;
+  const pct = Math.round((ul / scheduled) * 1000) / 10;
+  return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : null;
+}
+
 export async function getFilterOptions(
   range: { from?: string; to?: string } = {},
 ): Promise<{
@@ -1722,8 +1752,10 @@ export async function getFilterOptions(
   );
   return {
     tlNames: tlRows.map((r) => r.name as string),
-    amNames: amRows.map((r) => r.name as string),
-    tlAmMapping,
+    amNames: amRows.map((r) => r.name as string).filter((n) => !isNotAm(n)),
+    tlAmMapping: Object.fromEntries(
+      Object.entries(tlAmMapping).filter(([am]) => !isNotAm(am)),
+    ),
     analysts,
   };
 }
@@ -5893,6 +5925,23 @@ export async function getStackRanking(
          GROUP BY analyst_email`,
       [f.from, f.to, ...params],
     );
+    // AHT is the DOC raw overall AHT for the period (same rule as the Overview), not the audit sample's.
+    const [docAhtRows] = await pool.query<RowDataPacket[]>(
+      `SELECT analyst_email AS name, ${DOC_AHT_AVG} AS aht
+         FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${clause}
+           AND analyst_email IS NOT NULL AND analyst_email <> ''
+         GROUP BY analyst_email`,
+      [f.from, f.to, ...params],
+    );
+    const docAhtMap = new Map(
+      docAhtRows.map((r) => [String(r.name).toLowerCase(), r.aht]),
+    );
+    const docAht = (key: string, fallback: unknown): number | null => {
+      const v = docAhtMap.get(key) ?? fallback;
+      return v !== null && v !== undefined && Number.isFinite(Number(v))
+        ? Math.round(Number(v))
+        : null;
+    };
     const intMap = new Map(
       intRows.map((r) => [String(r.name).toLowerCase(), r]),
     );
@@ -5917,7 +5966,7 @@ export async function getStackRanking(
         crePct: pct1(cre, totalTasks),
         attritionPct: null,
         shrinkagePct: null,
-        ahtSecs: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
+        ahtSecs: docAht(key, r.avg_aht),
         score: 0,
         rank: 0,
       });
@@ -5967,16 +6016,37 @@ export async function getStackRanking(
          GROUP BY ${dimCol}`,
       [f.from, f.to],
     );
+    // Attrition counts on-floor rows only over mean daily on-floor HC (the reference's rule);
+    // a group with no on-floor presence ("Training") has no headcount, so its attrition is blank.
+    // Shrinkage = UL / scheduled across all states, blank when nothing was scheduled.
     const [attrRows] = await pool.query<RowDataPacket[]>(
-      `SELECT ${dimCol} AS name, COALESCE(SUM(attrition_flag),0) AS attrition,
+      `SELECT ${dimCol} AS name,
+              COALESCE(SUM(CASE WHEN ${ONFLOOR} THEN attrition_flag ELSE 0 END),0) AS attrition,
               COALESCE(SUM(actual_ul),0) AS ul, COALESCE(SUM(scheduled),0) AS scheduled,
-              COALESCE(SUM(hc),0) / GREATEST(COUNT(DISTINCT work_date),1) AS avg_hc
+              COALESCE(SUM(CASE WHEN ${ONFLOOR} THEN hc ELSE 0 END),0) AS onfloor_hc_days,
+              COUNT(DISTINCT CASE WHEN ${ONFLOOR} THEN work_date END) AS onfloor_days
          FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ?
            AND ${dimCol} IS NOT NULL AND TRIM(${dimCol}) <> ''
          GROUP BY ${dimCol}`,
       [f.from, f.to],
     );
 
+    const [docAhtRows] = await pool.query<RowDataPacket[]>(
+      `SELECT ${dimCol} AS name, ${DOC_AHT_AVG} AS aht
+         FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ?
+           AND ${dimCol} IS NOT NULL AND TRIM(${dimCol}) <> ''
+         GROUP BY ${dimCol}`,
+      [f.from, f.to],
+    );
+    const docAhtMap = new Map(
+      docAhtRows.map((r) => [String(r.name).toLowerCase(), r.aht]),
+    );
+    const docAht = (key: string, fallback: unknown): number | null => {
+      const v = docAhtMap.get(key) ?? fallback;
+      return v !== null && v !== undefined && Number.isFinite(Number(v))
+        ? Math.round(Number(v))
+        : null;
+    };
     const intMap = new Map(
       intRows.map((r) => [String(r.name).toLowerCase(), r]),
     );
@@ -5998,6 +6068,7 @@ export async function getStackRanking(
       const cre = creMap.get(key) ?? 0;
       const totalTasks = extAud > 0 ? extAud : 1;
       const scheduled = ar ? Number(ar.scheduled) : 0;
+      if (tier === "AM" && isNotAm(r.name)) continue;
       rows.push({
         name: r.name,
         tier: tier as "AM" | "TL",
@@ -6005,11 +6076,14 @@ export async function getStackRanking(
         extErrPct: pct1(extErr, extAud),
         crePct: pct1(cre, totalTasks),
         attritionPct: ar
-          ? pct1(Number(ar.attrition), Number(ar.avg_hc) > 0 ? Number(ar.avg_hc) : 1)
+          ? stackRankingAttritionPct(
+              Number(ar.attrition),
+              Number(ar.onfloor_hc_days),
+              Number(ar.onfloor_days),
+            )
           : null,
-        shrinkagePct:
-          ar && scheduled > 0 ? pct1(Number(ar.ul), scheduled) : null,
-        ahtSecs: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
+        shrinkagePct: ar ? stackRankingShrinkagePct(Number(ar.ul), scheduled) : null,
+        ahtSecs: docAht(key, r.avg_aht),
         score: 0,
         rank: 0,
       });

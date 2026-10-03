@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { normaliseImportDate, parseUtilizationCsv, splitCsvLine } from "../onfidoUtilizationCsv";
+import { UTILIZATION_TEMPLATE_HEADERS, cleanNumericCell, normaliseImportDate, parseUtilizationCsv, splitCsvLine, utilizationTemplateCsv } from "../onfidoUtilizationCsv";
 import { bucketAxisLabel, fmtDate, fmtHc, fmtInt, fmtRatioPct, presetRange } from "../onfidoReportShared";
 
 describe("utilization CSV import", () => {
   it("reads the hand-entered columns and ignores report columns", () => {
     const csv = [
       "Date,Month,WC,Forecasted Task,Forecasted Task POA,Utilization Forecaste,Actual Task,Manual FAR Case,Adhoc Time,Analyst QC,Facial checks,Cross training task POA,POA Live Audits / POA PQ Audits",
-      '01/07/2026,Jul-26,29-Jun,"35,626.99",5734.42,52447,29580,335,7885,2143,,0,662',
+      '01/07/2026,Jul-26,29-Jun,"35626.99",5734.42,52447,29580,335,7885,2143,,0,662',
       "2026-07-02,Jul-26,29-Jun,35463.45,5722.94,52000,29808,320,7895,2563,10,0,702",
     ].join("\n");
     const { rows, errors } = parseUtilizationCsv(csv);
     expect(errors).toEqual([]);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ inputDate: "2026-07-01", forecastTask: "35,626.99", forecastTaskPoa: "5734.42", manualFarCases: "335", adhocTime: "7885", analystQc: "2143", facialChecks: "", crossTrainingTaskPoa: "0", poaLiveAuditsPq: "662" });
+    expect(rows[0]).toMatchObject({ inputDate: "2026-07-01", forecastTask: "35626.99", forecastTaskPoa: "5734.42", manualFarCases: "335", adhocTime: "7885", analystQc: "2143", facialChecks: "", crossTrainingTaskPoa: "0", poaLiveAuditsPq: "662" });
     expect(rows[1].inputDate).toBe("2026-07-02");
   });
 
@@ -67,5 +67,32 @@ describe("report formatting helpers", () => {
     expect(presetRange("2026-07-15", "daily")).toEqual({ from: "2026-07-15", to: "2026-07-15" });
     expect(presetRange("2026-07-15", "weekly")).toEqual({ from: "2026-07-09", to: "2026-07-15" });
     expect(presetRange("2026-07-15", "monthly")).toEqual({ from: "2026-07-01", to: "2026-07-15" });
+  });
+});
+
+describe("utilization CSV numeric cells and template", () => {
+  it("cleans percent strings, commas and placeholders without calculating", () => {
+    expect(cleanNumericCell("85%")).toBe("85");
+    expect(cleanNumericCell("0.85")).toBe("0.85");
+    expect(cleanNumericCell("1,234")).toBe("1234");
+    expect(cleanNumericCell("-")).toBe("");
+    expect(cleanNumericCell("N/A")).toBe("");
+    expect(cleanNumericCell("")).toBe("");
+    expect(cleanNumericCell("(5)")).toBe("-5");
+    expect(cleanNumericCell("abc")).toBe("abc"); // left for the server to reject with a clear message
+  });
+
+  it("accepts % in non-percent columns and keeps blanks blank (never 0)", () => {
+    const csv = ["Date,Utilization with Adhoc,Utilization with Adhoc %,Analyst QC,Facial checks", '01/07/2026,"1,234.5",85%,2143.5,'].join("\n");
+    const { rows, errors } = parseUtilizationCsv(csv);
+    expect(errors).toEqual([]);
+    expect(rows[0]).toMatchObject({ fixedUtilizationWithAdhoc: "1234.5", fixedUtilizationWithAdhocPct: "85", analystQc: "2143.5", facialChecks: "" });
+  });
+
+  it("template headers round-trip through the parser", () => {
+    expect(UTILIZATION_TEMPLATE_HEADERS[0]).toBe("Date");
+    const { errors } = parseUtilizationCsv(`${utilizationTemplateCsv()}01/07/2026${",".repeat(UTILIZATION_TEMPLATE_HEADERS.length - 1)}`);
+    expect(errors).toEqual([]);
+    expect(new Set(UTILIZATION_TEMPLATE_HEADERS).size).toBe(UTILIZATION_TEMPLATE_HEADERS.length);
   });
 });
