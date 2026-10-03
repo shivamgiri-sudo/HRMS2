@@ -455,7 +455,14 @@ export async function submitProfile(token: string, profile: Record<string, unkno
  * until real server-side pagination + counts replace this — accepted tradeoff
  * for now, not the final shape.
  */
-export async function listOnboardingRequests(scopeFilter: { sql: string; params: unknown[] }) {
+export async function listOnboardingRequests(scopeFilter: { sql: string; params: unknown[] }, search?: string) {
+  // Server-side search reaches requests older than the 500-row window (e.g. long-onboarded employees
+  // whose link must be resent). Matches name, candidate code, employee code, mobile and email.
+  const term = String(search ?? '').trim().slice(0, 60);
+  const searchSql = term.length >= 3
+    ? `AND (c.full_name LIKE ? OR c.candidate_code LIKE ? OR e.employee_code LIKE ? OR c.mobile LIKE ? OR c.email LIKE ?)`
+    : '';
+  const searchParams = term.length >= 3 ? Array(5).fill(`%${term.replace(/[%_]/g, '')}%`) : [];
   // db.query, not db.execute — load-bearing. Measured live 2026-09-22: this exact
   // SQL/data ran in 561ms via a direct mysql client (text protocol) but 8.7s
   // through db.execute() (prepared/binary protocol) — MySQL's prepared-statement
@@ -503,10 +510,10 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
      LEFT JOIN employees e ON e.id = ob.employee_id
      LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = c.id
-     WHERE (${scopeFilter.sql})
+     WHERE (${scopeFilter.sql}) ${searchSql}
      ORDER BY r.created_at DESC
      LIMIT 500`,
-    scopeFilter.params,
+    [...scopeFilter.params, ...searchParams],
   );
   return rows;
 }

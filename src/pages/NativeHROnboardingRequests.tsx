@@ -760,18 +760,26 @@ export default function NativeHROnboardingRequests() {
   }, [documentPreview]);
 
   // ── Load list
+  // The list is capped to the 500 newest requests; a typed search (3+ chars) is also run on the
+  // server so long-onboarded employees can still be found and sent a fresh link.
+  const [serverSearch, setServerSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setServerSearch(search.trim().length >= 3 ? search.trim() : ''), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const r = await hrmsApi.get<unknown>('/api/ats/onboarding/requests');
+      const r = await hrmsApi.get<unknown>(`/api/ats/onboarding/requests${serverSearch ? `?search=${encodeURIComponent(serverSearch)}` : ''}`);
       setRows(rowsFrom(r));
     } catch (e: any) {
       setLoadError(e?.message || 'Unable to load onboarding requests.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [serverSearch]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -1077,6 +1085,7 @@ export default function NativeHROnboardingRequests() {
       list = list.filter((r) =>
         r.full_name?.toLowerCase().includes(q) ||
         r.candidate_code?.toLowerCase().includes(q) ||
+        r.employee_code?.toLowerCase().includes(q) ||
         r.email?.toLowerCase().includes(q) ||
         r.mobile?.includes(q) ||
         r.branch_name?.toLowerCase().includes(q)

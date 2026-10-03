@@ -8,6 +8,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../logger.js";
+import { sendOnboardingTokenEmail } from "../ats/ats.email.service.js";
 import { providerFactory } from "../communication/providers/provider.factory.js";
 import {
   allBranches,
@@ -193,6 +194,44 @@ export async function issueOnboardingLink(employeeId: string, nowMs = Date.now()
   );
   const exp = rows[0]?.exp ? new Date(rows[0].exp as string) : new Date(nowMs + REISSUED_LINK_TTL_MS);
   return { link: `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${token}`, expiresAt: exp.toISOString() };
+}
+
+export type EmailLinkResult =
+  | { status: "sent"; sentTo: string }
+  | { status: "no_link" | "no_email" | "not_found" }
+  | { status: "failed"; error: string };
+
+/**
+ * Emails the joiner their onboarding link (a live link is reused, an expired/missing one is re-issued).
+ * Works for any employee that still has an onboarding record, including long-onboarded ones. A manual
+ * HR action, so there is no cooldown; the caller audits it. Returns the real delivery outcome.
+ */
+export async function emailOnboardingLink(employeeId: string, nowMs = Date.now()): Promise<EmailLinkResult> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.full_name, c.email AS cand_email, e.personal_email, e.email AS emp_email
+       FROM employees e
+       LEFT JOIN ats_onboarding_bridge b ON b.employee_id = e.id
+       LEFT JOIN ats_candidate c ON c.id = b.candidate_id
+      WHERE e.id = ? LIMIT 1`,
+    [employeeId],
+  );
+  const row = rows[0];
+  if (!row) return { status: "not_found" };
+  const to = String(row.cand_email || row.personal_email || row.emp_email || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { status: "no_email" };
+  const issued = await issueOnboardingLink(employeeId, nowMs);
+  if (!issued) return { status: "no_link" };
+  const [cand] = await db.execute<RowDataPacket[]>(
+    "SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1", [employeeId],
+  );
+  const res = await sendOnboardingTokenEmail({
+    candidateId: String(cand[0]?.candidate_id ?? employeeId),
+    to,
+    candidateName: String(row.full_name ?? ""),
+    onboardingLink: issued.link,
+  });
+  if (!res.ok) return { status: "failed", error: res.error ?? "Email delivery failed" };
+  return { status: "sent", sentTo: to };
 }
 
 const ESCALATION_ITEM = "OPS_NUDGE_ESCALATION";

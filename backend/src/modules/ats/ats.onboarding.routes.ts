@@ -180,7 +180,7 @@ router.get(
       { branchId: 'r.branch_id' },
       { allowAdminBypass: true },
     );
-    const rows = await listOnboardingRequests(scopeFilter);
+    const rows = await listOnboardingRequests(scopeFilter, typeof req.query?.search === 'string' ? req.query.search : undefined);
     res.json({ ok: true, data: rows });
   }),
 );

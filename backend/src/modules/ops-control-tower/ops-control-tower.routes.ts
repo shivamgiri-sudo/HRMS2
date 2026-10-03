@@ -30,6 +30,7 @@ import {
 import {
   employeeBranchId,
   issueOnboardingLink,
+  emailOnboardingLink,
   enrichDetailRows,
   nudgeBranchPending,
   nudgeEmployee,
@@ -264,6 +265,53 @@ opsControlTowerRouter.post("/onboarding-link", requireRole(...NUDGE_ROLES), asyn
     res.json(issued);
   } catch (err) {
     fail(res, err, "issue the onboarding link");
+  }
+});
+
+// POST /api/ops-control-tower/onboarding-link/email { employeeId, issue } - emails the joiner their link.
+// Same roles, branch scope and section limits as the Copy link action; audited without the token.
+opsControlTowerRouter.post("/onboarding-link/email", requireRole(...NUDGE_ROLES), async (req, res) => {
+  try {
+    const { employeeId, issue } = req.body ?? {};
+    if (typeof employeeId !== "string" || !ID_PATTERN.test(employeeId)) {
+      res.status(400).json({ error: "employeeId must be a valid id" });
+      return;
+    }
+    if (typeof issue !== "string" || !isNudgeableIssue(issue)) {
+      res.status(400).json({ error: "issue is not nudgeable" });
+      return;
+    }
+    if (!(await mayUseBlock(req, issue))) {
+      res.status(403).json({ error: "Forbidden: this issue is not available to your role" });
+      return;
+    }
+    const branchId = await employeeBranchId(employeeId);
+    if (branchId === null) {
+      res.status(404).json({ error: "Employee not found" });
+      return;
+    }
+    const allowed = await allowedBranchIds(req);
+    if (allowed !== null && !allowed.has(branchId)) {
+      res.status(403).json({ error: "Forbidden: this employee is outside your branch / assigned scope" });
+      return;
+    }
+    const out = await emailOnboardingLink(employeeId);
+    void logSensitiveAction({
+      actor_user_id: (req as any).authUser?.id,
+      action_type: "ONBOARDING_LINK_EMAILED",
+      module_key: "ops-control-tower",
+      entity_type: "employee",
+      entity_id: employeeId,
+      change_summary: { issue, outcome: out.status },
+      req: req as any,
+    });
+    if (out.status === "sent") { res.json({ status: "sent", sentTo: out.sentTo }); return; }
+    if (out.status === "no_email") { res.status(409).json({ error: "No valid email address on file for this employee" }); return; }
+    if (out.status === "no_link") { res.status(409).json({ error: "This employee has no onboarding link to issue (no onboarding record, or marked not joining)" }); return; }
+    if (out.status === "not_found") { res.status(404).json({ error: "Employee not found" }); return; }
+    res.status(502).json({ error: `Email could not be delivered: ${out.status === "failed" ? out.error : "unknown error"}` });
+  } catch (err) {
+    fail(res, err, "email the onboarding link");
   }
 });
 

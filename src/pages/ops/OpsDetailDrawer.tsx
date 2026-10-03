@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Copy, Download, ExternalLink, MessageCircle, Wrench } from "lucide-react";
+import { Copy, Download, ExternalLink, Mail, MessageCircle, Wrench } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -61,6 +61,16 @@ async function copyOnboardingLink(employeeId: string, issue: DetailBlockKey) {
   }
 }
 
+/** Emails the joiner their onboarding link; the server reports the real delivery outcome. */
+async function emailOnboardingLinkTo(employeeId: string, issue: DetailBlockKey) {
+  try {
+    const out = await hrmsApi.post<{ status: string; sentTo?: string }>(`${BASE}/onboarding-link/email`, { employeeId, issue });
+    toast.success(`Link emailed to ${out.sentTo ?? "the employee"}`);
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Could not email the link");
+  }
+}
+
 export function DetailRowItem({ block, row, supported, pending, onNotify }: {
   block: DetailBlockKey; row: Row; supported: boolean; pending: boolean; onNotify: (employeeId: string) => void;
 }) {
@@ -99,6 +109,10 @@ export function DetailRowItem({ block, row, supported, pending, onNotify }: {
             <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" title="Create a fresh onboarding link and copy it"
               onClick={() => void copyOnboardingLink(row.employeeId, selected.block)}>
               <Copy className="mr-1 h-3 w-3" aria-hidden /> Copy link
+            </Button>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" title="Email the onboarding link to the employee"
+              onClick={() => void emailOnboardingLinkTo(row.employeeId, selected.block)}>
+              <Mail className="mr-1 h-3 w-3" aria-hidden /> Email link
             </Button>
             <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={pending || row.nudge?.due === false}
               title={row.nudge?.due === false ? "Notified in the last 24h" : "Send WhatsApp reminder"}
