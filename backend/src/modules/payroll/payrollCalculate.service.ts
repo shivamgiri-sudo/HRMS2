@@ -106,6 +106,33 @@ const PAYSLIP_COMPONENT_NAMES: Record<string, string> = {
 };
 
 /**
+ * One earned component, the way db_bill earns it: ROUND(component * EarnedDays / WorkingDays) to a
+ * WHOLE RUPEE (Basic1, HRA1, Bonus1, Conv1 ... are integers in db_bill.salary_data). Multiplies
+ * before it divides so rounding boundaries land where MySQL DECIMAL puts them.
+ */
+export function prorateToRupee(value: number, days: number, daysInMonth: number): number {
+  if (!daysInMonth) return 0;
+  return Math.round((value * days) / daysInMonth);
+}
+
+/**
+ * Earned gross for a per-employee component package: the SUM of each component earned on its own
+ * (db_bill's Gross1), never the unrounded package gross times a ratio — that gave 59,139.52 where
+ * db_bill pays 59,140 (MAS60236, 2026-08). Covers exactly the components the payslip itemises.
+ */
+export function sumProratedComponents(
+  compAmounts: Record<string, number>,
+  days: number,
+  daysInMonth: number,
+): number {
+  let total = 0;
+  for (const [code, val] of Object.entries(compAmounts)) {
+    if (val > 0 && PAYSLIP_COMPONENT_NAMES[code]) total += prorateToRupee(val, days, daysInMonth);
+  }
+  return total;
+}
+
+/**
  * Builds the itemized earning-component breakdown for one salary_prep_line's
  * payslip. Extracted 2026-08-14 for testability, from logic that used to be
  * inline in calculatePayrollRunScoped — behaviour unchanged except for the two
@@ -181,8 +208,8 @@ export function buildPayslipEarningComponents(params: {
   const rDen = params.ratioDenominator;
   const prorate = (v: number): number =>
     rNum !== undefined && rDen !== undefined && rDen !== 0
-      ? Math.round((v * rNum * 100) / rDen) / 100
-      : Math.round(v * params.ratio * 100) / 100;
+      ? prorateToRupee(v, rNum, rDen)
+      : Math.round(v * params.ratio);
 
   if (params.hasFixedComponents) {
     for (const [code, val] of Object.entries(params.compAmounts)) {
@@ -1565,9 +1592,13 @@ export async function calculatePayrollRunScoped(
       // Days-based gross calculation
       const isOnMaternityLeave = maternityExemptIds.has(emp.employee_id);
       // Maternity employees receive full monthly gross (MBA 1961 s.5(1))
+      // Per-employee component packages are earned component by component and summed, each
+      // rounded to a whole rupee like db_bill's Gross1; the CTC fallback keeps the plain ratio.
       const grossMonthly = isOnMaternityLeave
         ? monthlyGrossBase
-        : monthlyGrossBase * (finalPayableDays / daysInMonth);
+        : hasFixedComponents
+          ? sumProratedComponents(compAmounts, finalPayableDays, daysInMonth)
+          : monthlyGrossBase * (finalPayableDays / daysInMonth);
       // No separate LWP deduction needed — absent days just reduce finalPayableDays
       const lwpDeduction = 0; // absorbed into days-based calculation
       const grossAfterLwp = grossMonthly;
