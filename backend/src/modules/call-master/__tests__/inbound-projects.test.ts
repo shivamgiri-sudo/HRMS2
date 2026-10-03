@@ -20,7 +20,10 @@ import { PROJECTS } from "../inbound.service.js";
 /** Frozen copy of the hard-coded list as it was before the loader existed (origin/main inbound.service.ts). Must never drift silently. */
 const FROZEN: Array<[string, string, "A" | "B", string[], number, number, boolean, number | undefined]> = [
   ["gnc", "cdr_in_4", "A", ["GNC_Order_Related", "GNC_Product_Quality", "GNC_Other_Queries", "GNC_Product_Info", "GNC_Offer_Order", "GNC_Authentication"], 8, 6, false, undefined],
-  ["bellavita", "cdr_in_11_5", "A", ["H_Bellavita_Luxury", "E_Bellavita_Organic", "E_Bellavita_Luxury", "H_Bellavita_Organic", "H_Bevzilla_Complaint", "H_Bevzilla_CC_Agent", "E_Bevzilla_CC_Agent", "H_Bevzilla_Order", "E_Bevzilla_Order", "E_Bevzilla_Complaint", "E_Emb_Existing_Order", "H_Bevzilla_Product", "H_Emb_New_Order", "H_Emb_Existing_Order", "E_Bevzilla_Product", "E_Emb_New_Order"], 14, 12, false, undefined],
+  ["bellavita", "cdr_in_11_5", "A", ["H_Bellavita_Luxury", "E_Bellavita_Organic", "E_Bellavita_Luxury", "H_Bellavita_Organic", "H_Bevzilla_Complaint", "H_Bevzilla_CC_Agent", "E_Bevzilla_CC_Agent", "H_Bevzilla_Order", "E_Bevzilla_Order", "E_Bevzilla_Complaint", "E_Emb_Existing_Order", "H_Bevzilla_Product", "H_Emb_New_Order", "H_Emb_Existing_Order", "E_Bevzilla_Product", "E_Emb_New_Order",
+    // Kenaz/Guzz campaigns added deliberately (tausif-mis 7d02a4ee4): live volume that was never queried.
+    "H_Ken_Existing_Order", "E_Ken_Existing_Order", "H_Kenaz_New_Order", "E_Kenaz_New_Order",
+    "E_Guzz_New_Order", "E_Guz_Existing_Order", "H_Guz_Existing_Order", "H_Guzz_New_Order"], 14, 12, false, undefined],
   ["clovia", "cdr_in_250", "A", ["Clovia_English", "Clovia_Hindi"], 7, 6, false, undefined],
   ["neemans", "cdr_in_249", "B", ["Neemans_IB"], 10, 10, true, 475],
   ["viega", "cdr_in_249", "B", ["Viega"], 2, 2, false, undefined],
