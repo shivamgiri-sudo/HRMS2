@@ -31,10 +31,10 @@ export function OperationsPulseTiles({ data }: { data: ReferenceDashboardData })
 
   return (
     <PulseGrid cols={4}>
-      <PulseTile label="Calls handled" value={calls} icon={Headphones} tone="blue" helper="total volume today" unavailable={feedSilent(calls)} loading={data.loading} href="/operations-dashboard?tab=live" />
+      <PulseTile label="Calls handled" value={feedSilent(calls) ? null : calls} icon={Headphones} tone="blue" helper="total volume today" unavailable={feedSilent(calls)} loading={data.loading} href="/operations-dashboard?tab=live" />
       <PulseTile label="Login adherence" value={adherence} unit="percent" icon={Target} tone={adherence === null || adherenceTarget === null ? "slate" : adherence >= adherenceTarget ? "green" : "red"}
         helper={adherenceTarget === null ? "agents logged in vs scheduled" : `target ${adherenceTarget}%`} unavailable={noFeed} loading={data.loading} href="/operations-dashboard?tab=live" />
-      <PulseTile label="Avg handle time" value={aht} suffix=" s" icon={Clock} tone={aht !== null && aht <= 300 ? "green" : "amber"} higherIsBetter={false} helper="seconds per interaction" unavailable={feedSilent(aht)} loading={data.loading} href="/operations-dashboard?tab=performance&by=process" />
+      <PulseTile label="Avg handle time" value={feedSilent(aht) ? null : aht} suffix=" s" icon={Clock} tone={aht !== null && aht <= 300 ? "green" : "amber"} higherIsBetter={false} helper="seconds per interaction" unavailable={feedSilent(aht)} loading={data.loading} href="/operations-dashboard?tab=performance&by=process" />
       <PulseTile label="Active headcount" value={headcount} icon={Users} tone="violet" helper="agents on floor" unavailable={metricUnavailableReason(m, "hc")} loading={data.loading} {...(hc.onDrilldown ? { onDrill: hc.onDrilldown } : { href: "/operations-dashboard" })} />
     </PulseGrid>
   );

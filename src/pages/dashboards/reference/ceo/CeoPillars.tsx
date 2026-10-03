@@ -39,7 +39,7 @@ export function CeoPillars({ data, model, insights, loading }: { data: Reference
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <PulseTile size="hero" label={rev.month ? `Revenue — ${rev.month}` : "Revenue"} value={rev.revenue} unit="inr" icon={Banknote} tone="violet"
-              delta={rev.revenue !== null && rev.priorRevenue !== null ? rev.revenue - rev.priorRevenue : null} deltaLabel="vs prior month" spark={rev.spark}
+              delta={!rev.inProgress && rev.revenue !== null && rev.priorRevenue !== null ? rev.revenue - rev.priorRevenue : null} deltaLabel={rev.inProgress ? "Month in progress" : "vs prior month"} spark={rev.spark}
               helper={`${rev.inProgress ? "Month in progress" : "Recognised revenue"}${model.processesTotal ? ` · modelled for ${model.processesModelled ?? 0} of ${model.processesTotal} processes` : ""}`}
               formula="Recognised revenue for the selected P&L period from the P&L engine (/api/finance/pnl/summary)"
               href="/finance/process-pnl" loading={pnlWait} unavailable={rev.revenue === null && !pnlWait ? "No recognised revenue in the P&L" : null} />

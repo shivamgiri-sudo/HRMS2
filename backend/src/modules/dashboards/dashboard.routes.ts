@@ -935,3 +935,14 @@ router.get("/:dashboardCode/owner-accountability", h(async (req: AuthenticatedRe
 }));
 
 export { router as dashboardRouter };
+
+/** Boot warm-up: fill the org-wide operational summary of the newest payroll run so the first payroll visit after a restart is instant. */
+export async function warmPayrollOperationalSummary(): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id FROM salary_prep_run ORDER BY created_at DESC LIMIT 1");
+  const runId = rows[0]?.id ? String(rows[0].id) : "";
+  if (!runId) return;
+  const scope: DashboardScope = { level: "ORG_ALL", branchIds: [], processIds: [], employeeIds: [], userId: "warmup", role: "super_admin" };
+  const key = `payroll-op:${runId}:${scope.level}:${scope.branchIds.join(",")}:${scope.processIds.join(",")}:${scope.employeeIds.join(",")}`;
+  await payrollOperationalCache.getOrCompute(key, () => computeOperationalSummary(scope, runId));
+}
+

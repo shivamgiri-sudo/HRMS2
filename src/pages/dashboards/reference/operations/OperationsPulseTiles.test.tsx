@@ -32,3 +32,12 @@ describe("OperationsPulseTiles", () => {
     expect(html).not.toContain("No dialler data for today");
   });
 });
+
+describe("OperationsPulseTiles - dialler up but silent", () => {
+  it("shows calls as unavailable rather than 0 when agents are logged in but no calls are reported", () => {
+    const html = render({ agents_logged_in: 150, total_calls: 0, login_adherence_pct: 13.7, avg_aht_seconds: 0 }, 1066);
+    expect(html).toContain("Not reported by the dialler feed");
+    expect(html).toContain("13.7");
+    expect(html).not.toMatch(/Calls handled[\s\S]{0,400}>0</);
+  });
+});
