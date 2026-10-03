@@ -64,7 +64,10 @@ export async function runSbiBatch(
   }
 
   const [procRows] = await db.execute<Ref[]>(
-    `SELECT id FROM process_master WHERE process_name = ? AND active_status = 1 LIMIT 1`,
+    // By CODE first: migration 1985 merged the duplicate onto the real process ("SBI Credit Cards"), which took the code SBI_CARD, so the
+    // name "SBI Card Collections" no longer exists in production. The dashboard resolves by code too. The name is only a fallback.
+    `SELECT id FROM process_master WHERE active_status = 1 AND (process_code = 'SBI_CARD' OR process_name = ?)
+      ORDER BY (process_code = 'SBI_CARD') DESC LIMIT 1`,
     [SBI_CARD_PROCESS_NAME],
   );
   const processId = procRows[0]?.id ?? null;
@@ -91,7 +94,7 @@ export async function runSbiBatch(
 
   for (const row of batchRows) {
     if (!processId) {
-      const msg = `Row ${row.row_no}: no active "${SBI_CARD_PROCESS_NAME}" process found to attach this row to`;
+      const msg = `Row ${row.row_no}: no active SBI Card process (code SBI_CARD) found to attach this row to`;
       errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
     const raw = parsed.get(row.id)!;
