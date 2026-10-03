@@ -102,6 +102,8 @@ describe("getSyncHealth", () => {
     expect(h.coverage.map((b) => b.branchName)).toEqual(["NOIDA"]); // a branch with no active staff is left out
     const days = h.coverage[0]!.days;
     expect(days).toHaveLength(7);
+    expect(days[0]!.date).toBe("2026-09-25");
+    expect(days[6]!.date).toBe("2026-10-01"); // the day before yesterday: yesterday is written at 23:00 tonight, so it is left out
     expect(days.find((d) => d.date === "2026-10-01")).toMatchObject({ records: 235, pct: 56, low: true });
     expect(days.find((d) => d.date === "2026-09-30")).toMatchObject({ pct: 100, low: false });
     expect(h.lowDays).toBe(5 + 1); // five days with no record at all, plus the 235 one

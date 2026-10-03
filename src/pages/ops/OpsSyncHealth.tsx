@@ -39,7 +39,7 @@ export function OpsSyncHealthView({ data, nowMs = Date.now() }: { data: SyncHeal
       </ul>
       <details className="border-t" open={data.lowDays > 0}>
         <summary className="cursor-pointer px-4 py-2 text-xs font-semibold text-slate-700">
-          Records created per branch, last 7 days (% of active staff){worst ? ` — lowest: ${worst.b} ${short(worst.date)} at ${worst.pct}%` : ""}
+          Records created per branch, 7 days up to the day before yesterday (% of active staff; yesterday is filled overnight){worst ? ` — lowest: ${worst.b} ${short(worst.date)} at ${worst.pct}%` : ""}
         </summary>
         <div className="overflow-x-auto px-4 pb-3">
           <table className="w-full border-separate border-spacing-0 text-xs">

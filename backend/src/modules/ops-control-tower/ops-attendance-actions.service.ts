@@ -180,10 +180,12 @@ export async function getSyncHealth(nowMs = Date.now()): Promise<SyncHealth> {
     jobs.push({ key: w.key, label: w.label, lastRunAt: r.at ? r.at.toISOString() : null, status: r.status, tone: jobTone(r.at, r.status, nowMs, w.everyHours), note: r.note });
   }
 
-  // Coverage: share of active staff with an attendance record, per branch, over the last 7 complete days
+  // Coverage: share of active staff with an attendance record, per branch, over 7 days ending the day BEFORE
+  // yesterday. Yesterday is left out on purpose: the nightly engine writes it at 23:00 today, so it always
+  // looks incomplete until then and would raise a false alarm every single day.
   const today = todayIst();
-  const to = addDays(today, -1);
-  const from = addDays(today, -AUTO_HEAL_DAYS);
+  const to = addDays(today, -2);
+  const from = addDays(today, -1 - AUTO_HEAL_DAYS);
   const days: string[] = [];
   for (let d = from; d <= to; d = addDays(d, 1)) days.push(d);
 
