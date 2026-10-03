@@ -593,6 +593,46 @@ export const payrollService = {
       }
     }
 
+    // A run must not be marked DISBURSED while salary-transfer items for it are still unresolved. The
+    // Payment Center tracks every employee in salary_transfer_batch_item: 'exported' (sent to the bank,
+    // no return file yet), 'rejected' (the bank bounced it) and 'corrected_ready' (fixed, awaiting
+    // re-export). Marking the run disbursed over any of those records money as paid that has not been
+    // confirmed to have moved. Runs paid without the Payment Center have no items and are unaffected.
+    // An independent break-glass reason (same rule as the finance sign-off exception) overrides it, and
+    // is audited as PAYROLL_RUN_DISBURSED_BREAKGLASS. Approved by the owner 2026-10-03.
+    if (input.status === "disbursed") {
+      const [outstandingRows] = await db.execute<RowDataPacket[]>(
+        `SELECT status, COUNT(*) AS n
+           FROM salary_transfer_batch_item
+          WHERE run_id = ? AND status IN ('exported', 'rejected', 'corrected_ready')
+          GROUP BY status`,
+        [id],
+      );
+      const outstanding = (Array.isArray(outstandingRows) ? (outstandingRows as { status: string; n: number }[]) : [])
+        .map((r) => ({ status: r.status, count: Number(r.n) || 0 }))
+        .filter((r) => r.count > 0);
+      if (outstanding.length > 0) {
+        if (!breakGlassReason) {
+          throw Object.assign(
+            new Error(
+              "Some salary transfers for this run are not confirmed yet: " +
+              outstanding.map((o) => `${o.count} ${o.status.replace("_", " ")}`).join(", ") +
+              ". Import the bank's return file and resolve them, or have an independent head record a break-glass reason.",
+            ),
+            { statusCode: 409, code: "PAYROLL_TRANSFERS_OUTSTANDING", outstanding },
+          );
+        }
+        const isPreparer = runRecord.created_by && String(runRecord.created_by) === String(userId);
+        const isApprover = runRecord.approved_by && String(runRecord.approved_by) === String(userId);
+        if (isPreparer || isApprover) {
+          throw Object.assign(
+            new Error("Break-glass must be invoked by someone who neither prepared nor approved this run"),
+            { statusCode: 403, code: "PAYROLL_BREAKGLASS_NOT_INDEPENDENT" },
+          );
+        }
+      }
+    }
+
     const sets = ["status = ?"];
     const params: unknown[] = [input.status];
     if (input.status === "approved")  { sets.push("approved_by = ?");  params.push(userId); }

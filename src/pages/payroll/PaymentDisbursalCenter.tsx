@@ -862,6 +862,9 @@ export default function PaymentDisbursalCenter() {
   });
 
   const [showBreakGlass, setShowBreakGlass] = useState(false);
+  // Why the break-glass dialog opened: no finance sign-off, or salary transfers still unconfirmed.
+  const [breakGlassKind, setBreakGlassKind] = useState<"signoff" | "transfers">("signoff");
+  const [breakGlassDetail, setBreakGlassDetail] = useState("");
   const [breakGlassReason, setBreakGlassReason] = useState("");
 
   // Maps the backend's own well-named error codes (payroll.service.ts::updateRunStatus)
@@ -895,6 +898,15 @@ export default function PaymentDisbursalCenter() {
     },
     onError: (e: any) => {
       if (e?.code === "PAYROLL_FINANCE_SIGNOFF_REQUIRED") {
+        setBreakGlassKind("signoff");
+        setBreakGlassDetail("");
+        setShowBreakGlass(true);
+        return;
+      }
+      if (e?.code === "PAYROLL_TRANSFERS_OUTSTANDING") {
+        // Not a dead end: an independent head can override with a recorded reason (audited as break-glass).
+        setBreakGlassKind("transfers");
+        setBreakGlassDetail(typeof e?.message === "string" ? e.message : "");
         setShowBreakGlass(true);
         return;
       }
@@ -2957,21 +2969,40 @@ export default function PaymentDisbursalCenter() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Finance sign-off required</DialogTitle>
+            <DialogTitle>
+              {breakGlassKind === "transfers"
+                ? "Salary transfers not confirmed"
+                : "Finance sign-off required"}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              This run has not been finance-approved yet. You can obtain
-              sign-off on the Sign-Off page, or — for a genuine emergency
-              only — supply a break-glass reason below. Break-glass must be
-              invoked by someone who neither prepared nor approved this run.
-            </p>
-            <a
-              href="/payroll/sign-off"
-              className="text-sm font-medium text-sky-700 underline underline-offset-2"
-            >
-              Go to Sign-Off →
-            </a>
+            {breakGlassKind === "transfers" ? (
+              <>
+                <p className="text-sm text-muted-foreground">{breakGlassDetail}</p>
+                <p className="text-sm text-muted-foreground">
+                  Marking the run disbursed now would record money as paid that the bank has not
+                  confirmed. Normally: import the bank's return file on the Salary Transfer tab and
+                  clear the rejected rows first. Only for a genuine emergency, supply a break-glass
+                  reason below. Break-glass must be invoked by someone who neither prepared nor
+                  approved this run, and is recorded in the audit trail.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  This run has not been finance-approved yet. You can obtain
+                  sign-off on the Sign-Off page, or — for a genuine emergency
+                  only — supply a break-glass reason below. Break-glass must be
+                  invoked by someone who neither prepared nor approved this run.
+                </p>
+                <a
+                  href="/payroll/sign-off"
+                  className="text-sm font-medium text-sky-700 underline underline-offset-2"
+                >
+                  Go to Sign-Off →
+                </a>
+              </>
+            )}
             <div>
               <label className="text-sm font-medium">
                 Break-glass reason
@@ -2981,7 +3012,7 @@ export default function PaymentDisbursalCenter() {
                 rows={3}
                 value={breakGlassReason}
                 onChange={(e) => setBreakGlassReason(e.target.value)}
-                placeholder="Why this run must be disbursed without sign-off, right now."
+                placeholder={breakGlassKind === "transfers" ? "Why this run must be disbursed with unconfirmed transfers, right now." : "Why this run must be disbursed without sign-off, right now."}
               />
             </div>
           </div>
