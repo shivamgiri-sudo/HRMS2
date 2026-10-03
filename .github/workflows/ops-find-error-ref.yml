@@ -1,0 +1,65 @@
+name: Ops Find Error Reference (manual, read-only)
+
+# Looks a 500 error reference up in the production backend logs.
+#
+# The error handler (backend/src/middleware/errorHandler.ts) writes `API Error reference=<8 hex>`
+# followed by the full error whenever it returns "An unexpected server error occurred. Please quote
+# reference <hex>". This finds that entry so a user-reported reference can be traced to its cause
+# without anyone needing shell access to the server.
+#
+# Read-only: it greps log files and prints a short excerpt. workflow_dispatch only. The input is
+# validated as exactly 8 hex characters before it is used, so it cannot carry anything else into a command.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reference:
+        description: "The 8-character reference from the error message (e.g. 04698198)"
+        required: true
+        type: string
+
+concurrency:
+  group: ops-find-error-ref-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  find:
+    name: Find error reference in backend logs
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Validate input
+        shell: bash
+        env:
+          REF: ${{ inputs.reference }}
+        run: |
+          if ! [[ "$REF" =~ ^[0-9a-f]{8}$ ]]; then
+            echo "reference must be exactly 8 lowercase hex characters"; exit 1
+          fi
+
+      - name: Search logs
+        shell: bash
+        env:
+          REF: ${{ inputs.reference }}
+        run: |
+          set +e
+          echo "--- candidate log locations ---"
+          for d in /var/www/HRMS2/backend/logs "$HOME/.pm2/logs" /root/.pm2/logs /home/*/.pm2/logs /var/log/pm2; do
+            [ -d "$d" ] && echo "$d" && ls -la "$d" 2>/dev/null | head -12
+          done
+          echo
+          echo "--- matches for reference=$REF (30 lines of context each, max 2 hits) ---"
+          found=0
+          for f in $(ls -1t /var/www/HRMS2/backend/logs/*.log "$HOME"/.pm2/logs/*.log /root/.pm2/logs/*.log /home/*/.pm2/logs/*.log 2>/dev/null | head -20); do
+            if grep -q "reference=$REF" "$f" 2>/dev/null; then
+              echo "### $f"
+              grep -n -A 30 "reference=$REF" "$f" | head -70
+              found=1
+            fi
+          done
+          [ "$found" = 0 ] && echo "no match in the log files above (the entry may have rotated out, or logs live elsewhere)"
+          exit 0
