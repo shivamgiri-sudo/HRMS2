@@ -571,6 +571,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     // than fabricating either.
     let bankName = "";
     let ytdMap: Record<string, number> | undefined;
+    let legacyYtdByType: Record<string, Record<string, number>> | undefined;
     let weekOffDays = 0;
     let paidHolidays = 0;
     let detail: PayslipRecord | undefined;
@@ -587,11 +588,23 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       } catch {
         // Non-fatal — download proceeds without YTD/bank name/leave breakdown.
       }
+    } else if (record.run_month) {
+      // Legacy payslips (pre-run-engine months) have no run_id, so the per-run detail endpoint cannot serve
+      // them. Their financial-year-to-date comes from the caller's own YTD endpoint instead.
+      try {
+        const res = await hrmsApi.get<{ success: boolean; data: { ytd: Record<string, number>; ytd_by_type: Record<string, Record<string, number>> } }>(
+          `/api/payroll/payslip/my/ytd?month=${encodeURIComponent(String(record.run_month).slice(0, 7))}`,
+        );
+        ytdMap = res.data?.ytd;
+        legacyYtdByType = res.data?.ytd_by_type;
+      } catch {
+        // Non-fatal — the slip still downloads, with "-" in the YTD column.
+      }
     }
     const ytdFor = (...codes: string[]) => codes.reduce((t, c) => t + Number(ytdMap?.[c.toUpperCase()] ?? 0), 0);
     // The flat ytd map mixes earnings, deductions and employer costs, so "not in a
     // named slot" has to be taken per side or each Other row sums the opposite side.
-    const ytdByType = detail?.ytd_by_type;
+    const ytdByType = detail?.ytd_by_type ?? legacyYtdByType;
     const ytdUnslotted = (side: "earning" | "deduction", slotted: Set<string>) =>
       Object.entries(ytdByType?.[side] ?? {})
         .filter(([code]) => !slotted.has(code.toUpperCase()))

@@ -125,6 +125,49 @@ export function foldLegacyLineIntoYtd(ytd: Record<string, Record<string, number>
   add("deduction", "OTHER_DEDUCTIONS", n(line.other_deductions));
 }
 
+export interface LegacySnapshotYtdRow {
+  run_month: string;
+  basic?: unknown; hra?: unknown; conveyance?: unknown; portfolio?: unknown; medical_allowance?: unknown;
+  lta?: unknown; special_allowance?: unknown; other_allowance?: unknown; bonus?: unknown; incentive?: unknown;
+  arrear?: unknown; extra_day?: unknown; pli?: unknown;
+  epf_employee?: unknown; esic_employee?: unknown; professional_tax?: unknown; income_tax?: unknown;
+  leave_deduction?: unknown; loan_deduction?: unknown; advance_paid?: unknown; other_deduction?: unknown;
+  short_collection?: unknown; asset_recovery?: unknown;
+}
+
+/** One legacy_payslip_snapshot month -> YTD map, using the same component codes the V2 slip slots by. */
+export function foldLegacySnapshotIntoYtd(ytd: Record<string, Record<string, number>>, row: LegacySnapshotYtdRow): void {
+  const n = (v: unknown) => { const x = Number(v ?? 0); return Number.isFinite(x) ? x : 0; };
+  const add = (type: "earning" | "deduction", code: string, amount: number) => {
+    if (!(amount > 0)) return;
+    const bucket = (ytd[type] ??= {});
+    bucket[code] = (bucket[code] ?? 0) + amount;
+  };
+  add("earning", "BASIC", n(row.basic));
+  add("earning", "HRA", n(row.hra));
+  add("earning", "CONVEYANCE", n(row.conveyance));
+  add("earning", "PORTFOLIO", n(row.portfolio));
+  add("earning", "MEDICAL_ALLOWANCE", n(row.medical_allowance));
+  add("earning", "SPECIAL", n(row.special_allowance));
+  add("earning", "BONUS", n(row.bonus));
+  add("earning", "INCENTIVE", n(row.incentive));
+  add("earning", "ARREAR", n(row.arrear));
+  add("earning", "LTA", n(row.lta));
+  add("earning", "OTHER_ALLOWANCE", n(row.other_allowance));
+  add("earning", "PLI", n(row.pli));
+  add("earning", "EXTRA_DAY", n(row.extra_day));
+  add("deduction", "PF_EMPLOYEE", n(row.epf_employee));
+  add("deduction", "ESIC_EMPLOYEE", n(row.esic_employee));
+  add("deduction", "TDS", n(row.income_tax));
+  add("deduction", "LWP_DEDUCTION", n(row.leave_deduction));
+  add("deduction", "LOAN", n(row.loan_deduction));
+  add("deduction", "ADVANCE", n(row.advance_paid));
+  add("deduction", "PROFESSIONAL_TAX", n(row.professional_tax));
+  add("deduction", "OTHER_DEDUCTION", n(row.other_deduction));
+  add("deduction", "SHORT_COLLECTION", n(row.short_collection));
+  add("deduction", "ASSET_RECOVERY", n(row.asset_recovery));
+}
+
 export const payslipService = {
   /**
    * Generate a payslip record for a given employee within a run.
@@ -527,11 +570,46 @@ export const payslipService = {
         WHERE canonical.rn = 1`,
       [employeeId, fyFirstMonth, uptoRunMonth],
     );
+    const modernMonths = new Set<string>(covered);
     for (const line of lineRows as LegacyYtdLine[]) {
+      modernMonths.add(String(line.run_month));
       if (covered.has(String(line.run_month))) continue;
       foldLegacyLineIntoYtd(ytd, line);
     }
+
+    // Pre-run-engine months live only in legacy_payslip_snapshot (db_bill history). Those payslips have no
+    // run, so YTD for them — and for any later slip in the same financial year — was blank. One snapshot per
+    // employee/month (unique key); months a modern run already covers are skipped so nothing is counted twice.
+    try {
+      const [legacyRows] = await db.execute<RowDataPacket[]>(
+        `SELECT pay_month AS run_month, basic, hra, conveyance, portfolio, medical_allowance, lta, special_allowance,
+                other_allowance, bonus, incentive, arrear, extra_day, pli,
+                epf_employee, esic_employee, professional_tax, income_tax, leave_deduction, loan_deduction,
+                advance_paid, other_deduction, short_collection, asset_recovery
+           FROM legacy_payslip_snapshot
+          WHERE employee_id = ?
+            AND pay_month BETWEEN ? AND ?`,
+        [employeeId, fyFirstMonth, uptoRunMonth],
+      );
+      for (const row of legacyRows as LegacySnapshotYtdRow[]) {
+        if (modernMonths.has(String(row.run_month))) continue;
+        foldLegacySnapshotIntoYtd(ytd, row);
+      }
+    } catch (err) {
+      const e = err as { code?: string; errno?: number };
+      if (e?.code !== "ER_NO_SUCH_TABLE" && e?.errno !== 1146) throw err;
+    }
     return ytd;
+  },
+
+  /** Flat code -> amount plus per-side map, in the shape getPayslip() returns as ytd / ytd_by_type. */
+  async getYtdForEmployee(employeeId: string, uptoMonth: string) {
+    const ytdByType = await this.getYtdComponentsByType(employeeId, uptoMonth);
+    const ytd: Record<string, number> = {};
+    for (const type of Object.keys(ytdByType)) {
+      for (const code of Object.keys(ytdByType[type])) ytd[code] = (ytd[code] ?? 0) + ytdByType[type][code];
+    }
+    return { ytd, ytd_by_type: ytdByType };
   },
 
   /**

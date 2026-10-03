@@ -2050,6 +2050,26 @@ router.get(
 // It must stay off this router: `router.use(requireAuth)` above gates every route
 // registered here, so the payslip QR scan was answered with 401 instead of a verdict.
 
+// GET /api/payroll/payslip/my/ytd?month=YYYY-MM — the caller's own financial-year-to-date totals up to that month.
+// Legacy payslips (pre-run-engine months) have no run_id, so the per-run detail endpoint cannot serve them;
+// the V2 slip calls this instead. Self-service only: the employee is resolved from the session, never a param.
+router.get(
+  "/payslip/my/ytd",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp) {
+      return res.status(403).json({ success: false, message: "No employee record for authenticated user" });
+    }
+    const month = String(req.query.month ?? "");
+    const y = Number(month.split("-")[0]);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || y < 2000 || y > new Date().getFullYear() + 1) {
+      return res.status(400).json({ success: false, message: "month must be YYYY-MM" });
+    }
+    const data = await payslipService.getYtdForEmployee(callerEmp.id, month);
+    return res.json({ success: true, data });
+  }),
+);
+
 // GET /api/payroll/payslip/list/:employeeId — paginated payslip history for one employee (admin/HR view)
 //
 // requireRole alone checked role membership only, never branch/process scope, so a

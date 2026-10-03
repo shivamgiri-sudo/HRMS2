@@ -55,7 +55,8 @@ describe("payslip display service", () => {
         [],
       ])
       // getPayslip() also fetches financial-year-to-date totals once run_month is known:
-      // component sums, the months those cover, and the salary-line fallback for the rest.
+      // component sums, the months those cover, the salary-line fallback and legacy snapshots.
+      .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[], []]);
