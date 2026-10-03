@@ -38,13 +38,15 @@ on:
         required: false
         type: string
       steps:
-        description: "full = biometric pull + engine sweep + re-check; sweep-only skips the slow biometric pull (use when only the engine failed to write records)"
+        description: "full = biometric pull + fill missing + re-check; sweep-only skips the slow biometric pull; report-prejoin / delete-prejoin find / remove rows created today for dates before the employee joined (range up to 31 days)"
         required: false
         default: full
         type: choice
         options:
           - full
           - sweep-only
+          - report-prejoin
+          - delete-prejoin
 
 concurrency:
   group: ops-scripts-production
@@ -111,4 +113,6 @@ jobs:
           set -euo pipefail
           FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
           [ "$STEPS" = "sweep-only" ] && FLAG="$FLAG --skip-sync"
+          [ "$STEPS" = "report-prejoin" ] && FLAG="--report-prejoin"
+          [ "$STEPS" = "delete-prejoin" ] && FLAG="--delete-prejoin $( [ "$MODE" = "apply" ] && echo --apply )"
           npx tsx scripts/attendance-repair-range.ts "$FROM" "$TO" $FLAG
