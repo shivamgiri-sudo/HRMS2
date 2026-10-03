@@ -26,8 +26,22 @@ const ACTOR_ID = "actor-1";
 const EMPLOYEE_ID = "emp-in-scope";
 const REQUEST_ID = "reactivation-1";
 
-const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
+const { dbExecute, getConnection } = vi.hoisted(() => ({ dbExecute: vi.fn(), getConnection: vi.fn() }));
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, getConnection } }));
+
+// Branch-head approval now activates the employee inside the same transaction; activation is covered in rehire/.
+const { activateRejoin } = vi.hoisted(() => ({ activateRejoin: vi.fn() }));
+vi.mock("../rehire/rejoinActivation.js", async (orig) => ({ ...(await orig<typeof import("../rehire/rejoinActivation.js")>()), activateRejoin }));
+
+// Transactional connection for branch-action: SELECT ... FOR UPDATE returns the row, other statements succeed.
+function mockConn(row: Record<string, unknown>) {
+  const c = {
+    execute: vi.fn(async (sql: string) => (String(sql).includes("FOR UPDATE") ? [[row], []] : [{ affectedRows: 1 }, []])),
+    beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn(),
+  };
+  getConnection.mockResolvedValue(c);
+  return c;
+}
 
 const { canViewEmployee, resolveUserBusinessScope, buildEmployeeScopeCondition } = vi.hoisted(() => ({
   canViewEmployee: vi.fn(),
@@ -167,7 +181,7 @@ describe("GET /reactivation/pending — branch_head scope", () => {
 describe("POST /reactivation/:id/branch-action — scope", () => {
   it("refuses a branch_head whose scope does not cover the request's employee", async () => {
     authUser = { id: ACTOR_ID, role: "branch_head", roles: ["branch_head"] };
-    dbExecute.mockResolvedValue([[REQUEST_ROW], []]);
+    const c = mockConn(REQUEST_ROW);
     canViewEmployee.mockResolvedValue(false);
 
     const res = await request(app())
@@ -175,12 +189,13 @@ describe("POST /reactivation/:id/branch-action — scope", () => {
       .send({ action: "approved", remarks: "looks fine to me" });
 
     expect(res.status).toBe(403);
-    expect(dbExecute).toHaveBeenCalledTimes(1); // only the SELECT, no UPDATE
+    expect(c.execute).toHaveBeenCalledTimes(1); // only the SELECT ... FOR UPDATE, no UPDATE
+    expect(activateRejoin).not.toHaveBeenCalled();
   });
 
   it("allows a branch_head whose scope covers the request's employee", async () => {
     authUser = { id: ACTOR_ID, role: "branch_head", roles: ["branch_head"] };
-    dbExecute.mockResolvedValue([[REQUEST_ROW], []]);
+    const c = mockConn(REQUEST_ROW);
     canViewEmployee.mockResolvedValue(true);
 
     const res = await request(app())
@@ -188,18 +203,17 @@ describe("POST /reactivation/:id/branch-action — scope", () => {
       .send({ action: "approved", remarks: "looks fine to me" });
 
     expect(res.status).toBe(200);
-    expect(dbExecute).toHaveBeenCalledTimes(2); // SELECT then UPDATE
+    expect(c.execute).toHaveBeenCalledTimes(2); // SELECT then UPDATE (activation is mocked)
   });
 
-  it("allows admin regardless of scope (canViewEmployee's own bypass)", async () => {
+  it("no longer lets admin act on branch-action (branch_head only)", async () => {
     authUser = { id: ACTOR_ID, role: "admin", roles: ["admin"] };
-    dbExecute.mockResolvedValue([[REQUEST_ROW], []]);
     canViewEmployee.mockResolvedValue(true);
 
     const res = await request(app())
       .post(`/api/employees/reactivation/${REQUEST_ID}/branch-action`)
       .send({ action: "approved", remarks: "looks fine to me" });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
   });
 });
