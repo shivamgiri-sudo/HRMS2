@@ -6,8 +6,9 @@ import { missingTdsConfigKeys } from "./statutory-regime.js";
 // The closed-run set was `["locked", "disbursed"]`, which matched no row in
 // production — runs finish as FINALIZED — so this guard never fired.
 import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
-// PT removed 2026-09-11 per user decision — professional-tax-states.ts is no longer
-// consumed here; kept in the tree for historical reference only, not deleted.
+// PT is off from PT_REMOVED_FROM_MONTH (below), so professional-tax-states.ts is consulted
+// again, but only when an EARLIER month is calculated.
+import { isProfessionalTaxExempt } from "./professional-tax-states.js";
 import {
   EMPLOYMENT_END_DATE_SELECT,
   employmentWindowPredicate,
@@ -558,19 +559,71 @@ export function calculateTds(
 // ─── Professional Tax from Slab ───────────────────────────────────────────────
 
 /**
- * PT removed 2026-09-11 per user decision — full company-wide removal across all
- * states. This previously looked up pt_amount from pt_slab_master (and consulted
- * professional-tax-states.ts for genuinely-exempt states vs configuration gaps).
- * That table is kept for historical reference only (additive-only rule — nothing
- * dropped), but is no longer queried for live calculation: this always resolves
- * to 0 now, unconditionally, for every state. Signature kept unchanged for API/
- * caller shape compatibility (ats/salary.calculator.ts, running-salary.service.ts,
- * payroll-compliance's own copy).
+ * First payroll month with NO professional tax.
+ *
+ * PT was removed company-wide on 2026-09-11, "go-forward only" (commit 9c5212e09), and that
+ * commit made the engine return 0 for every month. That reached BACK: recalculating an
+ * earlier month dropped PT that had been deducted when the month was first calculated and that
+ * the legacy ledger still deducts. MAS60236, 2026-08: HRMS 59,140 net against db_bill's
+ * 58,940, after a targeted recalculation — the other 71 Ahmedabad-Jaldarshan lines in that run,
+ * untouched by any recalculation, still carried the Rs 200. A month before this one keeps its
+ * state-slab PT; this month and later never has any.
+ */
+export const PT_REMOVED_FROM_MONTH = "2026-09";
+
+/** True when professional tax still applies to payroll for `runMonth` ("YYYY-MM" or a date). */
+export function isProfessionalTaxActiveForMonth(runMonth: string | null | undefined): boolean {
+  if (!runMonth) return false;
+  return String(runMonth).slice(0, 7) < PT_REMOVED_FROM_MONTH;
+}
+
+/**
+ * PT amount for a state and monthly income from pt_slab_master, for months in which PT is still
+ * levied. With no `runMonth`, or one from PT_REMOVED_FROM_MONTH on, this is 0 and the table is
+ * not read - the removal is the default for any live or future calculation. Signature gained one
+ * optional argument; ats/salary.calculator.ts and running-salary.service.ts, which pass none,
+ * keep resolving to 0.
  */
 export async function getPtFromSlab(
-  _stateCode: string,
-  _monthlyIncome: number,
+  stateCode: string,
+  monthlyIncome: number,
+  runMonth?: string | null,
 ): Promise<number> {
+  if (!isProfessionalTaxActiveForMonth(runMonth)) return 0;
+
+  // Case-insensitive match on state_code (abbreviation) OR state_name (full name)
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT pt_amount FROM pt_slab_master
+      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?))
+        AND is_active = 1
+        AND income_from <= FLOOR(?)
+        AND (income_to IS NULL OR income_to >= FLOOR(?))
+      ORDER BY income_from DESC
+      LIMIT 1`,
+    [stateCode, stateCode, monthlyIncome, monthlyIncome],
+  );
+  const row = (rows as Array<{ pt_amount: number }>)[0];
+  if (row) return Number(row.pt_amount);
+
+  const [anyRows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM pt_slab_master
+      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?)) AND is_active = 1
+      LIMIT 1`,
+    [stateCode, stateCode],
+  );
+
+  if ((anyRows as RowDataPacket[]).length === 0) {
+    // No slab rows: either the state levies no PT (0 is right) or nobody configured it (0 would
+    // be an under-deduction). The exempt states are named explicitly; anything else is a gap.
+    if (isProfessionalTaxExempt(stateCode)) return 0;
+    throw new Error(
+      `Professional tax is not configured for state "${stateCode}". Add its slabs to ` +
+        `pt_slab_master, or record the state as PT-exempt if it levies none. ` +
+        `No amount is assumed, because zero would be an under-deduction if the state does levy PT.`,
+    );
+  }
+
+  // State has slabs but the income falls below the lowest bracket -> genuinely 0.
   return 0;
 }
 
@@ -646,21 +699,25 @@ interface StatutoryRow {
 }
 
 /**
- * PT removed 2026-09-11 per user decision — full company-wide removal.
- *
- * This used to throw when an employee's branch had no state (PT is a state
- * levy, so an indeterminate state meant an indeterminate liability), which
- * blocked that employee out of the run entirely via pt_blocked_employees. With
- * PT removed there is nothing to determine and nothing to block on — this now
- * always resolves to 0 for every employee, state known or not. Signature and
- * the async contract are kept unchanged so every caller keeps compiling.
+ * Professional tax for one employee in `runMonth`. 0 from PT_REMOVED_FROM_MONTH on - nothing to
+ * determine and nothing to block on. For an earlier month the state decides it, as it did before
+ * the removal, and an employee whose branch has no state throws (PT is a state levy, so no
+ * default is applied) and is blocked out of the run via pt_blocked_employees, exactly as then.
  */
 export async function resolveProfessionalTax(
-  _employeeCode: string,
-  _stateCode: string | null | undefined,
-  _monthlyGross: number,
+  employeeCode: string,
+  stateCode: string | null | undefined,
+  monthlyGross: number,
+  runMonth?: string | null,
 ): Promise<number> {
-  return 0;
+  if (!isProfessionalTaxActiveForMonth(runMonth)) return 0;
+  if (!stateCode) {
+    throw new Error(
+      `Professional tax cannot be determined for ${employeeCode}: their branch has no state set. ` +
+        `PT is levied per state, so no default is applied. Set the branch's state and re-run.`,
+    );
+  }
+  return getPtFromSlab(stateCode, monthlyGross, runMonth);
 }
 
 /**
@@ -1988,6 +2045,7 @@ export async function calculatePayrollRunScoped(
           emp.employee_code,
           emp.state_code,
           grossAfterLwp,
+          String(run.run_month),
         );
       } catch (err) {
         ptBlockedEmployees.push({
