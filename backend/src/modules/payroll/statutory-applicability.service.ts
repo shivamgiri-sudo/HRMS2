@@ -231,6 +231,31 @@ export async function loadStatutoryNotApplicable(
       if (r.pf.status === "NOT_APPLICABLE") pf.add(code);
       if (r.esi.status === "NOT_APPLICABLE") esi.add(code);
     }
+
+    // The employee's own active salary assignment carries pf_applicable / esi_applicable too. It
+    // agreed with db_bill on 97-98% of August employees and, for most of the 91 ESIC cases, already
+    // said NO - the engine just never read it. It is the fallback ONLY where the resolver above
+    // could not decide (no db_bill row for the month yet, no HRMS statutory record): a month
+    // calculated before db_bill closes would otherwise lose the flag entirely.
+    try {
+      const [aRows] = await db.execute<RowDataPacket[]>(
+        `SELECT UPPER(TRIM(e.employee_code)) AS code, a.pf_applicable, a.esi_applicable
+           FROM salary_component_assignments a
+           JOIN employees e ON e.id = a.employee_id
+          WHERE a.status = 'active'`,
+      );
+      for (const row of aRows as Array<{ code?: unknown; pf_applicable?: unknown; esi_applicable?: unknown }>) {
+        const code = String(row.code ?? "").trim().toUpperCase();
+        if (!code) continue;
+        const decided = all.get(code);
+        if (row.pf_applicable !== null && row.pf_applicable !== undefined
+            && Number(row.pf_applicable) === 0 && (!decided || decided.pf.status === "UNRESOLVED")) pf.add(code);
+        if (row.esi_applicable !== null && row.esi_applicable !== undefined
+            && Number(row.esi_applicable) === 0 && (!decided || decided.esi.status === "UNRESOLVED")) esi.add(code);
+      }
+    } catch (err) {
+      console.warn(`[payroll] salary assignment PF/ESI flags could not be read: ${err instanceof Error ? err.message : String(err)}`);
+    }
     return { pf, esi };
   } catch (err) {
     console.warn(

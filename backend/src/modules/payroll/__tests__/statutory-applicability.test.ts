@@ -177,3 +177,25 @@ describe("loadStatutoryNotApplicable - what the payroll ENGINE honours", () => {
     await expect(loadStatutoryNotApplicable("2026-08")).resolves.toBeNull();
   });
 });
+
+describe("loadStatutoryNotApplicable - assignment flags as the fallback", () => {
+  it("uses the active salary assignment only where db_bill / HRMS statutory record could not decide", async () => {
+    billQuery.mockResolvedValue([
+      { EmpCode: "MAS100", PFELig: "YES", ESIElig: "YES" }, // db_bill decides YES: assignment NO must NOT override
+    ]);
+    execute
+      .mockResolvedValueOnce([[], []]) // employee_statutory_info
+      .mockResolvedValueOnce([[], []]) // approved overrides
+      .mockResolvedValueOnce([[
+        { code: "MAS100", pf_applicable: 0, esi_applicable: 0 }, // db_bill YES wins
+        { code: "MAS200", pf_applicable: 0, esi_applicable: 1 }, // db_bill silent: assignment decides PF
+        { code: "MAS300", pf_applicable: null, esi_applicable: null }, // unknown stays unknown
+      ], []]);
+    const r = await loadStatutoryNotApplicable("2026-09");
+    expect(r?.pf.has("MAS100")).toBe(false);
+    expect(r?.esi.has("MAS100")).toBe(false);
+    expect(r?.pf.has("MAS200")).toBe(true);
+    expect(r?.esi.has("MAS200")).toBe(false);
+    expect(r?.pf.has("MAS300")).toBe(false);
+  });
+});
