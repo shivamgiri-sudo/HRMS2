@@ -236,8 +236,8 @@ export async function getDalmiaDashboard(monthInput?: string, fromInput?: string
     }
     if (gaps.length > 0) notes.push(`The dialer (dialer_db.cdr_in_249) has no Dalmia inbound calls for ${gaps.join(", ")} -- those days are missing from every inbound figure, so totals can sit below the business's own MIS if it counted them.`);
   }
-  if (dd.length === 0) notes.push("No dial-desk disposition rows for this period in the dialer (dialer_db.data_master_in, ClientId 417), so QRC and Leads read zero.");
-  else notes.push("Tagging and the Leads tab's per-source breakdown read zero: the live dial-desk data has no \"Source of Lead\" field, so neither can be computed from it (QRC and the rest of Leads are unaffected).");
+  if (dd.length === 0) notes.push("No dial-desk disposition rows for this period in the dialer (dialer_db.data_master_in, ClientId 417), so Tagging, QRC and Leads read zero.");
+  else notes.push("Lead status MT and Converted read zero: the live dial-desk data (dialer_db.data_master_in) carries neither field.");
   if (ob.length === 0) notes.push("No Outbound rows are uploaded for this period, so the Outbound section reads zero until that sheet is uploaded.");
   if (apr === null) notes.push("The dalmia_apr table does not exist yet (migration sql/1894 not applied), so Utilization is unavailable.");
   else if (apr.length === 0) notes.push("No dalmia_apr rows are uploaded for this period, so Utilization is unavailable.");

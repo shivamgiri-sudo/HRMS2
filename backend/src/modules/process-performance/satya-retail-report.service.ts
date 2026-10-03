@@ -297,6 +297,7 @@ interface DialerCdrRow {
  * window function that fetch never needed to pay for in the first place.
  */
 const AGENT_CODE_RE = /MAS[0-9]+/;
+const DIALER_FETCH_TIMEOUT_MS = 90_000;
 
 async function fetchDialerCdrRows(f: SatyaReportFilters): Promise<DialerCdrRow[]> {
   const w = dialerWhere(f);
@@ -319,7 +320,8 @@ async function fetchDialerCdrRows(f: SatyaReportFilters): Promise<DialerCdrRow[]
     FROM ${DIALER_CDR_TABLE}
     WHERE ${w.sql}`;
   const pool = await getDialerPool();
-  const [rawRows] = await pool.execute<RowDataPacket[]>(sql, w.params);
+  // Client-side timeout so a stuck dialer read cannot hold the request (and a pool slot) open indefinitely.
+  const [rawRows] = await pool.execute<RowDataPacket[]>({ sql, timeout: DIALER_FETCH_TIMEOUT_MS }, w.params);
 
   const attemptByNumber = new Map<string, number>();
   for (const r of rawRows) {
@@ -435,7 +437,7 @@ function findSpellingVariants(rows: Array<{ sub: string; n: number }>): SatyaChe
     }));
 }
 
-async function getChecks(dupIds: number[], f: SatyaReportFilters, dialerRows: DialerCdrRow[]): Promise<SatyaCheck[]> {
+async function getChecks(dupIds: number[], f: SatyaReportFilters, dialerRows: DialerCdrRow[], dialerError: string | null = null): Promise<SatyaCheck[]> {
   const [totalsR, subR] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total,
@@ -454,10 +456,17 @@ async function getChecks(dupIds: number[], f: SatyaReportFilters, dialerRows: Di
   const cdrTotal = dialerRows.length;
   const cdrWhNull = dialerRows.filter((r) => r.warehouse === "Unmapped").length;
   const cdrLastCall = dialerRows.length > 0
-    ? new Date(Math.max(...dialerRows.map((r) => r.callDate.getTime())))
+    ? new Date(dialerRows.reduce((m, r) => Math.max(m, r.callDate.getTime()), 0))
     : null;
   const t = totalsR[0][0];
   const checks: SatyaCheck[] = [];
+  if (dialerError) {
+    checks.push({
+      id: "cdr-unavailable", level: "warn", count: 0,
+      title: "Live dialer data unavailable",
+      detail: "The call records could not be read from the dialer (dialer_db.data_master_in) just now, so the Call attempts figures read zero. Allocation figures are unaffected. Try again in a few minutes.",
+    });
+  }
 
   if (dupIds.length > 0) {
     checks.push({
@@ -514,7 +523,16 @@ export async function getSatyaReport(f: SatyaReportFilters): Promise<SatyaReport
 
   // The one expensive dialer fetch, done ONCE for the whole report -- see fetchDialerCdrRows()'s
   // own header note for why (this used to happen 9 separate times per page load).
-  const dialerRows = await fetchDialerCdrRows(f);
+  // Fail soft: dialer_db is a separate (read-only) source -- if it is unreachable or slow to error,
+  // the allocation side of the report still renders and the Data checks tab says why calls read zero.
+  let dialerRows: DialerCdrRow[] = [];
+  let dialerError: string | null = null;
+  try {
+    dialerRows = await fetchDialerCdrRows(f);
+  } catch (err) {
+    dialerError = err instanceof Error ? err.message : String(err);
+    console.warn("[satya-retail-report] live dialer CDR read failed:", dialerError);
+  }
   const calls = getCallsData(dialerRows);
 
   const [headlineR, rosterR, dailyR, subR, agentR, whR, beatR, availR, whListR, checks] = await Promise.all([
@@ -536,7 +554,7 @@ export async function getSatyaReport(f: SatyaReportFilters): Promise<SatyaReport
        FROM ${A} ${w.sql} GROUP BY beat_n ORDER BY allocation DESC`, w.params),
     db.execute<RowDataPacket[]>(`SELECT MIN(${A_DATE}) AS min_d, MAX(${A_DATE}) AS max_d FROM ${A}`),
     db.execute<RowDataPacket[]>(`SELECT DISTINCT ${WH} AS wh FROM ${A}`),
-    getChecks(dupIds, f, dialerRows),
+    getChecks(dupIds, f, dialerRows, dialerError),
   ]);
 
   // Warehouse dropdown options: allocation's own list (no date bound, same as before) plus
@@ -605,10 +623,20 @@ export async function getSatyaDetail(type: SatyaDetailType, key: string, f: Saty
       `SELECT ${A_DATE} AS d, shop_name, ${BEAT} AS beat_n, agent_id, ${ROSTER} AS roster_n, ${REVENUE} AS amount
        FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed' ORDER BY d DESC, id DESC LIMIT 50`, w.params),
     db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM ${A} ${w.sql} AND sub_disposition = 'Order Placed'`, w.params),
-    (await getDialerPool()).execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
-         AVG(attempt) AS avg_attempt
-       FROM (${cdrBase.sql}) cdr WHERE ${CDR_DIM_COLUMN[type]} = ?`, [...cdrBase.params, key]),
+    // Live dialer side fails soft (calls read zero) so the allocation drill-down still opens.
+    (async (): Promise<[RowDataPacket[]]> => {
+      try {
+        const pool = await getDialerPool();
+        const [rows] = await pool.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS attempts, SUM(scenario = 'Connected') AS connected, SUM(sub_scenario_1 = 'Order Placed') AS order_calls,
+             AVG(attempt) AS avg_attempt
+           FROM (${cdrBase.sql}) cdr WHERE ${CDR_DIM_COLUMN[type]} = ?`, [...cdrBase.params, key]);
+        return [rows];
+      } catch (err) {
+        console.warn("[satya-retail-report] live dialer detail read failed:", err instanceof Error ? err.message : String(err));
+        return [[]];
+      }
+    })(),
   ]);
 
   const counts = mapCounts(totalsR[0][0]);

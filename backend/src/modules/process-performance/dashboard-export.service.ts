@@ -270,8 +270,13 @@ async function writeMasmisRaw(
   // this column -- applied inside the WHERE-filtered set, so a duplicate outside the date
   // range never wins the "latest" slot for one still inside it. The derived table already
   // carries every selected column (including id, needed for keyset pagination below).
-  const fromClause = src.dedupeBy
-    ? `(SELECT ${select}, ROW_NUMBER() OVER (PARTITION BY \`${src.dedupeBy}\` ORDER BY id DESC) AS __rn FROM ${table} WHERE 1=1${whereSql}) dedup WHERE __rn = 1`
+  // Rows with a NULL/blank dedupe key are never collapsed (PARTITION BY would otherwise lump every
+  // key-less row into one partition and drop all but one of them). Dedupe needs the id column.
+  const dedupeBy = src.dedupeBy && hasId ? src.dedupeBy : undefined;
+  const fromClause = dedupeBy
+    ? `(SELECT ${select}, ROW_NUMBER() OVER (PARTITION BY \`${dedupeBy}\` ORDER BY id DESC) AS __rn,
+         (\`${dedupeBy}\` IS NULL OR \`${dedupeBy}\` = '') AS __dk_blank
+        FROM ${table} WHERE 1=1${whereSql}) dedup WHERE (__rn = 1 OR __dk_blank = 1)`
     : `${table} WHERE 1=1${whereSql}`;
 
   // Keyset pagination on the primary key: each chunk resumes where the last one
