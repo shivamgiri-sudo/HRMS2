@@ -15,6 +15,12 @@ const CODE = process.argv[2] ?? "MAS63661";
 const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPacket[]>(sql, p))[0];
 
 (async () => {
+  console.log("\n== auth_user id for the redispatch actor ==");
+  try {
+    console.table(await q(
+      `SELECT id, email FROM auth_user WHERE email = ? LIMIT 3`, ["shivam.giri@teammas.in"]));
+  } catch (e) { console.log("auth_user lookup failed:", (e as Error).message); }
+
   console.log(`\n== kits + transactions for ${CODE} ==`);
   const rows = await q(
     `SELECT k.id kit_id, k.status kit_status, k.blocked_reason, k.sent_at, k.document_count, k.total_pages,
