@@ -37,6 +37,14 @@ on:
         description: "To APPLY, type REPAIR-ATTENDANCE exactly. Ignored for a dry run."
         required: false
         type: string
+      steps:
+        description: "full = biometric pull + engine sweep + re-check; sweep-only skips the slow biometric pull (use when only the engine failed to write records)"
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - sweep-only
 
 concurrency:
   group: ops-scripts-production
@@ -98,7 +106,9 @@ jobs:
           FROM: ${{ inputs.from }}
           TO: ${{ inputs.to }}
           MODE: ${{ inputs.mode }}
+          STEPS: ${{ inputs.steps }}
         run: |
           set -euo pipefail
           FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+          [ "$STEPS" = "sweep-only" ] && FLAG="$FLAG --skip-sync"
           npx tsx scripts/attendance-repair-range.ts "$FROM" "$TO" $FLAG

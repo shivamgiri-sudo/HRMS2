@@ -20,6 +20,10 @@
  *
  *   npx tsx scripts/attendance-repair-range.ts 2026-08-03 2026-08-03            # dry run
  *   npx tsx scripts/attendance-repair-range.ts 2026-08-03 2026-08-03 --apply
+ *   npx tsx scripts/attendance-repair-range.ts 2026-09-20 2026-09-20 --apply --skip-sync   # engine sweep + re-check only
+ *
+ * --skip-sync leaves out the biometric pull (step 1). Use it for days where the biometric data is already in HRMS
+ * and only the engine failed to write the records ("no attendance record"); the pull is the slow step.
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
@@ -32,6 +36,7 @@ import { findMissingPersonDays } from "../src/modules/wfm/attendance-heal.servic
 
 const dates = process.argv.filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a));
 const APPLY = process.argv.includes("--apply");
+const SKIP_SYNC = process.argv.includes("--skip-sync");
 const FROM = dates[0];
 const TO = dates[1] ?? dates[0];
 const today = nowIST().split("T")[0]!;
@@ -78,7 +83,8 @@ const fmt = (s: DayState) => `open=${s.openTotal} ${JSON.stringify(s.open)} | re
       try { console.log(`   ${label}: ${await fn()} (${((Date.now() - t) / 1000).toFixed(0)}s)`); }
       catch (e) { ok = false; failed++; console.error(`   ${label}: FAILED - ${e instanceof Error ? e.message : String(e)}`); }
     };
-    await timed("1/3 biometric sync ", async () => {
+    if (SKIP_SYNC) console.log("   1/3 biometric sync : skipped (--skip-sync)");
+    else await timed("1/3 biometric sync ", async () => {
       const r = await cosecSyncService.sync({ from: date, to: date });
       return `migrated=${r.migratedDays} unchanged=${r.skippedUnchanged} pulled=${r.pulledEvents} unmapped=${r.unmappedUsers.length} failed=${r.failed.length}`;
     });
