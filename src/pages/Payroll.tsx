@@ -1831,7 +1831,7 @@ function SignoffTab() {
     queryKey: ["payroll-signoff-runs"],
     queryFn: () =>
       hrmsApi
-        .get<{ success: boolean; data: any[] }>("/api/payroll/signoff/runs")
+        .get<{ success: boolean; data: any[] }>("/api/payroll/signoff/runs?include=pipeline")
         .then((r) => (r as any).data ?? []),
     staleTime: 30_000,
   });
