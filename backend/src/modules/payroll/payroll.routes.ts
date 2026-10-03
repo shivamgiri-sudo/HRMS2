@@ -3650,11 +3650,18 @@ const neftExportHandler = h(
     // isRunClosed (locked/disbursed/finalized, case-insensitive) rather than a literal
     // ["locked","disbursed"] list — that literal previously blocked NEFT export for every
     // FINALIZED production run (see run-status.ts).
-    const notClosed = runs.filter((r) => !isRunClosed(r.status));
+    // Owner ruling 2026-10-03 ("export first, finance after"): the payroll head exports the bank file
+    // once the run is APPROVED (which already requires a second person - PAYROLL_SELF_APPROVAL) and
+    // validated, and hands it to the finance head, who signs off and releases the payment. Sign-off is
+    // still required at LOCK and DISBURSE in payroll.service.updateRunStatus; only the export no longer
+    // waits for it, which together with lock-needs-sign-off made the file unobtainable for every run.
+    const exportable = (status: unknown) =>
+      isRunClosed(status as string) || String(status ?? "").toLowerCase() === "approved";
+    const notClosed = runs.filter((r) => !exportable(r.status));
     if (notClosed.length) {
       return res.status(400).json({
         error:
-          "Run must be locked, finalized, or disbursed to generate NEFT export",
+          "Run must be approved, locked, finalized, or disbursed to generate NEFT export",
         runs: notClosed.map((r) => ({ run_id: r.id, status: r.status })),
       });
     }
@@ -3674,25 +3681,26 @@ const neftExportHandler = h(
       });
     }
 
-    // FINANCE SIGN-OFF (payment gate requirement E).
-    //
-    // A closed, validated run still is not a mandate to move money — that is a separate act by a
-    // separate person, which is why salary_prep_run carries finance_approved_by/at at all. Nothing
-    // read those columns before this, so the only thing standing between a FINALIZED run and a bank
-    // file was validation_status. Verified live 2026-08-17: finance_approved_by is NULL on ALL 66
-    // runs, so no run in this system has ever actually been signed off for payment.
-    //
-    // Deliberately checked as a distinct 409 rather than folded into the run-state check above:
-    // "not signed off" is a workflow state a human resolves, not a malformed request.
+    // FINANCE SIGN-OFF is no longer a precondition of the EXPORT (owner ruling 2026-10-03, see above).
+    // It is still required to lock and to disburse. An export made before sign-off is not hidden: it is
+    // written to the audit trail, with the runs concerned, so the finance head sees exactly what was
+    // handed over and the control becomes "visible and attributable" instead of "blocks every run"
+    // (finance_approved_by was NULL on all 66 live runs on 2026-08-17, so the old hard gate meant no
+    // bank file could ever be generated).
     const unsigned = runs.filter((r) => !r.finance_approved_by);
     if (unsigned.length) {
-      return res.status(409).json({
-        success: false,
-        code: "FINANCE_SIGNOFF_MISSING",
-        message:
-          "Finance sign-off is required before a payment file can be generated. " +
-          `${unsigned.length} run(s) in this scope have no finance_approved_by. Record the sign-off, then export.`,
-        runs: unsigned.map((r) => ({ run_id: r.id, run_month: r.run_month })),
+      void logSensitiveAction({
+        actor_user_id: req.authUser!.id,
+        action_type: "PAYROLL_NEFT_EXPORT_BEFORE_FINANCE_SIGNOFF",
+        module_key: "payroll",
+        entity_type: "salary_prep_run",
+        entity_id: unsigned[0].id,
+        change_summary: {
+          run_ids: unsigned.map((r) => r.id),
+          run_months: unsigned.map((r) => r.run_month),
+          statuses: unsigned.map((r) => r.status),
+        },
+        req: req as never,
       });
     }
 

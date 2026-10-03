@@ -196,7 +196,8 @@ payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance
   if (!run) return res.status(404).json({ error: "Run not found" });
   // isRunClosed (locked/disbursed/finalized, case-insensitive) — a literal ["locked","disbursed"]
   // list here previously blocked NEFT export for every FINALIZED production run.
-  if (!isRunClosed(run.status)) return res.status(400).json({ error: "Run must be locked, finalized, or disbursed to generate NEFT export" });
+  // 'approved' is exportable too (owner ruling 2026-10-03, "export first, finance after"); see payroll.routes.ts neftExportHandler.
+  if (!isRunClosed(run.status) && String(run.status ?? "").toLowerCase() !== "approved") return res.status(400).json({ error: "Run must be approved, locked, finalized, or disbursed to generate NEFT export" });
   const [lines] = await db.execute<RowDataPacket[]>(
     `SELECT spl.employee_id, spl.net_salary, e.employee_code, e.full_name, ebd.bank_name, ebd.ifsc_code, ebd.account_number_enc, ebd.account_number
        FROM salary_prep_line spl

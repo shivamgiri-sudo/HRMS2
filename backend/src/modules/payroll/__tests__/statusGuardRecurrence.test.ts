@@ -104,7 +104,8 @@ describe("NEFT export is reachable for finalized runs (two implementations)", ()
     // isRunClosed is still the check; it is now applied to every run in scope, because one handler
     // serves both /runs/:id/neft-export and /month/:month/neft-export and a month paid in several
     // runs must still produce a single bank file.
-    expect(handlerSource(PAYROLL_ROUTES, "/runs/:id/neft-export")).toMatch(/isRunClosed\(r\.status\)/);
+    // Now via exportable(): isRunClosed(...) OR status === "approved" (owner ruling 2026-10-03).
+    expect(handlerSource(PAYROLL_ROUTES, "/runs/:id/neft-export")).toMatch(/isRunClosed\(status as string\)/);
   });
 
   it("payroll-extended.routes.ts NEFT export uses isRunClosed", () => {

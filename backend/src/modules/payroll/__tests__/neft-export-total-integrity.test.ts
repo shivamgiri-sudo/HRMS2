@@ -223,13 +223,14 @@ describe("the shadowed second copy cannot silently become the live one", () => {
 });
 
 describe("the gates that kept this latent stay in place", () => {
-  it("still refuses a run that is not closed", () => {
+  it("still refuses a run that is neither approved nor closed", () => {
     /*
      * The gate now runs over EVERY run in scope, not one: a month split into several runs produces
      * a single bank file, and a file mixing closed and open runs would pay from a run still being
      * computed. Asserting the filter form is strictly stronger than the old single-run check.
      */
-    expect(EXPORT_HANDLER).toContain("runs.filter((r) => !isRunClosed(r.status))");
+    expect(EXPORT_HANDLER).toContain("runs.filter((r) => !exportable(r.status))");
+    expect(EXPORT_HANDLER).toContain("isRunClosed(status as string)");
   });
 
   it("still refuses a run that is not validated", () => {

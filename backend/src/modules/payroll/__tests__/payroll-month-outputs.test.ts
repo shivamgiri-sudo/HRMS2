@@ -143,8 +143,11 @@ describe("the month payment file applies every gate to every run", () => {
     routes.indexOf('router.get("/runs/:id/neft-export"'),
   );
 
-  it("refuses when any run in scope is not closed", () => {
-    expect(neft).toContain("runs.filter((r) => !isRunClosed(r.status))");
+  it("refuses when any run in scope is neither approved nor closed", () => {
+    // Owner ruling 2026-10-03 ("export first, finance after"): an APPROVED run is exportable.
+    expect(neft).toContain("runs.filter((r) => !exportable(r.status))");
+    expect(neft).toContain("isRunClosed(status as string)");
+    expect(neft).toMatch(/toLowerCase\(\) === "approved"/);
   });
 
   it("refuses when any run in scope is unvalidated", () => {
@@ -152,18 +155,17 @@ describe("the month payment file applies every gate to every run", () => {
     expect(neft).toMatch(/r\.validation_status !== ['"]validated['"]/);
   });
 
-  it("refuses when any run in scope lacks finance sign-off", () => {
-    /*
-     * The one that matters most. A file assembled from a mix of approved and unapproved runs moves
-     * money nobody signed off, and the offending run is invisible in a CSV that looks complete.
-     */
+  it("no longer blocks on finance sign-off, but audit-logs an export made before it", () => {
+    // Owner ruling 2026-10-03 ("export first, finance after"): sign-off is still enforced at LOCK and
+    // DISBURSE in payroll.service.updateRunStatus; the export only records that it happened first.
+    expect(neft).not.toContain("FINANCE_SIGNOFF_MISSING");
     expect(neft).toContain("runs.filter((r) => !r.finance_approved_by)");
-    expect(neft).toContain("FINANCE_SIGNOFF_MISSING");
+    expect(neft).toContain("PAYROLL_NEFT_EXPORT_BEFORE_FINANCE_SIGNOFF");
   });
 
   it("names the offending runs so the refusal is actionable", () => {
     // "Some run isn't approved" across six runs is not something a person can act on.
-    expect(neft).toContain("runs: unsigned.map");
+    expect(neft).toContain("run_ids: unsigned.map");
     expect(neft).toContain("runs: notClosed.map");
   });
 
