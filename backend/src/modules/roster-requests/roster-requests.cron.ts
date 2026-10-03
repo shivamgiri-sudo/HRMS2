@@ -3,8 +3,12 @@
 //     raised, e.g. once the swap counterpart accepted, and anything an event trigger missed);
 //   - SLA escalation sweep every 30 minutes.
 //
-// Off by default, like the roster-upload-escalation scheduler it is modelled on:
-//   ROSTER_REQUESTS_CRON_ENABLED=true   register the timers (otherwise a no-op)
+// On by default. Opt out with ROSTER_REQUESTS_CRON_ENABLED=false (or 0 / off, any case); any other
+// value, or leaving it unset, registers the timers. It used to be opt-in, and with the variable never
+// set on the servers the SLA escalation and the auto-approve sweep simply never ran. Running it costs
+// little when nothing is configured: every auto-approve rule is default-off and the sweep then stops
+// after one COUNT on roster_request_auto_rule; the escalation sweep skips requests older than
+// 7 days and caps each kind at 500 per tick, so the first run after enabling cannot flood anyone.
 // Registered in server.ts (API process, behind ENABLE_SCHEDULERS and !WORKERS_EXTERNAL) and in
 // workers/all-workers.ts — exactly one of the two runs it in any topology.
 //
@@ -24,7 +28,9 @@ let escalationTimer: NodeJS.Timeout | undefined;
 let autoRunning = false;
 let escalationRunning = false;
 
-const isEnabled = (): boolean => process.env.ROSTER_REQUESTS_CRON_ENABLED === 'true';
+const OFF_VALUES = new Set(['false', '0', 'off']);
+const isEnabled = (): boolean =>
+  !OFF_VALUES.has(String(process.env.ROSTER_REQUESTS_CRON_ENABLED ?? '').trim().toLowerCase());
 
 export async function runAutoApproveTick(): Promise<void> {
   if (autoRunning) return;

@@ -296,7 +296,7 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startRosterUploadEscalationScheduler(); return Promise.resolve(); },
   },
   {
-    // Off by default: ROSTER_REQUESTS_CRON_ENABLED must be "true" — see roster-requests.cron.ts.
+    // On by default; ROSTER_REQUESTS_CRON_ENABLED=false/0/off turns it off — see roster-requests.cron.ts.
     // Auto-approve sweep every 5 min, SLA escalation sweep every 30 min.
     name: "roster-requests",
     start: () => { startRosterRequestsScheduler(); return Promise.resolve(); },

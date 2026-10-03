@@ -18,10 +18,14 @@ function deps(opts: {
   impact?: Partial<ImpactResult>;
   decideError?: Error;
   candidates?: { swap: string[]; weekoff: string[] };
+  enabledRules?: number;
 } = {}): AutoDeps {
   return {
     db: {
       execute: vi.fn(async (sql: string) => {
+        if (/COUNT\(\*\)/.test(sql) && /FROM roster_request_auto_rule/.test(sql)) {
+          return [[{ n: opts.enabledRules ?? 1 }], []];
+        }
         if (/roster_request_auto_rule r/.test(sql) && /wfm_roster_swap_request/.test(sql)) {
           return [(opts.candidates?.swap ?? []).map((id) => ({ id })), []];
         }
@@ -165,5 +169,15 @@ describe("sweepAutoApprove", () => {
     const swapQuery = (d.db.execute as any).mock.calls.find((c: any[]) => /roster_request_auto_rule r/.test(c[0]) && /wfm_roster_swap_request/.test(c[0]));
     expect(swapQuery[0]).toMatch(/r\.enabled = 1/);
     expect(swapQuery[1]).toContain(TODAY);
+  });
+
+  it("is a cheap no-op when no auto-approve rule is enabled: one COUNT, no candidate scans", async () => {
+    const d = deps({ enabledRules: 0, candidates: { swap: ["s1"], weekoff: ["a1"] } });
+    const r = await sweepAutoApprove(d);
+    expect(r).toEqual({ checked: 0, approved: 0 });
+    const calls = (d.db.execute as any).mock.calls as any[][];
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toMatch(/COUNT\(\*\)[\s\S]*FROM roster_request_auto_rule[\s\S]*enabled = 1/);
+    expect(d.decide).not.toHaveBeenCalled();
   });
 });

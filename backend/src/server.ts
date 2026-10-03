@@ -268,7 +268,7 @@ function startServer() {
         startManagerDailyBriefScheduler();
         // No-op unless ROSTER_UPLOAD_ESCALATION_ENABLED=true (dry-run unless ..._DRY_RUN=false).
         startRosterUploadEscalationScheduler();
-        // No-op unless ROSTER_REQUESTS_CRON_ENABLED=true — see roster-requests.cron.ts.
+        // On unless ROSTER_REQUESTS_CRON_ENABLED=false/0/off — see roster-requests.cron.ts.
         startRosterRequestsScheduler();
         // No-op unless INTERVENTION_RECOMMENDATIONS_ENABLED=true.
         startInterventionRecommendationScheduler();

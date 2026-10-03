@@ -221,6 +221,12 @@ export function triggerAutoApprove(kind: RequestKind, id: string): void {
 
 /** Cron sweep: pending swaps / week-off rejections, future-dated, whose process has an enabled rule. */
 export async function sweepAutoApprove(deps: AutoDeps = defaultDeps): Promise<{ checked: number; approved: number }> {
+  // Every rule is default-off, so on most ticks there is nothing to do: one COUNT on the tiny rule
+  // table (one row per process and kind at most) instead of the two candidate scans below.
+  const [ruleRows] = await deps.db.execute(
+    `SELECT COUNT(*) AS n FROM roster_request_auto_rule WHERE enabled = 1`,
+  );
+  if (Number((ruleRows as RowDataPacket[])[0]?.n ?? 0) === 0) return { checked: 0, approved: 0 };
   const today = deps.today();
   const [swaps] = await deps.db.execute(
     `SELECT s.id
