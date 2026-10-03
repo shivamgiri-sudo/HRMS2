@@ -30,6 +30,7 @@ export const OUTCOME_COLUMNS = [
   "id", "process_id", "report_date", "segment", "opening_accounts", "opening_amount", "resolved_accounts", "normalised_accounts", "rollback_accounts",
   "resolved_amount", "normalised_amount", "rollback_amount", "resolution_pct", "normalisation_pct", "rollback_pct", "data_source", "source_reference", "created_by", "created_at", "updated_at",
 ];
+export const ROSTER_COLUMNS = ["id", "process_id", "dialer_id", "employee_id", "agent_name", "gh", "team", "team_leader", "mode", "data_source", "source_reference", "created_by", "created_at", "updated_at"];
 export const ACCOUNT_FILE_NEW_COLUMNS = [
   "flow", "cd", "nrr", "block_1", "block_2", "ntc_flag", "new_to_card_flag", "promo_code", "product_class", "account_class", "donotcall", "callback_dt",
   ...[1, 2, 3, 4, 5, 6].flatMap((n) => [`call${n}_dt`, `disp${n}_c`, `agent${n}_id`]),
@@ -83,6 +84,19 @@ export function evaluate(facts) {
     if (facts.counts.outcome !== null && facts.counts.outcome !== undefined) add("rows in sbi_card_outcome", "INFO", `${facts.counts.outcome} (0 until the first Outcome file is uploaded)`);
   }
 
+  if (facts.rosterColumns !== undefined) {
+    if (!facts.rosterColumns) add("table sbi_card_roster exists (migration 2077)", "FAIL", "missing: migration 2077 has not run");
+    else {
+      const missing = ROSTER_COLUMNS.filter((c) => !facts.rosterColumns.includes(c));
+      add("table sbi_card_roster exists with all columns (migration 2077)", missing.length ? "FAIL" : "PASS", missing.length ? `missing: ${missing.join(", ")}` : `${facts.rosterColumns.length} columns`);
+    }
+    const m3 = facts.rosterMigrationRow;
+    add("migration 2077 recorded in schema_migrations", m3 && (m3.success === undefined || m3.success === null || Number(m3.success) === 1) ? "PASS" : "FAIL", m3 ? `${m3.filename}${m3.applied_at ? ` applied_at=${m3.applied_at}` : ""}` : "no row for migrations/2077_sbi_card_roster.sql");
+    const rt = facts.templates.SBI_CARD_ROSTER;
+    add("upload template SBI_CARD_ROSTER registered", rt && Number(rt.active) === 1 ? "PASS" : "FAIL", rt ? `active=${rt.active}, ${rt.optional.length} optional columns` : "missing");
+    if (facts.counts.roster !== null && facts.counts.roster !== undefined) add("rows in sbi_card_roster", "INFO", `${facts.counts.roster} (0 until the roster is uploaded)`);
+  }
+
   const apr = facts.templates.SBI_CARD_APR;
   add("upload template SBI_CARD_APR registered", apr && Number(apr.active) === 1 ? "PASS" : "FAIL", apr ? `active=${apr.active}, ${apr.optional.length} optional columns` : "missing");
   const acc = facts.templates.SBI_CARD_ACCOUNT_FILE;
@@ -106,7 +120,7 @@ async function collect(conn) {
     const rows = await q("SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION", [t]);
     return rows.length ? rows.map((r) => String(r.c)) : null;
   };
-  const agentTimeColumns = await cols("sbi_card_agent_time"); const accountColumns = await cols("sbi_card_account_file"); const outcomeColumns = await cols("sbi_card_outcome");
+  const agentTimeColumns = await cols("sbi_card_agent_time"); const accountColumns = await cols("sbi_card_account_file"); const outcomeColumns = await cols("sbi_card_outcome"); const rosterColumns = await cols("sbi_card_roster");
   const uniqueKeys = (await q("SELECT DISTINCT INDEX_NAME AS i FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sbi_card_account_file' AND NON_UNIQUE = 0")).map((r) => String(r.i));
 
   let migrationRow = null;
@@ -123,8 +137,14 @@ async function collect(conn) {
       ["migrations/2076_sbi_card_outcome.sql", "%2076_sbi_card_outcome.sql"]))[0] ?? null;
   }
 
+  let rosterMigrationRow = null;
+  if (smCols.length) {
+    rosterMigrationRow = (await q("SELECT filename" + (smCols.includes("applied_at") ? ", applied_at" : "") + (smCols.includes("success") ? ", success" : "") + " FROM schema_migrations WHERE filename = ? OR filename LIKE ? LIMIT 1",
+      ["migrations/2077_sbi_card_roster.sql", "%2077_sbi_card_roster.sql"]))[0] ?? null;
+  }
+
   const templates = {};
-  for (const code of ["SBI_CARD_APR", "SBI_CARD_ACCOUNT_FILE", "SBI_CARD_OUTCOME"]) {
+  for (const code of ["SBI_CARD_APR", "SBI_CARD_ACCOUNT_FILE", "SBI_CARD_OUTCOME", "SBI_CARD_ROSTER"]) {
     const r = (await q("SELECT active_status AS active, optional_columns AS opt FROM upload_template_master WHERE upload_type_code = ? LIMIT 1", [code]))[0];
     if (!r) { templates[code] = null; continue; }
     let opt = r.opt; try { opt = typeof opt === "string" ? JSON.parse(opt) : opt; } catch { opt = []; }
@@ -132,14 +152,15 @@ async function collect(conn) {
   }
 
   const process = (await q("SELECT id FROM process_master WHERE process_code = 'SBI_CARD' AND active_status = 1 LIMIT 1"))[0] ?? null;
-  const counts = { account: null, agentTime: null, outcome: null }; let flows = null;
+  const counts = { account: null, agentTime: null, outcome: null, roster: null }; let flows = null;
   if (accountColumns) {
     counts.account = Number((await q("SELECT COUNT(*) AS n FROM sbi_card_account_file"))[0].n);
     if (accountColumns.includes("flow")) { flows = {}; for (const r of await q("SELECT flow, COUNT(*) AS n FROM sbi_card_account_file GROUP BY flow")) flows[String(r.flow)] = Number(r.n); }
   }
+  if (rosterColumns) counts.roster = Number((await q("SELECT COUNT(*) AS n FROM sbi_card_roster"))[0].n);
   if (outcomeColumns) counts.outcome = Number((await q("SELECT COUNT(*) AS n FROM sbi_card_outcome"))[0].n);
   if (agentTimeColumns) counts.agentTime = Number((await q("SELECT COUNT(*) AS n FROM sbi_card_agent_time"))[0].n);
-  return { agentTimeColumns, accountColumns, outcomeColumns, outcomeMigrationRow, uniqueKeys, migrationRow, templates, process, counts, flows };
+  return { agentTimeColumns, accountColumns, outcomeColumns, outcomeMigrationRow, rosterColumns, rosterMigrationRow, uniqueKeys, migrationRow, templates, process, counts, flows };
 }
 
 async function main() {

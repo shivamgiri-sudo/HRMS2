@@ -98,10 +98,22 @@ export interface SbiReadiness {
   alerts: Array<{ level: "critical" | "warning" | "info"; text: string }>;
   expectedTables: Array<{ key: string; label: string }>;
 }
+export interface SbiTeamGroup {
+  key: string; teams: string[]; agents: number; activeAgents: number; attempts: number; accountsTouched: number; ptp: number; ptpPct: number; deadPct: number;
+  aprMatched: number; loginHours: number | null; utilisationPct: number | null; pausePct: number | null; callsPerLoginHour: number | null;
+}
+export interface SbiTeam {
+  hasRoster: boolean; rosterSize: number; byTeam: SbiTeamGroup[]; byLeader: SbiTeamGroup[];
+  alignment: {
+    high: { attempts: number; byHighbal: number; byLowbal: number; byOther: number; lowbalPct: number };
+    low: { attempts: number; byLowbal: number; byHighbal: number; byOther: number; highbalPct: number };
+  };
+  unmapped: { agents: number; attempts: number; pct: number }; apr: { agents: number; matched: number }; evidence: { leaderPtpP: number | null };
+}
 export interface SbiCardData {
   range: { from: string; to: string }; campaigns: string[]; summary: SbiSummary;
   daily: SbiDailyRow[]; byCampaign: SbiCampaignRow[]; agents: SbiAgentRow[]; teams: SbiTeamRow[];
-  downtime: SbiDowntimeRow[]; accounts: SbiAccounts; collections: SbiCollections; agentTime: SbiAgentTime; capacity: SbiCapacity;
+  downtime: SbiDowntimeRow[]; accounts: SbiAccounts; collections: SbiCollections; agentTime: SbiAgentTime; capacity: SbiCapacity; team: SbiTeam;
 }
 
 /** GET /api/process-performance/sbi-card-payout (manager and above). */
@@ -124,4 +136,16 @@ export interface SbiPayoutData {
   levers: Array<{ lever: string; label: string; addPoints: number; newRatePct: number; deltaPct: number; deltaAmount: number }>;
   nextSteps: Array<{ lever: string; label: string; addPoints: number; newRatePct: number; deltaPct: number; accountsNeeded: number | null; deltaAmount: number; unlocks: string }>;
   reading: string[];
+}
+
+export type SbiMoveKey = "left" | "rolledBack" | "rolledForward" | "stayedPaidDown" | "stayed";
+export interface SbiMovement {
+  range: { from: string; to: string }; dates: string[];
+  movement: null | {
+    dateA: string; dateB: string; opening: { accounts: number; exposure: number }; closing: { accounts: number; exposure: number };
+    outcomes: Array<{ key: SbiMoveKey; label: string; hint: string; accounts: number; exposure: number; pct: number; exposurePct: number }>;
+    newInB: { accounts: number; exposure: number }; paidDownAmount: number;
+    matrix: Array<{ from: string; total: number; to: Record<string, number> }>;
+    byStage: Array<{ from: string; accounts: number; exposure: number; pct: Record<SbiMoveKey, number> }>;
+  };
 }

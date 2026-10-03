@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Maximize2, Minimize2, Printer } from "lucide-react";
 import { fmtDate } from "./lpCallShared";
-import type { SbiAgentTime, SbiCapacity, SbiCollections } from "./sbiCardTypes";
+import type { SbiAgentTime, SbiCapacity, SbiCollections, SbiTeam } from "./sbiCardTypes";
 import { deriveInsights } from "./sbiCardInsights";
 import { ActNow, CompliancePanel, ContactabilityPanel, DepthYield, DimensionExplorer, DispositionBars, Funnel, HourYield, InsightGrid, PositionBar } from "./SbiCardOpsCharts";
 import { SbiCardAgentTimePanel } from "./SbiCardAgentTimePanel";
 import { CapacityPanel } from "./SbiCardCapacityPanel";
+import { TeamPanel } from "./SbiCardTeamPanel";
 import { FOCUS, PAL, inrC } from "./sbiViz";
 import { Empty, nz, pctTxt } from "./SbiCardShared";
 
@@ -73,7 +74,7 @@ function Chapter({ n, title, takeaway, children }: { n: string; title: string; t
   );
 }
 
-export function SbiCardCollectionsTab({ ops, time, capacity, range }: { ops: SbiCollections; time: SbiAgentTime; capacity: SbiCapacity; range: { from: string; to: string } }) {
+export function SbiCardCollectionsTab({ ops, time, capacity, team, range }: { ops: SbiCollections; time: SbiAgentTime; capacity: SbiCapacity; team: SbiTeam; range: { from: string; to: string } }) {
   const root = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false);
   useEffect(() => {
@@ -81,7 +82,7 @@ export function SbiCardCollectionsTab({ ops, time, capacity, range }: { ops: Sbi
     document.addEventListener("fullscreenchange", on);
     return () => document.removeEventListener("fullscreenchange", on);
   }, []);
-  const insights = useMemo(() => deriveInsights(ops, time, 13, capacity), [ops, time, capacity]);
+  const insights = useMemo(() => deriveInsights(ops, time, 14, capacity, team), [ops, time, capacity, team]);
   const h = ops.headline;
   if (!h.accounts) return <Empty>No account file loaded for this range. Upload the Account File (collection export) to see coverage, promises and exposure by bucket.</Empty>;
 
@@ -149,6 +150,10 @@ export function SbiCardCollectionsTab({ ops, time, capacity, range }: { ops: Sbi
 
       <Chapter n="8" title="The floor" takeaway="Is the dialer feeding agents, and are they using their time? From the dialer Agent Time (APR) export.">
         <SbiCardAgentTimePanel time={time} bare />
+        <div className="mt-6 border-t border-slate-100 pt-5">
+          <h4 className="mb-3 text-sm font-bold text-slate-900">Teams and team leaders</h4>
+          <TeamPanel team={team} />
+        </div>
       </Chapter>
     </div>
   );

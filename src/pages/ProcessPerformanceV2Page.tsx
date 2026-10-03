@@ -313,13 +313,14 @@ const DALMIA_UPLOADERS = [
   { code: "DALMIA_AFTER_HOUR",   label: "after_hour",      description: "Upload Dalmia after-hour call log",           icon: PhoneIncoming },
 ];
 
-/** SBI Card Collections' 7 uploaders (upload_template_master codes; RPCs import_sbi_card_*_batch). */
+/** SBI Card Collections' 8 uploaders (upload_template_master codes; RPCs import_sbi_card_*_batch). */
 const SBI_CARD_UPLOADERS = [
   { code: "SBI_CARD_DIALER_MIS",     label: "Dialer MIS",       description: "Upload SBI Card dialer MIS (one campaign sheet per upload)", icon: PhoneOutgoing },
   { code: "SBI_CARD_AGENT_MIS",      label: "Agent MIS",        description: "Upload SBI Card agent MIS",                                  icon: Users },
   { code: "SBI_CARD_ACCOUNT_FILE",   label: "Account File",     description: "Upload SBI Card account allocation file",                    icon: ClipboardList },
   { code: "SBI_CARD_DOWNTIME",       label: "Downtime Tracker", description: "Upload SBI Card dialer downtime tracker",                    icon: Activity },
   { code: "SBI_CARD_APR",            label: "Agent Time (APR)", description: "Upload the dialer Agent Time Detail export (AGENT_TIME*.csv)", icon: Users },
+  { code: "SBI_CARD_ROSTER",         label: "Agent roster", description: "Upload the TEAM_LIST: dialer id, team (HIGHBAL / LOWBAL) and team leader", icon: Users },
   { code: "SBI_CARD_OUTCOME",        label: "Outcome (Res / NM / RB)", description: "Upload cycle-to-date Resolution, Normalisation and Rollback for the payout", icon: Target },
   { code: "SBI_CARD_PEN_ESTIMATION", label: "Pen Estimation",   description: "Upload SBI Card penetration estimation",                     icon: Target },
 ];

@@ -131,6 +131,7 @@ export const SBI_ACCOUNT_DATETIME_HEADERS = ["CALLBACK_DT", "CALL1_DT", "CALL2_D
  * see backend report-column-plan.ts). Without these a renamed header row would score too low to be picked over a title row.
  */
 export const HEADER_HINTS: Record<string, string[]> = {
+  SBI_CARD_ROSTER: ["Dialer Id", "Agent ID", "Employee ID", "Emp ID", "Agent Name", "Employee Name", "Team Name", "Team Lead", "TL", "TL Name", "Supervisor", "Group Head"],
   SBI_CARD_OUTCOME: [
     "Date", "As On", "As At", "Portfolio", "Opening Count", "Allocated Accounts", "Total Accounts", "Resolved", "Normalized", "Normalised", "Rolled Back", "Roll Back",
     "RES %", "NM %", "RB %", "Resolution Rate", "Normalisation Rate", "Rollback Rate",

@@ -115,7 +115,7 @@ const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
   "PRE_AGENT_DETAILS_MASMIS", "PRE_CDR_MASMIS", "PRE_SALE_MASMIS",
   "SATYA_ALLOCATION_MASMIS", "SATYA_CDR_MASMIS",
   "DALMIA_DD_RAW", "DALMIA_OUTBOUND_RAW", "DALMIA_APR", "DALMIA_AFTER_HOUR",
-  "SBI_CARD_DIALER_MIS", "SBI_CARD_AGENT_MIS", "SBI_CARD_ACCOUNT_FILE", "SBI_CARD_DOWNTIME", "SBI_CARD_PEN_ESTIMATION", "SBI_CARD_APR", "SBI_CARD_OUTCOME",
+  "SBI_CARD_DIALER_MIS", "SBI_CARD_AGENT_MIS", "SBI_CARD_ACCOUNT_FILE", "SBI_CARD_DOWNTIME", "SBI_CARD_PEN_ESTIMATION", "SBI_CARD_APR", "SBI_CARD_OUTCOME", "SBI_CARD_ROSTER",
 ];
 
 router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), denyLobOnly, h(async (req: AuthenticatedRequest, res: Response) => {
@@ -546,6 +546,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_sbi_card_pen_estimation_batch",
   "import_sbi_card_apr_batch",
   "import_sbi_card_outcome_batch",
+  "import_sbi_card_roster_batch",
   // Domestic Billing Approved Headcount â€” month/process/LOB-grain planning table.
   "import_domestic_billing_approved_hc_batch",
   // GS1 India â€” email GTIN processing daily actuals, DataKart task daily

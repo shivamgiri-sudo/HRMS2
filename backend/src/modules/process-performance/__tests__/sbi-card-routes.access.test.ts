@@ -14,6 +14,9 @@ describe("readiness and ad-hoc routes", () => {
     expect(routes).toMatch(/router\.get\("\/sbi-card-dashboard\/readiness", requireRole\(\.\.\.VIEWER_ROLES\)/);
     expect(routes).toMatch(/router\.get\("\/sbi-card-dashboard\/adhoc-list", requireRole\(\.\.\.VIEWER_ROLES\)/);
   });
+  it("has the movement comparison behind the same viewer roles", () => {
+    expect(routes).toMatch(/router\.get\("\/sbi-card-dashboard\/movement", requireRole\(\.\.\.VIEWER_ROLES\)/);
+  });
   it("reject an unknown list type and send the list as a CSV attachment", () => {
     expect(routes).toMatch(/isAdhocType\(type\)\)[\s\S]{0,80}status\(400\)/);
     expect(routes).toContain('"text/csv; charset=utf-8"');

@@ -2,10 +2,11 @@ import { randomUUID } from "crypto";
 import { parseDurationSeconds } from "./dalmia-import-helpers.js";
 import { SBI_APR_COLUMNS, aprLoginResolver } from "./sbi-card-apr-columns.js";
 import { SBI_OUTCOME_COLUMNS } from "./sbi-card-outcome-columns.js";
+import { SBI_ROSTER_COLUMNS } from "./sbi-card-roster-columns.js";
 import { runSbiBatch, type SbiBatchSpec } from "./sbi-card-batch-runner.js";
 import {
   SBI_DIALER_COLS, SBI_DIALER_HEADERS, SBI_AGENT_COLS, SBI_AGENT_HEADERS, SBI_ACCOUNT_HEADERS, SBI_DOWNTIME_HEADERS,
-  SBI_PEN_HEADERS, SBI_APR_HEADERS, SBI_OUTCOME_HEADERS, OUTCOME_DEFAULT_SEGMENT, SBI_ATTEMPTS, isRollupCampaign,
+  SBI_PEN_HEADERS, SBI_APR_HEADERS, SBI_OUTCOME_HEADERS, SBI_ROSTER_HEADERS, OUTCOME_DEFAULT_SEGMENT, SBI_ATTEMPTS, isRollupCampaign,
 } from "./sbi-card-schema.js";
 import {
   cleanText, cleanTeam, cleanId, coerceCol, decOrNull, intOrNull, parseSbiDate, parseSbiTime, parseSeconds,
@@ -313,6 +314,31 @@ export const outcomeSpec: SbiBatchSpec = {
   },
 };
 
+/**
+ * Agent roster. Identity = DIALER ID (the id the dialer writes into AGENTn_ID). A blank row is a spacer. TEAM is stored upper-case so
+ * "HighBal" and "HIGHBAL" are one team; a leader of "0" or "-" (a failed lookup in the workbook) is no leader, not a person called "0".
+ */
+export const rosterSpec: SbiBatchSpec = {
+  table: "sbi_card_roster",
+  columns: ["id", "process_id", "dialer_id", "employee_id", "agent_name", "gh", "team", "team_leader", "mode", ...TAIL],
+  updateColumns: ["employee_id", "agent_name", "gh", "team", "team_leader", "mode"],
+  headers: SBI_ROSTER_HEADERS,
+  columnSpecs: SBI_ROSTER_COLUMNS,
+  planOptions: { minRecognised: 3 },
+  mapRow(data, _rowNo, ctx) {
+    const dialer = cleanId(data["DIALER ID"]);
+    const anything = SBI_ROSTER_HEADERS.some((h) => cleanText(data[h]) !== null);
+    if (!dialer) return anything ? { error: 'a usable "DIALER ID" is required (it is how agents are named in the day-end export)' } : { skip: true };
+    return {
+      values: [
+        dialer.slice(0, 20), cleanId(data["Employee ID"])?.slice(0, 30) ?? null, cleanText(data["Name"])?.slice(0, 150) ?? null, cleanId(data["GH"])?.slice(0, 30) ?? null,
+        cleanText(data["TEAM"])?.toUpperCase().slice(0, 50) ?? null, cleanTeam(data["TEAM LEADER"])?.slice(0, 150) ?? null, cleanText(data["MODE"])?.slice(0, 30) ?? null,
+        ...tail(ctx.batchId, ctx.userId),
+      ],
+    };
+  },
+};
+
 const run = (spec: SbiBatchSpec) => (batchId: string, userId: string) => runSbiBatch(batchId, userId, spec, randomUUID);
 export const importSbiCardDialerMisBatch = run(dialerMisSpec);
 export const importSbiCardAgentMisBatch = run(agentMisSpec);
@@ -321,3 +347,4 @@ export const importSbiCardDowntimeBatch = run(downtimeSpec);
 export const importSbiCardPenEstimationBatch = run(penEstimationSpec);
 export const importSbiCardAgentTimeBatch = run(agentTimeSpec);
 export const importSbiCardOutcomeBatch = run(outcomeSpec);
+export const importSbiCardRosterBatch = run(rosterSpec);

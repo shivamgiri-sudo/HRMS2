@@ -89,6 +89,23 @@ describe("critical insights", () => {
     expect(i.action).toContain("143 agent-hours");
     expect(deriveInsights(ops(), null, 30, { ...cap, total: { ...cap.total, penetration: 3.1, shortfallDials: 0 } }).some((x) => x.id === "penetration")).toBe(false);
   });
+  it("flags high-balance accounts being worked by the low-balance team, and a roster that is out of date", () => {
+    const team = { hasRoster: true, rosterSize: 139, byTeam: [], byLeader: [], apr: { agents: 19, matched: 0 }, evidence: { leaderPtpP: null },
+      alignment: { high: { attempts: 400, byHighbal: 260, byLowbal: 120, byOther: 20, lowbalPct: 30 }, low: { attempts: 100, byLowbal: 90, byHighbal: 10, byOther: 0, highbalPct: 10 } },
+      unmapped: { agents: 7, attempts: 60, pct: 12 } };
+    const ids = deriveInsights(ops(), null, 30, null, team).map((i) => i.id);
+    expect(ids).toContain("misrouted-high-balance");
+    expect(ids).toContain("roster-gap");
+    const quiet = { ...team, alignment: { ...team.alignment, high: { ...team.alignment.high, byLowbal: 10, lowbalPct: 2.5 } }, unmapped: { agents: 0, attempts: 0, pct: 0 } };
+    expect(deriveInsights(ops(), null, 30, null, quiet).some((i) => i.id === "misrouted-high-balance" || i.id === "roster-gap")).toBe(false);
+  });
+  it("names the best and worst team leader only when the gap is statistically real", () => {
+    const base = { hasRoster: true, rosterSize: 10, byTeam: [], apr: { agents: 0, matched: 0 }, alignment: { high: { attempts: 0, byHighbal: 0, byLowbal: 0, byOther: 0, lowbalPct: 0 }, low: { attempts: 0, byLowbal: 0, byHighbal: 0, byOther: 0, highbalPct: 0 } }, unmapped: { agents: 0, attempts: 0, pct: 0 } };
+    const g = (key: string, attempts: number, ptp: number) => ({ key, teams: [], agents: 5, activeAgents: 5, attempts, accountsTouched: 10, ptp, ptpPct: Math.round((ptp / attempts) * 1000) / 10, deadPct: 50, aprMatched: 0, loginHours: null, utilisationPct: null, pausePct: null, callsPerLoginHour: null });
+    const byLeader = [g("Sourabh", 200, 30), g("Ankit", 200, 8)];
+    expect(deriveInsights(ops(), null, 30, null, { ...base, byLeader, evidence: { leaderPtpP: 0.0004 } }).find((i) => i.id === "leader-spread")!.title).toContain("Sourabh 15.0% to Ankit 4.0%");
+    expect(deriveInsights(ops(), null, 30, null, { ...base, byLeader, evidence: { leaderPtpP: 0.4 } }).some((i) => i.id === "leader-spread")).toBe(false);
+  });
   it("calls out the hour with the best PTP yield", () => {
     const hours = deriveInsights(ops(), null).find((i) => i.id === "hours")!;
     expect(hours.title).toContain("10:00");

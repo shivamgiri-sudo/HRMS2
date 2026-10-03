@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 // @ts-expect-error plain .mjs ops script
-import { evaluate, refuseWriteMode, AGENT_TIME_COLUMNS, ACCOUNT_FILE_NEW_COLUMNS, OUTCOME_COLUMNS } from "../../../../scripts/sbi-card-verify.mjs";
+import { evaluate, refuseWriteMode, AGENT_TIME_COLUMNS, ACCOUNT_FILE_NEW_COLUMNS, OUTCOME_COLUMNS, ROSTER_COLUMNS } from "../../../../scripts/sbi-card-verify.mjs";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -31,6 +31,14 @@ describe("sbi-card-verify (read-only ops check)", () => {
     expect(broken.ok).toBe(false);
     expect(broken.checks.filter((c: { status: string }) => c.status === "FAIL").length).toBeGreaterThanOrEqual(3);
   });
+  it("checks the roster table, its migration row and its template once they are part of the facts", () => {
+    const withRoster = { ...healthy(), rosterColumns: [...ROSTER_COLUMNS], rosterMigrationRow: { filename: "migrations/2077_sbi_card_roster.sql", success: 1 },
+      templates: { ...healthy().templates, SBI_CARD_ROSTER: { active: 1, optional: ["TEAM"] } }, counts: { account: 10, agentTime: 0, roster: 0 } };
+    expect(evaluate(withRoster).ok).toBe(true);
+    const broken = evaluate({ ...withRoster, rosterColumns: null, rosterMigrationRow: null, templates: { ...withRoster.templates, SBI_CARD_ROSTER: null } });
+    expect(broken.ok).toBe(false);
+    expect(broken.checks.filter((c: { status: string }) => c.status === "FAIL").length).toBeGreaterThanOrEqual(3);
+  });
   it("has no apply mode", () => {
     expect(refuseWriteMode(["apply"])).toMatch(/read-only/);
     expect(refuseWriteMode([])).toBeNull();
@@ -42,5 +50,9 @@ describe("sbi-card-verify (read-only ops check)", () => {
   it("expects exactly the outcome columns migration 2076 creates", () => {
     const sql = readFileSync(resolve(__dirname, "../../../../sql/migrations/2076_sbi_card_outcome.sql"), "utf8");
     for (const c of OUTCOME_COLUMNS.filter((x: string) => !["id", "created_at", "updated_at"].includes(x))) expect(sql).toContain(c);
+  });
+  it("expects exactly the roster columns migration 2077 creates", () => {
+    const sql = readFileSync(resolve(__dirname, "../../../../sql/migrations/2077_sbi_card_roster.sql"), "utf8");
+    for (const c of ROSTER_COLUMNS.filter((x: string) => !["id", "created_at", "updated_at"].includes(x))) expect(sql).toContain(c);
   });
 });

@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1225,
-  "columnCount": 17840,
+  "tableCount": 1226,
+  "columnCount": 17854,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -17383,6 +17383,22 @@
       "target_penetration",
       "required_agent_hrs",
       "excess_deficit_hrs",
+      "data_source",
+      "source_reference",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "sbi_card_roster": [
+      "id",
+      "process_id",
+      "dialer_id",
+      "employee_id",
+      "agent_name",
+      "gh",
+      "team",
+      "team_leader",
+      "mode",
       "data_source",
       "source_reference",
       "created_by",

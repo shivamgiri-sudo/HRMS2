@@ -5,6 +5,7 @@ import {
   type DialerRow, type AgentRow, type AccountRow, type DailyOut, type CampaignOut, type AgentOut, type TeamOut, type AccountsOut,
 } from "./sbi-card-dashboard.calc.js";
 import { agentTimeOf, type AgentTimeOut, type AgentTimeRow } from "./sbi-card-agent-time.calc.js";
+import { teamOf, type RosterRow, type TeamBoard } from "./sbi-card-team.calc.js";
 import { capacityOf, type CapacityOut } from "./sbi-card-capacity.calc.js";
 import { loadAccountOpsRows } from "./sbi-card-account-rows.js";
 import { collectionsOps, type AccountOpsRow, type CollectionsOpsOut } from "./sbi-card-collections-ops.calc.js";
@@ -36,6 +37,7 @@ export interface SbiCardDashboardData {
   accounts: AccountsOut;
   agentTime: AgentTimeOut;
   capacity: CapacityOut;
+  team: TeamBoard;
   collections: CollectionsOpsOut & { agents: Array<CollectionsOpsOut["agents"][number] & { name: string | null }> };
 }
 
@@ -64,7 +66,7 @@ export async function getSbiCardDashboard(month?: string, fromIn?: string, toIn?
   const empty = !pid;
   const p = pid ?? "";
 
-  const [dRows, aRows, tRows, latest, timeRows, penRows] = await Promise.all([
+  const [dRows, aRows, tRows, latest, timeRows, penRows, rosterRows] = await Promise.all([
     empty ? [[]] : db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(report_date, '%Y-%m-%d') AS d, campaign, accounts_called, accounts_scheduled, total_accounts, dials, answers, connects, ptp, pad, otp, total_contacts
          FROM sbi_card_dialer_mis WHERE process_id = ? AND is_rollup = 0 AND report_date BETWEEN ? AND ?`, [p, from, to]),
@@ -86,6 +88,8 @@ export async function getSbiCardDashboard(month?: string, fromIn?: string, toIn?
     // The client's own penetration target (dials per account) travels with the Pen Estimation sheet: Dials Required = Download x Penetration.
     empty ? [[]] : db.execute<RowDataPacket[]>(
       `SELECT AVG(penetration) AS target FROM sbi_card_pen_estimation WHERE process_id = ? AND penetration > 0 AND report_date BETWEEN ? AND ?`, [p, from, to]),
+    empty ? [[]] : db.execute<RowDataPacket[]>(
+      `SELECT dialer_id, employee_id, agent_name, gh, team, team_leader, mode FROM sbi_card_roster WHERE process_id = ?`, [p]),
   ]);
 
   const dialer: DialerRow[] = (dRows[0] as RowDataPacket[]).map((r) => ({
@@ -108,6 +112,10 @@ export async function getSbiCardDashboard(month?: string, fromIn?: string, toIn?
   const ops = collectionsOps(opsRows, latestDate ?? null);
   const nameByDialer = new Map<string, string>();
   for (const a of agentRows) if (a.dialerId && a.name && !nameByDialer.has(a.dialerId)) nameByDialer.set(String(a.dialerId), a.name);
+  const roster: RosterRow[] = (rosterRows[0] as RowDataPacket[]).map((r) => ({
+    dialerId: String(r.dialer_id), employeeId: r.employee_id ?? null, name: r.agent_name ?? null, gh: r.gh ?? null, team: r.team ?? null, teamLeader: r.team_leader ?? null, mode: r.mode ?? null,
+  }));
+  for (const r of roster) if (r.name) nameByDialer.set(r.dialerId, r.name);   // the roster is the authority on who a dialer id is
 
   const timeIn: AgentTimeRow[] = (timeRows[0] as RowDataPacket[]).map((r) => ({
     date: String(r.d), employeeId: String(r.employee_id), name: r.agent_name ?? null, calls: num(r.calls), loginSec: num(r.login_sec),
@@ -149,6 +157,7 @@ export async function getSbiCardDashboard(month?: string, fromIn?: string, toIn?
     accounts,
     agentTime: agentTimeOf(timeIn),
     capacity,
+    team: teamOf(roster, opsRows, timeIn),
     collections: { ...ops, agents: ops.agents.map((a) => ({ ...a, name: nameByDialer.get(a.agentId) ?? null })) },
   };
 }

@@ -84,6 +84,7 @@ const RPC_BY_TYPE: Record<string, string> = {
   SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch",
   SBI_CARD_APR: "import_sbi_card_apr_batch",
   SBI_CARD_OUTCOME: "import_sbi_card_outcome_batch",
+  SBI_CARD_ROSTER: "import_sbi_card_roster_batch",
 };
 
 /** Same normalization every aw-*-bulk.service.ts backend importer uses: lowercase,

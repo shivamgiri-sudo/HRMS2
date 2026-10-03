@@ -4,6 +4,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { getSbiCardDashboard } from "./sbi-card-dashboard.service.js";
 import { getSbiCardPayout } from "./sbi-card-payout.service.js";
 import { getSbiCardReadiness } from "./sbi-card-readiness.service.js";
+import { getSbiCardMovement } from "./sbi-card-movement.service.js";
 import { getSbiCardAdhocCsv, isAdhocType } from "./sbi-card-adhoc.service.js";
 
 const router = Router();
@@ -30,6 +31,14 @@ router.get("/sbi-card-dashboard", requireRole(...VIEWER_ROLES), h(async (req, re
 router.get("/sbi-card-dashboard/readiness", requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await getSbiCardReadiness({
     month: req.query.month ? String(req.query.month) : undefined, from: req.query.from ? String(req.query.from) : undefined, to: req.query.to ? String(req.query.to) : undefined,
+  });
+  res.json({ success: true, data });
+}));
+
+router.get("/sbi-card-dashboard/movement", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getSbiCardMovement({
+    month: req.query.month ? String(req.query.month) : undefined, from: req.query.from ? String(req.query.from) : undefined, to: req.query.to ? String(req.query.to) : undefined,
+    a: req.query.a ? String(req.query.a) : undefined, b: req.query.b ? String(req.query.b) : undefined,
   });
   res.json({ success: true, data });
 }));

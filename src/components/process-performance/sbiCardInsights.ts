@@ -1,4 +1,4 @@
-import type { SbiAgentTime, SbiCapacity, SbiCollections, SbiDimRow } from "./sbiCardTypes";
+import type { SbiAgentTime, SbiCapacity, SbiCollections, SbiDimRow, SbiTeam } from "./sbiCardTypes";
 
 /**
  * Critical insights for the SBI Card Collections page, derived from the same figures the charts show (no invented numbers).
@@ -21,7 +21,7 @@ const p1 = (n: number): string => `${n.toFixed(1)}%`;
 const real = (p: number | null | undefined): boolean => p !== null && p !== undefined && p < 0.05;
 const material = (rows: SbiDimRow[], total: number, minShare = 0.05): SbiDimRow[] => rows.filter((r) => total > 0 && r.exposure / total >= minShare);
 
-export function deriveInsights(ops: SbiCollections, time: SbiAgentTime | null, limit = 12, capacity?: SbiCapacity | null): Insight[] {
+export function deriveInsights(ops: SbiCollections, time: SbiAgentTime | null, limit = 12, capacity?: SbiCapacity | null, team?: SbiTeam | null): Insight[] {
   const h = ops.headline;
   if (!h.accounts) return [];
   const out: Insight[] = [];
@@ -44,6 +44,29 @@ export function deriveInsights(ops: SbiCollections, time: SbiAgentTime | null, l
       title: `Penetration ${t.penetration.toFixed(2)} against a target of ${capacity.target}`, metric: `${t.shortfallDials.toLocaleString("en-IN")} dials`,
       detail: `${t.behindTables} call table(s) are behind; ${t.shortfallDials.toLocaleString("en-IN")} of ${t.requiredDials.toLocaleString("en-IN")} required dials are missing${cp ? `, about ${cp.extraHoursToCloseGap} more login hours at ${cp.dph} dials per hour` : ""}${worst ? `. Furthest behind: ${worst.table} (${worst.penetration.toFixed(2)})` : ""}.`,
       action: capacity.downtime.agentHoursLost > 0 ? `Add shifts or overtime on the lagging tables; outages already cost ${capacity.downtime.agentHoursLost} agent-hours, so fix the dialer first.` : "Add shifts or overtime on the lagging tables, or raise dialer pacing, before the cycle closes.",
+    });
+  }
+  if (team?.hasRoster && team.alignment.high.attempts >= 30 && team.alignment.high.lowbalPct >= 10) {
+    const h = team.alignment.high;
+    out.push({
+      id: "misrouted-high-balance", level: h.lowbalPct >= 25 ? "warning" : "info", title: `${h.lowbalPct.toFixed(1)}% of high-balance calls were made by LOWBAL agents`, metric: `${h.byLowbal}`,
+      detail: `${h.byLowbal} of ${h.attempts} attempts on the HB / HB1 call tables came from agents rostered to the low-balance team; the high-balance team made ${h.byHighbal}.`,
+      action: "Keep HB and HB1 tables on the HIGHBAL team's dialer login groups; check who is logged into which campaign.",
+    });
+  }
+  if (team?.hasRoster && team.evidence.leaderPtpP !== null && team.evidence.leaderPtpP < 0.05) {
+    const l = [...team.byLeader].filter((x) => x.attempts >= 30).sort((a, b) => b.ptpPct - a.ptpPct);
+    if (l.length >= 2) out.push({
+      id: "leader-spread", level: "info", title: `Team leaders differ on PTP yield: ${l[0]!.key} ${l[0]!.ptpPct.toFixed(1)}% to ${l[l.length - 1]!.key} ${l[l.length - 1]!.ptpPct.toFixed(1)}%`, metric: `${l[0]!.ptpPct.toFixed(1)}%`,
+      detail: `The gap between ${l.length} team leaders is larger than chance would give (p = ${team.evidence.leaderPtpP < 0.001 ? "<0.001" : team.evidence.leaderPtpP.toFixed(3)}).`,
+      action: `Have ${l[0]!.key}'s team share what they do on calls with ${l[l.length - 1]!.key}'s team; compare scripts and call timing first.`,
+    });
+  }
+  if (team?.hasRoster && team.unmapped.pct >= 10) {
+    out.push({
+      id: "roster-gap", level: "info", title: `${team.unmapped.agents} dialer ids are not on the roster`, metric: `${team.unmapped.pct.toFixed(1)}%`,
+      detail: `${team.unmapped.pct.toFixed(1)}% of attempts were made by dialer ids that are not in the uploaded roster, so they cannot be placed in a team or under a leader.`,
+      action: "Upload the current TEAM_LIST; new joiners and moved agents are usually the missing ids.",
     });
   }
   const c = ops.compliance;

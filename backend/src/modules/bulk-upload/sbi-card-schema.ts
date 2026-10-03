@@ -66,6 +66,9 @@ export const SBI_OUTCOME_HEADERS = [
 ] as const;
 export const OUTCOME_DEFAULT_SEGMENT = "CD3_HB";
 
+/** Agent roster: the TEAM_LIST sheet of the Agent MIS workbook. One row per dialer id. */
+export const SBI_ROSTER_HEADERS = ["DIALER ID", "Employee ID", "Name", "GH", "TEAM", "TEAM LEADER", "MODE"] as const;
+
 export const SBI_DOWNTIME_HEADERS = [
   "Date", "Start Time", "Up Time", "Downtime Minutes", "Total Impacted Users", "Responsibility",
   "Downtime Description/ Issue Reason", "Site", "Status", "RCA (If Any)", "Remarks",

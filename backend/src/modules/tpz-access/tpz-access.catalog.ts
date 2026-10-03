@@ -116,7 +116,7 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     uploads: {
       SBI_CARD_DIALER_MIS: "import_sbi_card_dialer_mis_batch", SBI_CARD_AGENT_MIS: "import_sbi_card_agent_mis_batch",
       SBI_CARD_ACCOUNT_FILE: "import_sbi_card_account_file_batch", SBI_CARD_DOWNTIME: "import_sbi_card_downtime_batch",
-      SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch", SBI_CARD_APR: "import_sbi_card_apr_batch", SBI_CARD_OUTCOME: "import_sbi_card_outcome_batch",
+      SBI_CARD_PEN_ESTIMATION: "import_sbi_card_pen_estimation_batch", SBI_CARD_APR: "import_sbi_card_apr_batch", SBI_CARD_OUTCOME: "import_sbi_card_outcome_batch", SBI_CARD_ROSTER: "import_sbi_card_roster_batch",
     },
   },
   // DU_DIGITAL per business-datapoints; DUBANGLADESH per migration 1952.
