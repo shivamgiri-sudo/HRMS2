@@ -57,6 +57,11 @@ export interface ReferenceDashboardData {
   pnl: JsonRecord;
   payroll: JsonRecord;
   payrollRuns?: JsonRecord[];
+  /** True while the payroll run list or the selected run's analytics (~9s cold) are still loading — not a failure. */
+  payrollLoading?: boolean;
+  /** True while the executive quality summary (~20s cold) is still in flight - the score is loading, not unavailable. */
+  qualityLoading?: boolean;
+  payrollError?: string | null;
   selectedPayrollRunId?: string;
   onPayrollRunChange?: (runId: string) => void;
   biometric: JsonRecord;

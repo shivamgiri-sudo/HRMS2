@@ -99,7 +99,9 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
         health={health ? { value: health.value, label: "Payroll health", basis: health.basis } : null}
         stats={stats} right={heroRight}
       >
-        {run ? <RunPipeline pipeline={run.pipeline} /> : <p className="text-[13px] text-white/80">Run analytics could not be computed - see the unavailable sources below.</p>}
+        {run ? <RunPipeline pipeline={run.pipeline} />
+          : data.payrollLoading ? <div className="grid grid-cols-2 gap-2 lg:grid-cols-4 xl:grid-cols-7" aria-busy="true" aria-label="Loading run analytics">{Array.from({ length: 7 }, (_, i) => <div key={i} className="kit-shimmer h-[92px] rounded-2xl" />)}</div>
+          : <p className="text-[13px] text-amber-700">Run analytics could not be computed{data.payrollError ? ` (${data.payrollError})` : ""} - see the unavailable sources below.</p>}
       </DashHero>
 
       <NoticeBar integrity={dataIntegrity} unavailable={unavailableSources} />
@@ -107,7 +109,7 @@ export function PayrollReferenceLayout({ data, filters }: { data: ReferenceDashb
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
         <ActionCenter actions={actions} loading={data.insightsLoading && !localActions.length} error={data.insightsError} limit={12} subtitle={data.insightsLoading ? "Loading approval queues…" : undefined} />
         <PayrollKpiGrid
-          run={run} loading={data.loading} totalEmployees={totalEmployees} readinessPct={readinessPct} readinessReason={readinessReason} blockerCount={blockerCount}
+          run={run} loading={data.loading || Boolean(data.payrollLoading)} totalEmployees={totalEmployees} readinessPct={readinessPct} readinessReason={readinessReason} blockerCount={blockerCount}
           incentivePending={incentivePending} loansActive={loansKpi?.value ?? null} readinessHref={drillHref(code, "PAYROLL_READINESS")} costHref={drillHref(code, "SALARY_COMPONENTS")}
           onReadinessDrill={drill("payroll").onDrilldown}
         />

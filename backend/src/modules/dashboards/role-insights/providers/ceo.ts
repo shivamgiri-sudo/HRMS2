@@ -89,7 +89,7 @@ async function exitQueue(ctx: InsightContext): Promise<InsightAction> {
 }
 
 async function attendanceSection(ctx: InsightContext): Promise<InsightSection> {
-  const days = completeDays(await attendanceDays(ctx)).slice(-30);
+  const days = completeDays(await attendanceDays(ctx), ctx.today).slice(-30);
   if (!days.length) {
     const why = "No complete processed-attendance day in the last 30 days";
     return {
@@ -242,7 +242,7 @@ async function hiring(ctx: InsightContext): Promise<InsightSection> {
 
 async function branchLeague(ctx: InsightContext): Promise<InsightSection> {
   const [scan, days] = await Promise.all([exitScan(ctx), attendanceDays(ctx)]);
-  const complete = completeDays(days);
+  const complete = completeDays(days, ctx.today);
   const latest = complete[complete.length - 1]?.date ?? null;
   const sc = attendanceScope(ctx);
   const att = latest
@@ -381,7 +381,7 @@ async function compliance(ctx: InsightContext): Promise<InsightSection> {
 /** Composite health from the sources this provider can measure; quality and revenue live on the page. */
 async function health(ctx: InsightContext): Promise<InsightSection> {
   const [days, scan, mand] = await Promise.all([attendanceDays(ctx), exitScan(ctx), mandateRows(ctx)]);
-  const complete = completeDays(days);
+  const complete = completeDays(days, ctx.today);
   const last = complete[complete.length - 1];
   const wk = complete.slice(-7);
   const attendance7 = wk.length ? wk.reduce((s, d) => s + (attendancePct(d) ?? 0), 0) / wk.length : null;

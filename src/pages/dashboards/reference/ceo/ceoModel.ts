@@ -167,6 +167,12 @@ export interface CeoModel {
   revenueRiskReason: string | null;
   lossMaking: number | null;
   receivable: number | null;
+  unbilled: number | null;
+  invoiced: number | null;
+  /** % of processes with a revenue model configured; revenue outside it is simply not in the P&L. */
+  revenueCoveragePct: number | null;
+  processesModelled: number | null;
+  processesTotal: number | null;
   pnlAsOf: string | null;
 }
 
@@ -217,6 +223,11 @@ export function buildCeoModel(data: ReferenceDashboardData): CeoModel {
     revenueRiskReason: typeof riskReason === "string" && riskReason ? "Revenue-risk feed not generated" : null,
     lossMaking: numberAt(data.pnl, "kpis", "lossMakingProcesses"),
     receivable: numberAt(data.pnl, "kpis", "outstandingReceivable"),
+    unbilled: numberAt(data.pnl, "kpis", "unbilledRevenue"),
+    invoiced: numberAt(data.pnl, "kpis", "invoicedRevenue"),
+    revenueCoveragePct: numberAt(data.pnl, "kpis", "revenueModelCoveragePct"),
+    processesModelled: numberAt(data.pnl, "kpis", "configuredProcesses"),
+    processesTotal: numberAt(data.pnl, "kpis", "totalProcesses"),
     pnlAsOf: typeof generated === "string" && generated ? new Date(generated).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : null,
   };
 }

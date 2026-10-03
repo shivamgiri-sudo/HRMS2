@@ -137,10 +137,15 @@ export function shrinkagePct(d: Pick<DayAttendance, "absent" | "halfDay" | "expe
   return d.expected > 0 ? Math.round(((d.absent + d.halfDay * 0.5) / d.expected) * 1000) / 10 : null;
 }
 
-/** Drops days whose record count is under half of the busiest day — processed attendance lags, so the newest days are partial. */
-export function completeDays(days: DayAttendance[]): DayAttendance[] {
-  const max = days.reduce((m, d) => Math.max(m, d.rows), 0);
-  return days.filter((d) => d.rows >= max * 0.5 && d.expected > 0);
+/**
+ * Keeps only days that are done being written: strictly before today, and with at least 90% of the busiest day's
+ * records. Processed attendance lags (records for a day keep arriving for ~2 days), so a day at 50-60% of the usual
+ * volume reads as a collapse in attendance - the CEO page once alarmed "Attendance is low 0.5%" off a morning-of day.
+ */
+export function completeDays(days: DayAttendance[], today?: string): DayAttendance[] {
+  const settled = today ? days.filter((d) => d.date < today) : days;
+  const max = settled.reduce((m, d) => Math.max(m, d.rows), 0);
+  return settled.filter((d) => d.rows >= max * 0.9 && d.expected > 0);
 }
 
 export type FilingStatus = "overdue" | "due_soon" | "upcoming" | "filed";

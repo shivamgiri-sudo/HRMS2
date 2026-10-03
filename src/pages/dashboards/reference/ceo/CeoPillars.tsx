@@ -40,7 +40,7 @@ export function CeoPillars({ data, model, insights, loading }: { data: Reference
           <div className="sm:col-span-2">
             <PulseTile size="hero" label={rev.month ? `Revenue — ${rev.month}` : "Revenue"} value={rev.revenue} unit="inr" icon={Banknote} tone="violet"
               delta={rev.revenue !== null && rev.priorRevenue !== null ? rev.revenue - rev.priorRevenue : null} deltaLabel="vs prior month" spark={rev.spark}
-              helper={rev.inProgress ? "Month in progress" : "Recognised revenue"}
+              helper={`${rev.inProgress ? "Month in progress" : "Recognised revenue"}${model.processesTotal ? ` · modelled for ${model.processesModelled ?? 0} of ${model.processesTotal} processes` : ""}`}
               formula="Recognised revenue for the selected P&L period from the P&L engine (/api/finance/pnl/summary)"
               href="/finance/process-pnl" loading={pnlWait} unavailable={rev.revenue === null && !pnlWait ? "No recognised revenue in the P&L" : null} />
           </div>
@@ -51,8 +51,14 @@ export function CeoPillars({ data, model, insights, loading }: { data: Reference
             unavailable={model.revenueRiskReason} helper="Sum of process_revenue_daily.revenue_at_risk" formula="Not a gap against target — no revenue target source is live" href="/finance/process-pnl" loading={pnlWait} />
           <PulseTile label="Loss-making processes" value={model.lossMaking} unit="count" icon={TrendingDown} tone={model.lossMaking ? "red" : "green"} higherIsBetter={false}
             helper={rev.marginCaveat ? "Counts booked cost only — may be understated" : "EBITDA negative after allocation"} formula="Processes whose P&L status is loss-making for the selected period" href="/finance/process-pnl" loading={pnlWait} />
-          <PulseTile label="Receivables outstanding" value={model.receivable} unit="inr" icon={Wallet} tone="amber" higherIsBetter={false}
-            helper="Invoiced and not yet collected" formula="Σ outstanding receivable across processes (P&L engine)" href="/finance/process-pnl" loading={pnlWait} />
+          {model.receivable ? (
+            <PulseTile label="Receivables outstanding" value={model.receivable} unit="inr" icon={Wallet} tone="amber" higherIsBetter={false}
+              helper="Invoiced and not yet collected" formula="Σ outstanding receivable across processes (P&L engine)" href="/finance/process-pnl" loading={pnlWait} />
+          ) : (
+            // Nothing invoiced yet reads as "₹0 receivable" - true but misleading. Show what is actually open: revenue earned and not billed.
+            <PulseTile label="Unbilled revenue" value={model.unbilled} unit="inr" icon={Wallet} tone="amber" higherIsBetter={false}
+              helper={model.invoiced ? "Earned, not yet invoiced" : "Nothing invoiced or collected yet this period"} formula="Recognised revenue minus invoiced revenue (P&L engine). Receivables outstanding is ₹0 only because nothing has been invoiced." href="/finance/process-pnl" loading={pnlWait} />
+          )}
           <div className="sm:col-span-2 rounded-2xl bg-white p-3 ring-1 ring-slate-200/70">
             <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Recognised revenue — last 6 months</p>
             {revTrend.length ? <BarsChart points={revTrend} unit="inr" height={120} /> : <p className="py-6 text-center text-[12px] text-slate-400">P&L trend unavailable</p>}
@@ -82,6 +88,8 @@ export function CeoPillars({ data, model, insights, loading }: { data: Reference
           <div className="kit-card kit-rise flex flex-col items-center gap-2 p-4">
             {model.qualityScore !== null && !model.qualityNote ? (
               <HealthRing value={model.qualityScore} label={model.qualityTarget ? `Org quality vs target ${model.qualityTarget}` : "Org quality score"} size={104} />
+            ) : data.qualityLoading ? (
+              <div className="kit-shimmer h-[104px] w-[104px] rounded-full" aria-busy="true" aria-label="Loading quality score" />
             ) : (
               <p className="py-6 text-center text-[12px] text-amber-700">{model.qualityNote ?? "Quality score unavailable"}</p>
             )}
@@ -91,7 +99,7 @@ export function CeoPillars({ data, model, insights, loading }: { data: Reference
               </p>
             ) : null}
           </div>
-          <PulseTile label="Agents at risk" value={model.qualityNote ? null : model.riskAgents} icon={ShieldAlert} tone="red" higherIsBetter={false} unavailable={model.qualityNote}
+          <PulseTile label="Agents at risk" value={model.qualityNote ? null : model.riskAgents} icon={ShieldAlert} tone="red" higherIsBetter={false} unavailable={model.qualityNote} loading={Boolean(data.qualityLoading)}
             helper="Score under 70" formula="Agents with a 30-day average under 60 (critical) or 60-70 (at risk)" href="/quality/executive" />
         </div>
       </Pillar>

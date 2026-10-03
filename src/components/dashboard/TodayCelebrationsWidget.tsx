@@ -118,12 +118,12 @@ export function TodayCelebrationsWidget() {
           <span className="inline-flex items-center justify-center rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-bold text-pink-700">{visiblePosts.length}</span>
         </h3>
         <ul className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-          {[...birthdays, ...anniversaries].slice(0, 8).map((p) => (
+          {[...birthdays, ...anniversaries].slice(0, 5).map((p) => (
             <li key={p.id} className="rounded-full border border-pink-100 bg-white px-2.5 py-0.5 text-[12px] font-medium text-slate-700">
               <span aria-hidden>{p.post_type === "birthday" ? "🎂" : "🎉"}</span> {nameOf(p) || "Team member"}
             </li>
           ))}
-          {visiblePosts.length > 8 ? <li className="px-1 py-0.5 text-[12px] font-medium text-slate-500">+{visiblePosts.length - 8} more</li> : null}
+          {visiblePosts.length > 5 ? <li className="px-1 py-0.5 text-[12px] font-medium text-slate-500">+{visiblePosts.length - 5} more</li> : null}
         </ul>
         <div className="flex items-center gap-3">
           <button type="button" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded} className="inline-flex items-center gap-1 text-[12px] font-semibold text-slate-600 hover:text-slate-900">

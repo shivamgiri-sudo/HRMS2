@@ -106,3 +106,19 @@ describe("CEO insight calculations", () => {
     expect(ageDays("nope", "2026-10-02")).toBeNull();
   });
 });
+
+describe("completeDays (processed-attendance anchor)", () => {
+  const day = (date: string, rows: number) => ({ date, rows, expected: rows, absent: 0, halfDay: 0, present: rows, leave: 0, weekOff: 0 } as never);
+
+  it("never treats today as complete, even when it already has more than half the usual rows", async () => {
+    const { completeDays } = await import("../role-insights/providers/ceoCalc.js");
+    const out = completeDays([day("2026-10-01", 1100), day("2026-10-02", 1100), day("2026-10-03", 671)], "2026-10-03");
+    expect(out.map((d: { date: string }) => d.date)).toEqual(["2026-10-01", "2026-10-02"]);
+  });
+
+  it("drops a still-arriving day at 60% of the usual volume (the old 50% rule kept it and read as a collapse)", async () => {
+    const { completeDays } = await import("../role-insights/providers/ceoCalc.js");
+    const out = completeDays([day("2026-09-30", 1100), day("2026-10-01", 660)], "2026-10-03");
+    expect(out.map((d: { date: string }) => d.date)).toEqual(["2026-09-30"]);
+  });
+});

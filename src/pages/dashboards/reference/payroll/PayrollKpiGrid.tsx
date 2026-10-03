@@ -26,7 +26,7 @@ export function PayrollKpiGrid(p: KpiGridProps) {
   const d = (cur?: number, old?: number) => pctChange(cur, old);
   const dl = r?.previousRun ? `% vs ${r.previousRun.month}` : undefined;
   return (
-    <PulseGrid cols={4}>
+    <PulseGrid cols={3} className="content-start">
       <PulseTile label="Net pay" value={t?.net ?? null} unit="inr" icon={WalletCards} tone="blue" loading={p.loading} href="/payroll" delta={d(t?.net, prev?.net)} deltaLabel={dl} formula="Sum of net_salary over this run's payroll lines in your scope" helper="Run lines, in scope" />
       <PulseTile label="Payroll cost" value={t?.payrollCost ?? null} unit="inr" icon={IndianRupee} tone="violet" loading={p.loading} href={p.costHref} delta={d(t?.payrollCost, prev?.payrollCost)} deltaLabel={dl} higherIsBetter={false} formula="Net pay + employee deductions + employer PF + employer ESI, summed from lines (not the contractual gross)" helper="Net + deductions + employer" />
       <PulseTile label="Employee deductions" value={t?.deductions ?? null} unit="inr" icon={ReceiptIndianRupee} tone="amber" loading={p.loading} href="/payroll/variance-analysis" delta={d(t?.deductions, prev?.deductions)} deltaLabel={dl} higherIsBetter={false} helper="PF, ESI, TDS, loans" />

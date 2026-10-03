@@ -4,11 +4,11 @@ import { cn } from "@/lib/utils";
 import type { Pipeline, StageState } from "./payrollModel";
 
 const LOOK: Record<StageState, { ring: string; chip: string; label: string }> = {
-  done: { ring: "ring-emerald-300/50 bg-emerald-400/15", chip: "bg-emerald-400 text-emerald-950", label: "Done" },
-  current: { ring: "ring-amber-300/80 bg-amber-300/20", chip: "bg-amber-300 text-amber-950", label: "Waiting here" },
-  blocked: { ring: "ring-rose-300/80 bg-rose-400/20", chip: "bg-rose-400 text-rose-950", label: "Blocked" },
-  pending: { ring: "ring-white/15 bg-white/5", chip: "bg-white/25 text-white", label: "Not started" },
-  unknown: { ring: "ring-white/15 border-dashed bg-transparent", chip: "bg-white/10 text-white/70", label: "No record" },
+  done: { ring: "ring-emerald-200 bg-emerald-50", chip: "bg-emerald-500 text-white", label: "Done" },
+  current: { ring: "ring-amber-300 bg-amber-50", chip: "bg-amber-500 text-white", label: "Waiting here" },
+  blocked: { ring: "ring-rose-300 bg-rose-50", chip: "bg-rose-500 text-white", label: "Blocked" },
+  pending: { ring: "ring-slate-200 bg-white", chip: "bg-slate-200 text-slate-700", label: "Not started" },
+  unknown: { ring: "ring-slate-200 border-dashed bg-white", chip: "bg-slate-100 text-slate-500", label: "No record" },
 };
 
 function StageIcon({ state, index }: { state: StageState; index: number }) {
@@ -32,14 +32,14 @@ export function RunPipeline({ pipeline }: { pipeline: Pipeline }) {
           <li key={stage.key} aria-current={stage.state === "current" || stage.state === "blocked" ? "step" : undefined}>
             <Link
               to={stage.href}
-              className={cn("flex h-full flex-col gap-2 rounded-2xl p-3 text-white ring-1 backdrop-blur transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white", look.ring, stage.state === "unknown" && "border border-dashed border-white/30")}
+              className={cn("flex h-full flex-col gap-2 rounded-2xl p-3 text-slate-900 ring-1 transition hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500", look.ring, stage.state === "unknown" && "border border-dashed border-white/30")}
             >
               <span className="flex items-center justify-between gap-2">
                 <span className={cn("flex h-7 w-7 items-center justify-center rounded-full", look.chip)}><StageIcon state={stage.state} index={i} /></span>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-white/70">{look.label}</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{look.label}</span>
               </span>
               <span className="text-[13px] font-bold leading-tight">{stage.label}</span>
-              <span className="text-[11px] leading-snug text-white/75">{stage.detail}</span>
+              <span className="text-[11px] leading-snug text-slate-600">{stage.detail}</span>
             </Link>
           </li>
         );
