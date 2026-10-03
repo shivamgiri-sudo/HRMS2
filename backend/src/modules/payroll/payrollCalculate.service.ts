@@ -139,6 +139,29 @@ export function sumProratedComponents(
 }
 
 /**
+ * Earned gross for a per-employee package.
+ *
+ * Normally the package's components add up to its stated gross, and the earned gross is the sum of
+ * each component earned to the rupee (db_bill's Gross1). When they do NOT add up - an assignment
+ * written by a flow that dropped a component (the Salary Change Center left out bonus, so
+ * MAS63489's 23,500 gross carried components worth 22,459) - the stated gross is what the employee
+ * was promised, so it is earned as a whole to the rupee instead of silently paying less.
+ */
+export function earnedGrossForPackage(
+  statedGross: number,
+  compAmounts: Record<string, number>,
+  days: number,
+  daysInMonth: number,
+): number {
+  let componentTotal = 0;
+  for (const [code, val] of Object.entries(compAmounts)) {
+    if (val > 0 && PAYSLIP_COMPONENT_NAMES[code]) componentTotal += val;
+  }
+  if (Math.abs(statedGross - componentTotal) > 1) return prorateToRupee(statedGross, days, daysInMonth);
+  return sumProratedComponents(compAmounts, days, daysInMonth);
+}
+
+/**
  * Builds the itemized earning-component breakdown for one salary_prep_line's
  * payslip. Extracted 2026-08-14 for testability, from logic that used to be
  * inline in calculatePayrollRunScoped — behaviour unchanged except for the two
@@ -1725,7 +1748,7 @@ export async function calculatePayrollRunScoped(
       const grossMonthly = isOnMaternityLeave && !isHeldAbsconder
         ? monthlyGrossBase
         : hasFixedComponents
-          ? sumProratedComponents(compAmounts, finalPayableDays, daysInMonth)
+          ? earnedGrossForPackage(fixedGross, compAmounts, finalPayableDays, daysInMonth)
           : monthlyGrossBase * (finalPayableDays / daysInMonth);
       // No separate LWP deduction needed — absent days just reduce finalPayableDays
       const lwpDeduction = 0; // absorbed into days-based calculation
