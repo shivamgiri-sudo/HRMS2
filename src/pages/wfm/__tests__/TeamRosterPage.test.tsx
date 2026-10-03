@@ -124,6 +124,32 @@ describe("TeamRosterPage - states", () => {
   });
 });
 
+describe("TeamRosterPage - deep link from the Roster Requests hub", () => {
+  // 2026-10-07 is a Wednesday: the roster tab opens on Monday 05/10 - Sunday 11/10.
+  const week = { from: "2026-10-05", to: "2026-10-11" };
+  const seedWeek = (c: QueryClient) => {
+    seedManager(c);
+    c.setQueryData(gridKey({ from: week.from, to: week.to, search: "", offset: 0, limit: 50 }), { ...grid(), from: week.from, to: week.to });
+  };
+
+  it("opens the roster tab on the week containing ?date= and marks ?employee='s row", () => {
+    const html = render(me(), seedWeek, "/wfm/team-roster?tab=roster&date=2026-10-07&employee=e1");
+    expect(html).toContain('value="2026-10-05"');
+    expect(html).toContain('value="2026-10-11"');
+    expect(html).toContain("Asha Kulkarni");
+    const rowStart = html.indexOf('data-highlighted="true"');
+    expect(rowStart).toBeGreaterThan(-1);
+    expect(html.indexOf("Asha Kulkarni", rowStart)).toBeGreaterThan(rowStart);
+    expect(html.match(/data-highlighted="true"/g)).toHaveLength(1);
+  });
+
+  it("ignores an invalid date and keeps the default range", () => {
+    const html = render(me(), seedManager, "/wfm/team-roster?tab=roster&date=2026-02-30&employee=e1");
+    expect(html).toContain(`value="${range.from}"`);
+    expect(html).toContain("Asha Kulkarni");
+  });
+});
+
 describe("My Team Roster grid", () => {
   const html = () => render(me(), seedManager);
 

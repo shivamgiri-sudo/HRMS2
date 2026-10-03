@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useImpact } from "./useImpact";
 import type { RosterRequest } from "./types";
+import { teamRosterHref } from "./deepLink";
 
 /** Label a week row by name where the request knows it (requester / swap counterpart), else "Employee". */
 function nameFor(request: RosterRequest, employeeId: string): string {
@@ -39,8 +40,7 @@ export function ImpactPanel({ request }: { request: RosterRequest }) {
           </div>
         </div>
       ))}
-      {/* /wfm/team-roster exists but reads no date query param, so link without one. */}
-      <Link className="inline-block text-sm text-blue-600 underline" to="/wfm/team-roster">Open in roster</Link>
+      <Link className="inline-block text-sm text-blue-600 underline" to={teamRosterHref(request)}>Open in roster</Link>
     </div>
   );
 }

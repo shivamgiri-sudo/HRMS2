@@ -13,3 +13,11 @@ export function findDeepLinked(requests: readonly RosterRequest[], link: { kind:
   if (!link.id) return null;
   return requests.find((r) => r.id === link.id && (!link.kind || r.kind === link.kind)) ?? null;
 }
+
+/** "Open in roster": the live roster tab of /wfm/team-roster on the request's date, focused on its employee. */
+export function teamRosterHref(request: Pick<RosterRequest, "date" | "employeeId">): string {
+  const q = new URLSearchParams({ tab: "roster" });
+  if (request.date) q.set("date", request.date);
+  if (request.employeeId) q.set("employee", request.employeeId);
+  return `/wfm/team-roster?${q.toString()}`;
+}

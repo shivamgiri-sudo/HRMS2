@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { LobBadge } from "@/components/wfm/LobBadge";
 import { RaiseExitButton } from "@/components/exit/RaiseExitButton";
 import { Link } from "react-router-dom";
@@ -28,6 +29,8 @@ export interface TeamRosterGridProps {
   dayFillOptions?: ShiftOption[];
   /** Pending roster requests keyed `${employeeId}|${date}` (see indexPendingCells). Optional. */
   pendingCells?: Map<string, PendingRef[]>;
+  /** Row to highlight and scroll into view once (deep link from the Roster Requests hub). */
+  highlightEmployeeId?: string | null;
 }
 
 export const stagedKey = cellKey;
@@ -138,7 +141,16 @@ function FillSelect({ label, options, onPick }: { label: string; options: ShiftO
 }
 
 export default function TeamRosterGrid(props: TeamRosterGridProps) {
-  const { data, today, onFillRow, onFillDay, dayFillOptions, templates, pendingCells } = props;
+  const { data, today, onFillRow, onFillDay, dayFillOptions, templates, pendingCells, highlightEmployeeId } = props;
+  const highlightRef = useRef<HTMLTableRowElement | null>(null);
+  const scrolledTo = useRef<string | null>(null);
+  const highlightShown = !!highlightEmployeeId && data.rows.some((r) => r.employeeId === highlightEmployeeId);
+  useEffect(() => {
+    // Once per employee: later re-renders (edits, refetches) must not keep yanking the scroll position.
+    if (!highlightShown || scrolledTo.current === highlightEmployeeId) return;
+    scrolledTo.current = highlightEmployeeId ?? null;
+    highlightRef.current?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  }, [highlightShown, highlightEmployeeId]);
   if (data.rows.length === 0) {
     return <p className="rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No team members match your search.</p>;
   }
@@ -159,8 +171,11 @@ export default function TeamRosterGrid(props: TeamRosterGridProps) {
         </thead>
         <tbody>
           {data.rows.map((row) => (
-            <tr key={row.employeeId} className="hover:bg-slate-50/60">
-              <th scope="row" className="sticky left-0 z-10 border-b border-r bg-white px-3 py-2 text-left font-normal">
+            <tr key={row.employeeId}
+              {...(row.employeeId === highlightEmployeeId
+                ? { ref: highlightRef, "data-highlighted": "true", "aria-current": "true" as const, className: "bg-amber-50/70 outline outline-2 -outline-offset-2 outline-amber-400" }
+                : { className: "hover:bg-slate-50/60" })}>
+              <th scope="row" className={`sticky left-0 z-10 border-b border-r px-3 py-2 text-left font-normal ${row.employeeId === highlightEmployeeId ? "bg-amber-50" : "bg-white"}`}>
                 <div className="font-semibold text-slate-800">{row.name}</div>
                 <div className="text-[11px] text-slate-500">{[row.code, row.processName].filter(Boolean).join(" - ")}</div>
                 <LobBadge name={row.lobName} />

@@ -64,3 +64,16 @@ describe("normalize", () => {
     expect(computeSla("2026-10-01 18:00:00", "2026-10-03", before).state).toBe("ok");
   });
 });
+
+describe("teamRosterHref", () => {
+  it("opens the live roster tab on the request's date and employee", async () => {
+    const { teamRosterHref } = await import("../deepLink");
+    const r = normalizeDispute({ id: "d1", employee_id: "e 1", roster_date: "2026-10-07" } as any, now);
+    expect(teamRosterHref(r)).toBe("/wfm/team-roster?tab=roster&date=2026-10-07&employee=e+1");
+  });
+  it("omits what the request does not know", async () => {
+    const { teamRosterHref } = await import("../deepLink");
+    const r = normalizeConflict({ id: "c1", conflict_date: "" } as any, now);
+    expect(teamRosterHref(r)).toBe("/wfm/team-roster?tab=roster");
+  });
+});
