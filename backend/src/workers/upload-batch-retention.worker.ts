@@ -6,8 +6,10 @@
  * (counts + error breakdown, no row data) in upload_batch_snapshot and delete the rows.
  *
  * SAFETY (this deletes production data, so it is deliberately conservative):
- *  - DRY RUN by default. Nothing is deleted unless UPLOAD_BATCH_RETENTION_MODE=execute (same convention as
- *    privacy-retention.worker.ts). A dry run logs, per upload type, how many batches/rows WOULD go.
+ *  - EXECUTES by default since 2026-10-03 (owner: upload_batch_row was recreated with 7-day retention and must
+ *    clean itself up). Set UPLOAD_BATCH_RETENTION_MODE=dry_run to switch deletion off; a dry run logs, per
+ *    upload type, how many batches/rows WOULD go. It was dry-run-by-default while the table held ~18 GB of
+ *    history nobody had reviewed; the rest of the safety list below is unchanged.
  *  - Only TERMINAL batches: imported, completed, imported_with_errors, rejected, failed, validation_failed.
  *    Never uploaded / validated / processing — a validated batch is pending import or approval and its rows are
  *    the work still to be done.
@@ -35,7 +37,8 @@ const RUN_BUDGET_MS = 45 * 60 * 1000;
 export type RetentionMode = "dry_run" | "execute";
 
 export function retentionMode(raw: string | undefined = process.env.UPLOAD_BATCH_RETENTION_MODE): RetentionMode {
-  return raw === "execute" ? "execute" : "dry_run";
+  // Deletion is the default; only an explicit "dry_run" turns it off (see the header comment).
+  return raw === "dry_run" ? "dry_run" : "execute";
 }
 
 export interface Policy {
@@ -175,7 +178,7 @@ export async function runUploadBatchRetention(mode: RetentionMode = retentionMod
     }
     logger.info(
       { worker: "upload-batch-retention", mode, considered: candidates.length, due: due.length, byType: Object.fromEntries(byType) },
-      "DRY RUN — nothing deleted. Set UPLOAD_BATCH_RETENTION_MODE=execute to purge.",
+      "DRY RUN — nothing deleted. Unset UPLOAD_BATCH_RETENTION_MODE (or set it to execute) to purge.",
     );
     return { mode, due: due.length, batchesPurged: 0, rowsDeleted: 0 };
   }

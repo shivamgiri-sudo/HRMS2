@@ -326,7 +326,7 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startRetentionCron(); return Promise.resolve(); },
   },
   {
-    // Dry run unless UPLOAD_BATCH_RETENTION_MODE=execute; see upload-batch-retention.worker.ts.
+    // Purges by default (7-day retention); UPLOAD_BATCH_RETENTION_MODE=dry_run turns deletion off. See upload-batch-retention.worker.ts.
     name: "upload-batch-retention",
     start: () => { startUploadBatchRetentionCron(); return Promise.resolve(); },
   },
