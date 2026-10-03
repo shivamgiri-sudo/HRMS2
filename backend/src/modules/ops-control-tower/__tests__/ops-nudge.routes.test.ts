@@ -10,6 +10,8 @@ const m = vi.hoisted(() => ({
   nudgeBranchPending: vi.fn(),
   enrich: vi.fn(),
   loader: vi.fn(),
+  issueLink: vi.fn(),
+  audit: vi.fn(),
 }));
 
 vi.mock('../../../middleware/authMiddleware.js', () => ({
@@ -28,6 +30,7 @@ vi.mock('../ops-control-tower.logic.js', async (orig) => ({
   ...(await orig<typeof import('../ops-control-tower.logic.js')>()),
   scopeSummaryToBranches: (x: unknown) => x,
 }));
+vi.mock('../../../shared/auditLog.js', () => ({ logSensitiveAction: (...a: unknown[]) => m.audit(...a) }));
 vi.mock('../../../shared/accessGuard.js', () => ({ hasRole: vi.fn(async () => m.fullTower) }));
 vi.mock('../ops-control-tower.service.js', () => ({
   getOpsControlTowerSummary: vi.fn(),
@@ -42,6 +45,7 @@ vi.mock('../ops-nudge.service.js', () => ({
   nudgeEmployee: m.nudgeEmployee,
   nudgeBranchPending: m.nudgeBranchPending,
   enrichDetailRows: m.enrich,
+  issueOnboardingLink: m.issueLink,
   whatsappConfigured: () => false,
 }));
 
@@ -134,5 +138,40 @@ describe('payroll_hr-only callers', () => {
     expect((await request(app).post('/api/ops-control-tower/nudge/bulk').send({ branchId: B1, issue: 'docs-pending' })).status).toBe(403);
     expect(m.nudgeEmployee).not.toHaveBeenCalled();
     expect(m.nudgeBranchPending).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /onboarding-link', () => {
+  const link = { link: 'https://hrms.test/onboard-full?token=t', expiresAt: '2026-10-06T00:00:00.000Z' };
+  beforeEach(() => { m.issueLink.mockResolvedValue(link); });
+
+  it('validates input', async () => {
+    expect((await request(app).post('/api/ops-control-tower/onboarding-link').send({ employeeId: 'x', issue: 'bgv-pending' })).status).toBe(400);
+    expect((await request(app).post('/api/ops-control-tower/onboarding-link').send({ employeeId: EMP, issue: 'fnf-pending' })).status).toBe(400);
+  });
+  it('403 outside branch scope, issues nothing', async () => {
+    m.allowed = [B2];
+    const r = await request(app).post('/api/ops-control-tower/onboarding-link').send({ employeeId: EMP, issue: 'bgv-pending' });
+    expect(r.status).toBe(403);
+    expect(m.issueLink).not.toHaveBeenCalled();
+  });
+  it('payroll_hr-only may issue for bank issues but not others', async () => {
+    m.fullTower = false;
+    expect((await request(app).post('/api/ops-control-tower/onboarding-link').send({ employeeId: EMP, issue: 'bgv-pending' })).status).toBe(403);
+    expect((await request(app).post('/api/ops-control-tower/onboarding-link').send({ employeeId: EMP, issue: 'penny-drop-missing' })).status).toBe(200);
+  });
+  it('409 when the employee has nothing to link to', async () => {
+    m.issueLink.mockResolvedValue(null);
+    expect((await request(app).post('/api/ops-control-tower/onboarding-link').send({ employeeId: EMP, issue: 'bgv-pending' })).status).toBe(409);
+    expect(m.audit).not.toHaveBeenCalled();
+  });
+  it('returns the link and audits who issued it, without the token in the audit record', async () => {
+    m.allowed = [B1];
+    const r = await request(app).post('/api/ops-control-tower/onboarding-link').send({ employeeId: EMP, issue: 'digilocker-pending' });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual(link);
+    const a = m.audit.mock.calls[0][0];
+    expect(a).toMatchObject({ action_type: 'ONBOARDING_LINK_ISSUED', entity_id: EMP, actor_user_id: 'u1' });
+    expect(JSON.stringify(a.change_summary)).not.toContain('token=');
   });
 });

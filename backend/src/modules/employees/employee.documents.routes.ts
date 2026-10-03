@@ -13,6 +13,7 @@ import type { RowDataPacket } from "mysql2";
 import { selfOrAdminHr, hasRole, getEmployeeForUser } from "../../shared/accessGuard.js";
 import { docCategoryFor, isSelfServiceDocType, isOwnerReadableDocType } from "./employee-document-category.js";
 import { guardEmployeeScope } from "./employeeScopeGuard.js";
+import { form16BulkRouter } from "./form16-bulk.routes.js";
 import { registerUpload } from "../document-vault/documentVault.service.js";
 
 // Use process.cwd() — resolves to backend/ in both dev and production
@@ -53,6 +54,9 @@ const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
 router.use(requireAuth);
+
+// Form 16 bulk upload (TRACES PDFs matched by PAN). Must be mounted before the /:employeeId routes.
+router.use("/form16", form16BulkRouter);
 
 // GET /api/employee-docs/:employeeId
 // The owner sees status only (type, name, verified, date). file_url is withheld from them: stored

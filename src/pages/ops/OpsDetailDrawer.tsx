@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Download, ExternalLink, MessageCircle, Wrench } from "lucide-react";
+import { Copy, Download, ExternalLink, MessageCircle, Wrench } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -50,6 +50,17 @@ function downloadCsv(name: string, csv: string) {
   URL.revokeObjectURL(url);
 }
 
+/** Asks the server for a fresh onboarding link and copies it, so HR can read it out or paste it into a chat. */
+async function copyOnboardingLink(employeeId: string, issue: DetailBlockKey) {
+  try {
+    const out = await hrmsApi.post<{ link: string; expiresAt: string }>(`${BASE}/onboarding-link`, { employeeId, issue });
+    await navigator.clipboard.writeText(out.link);
+    toast.success(`Link copied — valid until ${formatDate(Date.parse(out.expiresAt))}`);
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : "Could not create the link");
+  }
+}
+
 export function DetailRowItem({ block, row, supported, pending, onNotify }: {
   block: DetailBlockKey; row: Row; supported: boolean; pending: boolean; onNotify: (employeeId: string) => void;
 }) {
@@ -85,7 +96,11 @@ export function DetailRowItem({ block, row, supported, pending, onNotify }: {
         {supported && (
           <>
             <span className={neglected(row) ? "font-medium text-red-700" : "text-slate-500"}>{nudgeLabel(row.nudge)}</span>
-            <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-xs" disabled={pending || row.nudge?.due === false}
+            <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" title="Create a fresh onboarding link and copy it"
+              onClick={() => void copyOnboardingLink(row.employeeId, selected.block)}>
+              <Copy className="mr-1 h-3 w-3" aria-hidden /> Copy link
+            </Button>
+            <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={pending || row.nudge?.due === false}
               title={row.nudge?.due === false ? "Notified in the last 24h" : "Send WhatsApp reminder"}
               onClick={() => onNotify(row.employeeId)}>
               <MessageCircle className="mr-1 h-3 w-3" /> {(row.nudge?.count ?? 0) > 0 ? "Resend" : "Notify"}

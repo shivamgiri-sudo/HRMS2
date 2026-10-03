@@ -82,6 +82,12 @@ describe("drawer row", () => {
     expect(out).toContain("/employees/e1/complete-profile?step=documents");
   });
 
+  it("nudgeable rows offer Copy link next to Notify; non-nudgeable rows do not", () => {
+    expect(html("docs-pending")).toContain("Copy link");
+    const plain = renderToStaticMarkup(<MemoryRouter><DetailRowItem block="fnf-pending" row={row} supported={false} pending={false} onNotify={() => undefined} /></MemoryRouter>);
+    expect(plain).not.toContain("Copy link");
+  });
+
   it("bank row's primary action opens the Bank step", () => {
     expect(html("account-details-missing")).toContain("/employees/e1/complete-profile?step=bank");
   });

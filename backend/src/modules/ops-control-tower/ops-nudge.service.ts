@@ -176,6 +176,23 @@ export async function ensureLiveOnboardingToken(
   return res.affectedRows > 0 ? fresh : null;
 }
 
+/**
+ * A working onboarding link for one employee, for HR to share by hand (call, chat). Reuses a live token,
+ * otherwise re-issues one (72h). Null when the employee has no onboarding record to link to, or has been
+ * marked as not joining.
+ */
+export async function issueOnboardingLink(employeeId: string, nowMs = Date.now()): Promise<{ link: string; expiresAt: string } | null> {
+  const r = await loadRecipient(employeeId);
+  if (!r || r.candidate_status === "not_joining") return null;
+  const token = await ensureLiveOnboardingToken(r, nowMs);
+  if (!token) return null;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT onboarding_token_expires_at AS exp FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1", [r.candidate_id],
+  );
+  const exp = rows[0]?.exp ? new Date(rows[0].exp as string) : new Date(nowMs + REISSUED_LINK_TTL_MS);
+  return { link: `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${token}`, expiresAt: exp.toISOString() };
+}
+
 export async function nudgeEmployee(input: {
   employeeId: string;
   issue: NudgeableIssue;

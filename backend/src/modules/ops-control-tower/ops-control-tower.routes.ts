@@ -9,6 +9,7 @@ import {
 } from "../../shared/dashboardScope.js";
 import { blockAllowedForPayrollOnly, scopeSummaryToBranches } from "./ops-control-tower.logic.js";
 import { hasRole } from "../../shared/accessGuard.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 import {
   getOpsControlTowerSummary,
   getAttendanceMismatchDetail,
@@ -27,6 +28,7 @@ import {
 } from "./ops-control-tower.service.js";
 import {
   employeeBranchId,
+  issueOnboardingLink,
   enrichDetailRows,
   nudgeBranchPending,
   nudgeEmployee,
@@ -211,6 +213,54 @@ opsControlTowerRouter.post("/nudge", requireRole(...NUDGE_ROLES), async (req, re
     res.json(await nudgeEmployee({ employeeId, issue, trigger: "manual", actorId: (req as any).authUser?.id ?? null }));
   } catch (err) {
     fail(res, err, "send the nudge");
+  }
+});
+
+// POST /api/ops-control-tower/onboarding-link { employeeId, issue } - a fresh link HR can hand over directly.
+// Same roles, branch scope and per-role section limits as a nudge, plus an audit entry: the link lets the
+// holder act on the joiner's onboarding record, so every issue is traceable.
+opsControlTowerRouter.post("/onboarding-link", requireRole(...NUDGE_ROLES), async (req, res) => {
+  try {
+    const { employeeId, issue } = req.body ?? {};
+    if (typeof employeeId !== "string" || !ID_PATTERN.test(employeeId)) {
+      res.status(400).json({ error: "employeeId must be a valid id" });
+      return;
+    }
+    if (typeof issue !== "string" || !isNudgeableIssue(issue)) {
+      res.status(400).json({ error: "issue is not nudgeable" });
+      return;
+    }
+    if (!(await mayUseBlock(req, issue))) {
+      res.status(403).json({ error: "Forbidden: this issue is not available to your role" });
+      return;
+    }
+    const branchId = await employeeBranchId(employeeId);
+    if (branchId === null) {
+      res.status(404).json({ error: "Employee not found" });
+      return;
+    }
+    const allowed = await allowedBranchIds(req);
+    if (allowed !== null && !allowed.has(branchId)) {
+      res.status(403).json({ error: "Forbidden: this employee is outside your branch / assigned scope" });
+      return;
+    }
+    const issued = await issueOnboardingLink(employeeId);
+    if (!issued) {
+      res.status(409).json({ error: "This employee has no onboarding link to issue (no onboarding record, or marked not joining)" });
+      return;
+    }
+    void logSensitiveAction({
+      actor_user_id: (req as any).authUser?.id,
+      action_type: "ONBOARDING_LINK_ISSUED",
+      module_key: "ops-control-tower",
+      entity_type: "employee",
+      entity_id: employeeId,
+      change_summary: { issue, expires_at: issued.expiresAt },
+      req: req as any,
+    });
+    res.json(issued);
+  } catch (err) {
+    fail(res, err, "issue the onboarding link");
   }
 });
 

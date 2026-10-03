@@ -21,7 +21,7 @@ vi.mock('../ops-control-tower.service.js', () => ({
   getBgvPendingDetail: vi.fn(async () => []),
 }));
 
-import { nudgeEmployee, bulkNudge, getNudgeStats, runAutoNudgeSweep } from '../ops-nudge.service.js';
+import { nudgeEmployee, bulkNudge, getNudgeStats, runAutoNudgeSweep, issueOnboardingLink } from '../ops-nudge.service.js';
 
 const NOW = new Date('2026-10-02T10:00:00Z').getTime();
 let recipient: Record<string, unknown> | null;
@@ -276,3 +276,29 @@ describe('shared ledger with payroll pendency emails', () => {
     expect(m.get('e2')?.count).toBe(1);
   });
 });
+
+describe('issueOnboardingLink', () => {
+  it('reuses a live token without writing', async () => {
+    const out = await issueOnboardingLink('e1', NOW);
+    expect(out?.link).toBe('https://hrms.test/onboard-full?token=tok');
+    expect(updates).toHaveLength(0);
+  });
+  it('re-issues an expired token (72h) and returns the new link', async () => {
+    recipient = { ...recipient!, onboarding_token_expires_at: '2026-01-01 00:00:00' };
+    const out = await issueOnboardingLink('e1', NOW);
+    expect(updates).toHaveLength(1);
+    expect(out?.link).toContain(`token=${(updates[0] as string[])[0]}`);
+  });
+  it('null for an unknown employee, a not-joining candidate, or one with no onboarding record', async () => {
+    recipient = null;
+    expect(await issueOnboardingLink('e1', NOW)).toBeNull();
+    recipient = { ...baseRecipient(), candidate_status: 'not_joining' };
+    expect(await issueOnboardingLink('e1', NOW)).toBeNull();
+    recipient = { ...baseRecipient(), candidate_id: null, onboarding_token: null };
+    expect(await issueOnboardingLink('e1', NOW)).toBeNull();
+  });
+});
+function baseRecipient() {
+  return { full_name: 'Asha Rao', branch_id: 'b1', emp_mobile: '9999999999', candidate_id: 'c1', cand_mobile: '8888888888',
+    candidate_status: null, onboarding_token: 'tok', onboarding_token_expires_at: null, days_open: 4 };
+}
