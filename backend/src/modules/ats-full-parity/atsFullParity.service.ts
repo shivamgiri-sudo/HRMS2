@@ -101,6 +101,22 @@ function normalizeText(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+/** Date of birth from the intake payload as YYYY-MM-DD, or null if absent/unparseable. The form
+ *  webhook never wrote it, so date_of_birth was blank for every candidate registered this way. */
+export function intakeDateOfBirth(input: Record<string, unknown>): string | null {
+  const raw = normalizeText(input.dateOfBirth || input.DateOfBirth || input.dob || input.DOB || input["Date of Birth"]);
+  if (!raw) return null;
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const dmy = raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
+  const parts = iso ? [iso[1], iso[2], iso[3]] : dmy ? [dmy[3], dmy[2].padStart(2, "0"), dmy[1].padStart(2, "0")] : null;
+  if (!parts) return null;
+  const [y, m, d] = parts;
+  const date = new Date(`${y}-${m}-${d}T00:00:00Z`);
+  const valid = !Number.isNaN(date.getTime()) && date.toISOString().startsWith(`${y}-${m}-${d}`);
+  const year = Number(y);
+  return valid && year >= 1940 && year <= new Date().getUTCFullYear() - 14 ? `${y}-${m}-${d}` : null;
+}
+
 function rowText(row: CandidateRow, key: string): string {
   return normalizeText(row[key]);
 }
@@ -1443,8 +1459,8 @@ export const atsFullParityService = {
     if (existing.length) {
       const rec = existing[0];
       await db.execute(
-        `UPDATE ats_candidate SET full_name=?, email=?, address=?, education=?, experience=?, gender=?, role_applied=?, branch_text=?, applied_for_branch=?, applied_for_process=?, recruiter_selected=?, recruiter_id=?, recruiter_assigned_name=?, recruiter_email=?, recruiter_mobile=?, q_token=COALESCE(q_token, ?), status=COALESCE(status, 'Waiting'), updated_at=NOW() WHERE id=?`,
-        [fullName || rec.full_name, input.email || input.Email || rec.email, input.address || input.Address || rec.address, input.education || input.Education || rec.education, input.experience || input.Experience || rec.experience, input.gender || input.Gender || rec.gender, role, branch, branch, role, input.recruiterSelected || input.RecruiterSelected || null, recruiter?.id ?? null, recruiter?.name ?? null, recruiter?.email ?? null, recruiter?.mobile ?? null, qToken, rec.id]
+        `UPDATE ats_candidate SET full_name=?, email=?, address=?, education=?, experience=?, gender=?, role_applied=?, branch_text=?, applied_for_branch=?, applied_for_process=?, recruiter_selected=?, recruiter_id=?, recruiter_assigned_name=?, recruiter_name=COALESCE(NULLIF(TRIM(recruiter_name), ''), ?), recruiter_email=?, recruiter_mobile=?, q_token=COALESCE(q_token, ?), status=COALESCE(status, 'Waiting'), updated_at=NOW() WHERE id=?`,
+        [fullName || rec.full_name, input.email || input.Email || rec.email, input.address || input.Address || rec.address, input.education || input.Education || rec.education, input.experience || input.Experience || rec.experience, input.gender || input.Gender || rec.gender, role, branch, branch, role, input.recruiterSelected || input.RecruiterSelected || null, recruiter?.id ?? null, recruiter?.name ?? null, recruiter?.name ?? null, recruiter?.email ?? null, recruiter?.mobile ?? null, qToken, rec.id]
       );
       await audit("INTAKE_DUPLICATE_UPDATED", rec.candidate_code || rec.id, `Existing active candidate updated by ${actor}`);
       return (await candidateSelect("c.id = ?", [rec.id]))[0];
@@ -1453,9 +1469,9 @@ export const atsFullParityService = {
     const code = `CND-${Date.now().toString(36).toUpperCase()}`;
     await db.execute(
       `INSERT INTO ats_candidate
-        (id, candidate_code, full_name, mobile, email, address, education, experience, gender, applied_for_branch, applied_for_process, branch_text, role_applied, recruiter_selected, q_token, created_date, created_time, sourcing_channel, recruiter_id, recruiter_assigned_name, recruiter_email, recruiter_mobile, status, current_stage, profile_status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), 'Walk-In', ?, ?, ?, ?, 'Waiting', 'New', 'registered', NULL)`,
-      [id, code, fullName, mobile, input.email || input.Email || null, input.address || input.Address || null, input.education || input.Education || null, input.experience || input.Experience || null, input.gender || input.Gender || null, branch, role, branch, role, input.recruiterSelected || input.RecruiterSelected || null, qToken, recruiter?.id ?? null, recruiter?.name ?? null, recruiter?.email ?? null, recruiter?.mobile ?? null]
+        (id, candidate_code, full_name, mobile, email, address, education, experience, gender, applied_for_branch, applied_for_process, branch_text, role_applied, recruiter_selected, q_token, created_date, created_time, sourcing_channel, recruiter_id, recruiter_assigned_name, recruiter_name, recruiter_email, recruiter_mobile, status, current_stage, profile_status, created_by, date_of_birth, source_details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), CURTIME(), 'Walk-In', ?, ?, ?, ?, ?, 'Waiting', 'New', 'registered', NULL, ?, ?)`,
+      [id, code, fullName, mobile, input.email || input.Email || null, input.address || input.Address || null, input.education || input.Education || null, input.experience || input.Experience || null, input.gender || input.Gender || null, branch, role, branch, role, input.recruiterSelected || input.RecruiterSelected || null, qToken, recruiter?.id ?? null, recruiter?.name ?? null, recruiter?.name ?? null, recruiter?.email ?? null, recruiter?.mobile ?? null, intakeDateOfBirth(input), `${actor} intake`]
     );
     if (recruiter?.id) {
       // Optimistic locking: only increment if under capacity

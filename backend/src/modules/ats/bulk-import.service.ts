@@ -550,8 +550,9 @@ async function importOneCandidate(
     `INSERT INTO ats_candidate
       (id, candidate_code, full_name, mobile, email, gender,
        applied_for_process, applied_for_branch, current_stage, remarks,
-       walk_in_date, created_at, updated_at, active_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)`,
+       walk_in_date, created_at, updated_at, active_status,
+       created_by, sourcing_channel, recruiter_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1, ?, ?, ?)`,
     [
       candidateDbId,
       row.CandidateID?.trim() ?? `IMP-${randomUUID().slice(0, 8).toUpperCase()}`,
@@ -565,6 +566,11 @@ async function importOneCandidate(
       row["Rejection VOC"] ?? row.Round1_VOC ?? null,
       parseHistoricalDate(row.CreatedDate) ?? null,
       createdAt,
+      actorUserId,
+      // A bulk load that recorded no source left the column blank for every row of the file, which
+      // reports then showed as an unspecified channel (32k rows from the June 2026 load).
+      "Bulk Import",
+      row.RecruiterAssignedName?.trim() || null,
     ]
   );
 
