@@ -24,6 +24,7 @@ vi.mock("../../../db/mysql.js", () => ({ db: { execute, getConnection: vi.fn() }
 import {
   resolveProfessionalTax, buildStatutoryRow, getPtFromSlab,
   isProfessionalTaxActiveForMonth, PT_REMOVED_FROM_MONTH,
+  holidayCreditAfterAttendanceGate, DEFAULT_HOLIDAY_MIN_WORKED_DAYS,
 } from "../payrollCalculate.service.js";
 
 describe("professional tax is no longer resolved or applied (removed 2026-09-11)", () => {
@@ -130,5 +131,31 @@ describe("professional tax stays in force for months BEFORE the removal month", 
     await expect(getPtFromSlab("Gujarat", 59140, "2026-10")).resolves.toBe(0);
     await expect(getPtFromSlab("Gujarat", 59140)).resolves.toBe(0);
     expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("holiday credit needs more than 10 worked days (db_bill's rule, Aug 2026)", () => {
+  // db_bill: 0 of 108 NOIDA/HO employees with <= 10 days worked got the 15 Aug holiday;
+  // worked 10.0 -> none (5/5), worked 10.5 -> credited.
+  it("defaults to exceeding 10 days", () => {
+    expect(DEFAULT_HOLIDAY_MIN_WORKED_DAYS).toBe(10);
+  });
+
+  it("withholds the holiday at or below the threshold and grants it above", () => {
+    expect(holidayCreditAfterAttendanceGate(1, 0, 10)).toBe(0);
+    expect(holidayCreditAfterAttendanceGate(1, 9.5, 10)).toBe(0);
+    expect(holidayCreditAfterAttendanceGate(1, 10, 10)).toBe(0);
+    expect(holidayCreditAfterAttendanceGate(1, 10.5, 10)).toBe(1);
+    expect(holidayCreditAfterAttendanceGate(2, 25, 10)).toBe(2);
+  });
+
+  it("a threshold of 0 (or invalid) switches the rule off", () => {
+    expect(holidayCreditAfterAttendanceGate(1, 0, 0)).toBe(1);
+    expect(holidayCreditAfterAttendanceGate(1, 0, -1)).toBe(1);
+    expect(holidayCreditAfterAttendanceGate(1, 0, Number.NaN)).toBe(1);
+  });
+
+  it("never invents a holiday", () => {
+    expect(holidayCreditAfterAttendanceGate(0, 31, 10)).toBe(0);
   });
 });
