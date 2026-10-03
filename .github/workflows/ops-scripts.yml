@@ -60,6 +60,7 @@ on:
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
           - salary-rows-review
+          - dbbill-validate-flagged
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -230,6 +231,10 @@ jobs:
             salary-rows-review)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/salary-rows-review.ts
+              ;;
+            dbbill-validate-flagged)
+              # Read-only in both modes: SELECTs against HRMS and db_bill only.
+              npx tsx scripts/dbbill-validate-flagged.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
