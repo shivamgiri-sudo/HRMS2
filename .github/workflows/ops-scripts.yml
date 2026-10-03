@@ -57,6 +57,7 @@ on:
           - holiday-mapping-audit
           - kit-esign-diagnose
           - running-salary-diagnose
+          - loan-backfill-duplicate-cancel
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -214,6 +215,11 @@ jobs:
             running-salary-diagnose)
               # Read-only in both modes: SELECTs and a pure calculation, no writes.
               npx tsx scripts/running-salary-diagnose.ts MAS47814
+              ;;
+            loan-backfill-duplicate-cancel)
+              # Dry-runs unless given --apply. Apply cancels (soft) only exact duplicates of a synced loan.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/loan-backfill-duplicate-cancel.ts $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
