@@ -165,7 +165,10 @@ export async function sendOnboardingToken(
   let emailError: string | undefined;
   if (sendTo) {
     try {
-      await withDeliveryTimeout(
+      // send() reports failure as {ok:false} instead of throwing, and withDeliveryTimeout resolves null on
+      // timeout — both used to fall through to emailSent = true, so HR was told "link resent" when nothing
+      // had gone out.
+      const result = await withDeliveryTimeout(
         sendOnboardingTokenEmail({
           candidateId,
           to: sendTo,
@@ -174,7 +177,11 @@ export async function sendOnboardingToken(
         }),
         `email delivery for ${candidateId}`,
       );
-      emailSent = true;
+      if (result === null) emailError = 'The email server did not respond in time — the email may not have been sent';
+      else if (result.skipped) emailError = 'Email is not configured on the server (SMTP) — nothing was sent';
+      else if (!result.ok) emailError = result.error ?? 'Email delivery failed';
+      else emailSent = true;
+      if (emailError) console.error('[onboarding] email not delivered for', candidateId, emailError);
     } catch (emailErr) {
       emailError = emailErr instanceof Error ? emailErr.message : String(emailErr);
       console.error('[onboarding] email delivery failed for', candidateId, emailError);

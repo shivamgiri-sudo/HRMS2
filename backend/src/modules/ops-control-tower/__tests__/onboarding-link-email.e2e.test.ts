@@ -9,11 +9,13 @@ import { fileURLToPath } from "node:url";
 const h = vi.hoisted(() => ({
   dbExecute: vi.fn(),
   sendMail: vi.fn(),
-  env: { FRONTEND_URL: "https://hrms.test", SMTP_USER: "u", SMTP_PASS: "p", SMTP_FROM: "hr@test", SMTP_HOST: "smtp", SMTP_PORT: "587" } as Record<string, string>,
+  createTransport: vi.fn(),
+  env: { FRONTEND_URL: "https://hrms.test", SMTP_USER: "u", SMTP_PASS: "ab cd ef", SMTP_FROM: "hr@test", SMTP_HOST: "smtp", SMTP_PORT: "587" } as Record<string, string>,
 }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: h.dbExecute, query: h.dbExecute } }));
 vi.mock("../../../config/env.js", () => ({ env: h.env }));
-vi.mock("nodemailer", () => ({ default: { createTransport: () => ({ sendMail: h.sendMail }) } }));
+h.createTransport.mockImplementation(() => ({ sendMail: h.sendMail }));
+vi.mock("nodemailer", () => ({ default: { createTransport: (...a: unknown[]) => h.createTransport(...a) } }));
 vi.mock("../../communication/providers/provider.factory.js", () => ({
   providerFactory: { getProvider: () => ({ send: vi.fn(), isConfigured: () => true }) },
 }));
@@ -34,7 +36,7 @@ let emailLog: unknown[][];
 
 beforeEach(() => {
   h.dbExecute.mockReset(); h.sendMail.mockReset(); emailLog = [];
-  h.env.SMTP_USER = "u"; h.env.SMTP_PASS = "p";
+  h.env.SMTP_USER = "u"; h.env.SMTP_PASS = "ab cd ef";
   bridge = { candidate_id: "c1", employee_id: "e1", token: "old-token", expires: new Date(NOW + 5 * 86_400_000) };
   cand = { email: "asha@example.com", mobile: "9999999999", status: null };
   emp = { full_name: "Asha <Rao>", personal_email: "asha.personal@example.com", email: null, mobile: "9999999999" };
@@ -153,6 +155,23 @@ describe("Ops Email link — delivery and link validity", () => {
     const out = await emailOnboardingLink("e1", NOW);
     expect(out).toEqual({ status: "failed", error: "421 try again later" });
     expect(emailLog[0]).toContain("failed");
+  });
+
+  it("uses the shared pooled mailer: app-password spaces stripped, Gmail 421 retried, then delivered", async () => {
+    h.sendMail.mockRejectedValueOnce(Object.assign(new Error("421-4.3.0 Temporary System Problem"), { responseCode: 421 }));
+    const out = await emailOnboardingLink("e1", NOW);
+    expect(out.status).toBe("sent");
+    expect(h.sendMail).toHaveBeenCalledTimes(2);
+    const opts = h.createTransport.mock.calls.map((c) => c[0] as { auth: { pass: string }; pool?: boolean }).find((o) => o.pool)!;
+    expect(opts.auth.pass).toBe("abcdef");
+    expect(opts.pool).toBe(true);
+  }, 20_000);
+
+  it("a permanent 5xx (bad auth) is not retried and is reported", async () => {
+    h.sendMail.mockRejectedValue(Object.assign(new Error("535 5.7.8 Username and Password not accepted"), { responseCode: 535 }));
+    const out = await emailOnboardingLink("e1", NOW);
+    expect(out).toEqual({ status: "failed", error: "535 5.7.8 Username and Password not accepted" });
+    expect(h.sendMail).toHaveBeenCalledTimes(1);
   });
 
   it("HTML-escapes the employee name in the email body", async () => {

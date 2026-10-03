@@ -69,7 +69,6 @@ import { startHelpdeskSlaCron } from "./modules/helpdesk/helpdesk-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 import { startOpsNudgeScheduler } from "./modules/ops-control-tower/ops-nudge.cron.js";
-import { startOpsSummaryWarmer } from "./modules/ops-control-tower/ops-summary-warmer.js";
 import { startAtsDailyReportScheduler } from "./modules/ats/ats-daily-report.cron.js";
 import { startBranchActivityReportScheduler } from "./modules/ats/branch-activity-report/scheduler.js";
 import { startBranchHealthReportScheduler } from "./modules/branch-health-report/scheduler.js";
@@ -185,6 +184,8 @@ function startServer() {
     setTimeout(() => { void import("./modules/process-operations/feed-health.service.js").then((m) => m.startFeedHealthCacheWarmer()); }, 200_000).unref();
     // The Onfido Overview and Analyst reports take 20-26s cold; keep them in the response cache so the dashboard's first load is instant.
     setTimeout(() => { void import("./modules/onfido-process/onfido-cache-warmer.js").then((m) => m.startOnfidoCacheWarmer()); }, 240_000).unref();
+    // Ops Control Tower summary takes 12-40s cold; keep the API's own cache warm so the page opens instantly (OPS_SUMMARY_WARM=false disables).
+    setTimeout(() => { void import("./modules/ops-control-tower/ops-summary-warmer.js").then((m) => m.startOpsSummaryWarmer()); }, 30_000).unref();
     // ATS dashboards aggregate ~40k wide rows (15-20s cold); warm the cache after boot so the first visit is instant.
     setTimeout(() => { void import("./modules/ats/dashboard.warm.js").then((m) => m.warmAtsDashboards()); }, 260_000).unref();
     // Role dashboards: compute the org-wide insights once after the other warmers, one dashboard at a time,
@@ -350,8 +351,6 @@ function startServer() {
         }
         // No-op unless OPS_AUTO_NUDGE_ENABLED=true; also a no-op per run until WhatsApp is configured.
         startOpsNudgeScheduler();
-        // Keeps the Ops Control Tower summary warm so the page opens instantly (OPS_SUMMARY_WARM=false disables).
-        startOpsSummaryWarmer();
         // No-op unless ATS_BRANCH_ACTIVITY_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
         startBranchActivityReportScheduler();
         // No-op unless BRANCH_HEALTH_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).

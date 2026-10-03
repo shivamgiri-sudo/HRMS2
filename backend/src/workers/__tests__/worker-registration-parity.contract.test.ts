@@ -32,7 +32,7 @@ describe("worker registration parity", () => {
 
   /**
    * Starters the API process owns in EVERY topology, so all-workers.ts must not
-   * carry them. The two cache warmers fill in-memory caches that the API's own
+   * carry them. The cache warmers fill in-memory caches that the API's own
    * request handlers read — warmed in the workers process they would load the DB
    * for a cache nobody serves from. Meta lead sync was deliberately placed on the
    * API's WORKERS_PROCESS=external path (49f96b644); a second copy in the workers
@@ -44,6 +44,7 @@ describe("worker registration parity", () => {
   const API_PROCESS_OWNED = [
     "startFeedHealthCacheWarmer",
     "startOnfidoCacheWarmer",
+    "startOpsSummaryWarmer",
     "startMetaLeadSyncScheduler",
   ];
 

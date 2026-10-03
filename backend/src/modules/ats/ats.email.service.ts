@@ -17,7 +17,7 @@ type EmailType = 'registration' | 'selected' | 'rejected' | 'rejected_profession
                  'recruiter_notification' | 'selection_congratulations' | 'selection_letter' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval' | 'otp_verification' |
                  'joining_doc_reminder' | 'bank_resubmit_request' | 'bgv_address_link';
 
-interface SendResult { ok: boolean; error?: string }
+interface SendResult { ok: boolean; error?: string; /** true when nothing was sent because SMTP is not configured */ skipped?: boolean }
 
 const transporter = nodemailer.createTransport({
   host:   env.SMTP_HOST   || '',
@@ -58,7 +58,7 @@ async function send(
   if (!env.SMTP_USER || !env.SMTP_PASS) {
     console.warn(`[ATS-EMAIL] SMTP not configured - skipping ${type} to ${to} (candidate ${candidateId})`);
     await logEmail(candidateId, type, to, 'skipped', 'SMTP not configured');
-    return { ok: true };
+    return { ok: true, skipped: true };
   }
   const fromAddr = env.SMTP_FROM || env.SMTP_USER;
   const finalHtml = /<html[\s>]/i.test(html)
@@ -172,15 +172,12 @@ export async function sendRejectedEmail(params: {
   );
 }
 
-export async function sendOnboardingTokenEmail(params: {
-  candidateId: string; to: string; candidateName: string; onboardingLink: string;
-  /** Human text for how long the link works, e.g. "3 days"; defaults to the standard 15-day link. */
-  validFor?: string;
-}): Promise<SendResult> {
-  return send(
-    params.to,
-    'Complete Your Joining Formalities - MAS Callnet',
-    atsFrame({
+export function buildOnboardingTokenEmail(params: {
+  candidateName: string; onboardingLink: string; validFor?: string;
+}): { subject: string; html: string } {
+  return {
+    subject: 'Complete Your Joining Formalities - MAS Callnet',
+    html: atsFrame({
       eyebrow: "Candidate Onboarding",
       title: "Complete Your 10-Step Joining Form",
       body: `<p>Dear <strong>${escapeHtml(params.candidateName)}</strong>,</p>
@@ -193,9 +190,16 @@ export async function sendOnboardingTokenEmail(params: {
       actionUrl: params.onboardingLink,
       note: `This secure link is valid for ${params.validFor ?? "15 days"}. If it expires, ask your recruiter or HR to resend it.`,
     }),
-    params.candidateId,
-    'token_sent',
-  );
+  };
+}
+
+export async function sendOnboardingTokenEmail(params: {
+  candidateId: string; to: string; candidateName: string; onboardingLink: string;
+  /** Human text for how long the link works, e.g. "3 days"; defaults to the standard 15-day link. */
+  validFor?: string;
+}): Promise<SendResult> {
+  const mail = buildOnboardingTokenEmail(params);
+  return send(params.to, mail.subject, mail.html, params.candidateId, 'token_sent');
 }
 
 /**

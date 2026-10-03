@@ -8,7 +8,8 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../logger.js";
-import { sendOnboardingTokenEmail } from "../ats/ats.email.service.js";
+import { buildOnboardingTokenEmail } from "../ats/ats.email.service.js";
+import { emailService } from "../communication/email.service.js";
 import { providerFactory } from "../communication/providers/provider.factory.js";
 import {
   allBranches,
@@ -196,6 +197,9 @@ export async function issueOnboardingLink(employeeId: string, nowMs = Date.now()
   return { link: `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${token}`, expiresAt: exp.toISOString() };
 }
 
+/** How long the Ops "Email link" action waits for the mail server before reporting failure. */
+export const EMAIL_LINK_DEADLINE_MS = 25_000;
+
 export type EmailLinkResult =
   | { status: "sent"; sentTo: string }
   | { status: "no_link" | "no_email" | "not_found" }
@@ -219,24 +223,53 @@ export async function emailOnboardingLink(employeeId: string, nowMs = Date.now()
   if (!row) return { status: "not_found" };
   const to = String(row.cand_email || row.personal_email || row.emp_email || "").trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { status: "no_email" };
-  // ats.email.service's send() reports ok:true when SMTP is not configured (it only logs "skipped").
-  // A manual HR action must never say "sent" for that.
-  if (!env.SMTP_USER || !env.SMTP_PASS) return { status: "failed", error: "Email is not configured (SMTP)" };
+  // Sent through the shared mailer (the one payroll pendency reminders use): pooled, retries Gmail 421
+  // throttling, strips spaces from app passwords and refuses localhost links. The ATS mailer's own bare
+  // transport does none of that, and reports success when SMTP is unconfigured.
+  if (!emailService.isConfigured()) return { status: "failed", error: "Email is not configured (SMTP)" };
   const issued = await issueOnboardingLink(employeeId, nowMs);
   if (!issued) return { status: "no_link" };
   const hoursLeft = Math.max(1, Math.round((new Date(issued.expiresAt).getTime() - nowMs) / 3_600_000));
   const [cand] = await db.execute<RowDataPacket[]>(
     "SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1", [employeeId],
   );
-  const res = await sendOnboardingTokenEmail({
-    candidateId: String(cand[0]?.candidate_id ?? employeeId),
-    to,
+  const candidateId = String(cand[0]?.candidate_id ?? employeeId);
+  const mail = buildOnboardingTokenEmail({
     candidateName: String(row.full_name ?? ""),
     onboardingLink: issued.link,
     validFor: hoursLeft >= 48 ? `${Math.round(hoursLeft / 24)} days` : `${hoursLeft} hours`,
   });
-  if (!res.ok) return { status: "failed", error: res.error ?? "Email delivery failed" };
+  try {
+    // Hard deadline: an unreachable SMTP host would otherwise leave the request (and the button) hanging.
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        emailService.send({ to, subject: mail.subject, html: mail.html }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("The email server did not respond in time — try again shortly")), EMAIL_LINK_DEADLINE_MS);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    await logLinkEmail(candidateId, to, "failed", error);
+    return { status: "failed", error };
+  }
+  await logLinkEmail(candidateId, to, "sent");
   return { status: "sent", sentTo: to };
+}
+
+async function logLinkEmail(candidateId: string, to: string, status: "sent" | "failed", error?: string): Promise<void> {
+  try {
+    await db.execute(
+      `INSERT IGNORE INTO ats_email_log (id, candidate_id, email_type, sent_to, status, error_message) VALUES (UUID(), ?, 'token_sent', ?, ?, ?)`,
+      [candidateId, to, status, error?.slice(0, 500) ?? null],
+    );
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, candidateId }, "[ops-nudge] could not log onboarding link email");
+  }
 }
 
 const ESCALATION_ITEM = "OPS_NUDGE_ESCALATION";
