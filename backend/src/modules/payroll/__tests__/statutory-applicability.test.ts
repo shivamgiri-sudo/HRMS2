@@ -28,6 +28,7 @@ const {
   resolveStatutoryApplicabilityForPeriod,
   resolveStatutoryApplicability,
   summariseApplicability,
+  loadStatutoryNotApplicable,
 } = await import("../statutory-applicability.service.js");
 
 beforeEach(() => {
@@ -142,5 +143,37 @@ describe("summary keeps unresolved visible", () => {
     ];
     expect(summariseApplicability(rows, "pf")).toMatchObject({ applicable: 1, notApplicable: 0, unresolved: 1 });
     expect(summariseApplicability(rows, "esi")).toMatchObject({ applicable: 1, notApplicable: 1, unresolved: 0 });
+  });
+});
+
+describe("loadStatutoryNotApplicable - what the payroll ENGINE honours", () => {
+  // Aug 2026: db_bill deducts nothing for any employee it flags NO (ESIC 502/502, PF 313/313), yet
+  // HRMS deducted ESIC from 91 and PF from 12 of them. Only an explicit NO may switch a deduction
+  // off; YES / unreadable leave the engine's own wage rules alone.
+  it("returns only the employees explicitly flagged NOT applicable, per scheme", async () => {
+    billQuery.mockResolvedValue([
+      { EmpCode: "mas001 ", PFELig: "YES", ESIElig: "NO" },
+      { EmpCode: "MAS002", PFELig: "NO", ESIElig: "NO" },
+      { EmpCode: "MAS003", PFELig: "YES", ESIElig: "YES" },
+      { EmpCode: "MAS004", PFELig: "junk", ESIElig: "" },
+    ]);
+    const r = await loadStatutoryNotApplicable("2026-08");
+    expect([...(r?.esi ?? [])].sort()).toEqual(["MAS001", "MAS002"]);
+    expect([...(r?.pf ?? [])]).toEqual(["MAS002"]);
+  });
+
+  it("includes an approved HRMS opt-out for the month", async () => {
+    billQuery.mockResolvedValue([{ EmpCode: "MAS010", PFELig: "YES", ESIElig: "YES" }]);
+    execute
+      .mockResolvedValueOnce([[], []]) // employee_statutory_info
+      .mockResolvedValueOnce([[{ employee_code: "MAS010", override_type: "pf_opt_out" }], []]);
+    const r = await loadStatutoryNotApplicable("2026-08");
+    expect(r?.pf.has("MAS010")).toBe(true);
+    expect(r?.esi.has("MAS010")).toBe(false);
+  });
+
+  it("never throws: db_bill unreachable gives null so the run keeps its own rules", async () => {
+    billQuery.mockRejectedValue(new Error("ECONNREFUSED"));
+    await expect(loadStatutoryNotApplicable("2026-08")).resolves.toBeNull();
   });
 });

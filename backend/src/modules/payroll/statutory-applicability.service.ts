@@ -205,6 +205,42 @@ export async function resolveStatutoryApplicabilityForPeriod(
   return out;
 }
 
+/**
+ * The employees that PF / ESI explicitly do NOT apply to for a payroll month, for the payroll
+ * ENGINE to honour.
+ *
+ * The ruling above (db_bill's flags are authoritative) was only ever applied to the readiness
+ * screens; payrollCalculate decided on its own - ESIC from earned gross plus a continuity rule,
+ * PF from HRMS opt-outs alone. For August 2026 that deducted ESIC from 91 employees and PF from 12
+ * whom db_bill flags NO, and db_bill deducts nothing for any employee it flags NO (502/502 ESIC,
+ * 313/313 PF). Only an explicit NOT_APPLICABLE is returned: APPLICABLE or UNRESOLVED leaves the
+ * engine's own wage rules untouched, because db_bill deducts ESIC for a flagged-YES employee only
+ * while wages are inside the ceiling.
+ *
+ * Never throws. db_bill being unreachable must not stop a payroll run, so it returns null and the
+ * caller keeps today's behaviour (the HRMS opt-out overrides still apply on their own path).
+ */
+export async function loadStatutoryNotApplicable(
+  payrollMonth: string,
+): Promise<{ pf: Set<string>; esi: Set<string> } | null> {
+  try {
+    const all = await resolveStatutoryApplicabilityForPeriod(payrollMonth);
+    const pf = new Set<string>();
+    const esi = new Set<string>();
+    for (const [code, r] of all) {
+      if (r.pf.status === "NOT_APPLICABLE") pf.add(code);
+      if (r.esi.status === "NOT_APPLICABLE") esi.add(code);
+    }
+    return { pf, esi };
+  } catch (err) {
+    console.warn(
+      `[payroll] PF/ESI applicability for ${payrollMonth} could not be read, using the engine's own rules: `
+      + `${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
 /** The same answer for one employee. Convenience only — it resolves the whole period. */
 export async function resolveStatutoryApplicability(
   employeeCode: string,

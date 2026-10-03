@@ -9,6 +9,7 @@ import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
 // PT is off from PT_REMOVED_FROM_MONTH (below), so professional-tax-states.ts is consulted
 // again, but only when an EARLIER month is calculated.
 import { isProfessionalTaxExempt } from "./professional-tax-states.js";
+import { loadStatutoryNotApplicable } from "./statutory-applicability.service.js";
 import {
   EMPLOYMENT_END_DATE_SELECT,
   employmentWindowPredicate,
@@ -1157,6 +1158,12 @@ export async function calculatePayrollRunScoped(
 
   // All DB writes go through a single connection wrapped in a transaction so
   // that a crash mid-loop leaves the run fully rolled back rather than partially written.
+  // PF / ESI the payroll source (db_bill) or an HRMS opt-out says do not apply, read once per run
+  // and before the transaction opens, so a slow remote read never holds a connection.
+  const statutoryNotApplicable = await loadStatutoryNotApplicable(
+    String(run.run_month).slice(0, 7),
+  );
+
   const conn = await db.getConnection();
   await conn.beginTransaction();
 
@@ -2064,12 +2071,17 @@ export async function calculatePayrollRunScoped(
          AND (effective_from_month IS NULL OR effective_from_month <= ?)`,
         [emp.employee_id, run.run_month],
       );
-      const pfOptOut = (overrideRows as Array<{ override_type: string }>).some(
-        (r) => r.override_type === "pf_opt_out",
-      );
-      const esicOptOutDeclared = (
-        overrideRows as Array<{ override_type: string }>
-      ).some((r) => r.override_type === "esic_opt_out");
+      const empCodeKey = String(emp.employee_code ?? "").trim().toUpperCase();
+      // Not deducted when an approved HRMS opt-out exists OR the payroll source flags the scheme
+      // NOT applicable for the employee (statutory-applicability.service.ts).
+      const pfOptOut =
+        (overrideRows as Array<{ override_type: string }>).some(
+          (r) => r.override_type === "pf_opt_out",
+        ) || statutoryNotApplicable?.pf.has(empCodeKey) === true;
+      const esicOptOutDeclared =
+        (overrideRows as Array<{ override_type: string }>).some(
+          (r) => r.override_type === "esic_opt_out",
+        ) || statutoryNotApplicable?.esi.has(empCodeKey) === true;
 
       // ESI Act contribution-period rule (section 2(6A) / Reg 3):
       // Once covered at the start of a contribution period (Apr-Sep or Oct-Mar),
