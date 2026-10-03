@@ -72,3 +72,14 @@ export function buildNudgeMessage(
   lines.push('', '— MAS Callnet HR');
   return lines.join('\n');
 }
+
+/** After this many delivered nudges for one joiner and issue with the item still open, the branch head is told. */
+export const ESCALATE_AFTER_SENDS = 3;
+
+export function shouldEscalate(sentCount: number, alreadyEscalated: boolean): boolean {
+  return !alreadyEscalated && sentCount >= ESCALATE_AFTER_SENDS;
+}
+
+export function escalationTitle(name: string, issue: NudgeableIssue, sentCount: number): string {
+  return `${name} still needs to ${TASK_TEXT[issue]} after ${sentCount} reminders - please follow up`;
+}

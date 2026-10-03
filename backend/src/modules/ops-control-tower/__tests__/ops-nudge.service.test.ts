@@ -28,11 +28,14 @@ let recipient: Record<string, unknown> | null;
 let lastSent: string | null;
 let inserts: unknown[][];
 let updates: unknown[][];
+let sentCount = 1;
+let escalated = false;
+let workItems: unknown[][] = [];
 let bridgeAffected: number;
 
 beforeEach(() => {
   dbExecute.mockReset(); send.mockReset(); isConfigured.mockReset();
-  inserts = []; updates = []; bridgeAffected = 1;
+  inserts = []; updates = []; bridgeAffected = 1; sentCount = 1; escalated = false; workItems = [];
   recipient = { full_name: 'Asha Rao', branch_id: 'b1', emp_mobile: '9999999999', candidate_id: 'c1',
     cand_mobile: '8888888888', candidate_status: null, onboarding_token: 'tok', onboarding_token_expires_at: null, days_open: 4 };
   lastSent = null;
@@ -42,6 +45,9 @@ beforeEach(() => {
     if (sql.includes('FROM employees e')) return [recipient ? [recipient] : []];
     if (sql.includes('MAX(created_at) AS last_sent')) return [[{ last_sent: lastSent }]];
     if (sql.includes('INSERT INTO ops_nudge_log')) { inserts.push(params); return [{}]; }
+    if (sql.includes('COUNT(*) AS n FROM ops_nudge_log')) return [[{ n: sentCount }]];
+    if (sql.includes('FROM work_item WHERE item_type')) return [escalated ? [{ id: 'w' }] : []];
+    if (sql.includes('INSERT INTO work_item')) { workItems.push(params); return [{}]; }
     if (sql.includes('UPDATE ats_onboarding_bridge')) { updates.push(params); return [{ affectedRows: bridgeAffected }]; }
     return [[]];
   });
@@ -302,3 +308,34 @@ function baseRecipient() {
   return { full_name: 'Asha Rao', branch_id: 'b1', emp_mobile: '9999999999', candidate_id: 'c1', cand_mobile: '8888888888',
     candidate_status: null, onboarding_token: 'tok', onboarding_token_expires_at: null, days_open: 4 };
 }
+
+describe('escalation after repeated nudges', () => {
+  it('does nothing below the threshold', async () => {
+    sentCount = 2;
+    await call();
+    expect(workItems).toHaveLength(0);
+  });
+  it('raises one work item for the branch head at the third delivered nudge', async () => {
+    sentCount = 3;
+    await call();
+    expect(workItems).toHaveLength(1);
+    const p = workItems[0] as string[];
+    expect(p[0]).toBe('OPS_NUDGE_ESCALATION');
+    expect(p[1]).toContain('Asha Rao');
+    expect(p).toEqual(expect.arrayContaining(['digilocker-pending', 'e1', 'b1']));
+  });
+  it('does not raise a second one for the same joiner and issue', async () => {
+    sentCount = 5; escalated = true;
+    await call();
+    expect(workItems).toHaveLength(0);
+  });
+  it('a failing escalation never turns a delivered nudge into an error', async () => {
+    sentCount = 3;
+    const base = dbExecute.getMockImplementation()!;
+    dbExecute.mockImplementation(async (sql: string, params: unknown[]) => {
+      if (sql.includes('INSERT INTO work_item')) throw new Error('work_item missing');
+      return base(sql, params);
+    });
+    expect((await call()).status).toBe('sent');
+  });
+});

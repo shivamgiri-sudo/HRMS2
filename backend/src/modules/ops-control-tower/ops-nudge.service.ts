@@ -23,7 +23,9 @@ import {
   ageingBucket,
   buildNudgeMessage,
   cooldownState,
+  escalationTitle,
   isNudgeableIssue,
+  shouldEscalate,
   SHARED_PENDENCY_KIND,
   type AgeingBucket,
   type NudgeableIssue,
@@ -193,6 +195,33 @@ export async function issueOnboardingLink(employeeId: string, nowMs = Date.now()
   return { link: `${env.FRONTEND_URL || "http://localhost:5173"}/onboard-full?token=${token}`, expiresAt: exp.toISOString() };
 }
 
+const ESCALATION_ITEM = "OPS_NUDGE_ESCALATION";
+
+/**
+ * Once a joiner has been nudged ESCALATE_AFTER_SENDS times for the same open item, raise ONE work item for the
+ * branch head so a person follows up. Deduplicated per joiner + issue; a no-op when branch is unknown.
+ */
+export async function escalateIfStalled(a: { employeeId: string; branchId: string | null; name: string; issue: NudgeableIssue }): Promise<boolean> {
+  if (!a.branchId) return false;
+  const [sent] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM ops_nudge_log WHERE employee_id = ? AND issue_key = ? AND status = 'sent'`,
+    [a.employeeId, a.issue],
+  );
+  const sentCount = Number(sent?.[0]?.n ?? 0);
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM work_item WHERE item_type = ? AND entity_id = ? AND description = ? LIMIT 1`,
+    [ESCALATION_ITEM, a.employeeId, a.issue],
+  );
+  if (!shouldEscalate(sentCount, Array.isArray(existing) && existing.length > 0)) return false;
+  await db.execute(
+    `INSERT INTO work_item
+       (id, item_type, title, description, module_code, entity_type, entity_id, assigned_to_role, branch_id, priority, status, created_at)
+     VALUES (UUID(), ?, ?, ?, 'ops', 'employee', ?, 'branch_head', ?, 'high', 'pending', NOW())`,
+    [ESCALATION_ITEM, escalationTitle(a.name, a.issue, sentCount), a.issue, a.employeeId, a.branchId],
+  );
+  return true;
+}
+
 export async function nudgeEmployee(input: {
   employeeId: string;
   issue: NudgeableIssue;
@@ -233,6 +262,10 @@ export async function nudgeEmployee(input: {
     const res = await providerFactory.getProvider("whatsapp").send(mobile, "Joining formalities pending", body);
     if (!res?.success) throw new Error(res?.error ?? "WhatsApp provider reported failure");
     await logAttempt({ ...base, status: "sent" });
+    // Reminders alone are not working: hand it to a person. Never allowed to turn a delivered nudge into an error.
+    await escalateIfStalled({ employeeId, branchId: r.branch_id, name: r.full_name, issue }).catch((err) => {
+      logger.warn({ err: (err as Error).message, employeeId, issue }, "[ops-nudge] escalation check failed");
+    });
     return { employeeId, status: "sent" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

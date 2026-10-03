@@ -57,3 +57,18 @@ describe('buildNudgeMessage', () => {
     expect(m).not.toContain('http');
   });
 });
+
+import { ESCALATE_AFTER_SENDS, escalationTitle, shouldEscalate } from '../ops-nudge.logic.js';
+
+describe('escalation rule', () => {
+  it('escalates from the third delivered nudge, once', () => {
+    expect(ESCALATE_AFTER_SENDS).toBe(3);
+    expect(shouldEscalate(2, false)).toBe(false);
+    expect(shouldEscalate(3, false)).toBe(true);
+    expect(shouldEscalate(7, false)).toBe(true);
+    expect(shouldEscalate(7, true)).toBe(false);
+  });
+  it('names the joiner, the task and the count', () => {
+    expect(escalationTitle('Asha Rao', 'docs-pending', 3)).toBe('Asha Rao still needs to upload your pending joining documents after 3 reminders - please follow up');
+  });
+});
