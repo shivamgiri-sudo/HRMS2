@@ -62,6 +62,24 @@ describe("Ops Control Tower page by role", () => {
     expect(html).not.toContain("Showing the bank and penny-drop items");
   });
 
+  it("tells HR that leavers are not counted, labels the two leaver columns, and describes attendance accurately", () => {
+    access.roles.add("hr");
+    const html = renderPage();
+    expect(html).toContain("people who have left are excluded");
+    expect(html).toContain("People who have left are not counted, except in the two leaver columns");
+    expect(html).toContain("F&amp;F (leavers)");
+    expect(html).toContain("NOC (leavers)");
+    expect(html).toContain("biometric machine and the HRMS attendance record do not agree");
+    expect(html).not.toContain("roster/shift");
+  });
+
+  it("the payroll-only view makes no mention of leaver columns it does not show", () => {
+    access.roles.add("payroll_hr");
+    const html = renderPage();
+    expect(html).toContain("People who have left are not counted.");
+    expect(html).not.toContain("leaver columns");
+  });
+
   it("a user who is payroll_hr AND hr is not narrowed", () => {
     access.roles.add("payroll_hr"); access.roles.add("hr");
     expect(renderPage()).toContain("DigiLocker pending");

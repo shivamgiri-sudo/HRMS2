@@ -21,10 +21,10 @@ const fromBlock = (pick: (d: OpsControlTowerSummary) => CountBlock) => ({
 });
 
 export const MATRIX_COLUMNS: MatrixColumn[] = [
-  { id: "mismatch", label: "Attendance mismatch", title: "Biometric punch disagrees with roster/shift, still unresolved.", block: "attendance-mismatch", mediumAt: 5, highAt: 12,
+  { id: "mismatch", label: "Attendance mismatch", title: "Days where the biometric machine and the HRMS attendance record do not agree (swiped in but HRMS shows 0 minutes, or no attendance record at all) and nobody has fixed it yet. Open person-days for current staff, all dates.", block: "attendance-mismatch", mediumAt: 5, highAt: 12,
     count: (d, id) => d.attendanceMismatch.branches.find((b) => b.branchId === id)?.count ?? 0, total: (d) => d.attendanceMismatch.grandTotal },
-  { id: "fnf", label: "F&F", title: "Exited employees whose full-and-final settlement has not been paid.", block: "fnf-pending", mediumAt: 3, highAt: 8, ...fromBlock((d) => d.fnfPending) },
-  { id: "noc", label: "NOC", title: "Exit clearance certificates not yet issued.", block: "noc-pending", mediumAt: 2, highAt: 6, ...fromBlock((d) => d.nocPending) },
+  { id: "fnf", label: "F&F (leavers)", title: "Exited employees whose full-and-final settlement has not been paid.", block: "fnf-pending", mediumAt: 3, highAt: 8, ...fromBlock((d) => d.fnfPending) },
+  { id: "noc", label: "NOC (leavers)", title: "Exit clearance certificates not yet issued.", block: "noc-pending", mediumAt: 2, highAt: 6, ...fromBlock((d) => d.nocPending) },
   { id: "digilocker", label: "DigiLocker", title: "New joiners (last 30 days) whose Aadhaar/PAN pull via DigiLocker has not completed.", block: "digilocker-pending", mediumAt: 5, highAt: 15, ...fromBlock((d) => d.digilockerPending) },
   { id: "esign", label: "eSign Day 3", title: "Joining-kit documents not e-signed within 3 days of the employee code being created.", block: "esign-pending", mediumAt: 5, highAt: 15, ...fromBlock((d) => d.esignPending) },
   { id: "appt", label: "Appt. letter Day 7", title: "Appointment letter not e-signed within 7 days of the employee code being created.", block: "appointment-letter", mediumAt: 2, highAt: 6, ...fromBlock((d) => d.appointmentLetter) },
@@ -53,12 +53,13 @@ export function OpsBranchMatrix({ data, columns, showRoster, onOpen }: {
   const branches: BranchRef[] = data.attendanceMismatch.branches.map((b) => ({ branchId: b.branchId, branchName: b.branchName }));
   const rosterByBranch = new Map(data.rosterUploaded.branches.map((b) => [b.branchId, b]));
   const staleCount = data.rosterUploaded.branches.filter((b) => b.stale).length;
+  const hasLeaverColumns = columns.some((c) => c.id === "fnf" || c.id === "noc");
 
   return (
     <section aria-label="Branch overview" className="rounded-xl border bg-white">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-2.5">
         <h2 className="text-sm font-bold text-slate-900">All branches at a glance</h2>
-        <p className="text-xs text-slate-500">Click a number for the records behind it. Hover a column heading for its meaning.</p>
+        <p className="text-xs text-slate-500">Click a number for the records behind it. Hover a column heading for its meaning. People who have left are not counted{hasLeaverColumns ? ", except in the two leaver columns (F&F, NOC)" : ""}.</p>
       </div>
       <div className="max-h-[70vh] overflow-auto">
         <table className="w-full border-separate border-spacing-0 text-sm">

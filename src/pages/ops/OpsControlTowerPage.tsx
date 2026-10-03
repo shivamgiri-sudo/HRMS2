@@ -134,7 +134,7 @@ export default function OpsControlTowerPage() {
           <div>
             <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">Operations</p>
             <h1 className="text-xl font-bold text-slate-900">Ops Control Tower</h1>
-            <p className="text-sm text-slate-600">Every onboarding and operational deliverable, branch-wise. Click any number for the real records behind it.</p>
+            <p className="text-sm text-slate-600">Every onboarding and operational deliverable, branch-wise. Click any number for the real records behind it. Counts cover current staff and new joiners; people who have left are excluded.</p>
           </div>
           {data && <span className="whitespace-nowrap rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 font-mono text-xs text-amber-700">As of {formatDateTime(data.nowMs)}</span>}
         </div>

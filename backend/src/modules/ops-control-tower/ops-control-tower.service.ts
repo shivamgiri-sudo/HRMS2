@@ -46,6 +46,18 @@ function isMissingObject(err: unknown): boolean {
 /** A query slower than this is logged by name. */
 const SLOW_QUERY_MS = 2_000;
 
+/**
+ * Who the Ops Control Tower counts. People who have LEFT are not chased for onboarding paperwork and do not
+ * inflate branch totals:
+ *   - STILL_WITH_US: current staff plus pre-joiners (not active yet, employment_status 'preboarding'), so the
+ *     joiner-journey sections keep the very people they exist for while dropping anyone who has since exited.
+ *   - ACTIVE_STAFF_ONLY: current staff only, for attendance (a pre-joiner has none, and a leaver's old
+ *     mismatches are no longer something the branch can act on).
+ * F&F and NOC are exit trackers and deliberately still list people who have left.
+ */
+export const STILL_WITH_US = "(e.active_status = 1 OR LOWER(COALESCE(e.employment_status, '')) = 'preboarding')";
+export const ACTIVE_STAFF_ONLY = "e.active_status = 1";
+
 async function query<T extends RowDataPacket>(
   label: string,
   sql: string,
@@ -134,6 +146,7 @@ export async function getAttendanceMismatchBlock(): Promise<MismatchBlock> {
     `SELECT e.branch_id, SUM(ari.resolved_at IS NULL) AS open_count, MAX(ari.resolved_at) AS last_resolved
        FROM attendance_reconciliation_issue ari
        JOIN employees e ON e.id = ari.employee_id
+      WHERE ${ACTIVE_STAFF_ONLY}
       GROUP BY e.branch_id`,
   );
   const byBranch = new Map(rows.map((r) => [String(r.branch_id), r]));
@@ -174,7 +187,7 @@ export async function getAttendanceMismatchDetail(
             DATEDIFF(CURDATE(), ari.issue_date) AS days_open
        FROM attendance_reconciliation_issue ari
        JOIN employees e ON e.id = ari.employee_id
-      WHERE e.branch_id = ? AND ari.resolved_at IS NULL
+      WHERE e.branch_id = ? AND ari.resolved_at IS NULL AND ${ACTIVE_STAFF_ONLY}
       ORDER BY ari.issue_date ASC
       LIMIT 200`,
     [branchId],
@@ -375,7 +388,7 @@ export async function getDigilockerPendingBlock(): Promise<CountBlock> {
     `SELECT e.branch_id, COUNT(*) AS n
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => "?").join(",")}))
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS, ...DIGILOCKER_DONE],
@@ -403,7 +416,7 @@ export async function getDigilockerPendingDetail(
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => "?").join(",")}))
       ORDER BY e.created_at ASC
       LIMIT 200`,
@@ -514,7 +527,7 @@ function esignSql(scoped: boolean): string {
                       THEN e.created_at ELSE NULL END AS done_at
             FROM ats_onboarding_bridge b
             JOIN employees e ON e.id = b.employee_id
-           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY`;
+           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}`;
 }
 
 export async function getEsignPendingBlock(
@@ -556,7 +569,7 @@ function appointmentLetterSql(scoped: boolean): string {
                  CASE WHEN ${doneClause} THEN al.employee_esign_at ELSE NULL END AS done_at
             FROM employees e
             LEFT JOIN appointment_letter_issue al ON al.employee_id = e.id
-           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY`;
+           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}`;
 }
 
 export async function getAppointmentLetterBlock(
@@ -609,7 +622,7 @@ export async function getPennyDropMissingBlock(): Promise<CountBlock> {
                   SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
                 )
        ) latest ON latest.employee_id = e.id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (latest.penny_drop_status IS NULL OR latest.penny_drop_status NOT IN (${PENNY_DROP_DONE.map(() => "?").join(",")}))
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS, ...PENNY_DROP_DONE],
@@ -635,7 +648,7 @@ export async function getPennyDropMissingDetail(
                   SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
                 )
        ) latest ON latest.employee_id = e.id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (latest.penny_drop_status IS NULL OR latest.penny_drop_status NOT IN (${PENNY_DROP_DONE.map(() => "?").join(",")}))
       ORDER BY e.created_at ASC
       LIMIT 200`,
@@ -667,7 +680,7 @@ export async function getDocsPendingBlock(): Promise<CountBlock> {
     `SELECT e.branch_id, COUNT(DISTINCT e.id) AS n
        FROM employees e
        JOIN employee_joining_document_checklist c ON c.employee_id = e.id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND c.mandatory = 1
         AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
       GROUP BY e.branch_id`,
@@ -691,7 +704,7 @@ export async function getDocsPendingDetail(
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM employees e
        JOIN employee_joining_document_checklist c ON c.employee_id = e.id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND c.mandatory = 1
         AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
       GROUP BY e.id, e.employee_code, e.full_name, e.created_at
@@ -719,7 +732,7 @@ export async function getAccountDetailsMissingBlock(): Promise<CountBlock> {
     `SELECT e.branch_id, COUNT(*) AS n
        FROM employees e
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ebd.id IS NULL
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US} AND ebd.id IS NULL
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS],
   );
@@ -738,7 +751,7 @@ export async function getAccountDetailsMissingDetail(
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM employees e
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ebd.id IS NULL
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US} AND ebd.id IS NULL
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [branchId, NEW_JOINER_WINDOW_DAYS],
@@ -767,7 +780,7 @@ export async function getBgvPendingBlock(): Promise<CountBlock> {
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
        LEFT JOIN candidate_bgv_report r ON r.candidate_id = b.candidate_id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (r.overall_status IS NULL OR r.overall_status NOT IN (${BGV_DONE.map(() => "?").join(",")}))
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
@@ -788,7 +801,7 @@ export async function getBgvPendingDetail(
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
        LEFT JOIN candidate_bgv_report r ON r.candidate_id = b.candidate_id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (r.overall_status IS NULL OR r.overall_status NOT IN (${BGV_DONE.map(() => "?").join(",")}))
       ORDER BY e.created_at ASC
       LIMIT 200`,
@@ -832,7 +845,7 @@ async function provisioningPendingBlock(
       WHERE ipr.request_type = 'join'
         AND ipr.assigned_role IN (${roles.map(() => "?").join(",")})
         AND ipr.status IN (${PROVISIONING_PENDING_STATUSES.map(() => "?").join(",")})
-        AND e.created_at >= NOW() - INTERVAL ? DAY
+        AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
       GROUP BY e.branch_id`,
     [...roles, ...PROVISIONING_PENDING_STATUSES, NEW_JOINER_WINDOW_DAYS],
   );
@@ -856,7 +869,7 @@ async function provisioningPendingDetail(
       WHERE e.branch_id = ? AND ipr.request_type = 'join'
         AND ipr.assigned_role IN (${roles.map(() => "?").join(",")})
         AND ipr.status IN (${PROVISIONING_PENDING_STATUSES.map(() => "?").join(",")})
-        AND e.created_at >= NOW() - INTERVAL ? DAY
+        AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [
