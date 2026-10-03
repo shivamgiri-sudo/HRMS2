@@ -25,7 +25,7 @@ Status: approved by owner 2026-10-03. Replaces the Reactivation flow in
 | Stints | Two stints, same employee id/code, unpaid gap, `date_of_joining` kept |
 | Gap cap | > 30 days: refuse, require fresh ATS onboarding |
 
-## Eligibility (`rehire_status`: blocked | review | eligible)
+## Eligibility (computed status: blocked | review | eligible; not persisted)
 
 Computed from `exit_request` at exit time, re-checked at raise and at approval.
 
@@ -44,8 +44,8 @@ Computed from `exit_request` at exit time, re-checked at raise and at approval.
 **Eligible:** resignation, mutual_separation, retirement, contract_end within the 30-day cap.
 `did_not_join` is not a rejoin (new ATS joining).
 
-Legacy backfill: set `rehire_status` from old exit rows, and from status text such as
-"Terminated - Misconduct" where no exit row exists. Read-only prod check first.
+Legacy backfill: nothing to backfill. `exit_request.rehire_status` is dropped; eligibility is
+computed from live facts (exit rows, status text such as "Terminated - Misconduct", flags).
 
 ## Branch head dossier (one aggregated endpoint)
 
@@ -104,7 +104,8 @@ Attrition counts the first exit once; rejoins appear as a separate rehire metric
 
 ## Build order
 
-1. Migration: `employment_stint`, `rehire_status` on `exit_request`, disciplinary flag fields,
+1. Migration: `employment_stint`, side table `employee_rehire_control` (disciplinary flag fields and
+   block lift; no ALTER on hot tables employees/exit_request, per tests/migration-hot-table-guard.test.ts),
    rejoin audit table, `rejoined` exit status
 2. Eligibility + activation service
 3. Dossier API (12 sections, verdict)
