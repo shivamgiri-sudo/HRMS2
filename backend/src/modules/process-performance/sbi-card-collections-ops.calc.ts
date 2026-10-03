@@ -142,11 +142,11 @@ const customerType = (r: AccountOpsRow): string =>
 
 const dateOnly = (v: string | null): string | null => (v ? v.slice(0, 10) : null);
 
-interface Enriched {
+export interface Enriched {
   r: AccountOpsRow; n: number; stale: boolean; isPtp: boolean; due: number; overduePtp: boolean; exhausted: boolean; dnc: boolean;
 }
 
-function enrich(r: AccountOpsRow, snapshot: string): Enriched {
+export function enrich(r: AccountOpsRow, snapshot: string): Enriched {
   const stale = recencyBand(r.lastPmtDate, snapshot === "9999-12-31" ? null : snapshot) === "60+ days";
   const filled = r.attempts.filter((a) => a.dt || a.disp).length;
   const n = Math.max(filled, n0(r.dialCnt));

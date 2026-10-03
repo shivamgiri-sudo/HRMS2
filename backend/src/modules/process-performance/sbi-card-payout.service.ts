@@ -2,9 +2,9 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { resolveRange } from "./sbi-card-dashboard.service.js";
 import {
-  computePayout, levers, revenueOf, TARGET_INPUTS, PAYOUT_TARGETS, PAYOUT_SEGMENT, PAYOUT_MATRIX, MATRIX_ROW_LABELS, MATRIX_COL_LABELS, NORM_KICKER, RES_KICKER,
+  computePayout, levers, nextSteps, revenueOf, TARGET_INPUTS, PAYOUT_TARGETS, PAYOUT_SEGMENT, PAYOUT_MATRIX, MATRIX_ROW_LABELS, MATRIX_COL_LABELS, NORM_KICKER, RES_KICKER,
   outcomeToPercentages, pickOutcome, type OutcomeRow, type OutcomeBasis,
-  type PayoutInputs, type PayoutResult, type Lever,
+  type PayoutInputs, type PayoutResult, type Lever, type NextStep,
 } from "./sbi-card-payout.calc.js";
 
 /**
@@ -30,6 +30,8 @@ export interface SbiCardPayoutData {
   scenario: PayoutResult & { revenue: { ftd: number; mtd: number } };
   atTarget: PayoutResult & { revenue: { ftd: number; mtd: number } };
   levers: Lever[];
+  /** The smallest extra points of each outcome that raise the rate, in accounts of the opening book and in rupees. */
+  nextSteps: NextStep[];
   reading: string[];
 }
 
@@ -102,6 +104,6 @@ export async function getSbiCardPayout(q: { month?: string; from?: string; to?: 
       openingAccounts: picked.row.openingAccounts, openingAmount: picked.row.openingAmount,
       resolutionPct: pcts.resolutionPct, normalisationPct: pcts.normalisationPct, rollbackPct: pcts.rollbackPct,
     } : null,
-    scenario, atTarget: withRevenue(computePayout(TARGET_INPUTS)), levers: levers(scenario.inputs, mtdAmount), reading: PAYOUT_READING,
+    scenario, atTarget: withRevenue(computePayout(TARGET_INPUTS)), levers: levers(scenario.inputs, mtdAmount), nextSteps: nextSteps(scenario.inputs, mtdAmount, picked.row?.openingAccounts ?? null), reading: PAYOUT_READING,
   };
 }

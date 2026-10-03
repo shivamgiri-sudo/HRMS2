@@ -147,6 +147,23 @@ export function SbiCardPayoutTab({ from, to }: { from: string; to: string }) {
         {d.collected.mtd.amount === 0 && <p className="mt-2 text-xs text-slate-500">No collections in this range yet: upload the Agent MIS (Amt collected) to see revenue in rupees.</p>}
       </section>
 
+      {d.nextSteps.length > 0 && (
+        <section aria-label="Fastest ways to a higher rate" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h3 className="mb-1 flex items-center gap-2 text-sm font-bold text-slate-900"><TrendingUp className="h-4 w-4" aria-hidden />Fastest ways to a higher rate</h3>
+          <p className="mb-3 text-[11px] text-slate-500">The smallest extra points of each outcome that move the rate up a step, in accounts of the opening book{d.outcome?.openingAccounts ? ` (${nz(d.outcome.openingAccounts)})` : ""} and in rupees on what is collected so far.</p>
+          <ol className="grid gap-2.5 sm:grid-cols-3">
+            {d.nextSteps.map((n, i) => (
+              <li key={n.lever} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold text-slate-700">{i + 1}. {n.label}</p>
+                <p className="mt-0.5 text-lg font-bold tabular-nums text-slate-900">{ptsS(n.deltaPct)} <span className="text-xs font-semibold text-slate-500">→ {pctS(n.newRatePct)}</span></p>
+                <p className="text-[11px] text-slate-600">{n.accountsNeeded !== null ? `≈ ${nz(n.accountsNeeded)} more account(s) · ` : "needs an Outcome file for the account count · "}unlocks {n.unlocks}</p>
+                <p className="text-[11px] text-slate-500">{d.collected.mtd.amount > 0 ? `≈ ${n.deltaAmount >= 0 ? "+" : ""}${inrC(n.deltaAmount)} on MTD collections` : "worth more once collections are loaded"}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
       <section aria-label="What the next point is worth" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900"><TrendingUp className="h-4 w-4" aria-hidden />What one more point is worth</h3>
         <ul className="grid gap-2.5 sm:grid-cols-3">

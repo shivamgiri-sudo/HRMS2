@@ -119,6 +119,40 @@ export function levers(inputs: PayoutInputs, collected: number, step = 1): Lever
   ];
 }
 
+export interface NextStep {
+  lever: "resolution" | "normalisation" | "rollback"; label: string; addPoints: number; newRatePct: number; deltaPct: number;
+  /** Accounts that must move, from the opening book; null until an outcome file gives the opening accounts. */
+  accountsNeeded: number | null; deltaAmount: number; unlocks: string;
+}
+/**
+ * The smallest extra points of each outcome that actually raise the rate (the next step on the slab), what that is in accounts of the
+ * opening book and in rupees on what has been collected, and which step of the slab it unlocks. This is the "what do we need to do" view.
+ */
+export function nextSteps(inputs: PayoutInputs, collected: number, openingAccounts: number | null, maxPoints = 20): NextStep[] {
+  const base = computePayout(inputs);
+  const out: NextStep[] = [];
+  const levs: Array<[NextStep["lever"], string, keyof PayoutInputs]> = [["resolution", "Resolution", "resolutionPct"], ["normalisation", "Normalisation", "normalisationPct"], ["rollback", "Rollback", "rollbackPct"]];
+  for (const [lever, name, field] of levs) {
+    for (let k = 1; k <= maxPoints * 10; k++) {
+      const add = k / 10; const n = computePayout({ ...inputs, [field]: inputs[field] + add });
+      if (n.ratePct > base.ratePct) {
+        const unlocks: string[] = [];
+        if (n.cells.row > base.cells.row) unlocks.push(`matrix row ${MATRIX_ROW_LABELS[n.cells.row]}`);
+        if (n.cells.col > base.cells.col) unlocks.push(`NRB column ${MATRIX_COL_LABELS[n.cells.col]}`);
+        if (n.cells.norm > base.cells.norm) unlocks.push(`Norm kicker ${NORM_KICKER.labels[n.cells.norm]}`);
+        if (n.cells.res > base.cells.res) unlocks.push(`Resolution kicker ${RES_KICKER.labels[n.cells.res]}`);
+        out.push({
+          lever, label: `${name} +${add.toFixed(1)} pt`, addPoints: add, newRatePct: n.ratePct, deltaPct: r2(n.ratePct - base.ratePct),
+          accountsNeeded: openingAccounts && openingAccounts > 0 ? Math.ceil((add / 100) * openingAccounts) : null,
+          deltaAmount: Math.round(((n.ratePct - base.ratePct) / 100) * collected), unlocks: unlocks.join(" + ") || "next band",
+        });
+        break;
+      }
+    }
+  }
+  return out.sort((a, b) => a.addPoints - b.addPoints || b.deltaPct - a.deltaPct);
+}
+
 /** Revenue = the rate on what was collected. */
 export const revenueOf = (ratePct: number, collected: number): number => Math.round((ratePct / 100) * collected);
 

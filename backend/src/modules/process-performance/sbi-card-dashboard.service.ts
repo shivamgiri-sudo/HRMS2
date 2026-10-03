@@ -5,6 +5,8 @@ import {
   type DialerRow, type AgentRow, type AccountRow, type DailyOut, type CampaignOut, type AgentOut, type TeamOut, type AccountsOut,
 } from "./sbi-card-dashboard.calc.js";
 import { agentTimeOf, type AgentTimeOut, type AgentTimeRow } from "./sbi-card-agent-time.calc.js";
+import { capacityOf, type CapacityOut } from "./sbi-card-capacity.calc.js";
+import { loadAccountOpsRows } from "./sbi-card-account-rows.js";
 import { collectionsOps, type AccountOpsRow, type CollectionsOpsOut } from "./sbi-card-collections-ops.calc.js";
 
 /**
@@ -33,6 +35,7 @@ export interface SbiCardDashboardData {
   downtime: Array<{ date: string; startTime: string | null; upTime: string | null; downtimeMinutes: number; impactedUsers: number; reason: string | null; status: string | null }>;
   accounts: AccountsOut;
   agentTime: AgentTimeOut;
+  capacity: CapacityOut;
   collections: CollectionsOpsOut & { agents: Array<CollectionsOpsOut["agents"][number] & { name: string | null }> };
 }
 
@@ -99,20 +102,7 @@ export async function getSbiCardDashboard(month?: string, fromIn?: string, toIn?
   let opsRows: AccountOpsRow[] = [];
   const latestDate = (latest[0] as RowDataPacket[])[0]?.d as string | null | undefined;
   if (!empty && latestDate) {
-    const attemptCols = [1, 2, 3, 4, 5, 6].map((n) => `DATE_FORMAT(call${n}_dt, '%Y-%m-%d %H:%i:%s') AS c${n}, disp${n}_c AS d${n}, agent${n}_id AS a${n}`).join(", ");
-    const [ar] = await db.execute<RowDataPacket[]>(
-      `SELECT account_no, delq1, billing_cycle, cibil_score, vintage, region, product_class, account_class, call_table_name, promo_code,
-              ntc_flag, new_to_card_flag, total_amount_due, cur_bal, flow, cd, nrr, DATE_FORMAT(date_last_pmt, '%Y-%m-%d') AS lp, cur_bal_plus_dpi, last_action_code, DATE_FORMAT(last_ptp_date, '%Y-%m-%d') AS ptp_d,
-              DATE_FORMAT(callback_dt, '%Y-%m-%d %H:%i:%s') AS cb, donotcall, dial_cnt, ${attemptCols}
-         FROM sbi_card_account_file WHERE process_id = ? AND report_date = ?`, [p, latestDate]);
-    opsRows = ar.map((r) => ({
-      accountNo: String(r.account_no), delq: r.delq1 ?? null, billingCycle: r.billing_cycle ?? null, cibil: num(r.cibil_score),
-      vintage: num(r.vintage), region: r.region ?? null, productClass: r.product_class ?? null, accountClass: r.account_class ?? null,
-      callTable: r.call_table_name ?? null, promo: r.promo_code ?? null, ntc: r.ntc_flag ?? null, newToCard: r.new_to_card_flag ?? null,
-      totalDue: num(r.total_amount_due), curBal: num(r.cur_bal), flow: r.flow ?? null, cd: num(r.cd), nrr: r.nrr ?? null, lastPmtDate: r.lp ?? null, dpiBal: num(r.cur_bal_plus_dpi), lastActionCode: r.last_action_code ?? null, lastPtpDate: r.ptp_d ?? null,
-      callbackDt: r.cb ?? null, dnc: r.donotcall ?? null, dialCnt: num(r.dial_cnt),
-      attempts: [1, 2, 3, 4, 5, 6].map((n) => ({ dt: r[`c${n}`] ?? null, disp: r[`d${n}`] ?? null, agent: r[`a${n}`] ?? null })),
-    }));
+    opsRows = await loadAccountOpsRows(p, latestDate);
     accounts = accountsOf(opsRows.map((r): AccountRow => ({ delq: r.delq, billingCycle: r.billingCycle, totalDue: r.totalDue, curBal: r.curBal })));
   }
   const ops = collectionsOps(opsRows, latestDate ?? null);
@@ -125,6 +115,15 @@ export async function getSbiCardDashboard(month?: string, fromIn?: string, toIn?
     achtSec: num(r.acht_sec), firstLogin: r.fl ?? null, lastLogout: r.ll ?? null, lb: num(r.pause_lb_sec), tb: num(r.pause_tb_sec),
     wb: num(r.pause_wb_sec), mb: num(r.pause_mb_sec), qb: num(r.pause_qb_sec), loginCode: num(r.pause_login_sec),
   }));
+
+  const penTarget = num((penRows[0] as RowDataPacket[])[0]?.target);
+  const aprCalls = timeIn.reduce((n, r) => n + (r.calls ?? 0), 0);
+  const aprHours = timeIn.reduce((n, r) => n + (r.loginSec ?? 0), 0) / 3600;
+  const capacity = capacityOf({
+    accounts: opsRows.map((r) => ({ callTable: r.callTable, attempts: Math.max(r.attempts.filter((a) => a.dt || a.disp).length, r.dialCnt ?? 0) })),
+    targetPenetration: penTarget, apr: timeIn.length > 0 ? { calls: aprCalls, loginHours: aprHours } : null,
+    downtime: (tRows[0] as RowDataPacket[]).map((r) => ({ minutes: num(r.downtime_minutes), users: num(r.impacted_users) })),
+  });
 
   const t = totalsOf(dialer);
   const agents = agentsOf(agentRows);
@@ -149,6 +148,7 @@ export async function getSbiCardDashboard(month?: string, fromIn?: string, toIn?
     })),
     accounts,
     agentTime: agentTimeOf(timeIn),
+    capacity,
     collections: { ...ops, agents: ops.agents.map((a) => ({ ...a, name: nameByDialer.get(a.agentId) ?? null })) },
   };
 }

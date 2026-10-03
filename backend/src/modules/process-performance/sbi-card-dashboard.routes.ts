@@ -3,6 +3,8 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { getSbiCardDashboard } from "./sbi-card-dashboard.service.js";
 import { getSbiCardPayout } from "./sbi-card-payout.service.js";
+import { getSbiCardReadiness } from "./sbi-card-readiness.service.js";
+import { getSbiCardAdhocCsv, isAdhocType } from "./sbi-card-adhoc.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -23,6 +25,24 @@ router.get("/sbi-card-dashboard", requireRole(...VIEWER_ROLES), h(async (req, re
     req.query.to ? String(req.query.to) : undefined,
   );
   res.json({ success: true, data });
+}));
+
+router.get("/sbi-card-dashboard/readiness", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getSbiCardReadiness({
+    month: req.query.month ? String(req.query.month) : undefined, from: req.query.from ? String(req.query.from) : undefined, to: req.query.to ? String(req.query.to) : undefined,
+  });
+  res.json({ success: true, data });
+}));
+
+/** Ad-hoc call list as CSV: account numbers only (the client's PII rule), never a do-not-call, deceased, dispute or welfare account. */
+router.get("/sbi-card-dashboard/adhoc-list", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const type = req.query.type;
+  if (!isAdhocType(type)) { res.status(400).json({ success: false, message: "Unknown list type." }); return; }
+  const out = await getSbiCardAdhocCsv(type, { month: req.query.month ? String(req.query.month) : undefined, from: req.query.from ? String(req.query.from) : undefined, to: req.query.to ? String(req.query.to) : undefined });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${out.filename}"`);
+  res.setHeader("X-Row-Count", String(out.count));
+  res.send(out.csv);
 }));
 
 /**

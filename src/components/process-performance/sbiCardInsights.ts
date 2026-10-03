@@ -1,4 +1,4 @@
-import type { SbiAgentTime, SbiCollections, SbiDimRow } from "./sbiCardTypes";
+import type { SbiAgentTime, SbiCapacity, SbiCollections, SbiDimRow } from "./sbiCardTypes";
 
 /**
  * Critical insights for the SBI Card Collections page, derived from the same figures the charts show (no invented numbers).
@@ -21,7 +21,7 @@ const p1 = (n: number): string => `${n.toFixed(1)}%`;
 const real = (p: number | null | undefined): boolean => p !== null && p !== undefined && p < 0.05;
 const material = (rows: SbiDimRow[], total: number, minShare = 0.05): SbiDimRow[] => rows.filter((r) => total > 0 && r.exposure / total >= minShare);
 
-export function deriveInsights(ops: SbiCollections, time: SbiAgentTime | null, limit = 12): Insight[] {
+export function deriveInsights(ops: SbiCollections, time: SbiAgentTime | null, limit = 12, capacity?: SbiCapacity | null): Insight[] {
   const h = ops.headline;
   if (!h.accounts) return [];
   const out: Insight[] = [];
@@ -34,6 +34,16 @@ export function deriveInsights(ops: SbiCollections, time: SbiAgentTime | null, l
       title: `${h.overduePtp} promises have lapsed`, metric: inrShort(h.overduePtpExposure),
       detail: `${inrShort(h.overduePtpExposure)} (${p1(share(h.overduePtpExposure) * 100)} of amount due) was promised and not paid by the snapshot day.`,
       action: top ? `Re-contact today, largest first (start with ${top.accountNo}, ${inrShort(top.totalDue)}).` : "Re-contact today, largest first.",
+    });
+  }
+  if (capacity && capacity.total.accounts > 0 && capacity.total.penetration < capacity.target) {
+    const t = capacity.total; const cp = capacity.capacity;
+    const worst = capacity.rows.find((r) => r.status === "behind");
+    out.push({
+      id: "penetration", level: capacity.target - t.penetration >= 0.5 ? "critical" : "warning",
+      title: `Penetration ${t.penetration.toFixed(2)} against a target of ${capacity.target}`, metric: `${t.shortfallDials.toLocaleString("en-IN")} dials`,
+      detail: `${t.behindTables} call table(s) are behind; ${t.shortfallDials.toLocaleString("en-IN")} of ${t.requiredDials.toLocaleString("en-IN")} required dials are missing${cp ? `, about ${cp.extraHoursToCloseGap} more login hours at ${cp.dph} dials per hour` : ""}${worst ? `. Furthest behind: ${worst.table} (${worst.penetration.toFixed(2)})` : ""}.`,
+      action: capacity.downtime.agentHoursLost > 0 ? `Add shifts or overtime on the lagging tables; outages already cost ${capacity.downtime.agentHoursLost} agent-hours, so fix the dialer first.` : "Add shifts or overtime on the lagging tables, or raise dialer pacing, before the cycle closes.",
     });
   }
   const c = ops.compliance;

@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ScatterChart, Scatter, ZAxis, ReferenceLine, LabelList,
 } from "recharts";
-import { AlertOctagon, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { AlertOctagon, AlertTriangle, CheckCircle2, Download, Info } from "lucide-react";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { TOOLTIP_PROPS, fmtDate } from "./lpCallShared";
 import type { SbiCollections, SbiDimKey, SbiDimRow, SbiWorkItem } from "./sbiCardTypes";
 import type { Insight, InsightLevel } from "./sbiCardInsights";
@@ -396,30 +397,53 @@ export function CompliancePanel({ ops }: { ops: SbiCollections }) {
   );
 }
 
-/** The three call lists, one tab each, largest amount first. */
-export function ActNow({ ops }: { ops: SbiCollections }) {
+/** One ad-hoc list as an account-number-only CSV (server builds it; do-not-call, deceased, dispute and welfare accounts are never in it). */
+async function downloadList(type: string, range: { from: string; to: string }): Promise<void> {
+  const blob = await hrmsApi.getBlob(`/api/process-performance/sbi-card-dashboard/adhoc-list?type=${encodeURIComponent(type)}&from=${range.from}&to=${range.to}`);
+  const url = URL.createObjectURL(blob); const a = document.createElement("a");
+  a.href = url; a.download = `SBI_ADHOC_${type}_${range.to}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+const MORE_LISTS: Array<{ type: string; label: string }> = [
+  { type: "exhausted", label: "Exhausted (4+ attempts)" }, { type: "stuck", label: "Never reached a person" },
+  { type: "settlement-hardship", label: "Settlement / hardship" }, { type: "language", label: "Language barrier" },
+];
+
+/** The three call lists, one tab each, largest amount first; every list can be downloaded for the dialer team. */
+export function ActNow({ ops, range }: { ops: SbiCollections; range?: { from: string; to: string } }) {
   const tabs = [
-    { key: "ptp", label: "Lapsed promises", n: ops.headline.overduePtp, rows: ops.worklists.overduePtp, due: "Promised on" },
-    { key: "unt", label: "Untouched", n: ops.headline.untouched, rows: ops.worklists.untouched, due: null },
-    { key: "cb", label: "Missed callbacks", n: ops.headline.callbacksOverdue, rows: ops.worklists.overdueCallbacks, due: "Callback was" },
+    { key: "ptp", label: "Lapsed promises", n: ops.headline.overduePtp, rows: ops.worklists.overduePtp, due: "Promised on", type: "lapsed-promises" },
+    { key: "unt", label: "Untouched", n: ops.headline.untouched, rows: ops.worklists.untouched, due: null, type: "untouched" },
+    { key: "cb", label: "Missed callbacks", n: ops.headline.callbacksOverdue, rows: ops.worklists.overdueCallbacks, due: "Callback was", type: "missed-callbacks" },
   ];
   const [k, setK] = useState(tabs[0]!.key);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const cur = tabs.find((t) => t.key === k)!;
+  const get = async (type: string) => { if (!range) return; setBusy(type); setErr(null); try { await downloadList(type, range); } catch { setErr("Could not download the list."); } finally { setBusy(null); } };
+  const dl = `inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60 ${FOCUS}`;
   return (
     <div>
-      <div role="tablist" aria-label="Call lists" className="mb-3 flex flex-wrap gap-1.5">
+      <div role="tablist" aria-label="Call lists" className="mb-3 flex flex-wrap items-center gap-1.5">
         {tabs.map((t) => (
           <button key={t.key} type="button" role="tab" aria-selected={t.key === k} onClick={() => setK(t.key)}
             className={`cursor-pointer rounded-full border px-3 py-1 text-xs font-semibold transition-colors duration-200 ${FOCUS} ${t.key === k ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}>
             {t.label} <span className="ml-1 tabular-nums opacity-80">{nz(t.n)}</span>
           </button>
         ))}
+        {range && <button type="button" disabled={busy !== null} onClick={() => void get(cur.type)} className={`${dl} ml-auto`}><Download className="h-3.5 w-3.5" aria-hidden />{busy === cur.type ? "Preparing…" : "Download full list (CSV)"}</button>}
       </div>
+      {err && <p role="alert" className="mb-2 text-xs text-red-600">{err}</p>}
       {cur.rows.length === 0 ? <Empty>Nothing in this list.</Empty> : (
         <>
           <SortTable rows={cur.rows} cols={workCols(cur.due)} caption={cur.label} rowKey={(r) => r.accountNo} />
-          <p className="mt-1 text-[11px] text-slate-500">Top {cur.rows.length} by amount due{k === "unt" ? ", do-not-call accounts excluded" : ""}.</p>
+          <p className="mt-1 text-[11px] text-slate-500">Top {cur.rows.length} by amount due{k === "unt" ? ", do-not-call accounts excluded" : ""}. The download has every account on the list, account numbers only, and leaves out do-not-call, deceased, dispute and welfare accounts, so it can hold fewer than the headline count.</p>
         </>
+      )}
+      {range && (
+        <div className="mt-3 border-t border-slate-100 pt-3">
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">More ad-hoc lists for the dialer team</p>
+          <div className="flex flex-wrap gap-2">{MORE_LISTS.map((l) => <button key={l.type} type="button" disabled={busy !== null} onClick={() => void get(l.type)} className={dl}><Download className="h-3.5 w-3.5" aria-hidden />{busy === l.type ? "Preparing…" : l.label}</button>)}</div>
+        </div>
       )}
     </div>
   );

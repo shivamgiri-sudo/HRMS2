@@ -129,3 +129,24 @@ describe("choosing the outcome row", () => {
     expect(pickOutcome([]).row).toBeNull();
   });
 });
+
+import { nextSteps } from "../sbi-card-payout.calc.js";
+
+describe("next steps up the slab", () => {
+  it("finds the smallest extra points that raise the rate, in accounts and rupees", () => {
+    const steps = nextSteps(TARGET_INPUTS, 10_000_000, 2353);
+    const by = Object.fromEntries(steps.map((s) => [s.lever, s]));
+    // at target (Res 35, NM 18, RB 10) the total is exactly 63, the top of the 62-63 row: any extra 0.1 of Resolution crosses into 63-64
+    expect(by.resolution!.addPoints).toBe(0.1);
+    expect(by.resolution!.unlocks).toBe("matrix row 63%-64%");
+    expect(by.normalisation!.addPoints).toBe(0.1);                 // 18.1 enters the 18-19 Norm kicker (+0.50) at once
+    expect(by.normalisation!.unlocks).toMatch(/Norm kicker 18-19%/);
+    expect(by.normalisation!.accountsNeeded).toBe(3);              // ceil(0.1% of 2353)
+    expect(by.normalisation!.deltaAmount).toBe(Math.round((by.normalisation!.deltaPct / 100) * 10_000_000));
+    expect(steps[0]!.addPoints).toBeLessThanOrEqual(steps[steps.length - 1]!.addPoints);   // smallest effort first
+  });
+  it("has no account counts without an opening book, and nothing to find at the ceiling", () => {
+    expect(nextSteps(TARGET_INPUTS, 1_000_000, null).every((s) => s.accountsNeeded === null)).toBe(true);
+    expect(nextSteps({ resolutionPct: 60, normalisationPct: 40, rollbackPct: 20 }, 1_000_000, 1000)).toEqual([]);
+  });
+});

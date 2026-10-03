@@ -79,6 +79,16 @@ describe("critical insights", () => {
     expect(i.title).toContain("13.3%");
     expect(i.detail).toContain("PTP, PAD, OTP, DS, RTP and CBL");
   });
+  it("flags a penetration shortfall against the client's target, with the hours it needs", () => {
+    const cap = { target: 3, targetFromClient: true, rows: [{ table: "CD3_HB", accounts: 1000, attempts: 2000, penetration: 2, requiredDials: 3000, shortfallDials: 1000, status: "behind" as const }],
+      total: { accounts: 1000, attempts: 2000, penetration: 2, requiredDials: 3000, shortfallDials: 1000, behindTables: 1 },
+      capacity: { dph: 10, loginHours: 100, extraHoursToCloseGap: 100, requiredHoursAtTarget: 300 }, downtime: { events: 1, agentHoursLost: 143, dialsLost: 1430 } };
+    const i = deriveInsights(ops(), null, 30, cap).find((x) => x.id === "penetration")!;
+    expect(i.level).toBe("critical");                    // a full dial below target
+    expect(i.detail).toContain("100 more login hours");
+    expect(i.action).toContain("143 agent-hours");
+    expect(deriveInsights(ops(), null, 30, { ...cap, total: { ...cap.total, penetration: 3.1, shortfallDials: 0 } }).some((x) => x.id === "penetration")).toBe(false);
+  });
   it("calls out the hour with the best PTP yield", () => {
     const hours = deriveInsights(ops(), null).find((i) => i.id === "hours")!;
     expect(hours.title).toContain("10:00");

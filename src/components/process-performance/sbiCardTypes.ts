@@ -81,10 +81,27 @@ export interface SbiAgentTime {
   pauseCodes: Array<{ code: string; hours: number; sharePct: number | null }>;
   daily: Array<{ date: string; agents: number; calls: number; utilisationPct: number | null; occupancyPct: number | null; pausePct: number | null; achtSec: number | null }>;
 }
+export interface SbiCapacity {
+  target: number; targetFromClient: boolean;
+  rows: Array<{ table: string; accounts: number; attempts: number; penetration: number; requiredDials: number; shortfallDials: number; status: "on-target" | "behind" }>;
+  total: { accounts: number; attempts: number; penetration: number; requiredDials: number; shortfallDials: number; behindTables: number };
+  capacity: { dph: number; loginHours: number; extraHoursToCloseGap: number; requiredHoursAtTarget: number } | null;
+  downtime: { events: number; agentHoursLost: number; dialsLost: number | null };
+}
+export type SbiSourceKey = "accountNew" | "accountManual" | "apr" | "dialerMis" | "agentMis" | "penEstimation" | "outcome" | "downtime";
+export interface SbiReadiness {
+  range: { from: string; to: string };
+  days: Array<{ date: string; cells: Partial<Record<SbiSourceKey, number>>; dailyMissing: SbiSourceKey[]; complete: boolean; tables: { found: string[]; missing: string[]; other: string[] } | null }>;
+  freshness: Array<{ key: SbiSourceKey; label: string; daily: boolean; lastDate: string | null; ageDays: number | null; status: "ok" | "stale" | "never"; rows: number }>;
+  latest: SbiReadiness["days"][number] | null;
+  tablesDay: SbiReadiness["days"][number] | null;
+  alerts: Array<{ level: "critical" | "warning" | "info"; text: string }>;
+  expectedTables: Array<{ key: string; label: string }>;
+}
 export interface SbiCardData {
   range: { from: string; to: string }; campaigns: string[]; summary: SbiSummary;
   daily: SbiDailyRow[]; byCampaign: SbiCampaignRow[]; agents: SbiAgentRow[]; teams: SbiTeamRow[];
-  downtime: SbiDowntimeRow[]; accounts: SbiAccounts; collections: SbiCollections; agentTime: SbiAgentTime;
+  downtime: SbiDowntimeRow[]; accounts: SbiAccounts; collections: SbiCollections; agentTime: SbiAgentTime; capacity: SbiCapacity;
 }
 
 /** GET /api/process-performance/sbi-card-payout (manager and above). */
@@ -105,5 +122,6 @@ export interface SbiPayoutData {
   };
   scenario: SbiPayoutResult; atTarget: SbiPayoutResult;
   levers: Array<{ lever: string; label: string; addPoints: number; newRatePct: number; deltaPct: number; deltaAmount: number }>;
+  nextSteps: Array<{ lever: string; label: string; addPoints: number; newRatePct: number; deltaPct: number; accountsNeeded: number | null; deltaAmount: number; unlocks: string }>;
   reading: string[];
 }

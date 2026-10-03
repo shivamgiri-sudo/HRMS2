@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Maximize2, Minimize2, Printer } from "lucide-react";
 import { fmtDate } from "./lpCallShared";
-import type { SbiAgentTime, SbiCollections } from "./sbiCardTypes";
+import type { SbiAgentTime, SbiCapacity, SbiCollections } from "./sbiCardTypes";
 import { deriveInsights } from "./sbiCardInsights";
 import { ActNow, CompliancePanel, ContactabilityPanel, DepthYield, DimensionExplorer, DispositionBars, Funnel, HourYield, InsightGrid, PositionBar } from "./SbiCardOpsCharts";
 import { SbiCardAgentTimePanel } from "./SbiCardAgentTimePanel";
+import { CapacityPanel } from "./SbiCardCapacityPanel";
 import { FOCUS, PAL, inrC } from "./sbiViz";
 import { Empty, nz, pctTxt } from "./SbiCardShared";
 
@@ -72,7 +73,7 @@ function Chapter({ n, title, takeaway, children }: { n: string; title: string; t
   );
 }
 
-export function SbiCardCollectionsTab({ ops, time }: { ops: SbiCollections; time: SbiAgentTime }) {
+export function SbiCardCollectionsTab({ ops, time, capacity, range }: { ops: SbiCollections; time: SbiAgentTime; capacity: SbiCapacity; range: { from: string; to: string } }) {
   const root = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false);
   useEffect(() => {
@@ -80,7 +81,7 @@ export function SbiCardCollectionsTab({ ops, time }: { ops: SbiCollections; time
     document.addEventListener("fullscreenchange", on);
     return () => document.removeEventListener("fullscreenchange", on);
   }, []);
-  const insights = useMemo(() => deriveInsights(ops, time), [ops, time]);
+  const insights = useMemo(() => deriveInsights(ops, time, 13, capacity), [ops, time, capacity]);
   const h = ops.headline;
   if (!h.accounts) return <Empty>No account file loaded for this range. Upload the Account File (collection export) to see coverage, promises and exposure by bucket.</Empty>;
 
@@ -127,21 +128,26 @@ export function SbiCardCollectionsTab({ ops, time }: { ops: SbiCollections; time
         </div>
       </Chapter>
 
-      <Chapter n="4" title="Contactability"
+      <Chapter n="4" title="Penetration and capacity"
+        takeaway={capacity.total.accounts ? `${capacity.total.penetration.toFixed(2)} dials per account against a target of ${capacity.target}: ${nz(capacity.total.shortfallDials)} dials short${capacity.capacity ? `, about ${capacity.capacity.extraHoursToCloseGap} login hours at the current dial rate` : ""}.` : "Dials per account against the client's target, and the agent hours that needs."}>
+        <CapacityPanel cap={capacity} />
+      </Chapter>
+
+      <Chapter n="5" title="Contactability"
         takeaway={`${pctTxt(ops.contactability.noConversationPct)} of attempts reached nobody; ${nz(ops.contactability.stuck.accounts)} accounts have had 3+ attempts and never a conversation (${inrC(ops.contactability.stuck.exposure)}).`}>
         <ContactabilityPanel ops={ops} />
       </Chapter>
 
-      <Chapter n="5" title="Compliance and customer treatment"
+      <Chapter n="6" title="Compliance and customer treatment"
         takeaway={`${nz(ops.compliance.window.outside)} calls outside ${ops.compliance.windowLabel}; ${nz(ops.compliance.redialedAfterExclusion.accounts)} accounts dialled again after they should have left the list.`}>
         <CompliancePanel ops={ops} />
       </Chapter>
 
-      <Chapter n="6" title="Act now" takeaway="The three call lists to clear first, largest amount due on top.">
-        <ActNow ops={ops} />
+      <Chapter n="7" title="Act now" takeaway="The call lists to clear first, largest amount due on top. Each downloads as an account-number-only file for the dialer team.">
+        <ActNow ops={ops} range={range} />
       </Chapter>
 
-      <Chapter n="7" title="The floor" takeaway="Is the dialer feeding agents, and are they using their time? From the dialer Agent Time (APR) export.">
+      <Chapter n="8" title="The floor" takeaway="Is the dialer feeding agents, and are they using their time? From the dialer Agent Time (APR) export.">
         <SbiCardAgentTimePanel time={time} bare />
       </Chapter>
     </div>
