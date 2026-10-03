@@ -111,5 +111,7 @@ const fmt = (s: DayState) => `open=${s.openTotal} ${JSON.stringify(s.open)} | re
     console.log("Dry run only: nothing was written. Add --apply to repair.");
   }
   await db.end();
-  if (failed > 0) process.exit(1);
+  // Exit explicitly: the biometric step leaves its connection to the punch server open, which would otherwise keep
+  // the process (and the workflow job) alive for hours after all the work is done.
+  process.exit(failed > 0 ? 1 : 0);
 })().catch(async (e) => { console.error("ERR", e?.message ?? e); try { await db.end(); } catch { /* ignore */ } process.exit(1); });
