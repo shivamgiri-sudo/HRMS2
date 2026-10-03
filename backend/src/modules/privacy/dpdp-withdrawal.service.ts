@@ -120,6 +120,15 @@ export async function getDecisionSlaHours(): Promise<number> {
   }
 }
 
+export const OWN_REQUEST_MESSAGE = "You cannot review or decide your own withdrawal request. Another reviewer must handle it.";
+
+/** Separation of duties: the person who made a request never reviews, decides or releases it. */
+export function assertNotOwnRequest(requesterId: unknown, actorId: string): void {
+  if (requesterId != null && String(requesterId) === String(actorId)) {
+    throw Object.assign(new Error(OWN_REQUEST_MESSAGE), { statusCode: 403 });
+  }
+}
+
 /** True when the user is a current employee (employment-essential processing continues for them). */
 export async function isActiveEmployeeUser(userId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -368,6 +377,7 @@ export async function startReview(id: string, reviewedBy: string): Promise<void>
     "SELECT requester_id FROM dpdp_consent_withdrawal WHERE id = ? LIMIT 1", [id]
   );
   const requesterId = Array.isArray(who) && who[0]?.requester_id ? String(who[0].requester_id) : null;
+  assertNotOwnRequest(requesterId, reviewedBy);
   const applyHold = requesterId ? !(await isActiveEmployeeUser(requesterId)) : true;
 
   const [result] = await db.execute<any>(
@@ -425,9 +435,10 @@ export async function approve(
 ): Promise<void> {
   // Read current status for accurate audit log
   const [preRows] = await db.execute<RowDataPacket[]>(
-    'SELECT status FROM dpdp_consent_withdrawal WHERE id = ? LIMIT 1', [id]
+    'SELECT status, requester_id FROM dpdp_consent_withdrawal WHERE id = ? LIMIT 1', [id]
   );
   if (!preRows.length) throw Object.assign(new Error('Withdrawal request not found'), { statusCode: 404 });
+  assertNotOwnRequest(preRows[0].requester_id, approvedBy);
   const fromStatus = preRows[0].status as string;
 
   const [result] = await db.execute<any>(
@@ -509,6 +520,7 @@ export async function reject(
     "SELECT status, requester_id FROM dpdp_consent_withdrawal WHERE id = ? LIMIT 1", [id]
   );
   if (!preRows.length) throw Object.assign(new Error("Withdrawal request not found"), { statusCode: 404 });
+  assertNotOwnRequest(preRows[0].requester_id, rejectedBy);
   const fromStatus = String(preRows[0].status);
 
   // Only an open request can be rejected. This UPDATE used to match on id alone, so a request that had
@@ -554,6 +566,8 @@ export async function reject(
  * Manually release a processing hold without full approval/rejection.
  */
 export async function releaseHold(id: string, releasedBy: string): Promise<void> {
+  const [own] = await db.execute<RowDataPacket[]>("SELECT requester_id FROM dpdp_consent_withdrawal WHERE id = ? LIMIT 1", [id]);
+  assertNotOwnRequest(Array.isArray(own) ? own[0]?.requester_id : null, releasedBy);
   await db.execute(
     `UPDATE dpdp_processing_hold
      SET is_active = 0, released_at = NOW(), released_by = ?, release_reason = 'Manual hold release'

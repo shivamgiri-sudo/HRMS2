@@ -220,3 +220,33 @@ describe("escalateOverdueWithdrawals", () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("separation of duties: nobody decides their own withdrawal", () => {
+  const writes = () => sqls().filter((q) => /^\s*(UPDATE|INSERT)/i.test(q));
+
+  it("start-review by the requester is refused (403) and writes nothing", async () => {
+    execute.mockResolvedValueOnce([[{ requester_id: USER }]]);
+    await expect(svc.startReview(ID, USER)).rejects.toMatchObject({ statusCode: 403, message: svc.OWN_REQUEST_MESSAGE });
+    expect(writes()).toEqual([]);
+  });
+  it("approve by the requester is refused and writes nothing", async () => {
+    execute.mockResolvedValueOnce([[{ status: "in_review", requester_id: USER }]]);
+    await expect(svc.approve(ID, USER)).rejects.toMatchObject({ statusCode: 403 });
+    expect(writes()).toEqual([]);
+  });
+  it("reject by the requester is refused and writes nothing", async () => {
+    execute.mockResolvedValueOnce([[{ status: "in_review", requester_id: USER }]]);
+    await expect(svc.reject(ID, USER, "no")).rejects.toMatchObject({ statusCode: 403 });
+    expect(writes()).toEqual([]);
+  });
+  it("manual hold release by the requester is refused and writes nothing", async () => {
+    execute.mockResolvedValueOnce([[{ requester_id: USER }]]);
+    await expect(svc.releaseHold(ID, USER)).rejects.toMatchObject({ statusCode: 403 });
+    expect(writes()).toEqual([]);
+  });
+  it("a different reviewer is unaffected", () => {
+    expect(() => svc.assertNotOwnRequest(USER, HR)).not.toThrow();
+    expect(() => svc.assertNotOwnRequest(null, HR)).not.toThrow();
+    expect(() => svc.assertNotOwnRequest(USER, USER)).toThrow();
+  });
+});
