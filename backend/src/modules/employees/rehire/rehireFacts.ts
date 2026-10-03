@@ -31,10 +31,12 @@ export async function loadRehireFacts(
 ): Promise<LoadedRehireFacts | null> {
   // Dates are formatted in SQL so they stay strings end to end (see payroll/employment-end-date.ts).
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT employment_status,
-            DATE_FORMAT(date_of_exit, '%Y-%m-%d') AS date_of_exit,
-            disciplinary_flag, rehire_block_lifted_at
-       FROM employees WHERE id = ?`,
+    `SELECT e.employment_status,
+            DATE_FORMAT(e.date_of_exit, '%Y-%m-%d') AS date_of_exit,
+            COALESCE(c.disciplinary_flag, 0) AS disciplinary_flag,
+            c.block_lifted_at AS rehire_block_lifted_at
+       FROM employees e LEFT JOIN employee_rehire_control c ON c.employee_id = e.id
+      WHERE e.id = ?`,
     [employeeId],
   );
   const emp = empRows[0];

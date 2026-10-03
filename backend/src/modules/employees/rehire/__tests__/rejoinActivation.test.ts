@@ -9,7 +9,7 @@ function conn(opts: { facts: Record<string, unknown>; stintCount?: number }) {
     calls,
     execute: vi.fn(async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
-      if (sql.includes("FROM employees WHERE id")) return [[{ employment_status: "Resigned", date_of_exit: "2026-09-01", disciplinary_flag: opts.facts.disciplinary ? 1 : 0, rehire_block_lifted_at: null }], []];
+      if (sql.includes("LEFT JOIN employee_rehire_control")) return [[{ employment_status: "Resigned", date_of_exit: "2026-09-01", disciplinary_flag: opts.facts.disciplinary ? 1 : 0, rehire_block_lifted_at: null }], []];
       if (sql.includes("FROM exit_request") && sql.includes("ORDER BY created_at")) return [[{ id: "x1", exit_type: "voluntary", exit_sub_type: opts.facts.sub ?? "resignation", exit_reason_category: "relocation", lwd: "2026-09-10" }], []];
       if (sql.includes("MAX(stint_no)")) return [[{ n: opts.stintCount ?? 0 }], []];
       if (sql.includes("COUNT(*)")) return [[{ n: 0 }], []];

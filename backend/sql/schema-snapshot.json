@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1226,
-  "columnCount": 17854,
+  "tableCount": 1228,
+  "columnCount": 17877,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -7798,6 +7798,23 @@
       "hr_final_remarks",
       "exit_request_id",
       "created_at",
+      "updated_at",
+      "raised_by_role",
+      "eligibility_status",
+      "eligibility_snapshot",
+      "absconding_acknowledged"
+    ],
+    "employee_rehire_control": [
+      "employee_id",
+      "disciplinary_flag",
+      "disciplinary_reason",
+      "disciplinary_flag_date",
+      "disciplinary_flagged_by",
+      "disciplinary_document_url",
+      "block_lifted_by",
+      "block_lifted_at",
+      "block_lift_reason",
+      "created_at",
       "updated_at"
     ],
     "employee_reimbursement_claim": [
@@ -8301,6 +8318,16 @@
       "sub_source",
       "candidate_id",
       "aadhaar_blind_index"
+    ],
+    "employment_stint": [
+      "id",
+      "employee_id",
+      "stint_no",
+      "start_date",
+      "end_date",
+      "end_exit_request_id",
+      "rejoin_request_id",
+      "created_at"
     ],
     "engagement_contest": [
       "id",

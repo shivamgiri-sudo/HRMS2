@@ -13,7 +13,7 @@ function executor(map: Record<string, unknown[]>) {
 describe("loadRehireFacts", () => {
   it("assembles facts from the latest non-rejoined exit and computes the gap from its LWD", async () => {
     const ex = executor({
-      "FROM employees WHERE id": [{ employment_status: "Resigned", date_of_exit: "2026-09-01", disciplinary_flag: 0, rehire_block_lifted_at: null }],
+      "LEFT JOIN employee_rehire_control": [{ employment_status: "Resigned", date_of_exit: "2026-09-01", disciplinary_flag: 0, rehire_block_lifted_at: null }],
       "AND LOWER(status) NOT IN": [{ id: "x1", exit_type: "voluntary", exit_sub_type: "resignation", exit_reason_category: "relocation", lwd: "2026-09-10" }],
       "abscond": [{ n: 0 }],
       "FROM employment_stint": [{ n: 0 }],
@@ -30,7 +30,7 @@ describe("loadRehireFacts", () => {
 
   it("falls back to date_of_exit for the gap when there is no exit record, and marks hasExitRecord=false", async () => {
     const ex = executor({
-      "FROM employees WHERE id": [{ employment_status: "Resigned", date_of_exit: "2026-09-01", disciplinary_flag: 0, rehire_block_lifted_at: null }],
+      "LEFT JOIN employee_rehire_control": [{ employment_status: "Resigned", date_of_exit: "2026-09-01", disciplinary_flag: 0, rehire_block_lifted_at: null }],
       "abscond": [{ n: 0 }],
       "FROM employment_stint": [{ n: 0 }],
       "FROM exit_clearance_checklist": [{ n: 0 }],
