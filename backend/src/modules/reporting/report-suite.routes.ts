@@ -437,7 +437,12 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
       const [fyStr] = (filters.month as string).split("-");
       const fm = Number(fmStr);
       const shortYY = String(Number(fyStr)).slice(2);
-      exportColumns = exportColumns.map(c => {
+      // No such column as 31-Sep: drop day columns past the month's real length.
+      const daysInSelectedMonth = new Date(Number(fyStr), fm, 0).getDate();
+      exportColumns = exportColumns.filter(c => {
+        const dm = c.key.match(/^day_(\d+)$/);
+        return !dm || Number(dm[1]) <= daysInSelectedMonth;
+      }).map(c => {
         const m = c.key.match(/^day_(\d+)$/);
         if (!m) return c;
         const d = Number(m[1]);
