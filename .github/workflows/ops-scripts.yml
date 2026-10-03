@@ -58,6 +58,7 @@ on:
           - kit-esign-diagnose
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
+          - deduction-duplicates-scan
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -220,6 +221,10 @@ jobs:
               # Dry-runs unless given --apply. Apply cancels (soft) only exact duplicates of a synced loan.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/loan-backfill-duplicate-cancel.ts $FLAG
+              ;;
+            deduction-duplicates-scan)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/deduction-duplicates-scan.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
