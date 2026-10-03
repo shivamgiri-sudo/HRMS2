@@ -733,16 +733,21 @@ async function loadKitForRelink(kitId: string): Promise<KitForRelink | null> {
  * their side. The system cannot tell whether a FAILED status is a temporary OTP
  * failure (recoverable) or a session that has truly died.
  *
+ * Verified live (MAS63661, 2026-10-03): a kit sent 2026-10-01 still read `failed` two
+ * days later, a resend minted a fresh token for it, and the employee landed on
+ * eMudhra's "Invalid Page". The old 3-day cutoff let that resend through, so a
+ * `failed` session is now treated as dead after 24 hours.
+ *
  * The heuristic: a `failed` transaction less than SESSION_DEAD_AFTER_DAYS old
  * might still be recoverable — the candidate could retry on the same link. After
  * that, the eMudhra session is definitely gone; treat it as dead so redispatch
  * becomes possible.
  */
-const SESSION_DEAD_AFTER_DAYS = 3;
+const SESSION_DEAD_AFTER_DAYS = 1;
 
 export async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT status, initiated_at, DATEDIFF(NOW(), initiated_at) AS age_days
+    `SELECT status, initiated_at, TIMESTAMPDIFF(HOUR, initiated_at, NOW()) / 24 AS age_days
        FROM employee_document_esign_transaction
       WHERE kit_id = ? ORDER BY initiated_at DESC LIMIT 1`,
     [kitId],

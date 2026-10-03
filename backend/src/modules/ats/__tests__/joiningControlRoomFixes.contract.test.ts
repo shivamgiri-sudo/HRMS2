@@ -277,8 +277,8 @@ describe('resend/reminder never mint a link to an already-dead Luckpay session',
     expect(body).toContain('["expired", "cancelled", "abandoned_unresolved"].includes(status)');
     expect(body).toContain('status === "failed" && ageDays >= SESSION_DEAD_AFTER_DAYS');
     expect(body).toContain('["pending", "initiated"].includes(status) && ageDays >= 7');
-    expect(body).toContain('DATEDIFF(NOW(), initiated_at) AS age_days');
-    expect(kitDispatch).toMatch(/const SESSION_DEAD_AFTER_DAYS = 3;/);
+    expect(body).toContain('TIMESTAMPDIFF(HOUR, initiated_at, NOW()) / 24 AS age_days');
+    expect(kitDispatch).toMatch(/const SESSION_DEAD_AFTER_DAYS = 1;/);
     // Each dead state must actually refuse (return false), not merely be named.
     expect(body.match(/return false;/g)?.length).toBe(3);
   });
