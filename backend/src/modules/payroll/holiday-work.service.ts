@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { EMPLOYMENT_END_DATE_SELECT, payableThrough } from "./employment-end-date.js";
+import { isDateEmployed, type DateRange } from "./stint-window.js";
 
 // ─── Internal types ───────────────────────────────────────────────────────────
 
@@ -52,7 +53,10 @@ function lastDayOfMonth(runMonth: string): number {
  */
 export async function resolveHolidaysForEmployeeV2(
   employeeId: string,
-  runMonth: string
+  runMonth: string,
+  // Rejoin v3: when given, a holiday outside every employed range (i.e. inside a rejoiner's gap) is not
+  // counted. Undefined = unchanged.
+  employedRanges?: DateRange[]
 ): Promise<{ eligibleHolidayCount: number; eligibleHolidayDates: string[]; holidayWorkExtraPayout: number }> {
   // ── Step 1: Employee master data ──────────────────────────────────────────
   const [empRows] = await db.execute<RowDataPacket[]>(
@@ -145,6 +149,7 @@ export async function resolveHolidaysForEmployeeV2(
     // a holiday on one definition of their end date and paid on another. date_of_leaving is NULL
     // on every row in this database, which is why it is never read on its own.
     if (holidayDateStr > payableThroughDate) continue;
+    if (employedRanges && !isDateEmployed(employedRanges, holidayDateStr)) continue;
 
     // Mandatory-work override: if the employee's branch/process was mandated to work
     // this holiday (is_mandatory=1), it is not a paid holiday for them.
