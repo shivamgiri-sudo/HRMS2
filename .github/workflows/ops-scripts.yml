@@ -78,6 +78,7 @@ on:
           - create-missing-esa-for-run-lines
           - employee-components-audit
           - fix-63694c-package
+          - align-offers-to-catalog
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -274,6 +275,11 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            align-offers-to-catalog)
+              # Dry-runs unless given --apply. Apply repairs only offers with no salary line yet; the rest are listed.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/align-offers-to-catalog.ts $FLAG
               ;;
             fix-63694c-package)
               # Dry-runs unless given --apply. Apply corrects one employee's package row, offer and joining validation in one transaction.
