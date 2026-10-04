@@ -182,6 +182,9 @@ describe("role helpers", () => {
     expect(reviewLinkFor({ id: "r-1", status: "approved" }, ["branch_head"])).toEqual({ href: "/employees/reactivation/r-1/review", label: "View" });
     expect(reviewLinkFor({ id: "r-1", status: "pending" }, ["hr"])).toEqual({ href: "/employees/reactivation/r-1/review", label: "View" });
     expect(reviewLinkFor({ id: "r-1", status: "pending" }, ["manager"])).toBeNull();
+    expect(reviewLinkFor({ id: "r-2", status: "branch_head_approved" }, ["branch_head"])).toEqual({ href: "/employees/reactivation/r-2/review", label: "Review" });
+    expect(reviewLinkFor({ id: "r-2", status: "branch_head_approved" }, ["hr"])).toEqual({ href: "/employees/reactivation/r-2/review", label: "View" });
+    expect(reviewLinkFor({ id: "r-3", status: "approved" }, ["branch_head"])).toEqual({ href: "/employees/reactivation/r-3/review", label: "View" });
   });
 });
 
@@ -237,10 +240,14 @@ describe("statusBannerFor", () => {
   it("no banner while pending", () => {
     expect(statusBannerFor("pending")).toBeNull();
   });
-  it("explains each closed state, including the old two-step one", () => {
+  it("legacy 'branch_head_approved': a neutral note that the final decision is still open, not a closed banner", () => {
+    const text = statusBannerFor("branch_head_approved");
+    expect(text).toBe("Approved earlier by the branch head under the old process; waiting for the final decision.");
+    expect(text).not.toMatch(/cannot be actioned|Nothing is left/);
+  });
+  it("explains each closed state", () => {
     expect(statusBannerFor("approved")).toMatch(/approved/);
     expect(statusBannerFor("rejected")).toMatch(/rejected/);
-    expect(statusBannerFor("branch_head_approved")).toMatch(/old two-step flow/);
     expect(statusBannerFor("weird")).toBe("This request is weird, so it cannot be actioned.");
   });
 });

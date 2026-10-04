@@ -138,6 +138,7 @@ describe("labels", () => {
     expect(eligibilityLabel("review")).toBe("Needs review");
     expect(eligibilityLabel("blocked")).toBe("Blocked");
     expect(requestStatusLabel("pending")).toBe("Pending branch head");
+    expect(requestStatusLabel("branch_head_approved")).toBe("Awaiting final decision (old process)");
     expect(requestStatusLabel("something_else")).toBe("Something else");
     expect(roleLabel("branch_head")).toBe("Branch head");
     expect(roleLabel(null)).toBe("Unknown role");

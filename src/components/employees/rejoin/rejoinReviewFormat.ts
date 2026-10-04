@@ -143,8 +143,8 @@ const REQUEST_STATUS_LABEL: Record<string, string> = {
   approved: "Approved, employee active",
   rejected: "Rejected",
   cancelled: "Cancelled",
-  // Old two-step rows only; nothing creates this status any more.
-  branch_head_approved: "Branch head approved (old HR step)",
+  // Old two-step rows only; nothing creates this status any more. The branch head makes the final decision.
+  branch_head_approved: "Awaiting final decision (old process)",
 };
 
 export function requestStatusLabel(status: string | null | undefined): string {

@@ -29,7 +29,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 const STATUS_LABELS: Record<string, string> = {
   pending: "Branch Head",
-  branch_head_approved: "Old HR step",
+  branch_head_approved: "Final decision (old process)",
   approved: "Reactivated",
   rejected: "Rejected",
   cancelled: "Cancelled",

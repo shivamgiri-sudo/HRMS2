@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MIN_ABSCONDING_REMARKS, MIN_REMARKS, decide, type DecisionInput } from "../rejoinDecisionRules";
+import { MIN_ABSCONDING_REMARKS, MIN_REMARKS, decide, isAwaitingBranchHead, type DecisionInput } from "../rejoinDecisionRules";
 
 const eligible: DecisionInput["eligibility"] = { status: "eligible", reasons: [], requiresAbscondingAck: false };
 const absconder: DecisionInput["eligibility"] = {
@@ -42,12 +42,30 @@ describe("decide", () => {
     expect(d.canReject).toBe(true);
   });
 
-  it.each(["approved", "rejected", "cancelled", "branch_head_approved", ""])("request status %j: both disabled with a reason", (status) => {
+  it.each(["approved", "rejected", "cancelled", ""])("request status %j: both disabled with a reason", (status) => {
     const d = decide(input({ requestStatus: status, remarks: "a long enough remark here, really" }));
     expect(d.canApprove).toBe(false);
     expect(d.canReject).toBe(false);
     expect(d.approveReason).toMatch(/no longer pending/);
     expect(d.rejectReason).toMatch(/no longer pending/);
+  });
+
+  it("legacy 'branch_head_approved' (old flow, stuck at the removed HR step) is still decidable", () => {
+    const d = decide(input({ requestStatus: "branch_head_approved", remarks: "Good record, approve." }));
+    expect(d).toMatchObject({ canApprove: true, canReject: true, approveReason: null, rejectReason: null });
+  });
+
+  it("legacy 'branch_head_approved' keeps the absconding and blocked rules from the live eligibility", () => {
+    expect(decide(input({ requestStatus: "branch_head_approved", eligibility: absconder, remarks: "short ok" })).canApprove).toBe(false);
+    const b = decide(input({ requestStatus: "branch_head_approved", eligibility: blocked }));
+    expect(b.canApprove).toBe(false);
+    expect(b.canReject).toBe(true);
+  });
+
+  it("isAwaitingBranchHead: pending and the legacy status are open, everything else is closed", () => {
+    expect(isAwaitingBranchHead("pending")).toBe(true);
+    expect(isAwaitingBranchHead("branch_head_approved")).toBe(true);
+    for (const s of ["approved", "rejected", "cancelled", "", null, undefined]) expect(isAwaitingBranchHead(s)).toBe(false);
   });
 
   it("remarks shorter than 5 after trimming: both disabled, with a counter", () => {

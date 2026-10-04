@@ -11,6 +11,7 @@ import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { ReactivationInsights } from "@/components/employees/ReactivationInsights";
 import { RaiseRejoinDialog } from "@/components/employees/rejoin/RaiseRejoinDialog";
 import { canDecideRejoin, canRaiseRejoin, reviewLinkFor } from "@/components/employees/rejoin/rejoinActions";
+import { isAwaitingBranchHead } from "@/components/employees/rejoin/rejoinDecisionRules";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -51,9 +52,10 @@ const STATUS_CONFIG = {
     border: "border-amber-200",
     dot: "bg-amber-400",
   },
-  // Old two-step rows only: the HR final step was removed, nothing creates this status any more.
+  // Old two-step rows only: the HR final step was removed, nothing creates this status any more. These
+  // are still open: the branch head makes the final decision.
   branch_head_approved: {
-    label: "Old HR step (closed)",
+    label: "Awaiting final decision (old process)",
     bg: "bg-blue-50",
     text: "text-blue-700",
     border: "border-blue-200",
@@ -113,12 +115,15 @@ function daysSince(iso?: string | null): number {
   return Number.isNaN(t) ? 0 : Math.max(0, Math.floor((Date.now() - t) / DAY_MS));
 }
 
-/** Days a pending request has been waiting for the branch head (the only approver). */
+/** Days an open request has been waiting for the branch head (the only approver). */
 function waitingDays(r: ReactivationRequest): number {
-  return r.status === "pending" ? daysSince(r.created_at) : 0;
+  return isOpen(r) ? daysSince(r.created_at) : 0;
 }
 
-const isOpen = (r: ReactivationRequest) => r.status === "pending";
+/** Open = waiting for the branch head: 'pending', or a legacy 'branch_head_approved' left by the old flow. */
+function isOpen(r: ReactivationRequest): boolean {
+  return isAwaitingBranchHead(r.status);
+}
 const isOverdue = (r: ReactivationRequest) => isOpen(r) && waitingDays(r) >= SLA_DAYS;
 
 function riskFlags(r: ReactivationRequest): { label: string; tone: string }[] {
@@ -132,14 +137,14 @@ function riskFlags(r: ReactivationRequest): { label: string; tone: string }[] {
 // ── Request Card ──────────────────────────────────────────────────────────────
 
 function RequestCard({ request, roleKeys }: { request: ReactivationRequest; roleKeys: readonly string[] }) {
-  // Review (branch head, pending) or View (hr / admin / super_admin, or a decided request): both open the
+  // Review (branch head, open request) or View (hr / admin / super_admin, or a decided request): both open the
   // dossier page. Roles that cannot open it (payroll_head, manager) get no link.
   const link = reviewLinkFor(request, roleKeys);
   const open = isOpen(request);
   const waited = waitingDays(request);
   const overdue = isOverdue(request);
   const flags = riskFlags(request);
-  const stage = request.status === "pending" ? 0 : request.status === "approved" ? 2 : -1;
+  const stage = open ? 0 : request.status === "approved" ? 2 : -1;
 
   return (
     <div
@@ -317,7 +322,7 @@ export default function NativeEmployeeReactivation() {
     void fetchSnapshot();
   }
 
-  const needsMyAction = (r: ReactivationRequest) => r.status === "pending" && isBranchHead;
+  const needsMyAction = (r: ReactivationRequest) => isOpen(r) && isBranchHead;
 
   const queue = pending.filter(isOpen);
   const stage1 = queue.length;
@@ -585,6 +590,7 @@ export default function NativeEmployeeReactivation() {
               >
                 <option value="">All statuses</option>
                 <option value="pending">Pending Branch Head</option>
+                <option value="branch_head_approved">Awaiting final decision (old process)</option>
                 <option value="approved">Reactivated</option>
                 <option value="rejected">Rejected</option>
                 <option value="cancelled">Cancelled</option>

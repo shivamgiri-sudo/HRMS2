@@ -96,6 +96,13 @@ describe("buildDossier", () => {
     expect(d.window.end).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  it("builds for a legacy 'branch_head_approved' request that predates raised_by_role", async () => {
+    const legacy = { ...requestRow, status: "branch_head_approved", raised_by_role: null, gap_days: null };
+    const d = (await buildDossier(db([legacy]) as never, "r1"))!;
+    expect(d.request).toMatchObject({ status: "branch_head_approved", raisedByRole: null, gapDays: 0 });
+    expect(d.eligibility.status).toBe("eligible");
+  });
+
   it("still returns a dossier when facts cannot be loaded, with no eligibility claim made up", async () => {
     m.loadRehireFacts.mockResolvedValue(null);
     const d = (await buildDossier(db() as never, "r1"))!;

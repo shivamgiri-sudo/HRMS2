@@ -244,6 +244,78 @@ describe("POST /reactivation/:id/branch-action", () => {
   });
 });
 
+describe("legacy 'branch_head_approved' requests (old flow, stuck at the removed HR step)", () => {
+  // Old rows predate raised_by_role / eligibility_snapshot, so both are NULL.
+  const legacyRow = { id: "r9", employee_id: "e9", status: "branch_head_approved", proposed_joining_date: "2026-09-20",
+    absconding_acknowledged: 0, raised_by_role: null, eligibility_snapshot: null, branch_head_actioned_by: "bh-old" };
+  function conn(row: Record<string, unknown> = legacyRow) {
+    const c = { execute: vi.fn(async (sql: string) => String(sql).includes("FOR UPDATE") ? [[row], []] : [{ affectedRows: 1 }, []]),
+      beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
+    getConnection.mockResolvedValue(c);
+    return c;
+  }
+  const eligible = { status: "eligible", reasons: [], requiresFreshOnboarding: false, requiresAbscondingAck: false };
+  const act = (action: string) => request(app()).post("/api/employees/reactivation/r9/branch-action").send({ action, remarks: "fine to rejoin" });
+
+  it("approving activates through the same checked path and marks it approved, then runs follow-ups", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    const c = conn(); activateRejoin.mockResolvedValue(eligible);
+    const res = await act("approved");
+    expect(res.status).toBe(200);
+    expect(activateRejoin).toHaveBeenCalledOnce();
+    expect(activateRejoin.mock.calls[0][1]).toMatchObject({ id: "r9", employee_id: "e9", absconding_acknowledged: 0 });
+    expect(c.commit).toHaveBeenCalledOnce();
+    const upd = c.execute.mock.calls.find(([sql]) => String(sql).includes("UPDATE employee_reactivation_requests"))!;
+    expect((upd[1] as unknown[])[0]).toBe("approved");
+    expect(runRejoinFollowUps).toHaveBeenCalledWith(expect.anything(), { marker: "deps" },
+      { requestId: "r9", employeeId: "e9", approverId: "bh1", rejoinDate: "2026-09-20" });
+    expect(notifyRejoinDecided).toHaveBeenCalledWith("r9", "approved");
+  });
+
+  it("rejecting closes it without activation", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    const c = conn();
+    const res = await act("rejected");
+    expect(res.status).toBe(200);
+    expect(activateRejoin).not.toHaveBeenCalled();
+    const upd = c.execute.mock.calls.find(([sql]) => String(sql).includes("UPDATE employee_reactivation_requests"))!;
+    expect((upd[1] as unknown[])[0]).toBe("rejected");
+  });
+
+  it("a live absconding verdict still refuses an unacknowledged approval even with no stored snapshot", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    const c = conn();
+    const { RejoinBlockedError } = await import("../rejoinActivation.js");
+    activateRejoin.mockRejectedValue(new RejoinBlockedError({ ...eligible, status: "review", requiresAbscondingAck: true }, "Absconding rejoin requires the branch head's acknowledgement"));
+    const res = await act("approved");
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBe("Absconding rejoin requires the branch head's acknowledgement");
+    expect(c.rollback).toHaveBeenCalledOnce();
+    expect(c.commit).not.toHaveBeenCalled();
+  });
+
+  it.each(["approved", "rejected", "cancelled"])("still 400s a request already '%s'", async (status) => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    const c = conn({ ...legacyRow, status });
+    const res = await act("approved");
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBe("Request is not pending branch head action");
+    expect(activateRejoin).not.toHaveBeenCalled();
+    expect(c.rollback).toHaveBeenCalledOnce();
+  });
+});
+
+describe("GET /reactivation/pending", () => {
+  it("lists both new 'pending' and legacy 'branch_head_approved' requests, keeping the scope", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    const res = await request(app()).get("/api/employees/reactivation/pending");
+    expect(res.status).toBe(200);
+    const sql = String(dbExecute.mock.calls[0][0]).replace(/\s+/g, " ");
+    expect(sql).toContain("r.status IN ('pending', 'branch_head_approved')");
+    expect(sql).toContain("AND (1=1)");
+  });
+});
+
 describe("POST /reactivation/:id/hr-action", () => {
   it("is gone (410) — the HR confirmation step was removed", async () => {
     authUser = { id: "u1", role: "hr", roles: ["hr"] };

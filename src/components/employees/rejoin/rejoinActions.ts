@@ -5,6 +5,7 @@
  * explains what is missing.
  */
 import type { RehireVerdict } from "./rejoinTypes";
+import { isAwaitingBranchHead } from "./rejoinDecisionRules";
 
 export type BranchAction = "approved" | "rejected";
 
@@ -164,10 +165,10 @@ export const canOpenRejoinReview = (roleKeys: readonly string[]) => hasAny(roleK
 
 export const rejoinReviewPath = (id: string) => `/employees/reactivation/${encodeURIComponent(id)}/review`;
 
-/** "Review" for a branch head on a pending request, "View" for anyone else who may open the page. */
+/** "Review" for a branch head on a request awaiting their decision, "View" for anyone else who may open the page. */
 export function reviewLinkFor(request: { id: string; status: string }, roleKeys: readonly string[]): { href: string; label: "Review" | "View" } | null {
   if (!canOpenRejoinReview(roleKeys)) return null;
-  const label = canDecideRejoin(roleKeys) && request.status === "pending" ? "Review" : "View";
+  const label = canDecideRejoin(roleKeys) && isAwaitingBranchHead(request.status) ? "Review" : "View";
   return { href: rejoinReviewPath(request.id), label };
 }
 
@@ -240,13 +241,15 @@ const STATUS_BANNER: Record<string, string> = {
   approved: "This request was approved and the employee is active again. Nothing is left to decide.",
   rejected: "This request was rejected. Nothing is left to decide.",
   cancelled: "This request was cancelled. Nothing is left to decide.",
-  branch_head_approved:
-    "The branch head approved this request under the old two-step flow, which waited for an HR confirmation that no longer exists. It cannot be actioned here.",
 };
 
-/** Banner text when the request is not pending; null while it is. */
+/** Legacy status from the old two-step flow: still open, so a neutral note rather than a "closed" banner. */
+const LEGACY_AWAITING_NOTE = "Approved earlier by the branch head under the old process; waiting for the final decision.";
+
+/** Banner text when the request is closed (or a legacy open one); null for a plain pending request. */
 export function statusBannerFor(status: string): string | null {
   if (status === "pending") return null;
+  if (status === "branch_head_approved") return LEGACY_AWAITING_NOTE;
   return STATUS_BANNER[status] ?? `This request is ${status || "in an unknown state"}, so it cannot be actioned.`;
 }
 

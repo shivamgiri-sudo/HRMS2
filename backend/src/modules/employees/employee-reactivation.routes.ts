@@ -55,7 +55,9 @@ type ReactivationRow = {
 };
 
 // ── GET /reactivation/pending ─────────────────────────────────────────────────
-// Returns all requests pending action for the current user's role
+// Returns all requests pending action for the current user's role. 'branch_head_approved' is a legacy
+// status: the old two-step flow parked requests there for an HR confirmation that no longer exists, so
+// those requests are still waiting for the branch head's final decision.
 
 employeeReactivationRouter.get("/reactivation/pending", async (req: AuthenticatedRequest, res) => {
   try {
@@ -89,7 +91,7 @@ employeeReactivationRouter.get("/reactivation/pending", async (req: Authenticate
         CONCAT(e.first_name, ' ', e.last_name) as employee_name
       FROM employee_reactivation_requests r
       JOIN employees e ON r.employee_id = e.id
-      WHERE r.status = 'pending'
+      WHERE r.status IN ('pending', 'branch_head_approved')
         AND (${scopeCondition.sql})
       ORDER BY r.created_at DESC
     `;
@@ -363,7 +365,9 @@ employeeReactivationRouter.post(
           await conn.rollback();
           return res.status(403).json({ success: false, message: "This reactivation request is not in your assigned scope" });
         }
-        if (request.status !== "pending") {
+        // 'branch_head_approved' rows were left by the old flow at the removed HR step: the branch head
+        // finishes them here, through the same eligibility-checked activation.
+        if (request.status !== "pending" && request.status !== "branch_head_approved") {
           await conn.rollback();
           return res.status(400).json({ success: false, message: "Request is not pending branch head action" });
         }

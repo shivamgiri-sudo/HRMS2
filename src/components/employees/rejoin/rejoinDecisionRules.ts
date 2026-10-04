@@ -9,6 +9,17 @@ export const MIN_REMARKS = 5;
 /** Backend rule for approving an absconder: acknowledgement ticked and remarks of at least 20 characters. */
 export const MIN_ABSCONDING_REMARKS = 20;
 
+/**
+ * Statuses still waiting for the branch head's decision. 'branch_head_approved' is a legacy status: the
+ * old two-step flow parked requests there for an HR confirmation that was removed, so the branch head
+ * makes the final decision on them (the server's branch-action accepts both).
+ */
+export const AWAITING_BRANCH_HEAD_STATUSES = ["pending", "branch_head_approved"] as const;
+
+export function isAwaitingBranchHead(status: string | null | undefined): boolean {
+  return (AWAITING_BRANCH_HEAD_STATUSES as readonly string[]).includes(String(status ?? ""));
+}
+
 export interface DecisionInput {
   requestStatus: string;
   eligibility: Pick<RehireVerdict, "status" | "reasons" | "requiresAbscondingAck">;
@@ -34,7 +45,7 @@ export function decide(input: DecisionInput): DecisionState {
   const approveMinRemarks = needsAck ? MIN_ABSCONDING_REMARKS : MIN_REMARKS;
   const len = input.remarks.trim().length;
 
-  if (input.requestStatus !== "pending") {
+  if (!isAwaitingBranchHead(input.requestStatus)) {
     const why = "This request is no longer pending, so it cannot be actioned.";
     return { canApprove: false, canReject: false, approveReason: why, rejectReason: why, needsAck, approveMinRemarks };
   }

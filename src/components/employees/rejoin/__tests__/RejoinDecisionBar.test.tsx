@@ -95,6 +95,13 @@ describe("RejoinDecisionBarView", () => {
     expect(out.split("no longer pending").length - 1).toBe(1);
   });
 
+  it("legacy 'branch_head_approved': the branch head can still approve or reject", () => {
+    const out = render({ status: "branch_head_approved", remarks: "Good record, approve" });
+    expect(disabled(button(out, "Approve"))).toBe(false);
+    expect(disabled(button(out, "Reject"))).toBe(false);
+    expect(out).not.toContain("no longer pending");
+  });
+
   it("while a decision is in flight both buttons are disabled", () => {
     const out = render({ remarks: "Good record, approve", pendingAction: "approved" });
     expect(disabled(button(out, "Approving…"))).toBe(true);
