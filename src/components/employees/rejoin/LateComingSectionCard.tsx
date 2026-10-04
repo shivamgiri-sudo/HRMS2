@@ -31,7 +31,7 @@ export function LateComingSectionCard({ result, windowMonths }: { result: Sectio
         const avg = d.late.avgLateMarksPerMonth;
         return (
           <>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 2xl:grid-cols-4">
               <StatTile label="Total late marks" value={d.late.totalLateMarks} />
               <StatTile
                 label="Avg per month"

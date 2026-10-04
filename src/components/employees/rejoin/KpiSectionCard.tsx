@@ -29,7 +29,7 @@ export function KpiSectionCard({ result }: { result: SectionResult<KpiSection> }
         const t = d.atTargetPct;
         return (
           <>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 2xl:grid-cols-4">
               <StatTile
                 label="Months at target"
                 value={`${d.monthsAtTarget}/${d.monthsWithData}`}
@@ -50,10 +50,10 @@ export function KpiSectionCard({ result }: { result: SectionResult<KpiSection> }
                   role="img"
                   aria-label={`Monthly KPI achievement. At target in ${d.monthsAtTarget} of ${d.monthsWithData} measured months.`}
                 >
-                  <BarChart data={data} margin={{ top: 8, right: 4, left: -16, bottom: 0 }}>
+                  <BarChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
                     <CartesianGrid vertical={false} />
                     <XAxis dataKey="month" tickLine={false} axisLine={false} interval="preserveStartEnd" tickMargin={6} />
-                    <YAxis domain={[0, 100]} tickLine={false} axisLine={false} width={40} tickFormatter={(v) => `${v}%`} />
+                    <YAxis domain={[0, 100]} tickLine={false} axisLine={false} width={44} tickFormatter={(v) => `${v}%`} />
                     <ReferenceLine
                       y={100}
                       stroke="hsl(var(--muted-foreground))"

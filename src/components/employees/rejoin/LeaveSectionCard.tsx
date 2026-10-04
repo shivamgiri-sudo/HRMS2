@@ -15,7 +15,7 @@ export function LeaveSectionCard({ result }: { result: SectionResult<LeaveSectio
     >
       {(d) => (
         <>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 2xl:grid-cols-4">
             <StatTile label="Requests" value={d.totalRequests} hint={`${fmtNum(d.totalDays)} days`} />
             <StatTile label="Paid / unpaid days" value={`${fmtNum(d.paidDays)} / ${fmtNum(d.unpaidDays)}`} />
             <StatTile
