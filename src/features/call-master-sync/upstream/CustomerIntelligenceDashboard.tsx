@@ -139,7 +139,7 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, trend, 
             <div style={{ color }}>{icon}</div>
           </div>
         </div>
-        <div className="text-2xl font-bold text-slate-900 tracking-tight">
+        <div className="text-xl font-bold text-slate-900 tracking-tight whitespace-nowrap">
           <AnimNum value={value} suffix={suffix} dec={dec} />
         </div>
         <div className="flex items-center gap-1.5 mt-1">
@@ -195,7 +195,7 @@ function SCard({ title, children, className = '', accent = C.blue, dl }: {
         {hdr()} <div className="p-5">{children}</div>
       </motion.div>
       {exp && createPortal(
-        <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-sm"
+        <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-slate-100 backdrop-blur-sm"
           style={{ zIndex: 9999 }} onClick={() => setExp(false)}>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
             style={{ maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
@@ -232,7 +232,7 @@ function HorizBars({ data, labelKey, valueKey, color, maxItems = 12, suffix = ''
         return (
           <div key={i}>
             <div className="flex items-center justify-between mb-0.5">
-              <span className="text-[11px] text-slate-400 truncate max-w-[70%]" title={String(r[labelKey])}>{String(r[labelKey])}</span>
+              <span className="text-[11px] text-slate-500 truncate max-w-[70%]" title={String(r[labelKey])}>{String(r[labelKey])}</span>
               <span className="text-[11px] font-semibold shrink-0" style={{ color: bc }}>{Number(val).toLocaleString()}{suffix}</span>
             </div>
             <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
@@ -320,7 +320,7 @@ function InsightCard({ insight, index }: { insight: AIInsight; index: number }) 
                 { k: 'Impact', v: insight.impact },
                 { k: 'Action', v: insight.action },
               ].map(({ k, v }) => (
-                <div key={k} className="rounded-lg bg-black/20 px-3 py-2">
+                <div key={k} className="rounded-lg bg-slate-100 px-3 py-2">
                   <div className="text-[9px] font-bold uppercase tracking-wider mb-1" style={{ color: cfg.color }}>{k}</div>
                   <div className="text-[11px] text-slate-600 leading-relaxed">{v}</div>
                 </div>
@@ -644,7 +644,7 @@ export default function CustomerIntelligenceDashboard() {
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate('/call-master')}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 transition-colors text-xs">
+            className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 transition-colors text-xs">
             <ChevronLeft size={16} /> Call Master
           </button>
           <div className="w-px h-4 bg-slate-300" />
@@ -750,8 +750,8 @@ export default function CustomerIntelligenceDashboard() {
                   </ResponsiveContainer>
                   <div className="grid grid-cols-2 gap-2 mt-2">
                     {sentiment.map(r => (
-                      <div key={r.sentiment} className="flex items-center justify-between p-2 rounded-lg bg-black/20">
-                        <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                      <div key={r.sentiment} className="flex items-center justify-between p-2 rounded-lg bg-slate-100">
+                        <span className="flex items-center gap-1.5 text-[11px] text-slate-600">
                           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: SENTIMENT_COLORS[r.sentiment] ?? C.unk }} />
                           {r.sentiment}
                         </span>
@@ -820,7 +820,7 @@ export default function CustomerIntelligenceDashboard() {
                 <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                   {fbSubCats.map((r, i) => (
                     <div key={i} className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-slate-400 truncate" title={r.subCategory}>{r.subCategory}</span>
+                      <span className="text-[11px] text-slate-500 truncate" title={r.subCategory}>{r.subCategory}</span>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <SentBadge sentiment={r.feedback} />
                         <span className="text-[11px] font-semibold text-slate-600">{Number(r.count).toLocaleString()}</span>
@@ -972,7 +972,7 @@ export default function CustomerIntelligenceDashboard() {
                       return (
                         <tr key={i} className="hover:bg-slate-50 transition-colors">
                           <td className="py-2 text-slate-600 truncate max-w-[160px]" title={r.category}>{r.category}</td>
-                          <td className="py-2 text-right text-slate-400">{Number(r.count).toLocaleString()}</td>
+                          <td className="py-2 text-right text-slate-500">{Number(r.count).toLocaleString()}</td>
                           <td className="py-2 text-right font-semibold" style={{ color: C.pos }}>{Number(r.positive).toLocaleString()}</td>
                           <td className="py-2 text-right font-semibold" style={{ color: C.neg }}>{Number(r.negative).toLocaleString()}</td>
                           <td className="py-2 text-right font-semibold" style={{ color: C.neu }}>{Number(r.neutral).toLocaleString()}</td>
@@ -1026,7 +1026,7 @@ export default function CustomerIntelligenceDashboard() {
                       <tr key={i} className="hover:bg-slate-50 transition-colors">
                         <td className="py-1.5 text-slate-500 font-bold">{i + 1}</td>
                         <td className="py-1.5 text-slate-600 font-medium">{r.client_id}</td>
-                        <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
+                        <td className="py-1.5 text-right text-slate-500">{Number(r.calls).toLocaleString()}</td>
                         <td className="py-1.5 text-right"><span className="font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</span></td>
                         <td className="py-1.5 text-right font-semibold" style={{ color: C.pos }}>{r.positive_pct}%</td>
                         <td className="py-1.5 text-right font-semibold" style={{ color: negColor(r.negative_pct) }}>{r.negative_pct}%</td>
@@ -1068,7 +1068,7 @@ export default function CustomerIntelligenceDashboard() {
                         <tr key={i} className="hover:bg-slate-50 transition-colors">
                           <td className="py-1.5 text-slate-500 font-bold">{i + 1}</td>
                           <td className="py-1.5 text-slate-600 truncate max-w-[120px]" title={r.campaign}>{r.campaign}</td>
-                          <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
+                          <td className="py-1.5 text-right text-slate-500">{Number(r.calls).toLocaleString()}</td>
                           <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</td>
                           <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.offer_accept_pct) }}>{r.offer_accept_pct}%</td>
                           <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.conv_pct) }}>{r.conv_pct}%</td>
@@ -1121,7 +1121,7 @@ export default function CustomerIntelligenceDashboard() {
                       <tr key={i} className="hover:bg-slate-50 transition-colors">
                         <td className="py-1.5 font-bold" style={{ color: i < 3 ? C.neu : '#64748B' }}>{i + 1}</td>
                         <td className="py-1.5 text-slate-600 truncate max-w-[100px]" title={r.agent}>{r.agent}</td>
-                        <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
+                        <td className="py-1.5 text-right text-slate-500">{Number(r.calls).toLocaleString()}</td>
                         <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</td>
                         <td className="py-1.5 text-right font-semibold" style={{ color: C.pos }}>{r.positive_pct}%</td>
                         <td className="py-1.5 text-right font-semibold" style={{ color: negColor(r.negative_pct) }}>{r.negative_pct}%</td>
@@ -1157,7 +1157,7 @@ export default function CustomerIntelligenceDashboard() {
                       <tr key={i} className="hover:bg-red-900/[0.06] transition-colors">
                         <td className="py-1.5 text-red-500 font-bold">{i + 1}</td>
                         <td className="py-1.5 text-slate-600 truncate max-w-[100px]" title={r.agent}>{r.agent}</td>
-                        <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
+                        <td className="py-1.5 text-right text-slate-500">{Number(r.calls).toLocaleString()}</td>
                         <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</td>
                         <td className="py-1.5 text-right font-semibold" style={{ color: C.pos }}>{r.positive_pct}%</td>
                         <td className="py-1.5 text-right font-semibold" style={{ color: negColor(r.negative_pct) }}>{r.negative_pct}%</td>
@@ -1213,7 +1213,7 @@ export default function CustomerIntelligenceDashboard() {
           {sec9Loaded.current && !sec9Loading && insights.length === 0 && (
             <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-50 border border-slate-200">
               <Info size={16} className="text-slate-500" />
-              <span className="text-[12px] text-slate-400">AI insights will appear once data is loaded.</span>
+              <span className="text-[12px] text-slate-500">AI insights will appear once data is loaded.</span>
             </div>
           )}
         </section>
@@ -1273,7 +1273,7 @@ export default function CustomerIntelligenceDashboard() {
                         <tr key={r.agent} className="hover:bg-slate-50 transition-colors">
                           <td className="py-1.5 text-slate-500 font-bold pr-2">{i + 1}</td>
                           <td className="py-1.5 text-slate-700 font-medium max-w-[120px] truncate" title={r.agent}>{r.agent}</td>
-                          <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
+                          <td className="py-1.5 text-right text-slate-500">{Number(r.calls).toLocaleString()}</td>
                           <td className="py-1.5 text-right">
                             <span className="font-bold" style={{ color: pctColor(r.csat) }}>{r.csat}%</span>
                           </td>
@@ -1312,7 +1312,7 @@ export default function CustomerIntelligenceDashboard() {
                       const avgNPS      = totCalls  ? +(((totPromoter - totDetractor) / totCalls) * 100).toFixed(1) : 0;
                       return (
                         <tfoot>
-                          <tr className="border-t border-slate-200 text-[10px] font-bold text-slate-400">
+                          <tr className="border-t border-slate-200 text-[10px] font-bold text-slate-500">
                             <td></td>
                             <td className="py-2">Total / Avg</td>
                             <td className="py-2 text-right">{totCalls.toLocaleString()}</td>

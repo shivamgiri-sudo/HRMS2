@@ -208,7 +208,7 @@ function KPICard({ label, value, suffix, dec, icon, color, sub, index, onClick }
         <div className="flex items-start justify-between mb-3">
           <span className="text-[10px] font-black text-slate-700 uppercase tracking-[0.12em] leading-none pr-2">{label}</span>
           <div className="flex items-center gap-1.5">
-            {onClick && <Info size={11} className="text-slate-400 group-hover:text-slate-600 transition-colors" />}
+            {onClick && <Info size={11} className="text-slate-500 group-hover:text-slate-600 transition-colors" />}
             <div className="p-2 rounded-xl shrink-0 group-hover:scale-110 transition-transform duration-200 shadow-sm"
                  style={{ backgroundColor: `${color}18`, color }}>
               {icon}
@@ -303,7 +303,7 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, des
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-100 backdrop-blur-sm"
           onClick={() => setExpanded(false)}
         >
           <motion.div
@@ -318,7 +318,7 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, des
           >
             {cardHeader(() => setExpanded(false))}
             {description && (
-              <div className="px-5 py-2.5 bg-blue-500/5 border-b border-blue-500/10 text-xs text-slate-400 leading-relaxed">
+              <div className="px-5 py-2.5 bg-blue-500/5 border-b border-blue-500/10 text-xs text-slate-500 leading-relaxed">
                 {description}
               </div>
             )}
@@ -351,7 +351,7 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, des
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="px-5 py-3 bg-blue-500/5 border-b border-blue-500/10 text-xs text-slate-400 leading-relaxed">
+              <div className="px-5 py-3 bg-blue-500/5 border-b border-blue-500/10 text-xs text-slate-500 leading-relaxed">
                 {description}
               </div>
             </motion.div>
@@ -433,7 +433,7 @@ function FilterBar({
               <option className="text-slate-900 bg-white" key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
             ))}
           </select>
-          <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
+          <ChevronDown size={12} className="absolute right-2 top-3 text-slate-500 pointer-events-none" />
         </div>
       )}
 
@@ -448,7 +448,7 @@ function FilterBar({
           <option className="text-slate-900 bg-white" value="Inbound">Inbound</option>
           <option className="text-slate-900 bg-white" value="Outbound">Outbound</option>
         </select>
-        <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
+        <ChevronDown size={12} className="absolute right-2 top-3 text-slate-500 pointer-events-none" />
       </div>
 
       {/* Period */}
@@ -462,7 +462,7 @@ function FilterBar({
           <option className="text-slate-900 bg-white" value="weekly">Weekly</option>
           <option className="text-slate-900 bg-white" value="monthly">Monthly</option>
         </select>
-        <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
+        <ChevronDown size={12} className="absolute right-2 top-3 text-slate-500 pointer-events-none" />
       </div>
 
       <motion.button
@@ -484,7 +484,7 @@ function FunnelBar({ row, max }: { row: FunnelRow; max: number }) {
   const width = max > 0 ? (row.value / max) * 100 : 0;
   return (
     <div className="flex items-center gap-3">
-      <div className="w-36 text-xs text-slate-400 text-right shrink-0">{row.stage}</div>
+      <div className="w-36 text-xs text-slate-500 text-right shrink-0">{row.stage}</div>
       <div className="flex-1 bg-slate-100 rounded-full h-6 overflow-hidden">
         <motion.div
           className="h-6 rounded-full flex items-center justify-end pr-2"
@@ -496,7 +496,7 @@ function FunnelBar({ row, max }: { row: FunnelRow; max: number }) {
           <span className="text-xs text-slate-900 font-bold">{fmt(row.value)}</span>
         </motion.div>
       </div>
-      <div className="w-12 text-xs text-slate-400 shrink-0">{row.pct}%</div>
+      <div className="w-12 text-xs text-slate-500 shrink-0">{row.pct}%</div>
     </div>
   );
 }
@@ -512,7 +512,7 @@ function DetailDrawer({ open, onClose, title, description, children }: {
         <>
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 z-40 backdrop-blur-sm"
+            className="fixed inset-0 bg-slate-100 z-40 backdrop-blur-sm"
             onClick={onClose}
           />
           <motion.div
@@ -531,7 +531,7 @@ function DetailDrawer({ open, onClose, title, description, children }: {
             </div>
             {/* Description */}
             <div className="px-6 py-3 bg-blue-500/5 border-b border-slate-200">
-              <p className="text-xs text-slate-400 leading-relaxed">{description}</p>
+              <p className="text-xs text-slate-500 leading-relaxed">{description}</p>
             </div>
             {/* Content */}
             <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -584,7 +584,7 @@ function ParamBars({ rows, barH = 'h-5' }: { rows: CXParamRow[]; barH?: string }
     <div className="space-y-1.5">
       {sorted.map(p => (
         <div key={p.key} className="flex items-center gap-2">
-          <span className="text-xs text-slate-400 w-40 shrink-0 truncate" title={p.parameter}>{p.parameter}</span>
+          <span className="text-xs text-slate-500 w-40 shrink-0 truncate" title={p.parameter}>{p.parameter}</span>
           <div className={`flex-1 bg-slate-100 rounded-full ${barH} overflow-hidden`}>
             <motion.div
               className={`${barH} rounded-full flex items-center justify-end pr-2`}
@@ -628,11 +628,11 @@ function CXParametersCard({ cxData, lob }: { cxData: CXData; lob: string }) {
       {(showInbound && showOutbound) && (
         <div className="flex gap-1 mb-4 bg-slate-100 rounded-lg p-1 w-fit">
           <button onClick={() => setTab('inbound')}
-            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'inbound' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-900'}`}>
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'inbound' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-900'}`}>
             Inbound (19)
           </button>
           <button onClick={() => setTab('outbound')}
-            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'outbound' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-slate-900'}`}>
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'outbound' ? 'bg-purple-600 text-white' : 'text-slate-500 hover:text-slate-900'}`}>
             Outbound (6)
           </button>
         </div>
@@ -735,7 +735,7 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
                 <div className="w-2.5 h-2.5 rounded-full shrink-0"
                   style={{ backgroundColor: r.name === 'Other' ? '#475569' : SCENARIO_COLORS[i % SCENARIO_COLORS.length] }} />
                 <span className={`text-xs flex-1 ${r.name === 'Other' ? 'text-slate-500 italic' : 'text-slate-600'}`}>{r.name}</span>
-                <span className="text-xs text-slate-400">{r.value.toLocaleString()}</span>
+                <span className="text-xs text-slate-500">{r.value.toLocaleString()}</span>
                 <span className="text-xs font-semibold text-slate-600 w-12 text-right">
                   {((r.value / total) * 100).toFixed(1)}%
                 </span>
@@ -762,7 +762,7 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
             const subTotal = subData.reduce((s, r) => s + r.value, 0) || 1;
             return (
               <>
-                <p className="text-xs text-slate-400 mb-3">
+                <p className="text-xs text-slate-500 mb-3">
                   Sub-scenarios — <span className="text-slate-900 font-medium">{selected}</span>
                 </p>
                 <ResponsiveContainer width="100%" height={160}>
@@ -784,7 +784,7 @@ function ScenarioSection({ scenario, buildQS }: { scenario: ScenarioRow[]; build
                     <div key={r.name} className="flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
                       <span className="text-xs text-slate-600 flex-1">{r.name}</span>
-                      <span className="text-xs text-slate-400">{r.value.toLocaleString()}</span>
+                      <span className="text-xs text-slate-500">{r.value.toLocaleString()}</span>
                       <span className="text-xs font-semibold text-slate-600 w-12 text-right">
                         {((r.value / subTotal) * 100).toFixed(1)}%
                       </span>
@@ -821,7 +821,7 @@ function AgentParamsPanel({
       <div className="flex items-center justify-between mb-3">
         <div>
           <span className="text-sm font-semibold text-slate-900">{agent.agent}</span>
-          <span className="ml-2 text-xs text-slate-400">
+          <span className="ml-2 text-xs text-slate-500">
             {type === 'top' ? '— Why Top Performer' : '— Coaching Areas'}
           </span>
         </div>
@@ -836,7 +836,7 @@ function AgentParamsPanel({
           <div className="space-y-1.5">
             {weak.map(p => (
               <div key={p.key} className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 w-44 shrink-0">{p.parameter}</span>
+                <span className="text-xs text-slate-500 w-44 shrink-0">{p.parameter}</span>
                 <div className="flex-1 bg-slate-100 rounded-full h-4 overflow-hidden">
                   <motion.div
                     className="h-4 rounded-full flex items-center justify-end pr-1.5"
@@ -860,7 +860,7 @@ function AgentParamsPanel({
           <div className="space-y-1.5">
             {strong.map(p => (
               <div key={p.key} className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 w-44 shrink-0">{p.parameter}</span>
+                <span className="text-xs text-slate-500 w-44 shrink-0">{p.parameter}</span>
                 <div className="flex-1 bg-slate-100 rounded-full h-4 overflow-hidden">
                   <motion.div
                     className="h-4 rounded-full flex items-center justify-end pr-1.5"
@@ -886,7 +886,7 @@ function AgentParamsPanel({
         <div className="mt-2 space-y-1">
           {sorted.map(p => (
             <div key={p.key} className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 w-44 shrink-0">{p.parameter}</span>
+              <span className="text-xs text-slate-500 w-44 shrink-0">{p.parameter}</span>
               <div className="flex-1 bg-slate-100 rounded-full h-3 overflow-hidden">
                 <div
                   className="h-3 rounded-full"
@@ -941,7 +941,7 @@ function AgentTable({
     <div>
       <div className="flex items-center gap-2 mb-3">
         {icon}
-        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
           {type === 'top' ? 'Top Performers' : 'Needs Coaching'}
         </span>
         <span className="text-xs text-slate-600 ml-1">(click agent to drill down)</span>
@@ -972,7 +972,7 @@ function AgentTable({
               >
                 <td className="py-2 pr-3 text-slate-600">{i + 1}</td>
                 <td className="py-2 pr-3 font-medium text-blue-300 underline decoration-dotted">{a.agent}</td>
-                <td className="py-2 pr-3 text-right text-slate-400">{fmt(a.calls)}</td>
+                <td className="py-2 pr-3 text-right text-slate-500">{fmt(a.calls)}</td>
                 <td className="py-2 pr-3 text-right font-semibold" style={{ color: pctColor(a.quality) }}>
                   {a.quality.toFixed(1)}%
                 </td>
@@ -1201,7 +1201,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                         className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                           source === s
                             ? s === 'inbound' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
-                            : 'bg-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100'
+                            : 'bg-slate-100 text-slate-500 hover:text-slate-900 hover:bg-slate-100'
                         }`}
                       >
                         {s === 'inbound' ? 'Inbound' : 'Outbound'}
@@ -1266,7 +1266,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                       { id: 'quality' as const, label: 'Quality Only' },
                     ] as const).map(p => (
                       <button key={p.id} onClick={() => applyPreset(p.id)}
-                        className="w-full text-left text-xs text-slate-400 hover:text-slate-900 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-100 transition-colors"
+                        className="w-full text-left text-xs text-slate-500 hover:text-slate-900 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-100 transition-colors"
                       >
                         {p.label}
                       </button>
@@ -1343,7 +1343,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                                 onChange={() => toggleCol(col.key)}
                                 className="w-3.5 h-3.5 rounded accent-blue-500"
                               />
-                              <span className="text-xs text-slate-400 group-hover/col:text-slate-700 transition-colors truncate" title={col.label}>
+                              <span className="text-xs text-slate-500 group-hover/col:text-slate-700 transition-colors truncate" title={col.label}>
                                 {col.label}
                               </span>
                             </label>
@@ -1906,7 +1906,7 @@ export default function CallMasterDashboard() {
                     >
                       <td className="py-2.5 pr-3 text-slate-600">{i + 1}</td>
                       <td className="py-2.5 pr-4 font-medium text-slate-700">{r.agent}</td>
-                      <td className="py-2.5 pr-4 text-right text-slate-400">{r.audit_count.toLocaleString()}</td>
+                      <td className="py-2.5 pr-4 text-right text-slate-500">{r.audit_count.toLocaleString()}</td>
                       <td className="py-2.5 pr-4 text-right font-semibold" style={{ color: pctColor(r.cq_score) }}>
                         {r.cq_score.toFixed(1)}%
                       </td>
@@ -1985,7 +1985,7 @@ export default function CallMasterDashboard() {
             processListLoading ? (
               <div className="flex items-center justify-center py-16">
                 <RefreshCw size={20} className="animate-spin text-blue-400" />
-                <span className="ml-3 text-sm text-slate-400">Loading processes…</span>
+                <span className="ml-3 text-sm text-slate-500">Loading processes…</span>
               </div>
             ) : processList.length === 0 ? (
               <p className="text-slate-600 text-sm text-center py-12">No process data available</p>
@@ -2006,13 +2006,13 @@ export default function CallMasterDashboard() {
                     {processList.map((p, i) => (
                       <tr key={i} className="border-b border-slate-200 hover:bg-slate-100 transition-colors">
                         <td className="py-2.5 pr-3 font-medium text-slate-700 max-w-[120px] truncate" title={p.process_name}>{p.process_name}</td>
-                        <td className="py-2.5 pr-3 text-slate-400 max-w-[100px] truncate" title={p.client_name}>{p.client_name}</td>
+                        <td className="py-2.5 pr-3 text-slate-500 max-w-[100px] truncate" title={p.client_name}>{p.client_name}</td>
                         <td className="py-2.5 pr-3">
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                             p.lob === 'Outbound' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-blue-400'
                           }`}>{p.lob === 'Outbound' ? 'OB' : 'IB'}</span>
                         </td>
-                        <td className="py-2.5 pr-3 text-right text-slate-400">{fmt(p.total_calls)}</td>
+                        <td className="py-2.5 pr-3 text-right text-slate-500">{fmt(p.total_calls)}</td>
                         <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: p.quality_score !== null ? pctColor(p.quality_score) : '#64748B' }}>
                           {p.quality_score !== null ? `${p.quality_score.toFixed(1)}%` : '—'}
                         </td>
@@ -2033,7 +2033,7 @@ export default function CallMasterDashboard() {
             agentsListLoading ? (
               <div className="flex items-center justify-center py-16">
                 <RefreshCw size={20} className="animate-spin text-blue-400" />
-                <span className="ml-3 text-sm text-slate-400">Loading agents…</span>
+                <span className="ml-3 text-sm text-slate-500">Loading agents…</span>
               </div>
             ) : agentsList.length === 0 ? (
               <p className="text-slate-600 text-sm text-center py-12">No agent data for this period</p>
@@ -2054,11 +2054,11 @@ export default function CallMasterDashboard() {
                       <tr key={a.agent} className="border-b border-slate-200 hover:bg-slate-100 transition-colors">
                         <td className="py-2.5 pr-3 text-slate-600">{i + 1}</td>
                         <td className="py-2.5 pr-3 font-medium text-slate-700">{a.agent}</td>
-                        <td className="py-2.5 pr-3 text-right text-slate-400">{fmt(a.calls)}</td>
+                        <td className="py-2.5 pr-3 text-right text-slate-500">{fmt(a.calls)}</td>
                         <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: pctColor(a.quality) }}>
                           {a.quality.toFixed(1)}%
                         </td>
-                        <td className="py-2.5 text-slate-400 max-w-[160px] truncate" title={a.clients}>
+                        <td className="py-2.5 text-slate-500 max-w-[160px] truncate" title={a.clients}>
                           <span className="inline-flex items-center gap-1.5">
                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ${
                               a.lob === 'Outbound'
@@ -2087,12 +2087,12 @@ export default function CallMasterDashboard() {
                 <p className="text-3xl font-bold text-slate-900">
                   {drawer === 'total_calls'  && <AnimatedNumber value={kpis?.totalCalls ?? 0} />}
                   {drawer === 'audited_calls'&& <AnimatedNumber value={kpis?.totalAudited ?? 0} />}
-                  {drawer === 'quality_score'&& <><AnimatedNumber value={kpis?.qualityScore ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'fatal_score'  && <><AnimatedNumber value={kpis?.fatalScore ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'compliance'   && <><AnimatedNumber value={kpis?.compliance ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'cx_score'     && <><AnimatedNumber value={kpis?.customerExperience ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'sales_conv'   && <><AnimatedNumber value={kpis?.salesConversion ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
-                  {drawer === 'ob_quality'   && <><AnimatedNumber value={kpis?.outboundQuality ?? 0} dec={1} /><span className="text-lg text-slate-400 ml-1">%</span></>}
+                  {drawer === 'quality_score'&& <><AnimatedNumber value={kpis?.qualityScore ?? 0} dec={1} /><span className="text-lg text-slate-500 ml-1">%</span></>}
+                  {drawer === 'fatal_score'  && <><AnimatedNumber value={kpis?.fatalScore ?? 0} dec={1} /><span className="text-lg text-slate-500 ml-1">%</span></>}
+                  {drawer === 'compliance'   && <><AnimatedNumber value={kpis?.compliance ?? 0} dec={1} /><span className="text-lg text-slate-500 ml-1">%</span></>}
+                  {drawer === 'cx_score'     && <><AnimatedNumber value={kpis?.customerExperience ?? 0} dec={1} /><span className="text-lg text-slate-500 ml-1">%</span></>}
+                  {drawer === 'sales_conv'   && <><AnimatedNumber value={kpis?.salesConversion ?? 0} dec={1} /><span className="text-lg text-slate-500 ml-1">%</span></>}
+                  {drawer === 'ob_quality'   && <><AnimatedNumber value={kpis?.outboundQuality ?? 0} dec={1} /><span className="text-lg text-slate-500 ml-1">%</span></>}
                 </p>
               </div>
               <div className="bg-slate-100 rounded-xl p-4 border border-slate-200">

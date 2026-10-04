@@ -128,12 +128,12 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, index, 
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
       <div className="pl-2">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider leading-none">{label}</span>
+          <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider leading-none">{label}</span>
           <div className="p-1.5 rounded-lg" style={{ backgroundColor: `${color}18` }}>
             <div style={{ color }}>{icon}</div>
           </div>
         </div>
-        <div className="text-2xl font-bold text-slate-900 tracking-tight">
+        <div className="text-xl font-bold text-slate-900 tracking-tight whitespace-nowrap">
           <AnimatedNumber value={value} suffix={suffix} dec={dec} />
         </div>
         {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
@@ -191,7 +191,7 @@ function SectionCard({ title, children, className = '', accent = COLOR_BLUE, dow
       </motion.div>
 
       {expanded && createPortal(
-        <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-sm"
+        <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-slate-100 backdrop-blur-sm"
           style={{ zIndex: 9999 }} onClick={() => setExpanded(false)}>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
             style={{ maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
@@ -221,7 +221,7 @@ function HorizBars({ data, labelKey, valueKey, colorFn }: {
         const color = colorFn ? colorFn(v) : COLORS[i % COLORS.length];
         return (
           <div key={String(r[labelKey])} className="flex items-center gap-2">
-            <span className="text-xs text-slate-400 w-36 shrink-0 truncate" title={String(r[labelKey])}>
+            <span className="text-xs text-slate-500 w-36 shrink-0 truncate" title={String(r[labelKey])}>
               {String(r[labelKey])}
             </span>
             <div className="flex-1 bg-slate-100 rounded-full h-5 overflow-hidden">
@@ -230,7 +230,7 @@ function HorizBars({ data, labelKey, valueKey, colorFn }: {
                 {pct > 15 && <span className="text-[10px] text-slate-900 font-bold">{fmt(v, 0)}</span>}
               </div>
             </div>
-            {pct <= 15 && <span className="text-[10px] text-slate-400 w-10 text-right shrink-0">{fmt(v, 0)}</span>}
+            {pct <= 15 && <span className="text-[10px] text-slate-500 w-10 text-right shrink-0">{fmt(v, 0)}</span>}
           </div>
         );
       })}
@@ -246,7 +246,7 @@ function QualityBars({ rows }: { rows: QParamRow[] }) {
     <div className="space-y-2">
       {sorted.map(p => (
         <div key={p.key} className="flex items-center gap-2">
-          <span className="text-xs text-slate-400 w-40 shrink-0 truncate" title={p.parameter}>{p.parameter}</span>
+          <span className="text-xs text-slate-500 w-40 shrink-0 truncate" title={p.parameter}>{p.parameter}</span>
           <div className="flex-1 bg-slate-100 rounded-full h-5 overflow-hidden">
             <motion.div className="h-5 rounded-full flex items-center justify-end pr-2"
               style={{ backgroundColor: pctColor(p.score), minWidth: 4 }}
@@ -309,7 +309,7 @@ function AgentTable({ rows, onRowClick }: { rows: AgentRow[]; onRowClick?: (a: A
               className={`border-b border-slate-200 hover:bg-slate-100 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}>
               <td className="py-2.5 pr-3 text-slate-600">{i + 1}</td>
               <td className="py-2.5 pr-3 font-medium text-slate-700 max-w-[140px] truncate" title={a.agent}>{a.agent}</td>
-              <td className="py-2.5 pr-3 text-right text-slate-400">{fmt(a.calls, 0)}</td>
+              <td className="py-2.5 pr-3 text-right text-slate-500">{fmt(a.calls, 0)}</td>
               <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: a.sales > 0 ? COLOR_GREEN : '#64748B' }}>
                 {Number(a.sales) > 0 ? fmt(Number(a.sales), 0) : '—'}
               </td>
@@ -319,7 +319,7 @@ function AgentTable({ rows, onRowClick }: { rows: AgentRow[]; onRowClick?: (a: A
               <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: pctColor(a.ob_quality) }}>
                 {Number(a.ob_quality).toFixed(1)}%
               </td>
-              <td className="py-2.5 text-right text-slate-400">{fmtSec(a.avg_talk_sec)}</td>
+              <td className="py-2.5 text-right text-slate-500">{fmtSec(a.avg_talk_sec)}</td>
             </tr>
           ))}
           {sorted.length === 0 && (
@@ -352,11 +352,11 @@ function OBDrillModal({ title, accent, onClose, loading, onExport, children }: {
           <div className="w-1.5 h-5 rounded-full shrink-0" style={{ backgroundColor: accent ?? COLOR_PURPLE }} />
           <h3 className="text-sm font-semibold text-slate-700 flex-1 truncate">{title}</h3>
           {onExport && (
-            <button onClick={onExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors">
+            <button onClick={onExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors">
               <FileDown size={13} /> Export CSV
             </button>
           )}
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors ml-1">
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors ml-1">
             <X size={15} />
           </button>
         </div>
@@ -429,7 +429,7 @@ function OBRootCausePanel({ summary, notInt, agents, qParams }: {
             <span className="text-sm shrink-0 mt-0.5">{ins.icon}</span>
             <div className="min-w-0">
               <p className="text-xs font-bold mb-0.5" style={{ color: ins.color }}>{ins.title}</p>
-              <p className="text-xs text-slate-400 mb-0.5">{ins.detail}</p>
+              <p className="text-xs text-slate-500 mb-0.5">{ins.detail}</p>
               <p className="text-[11px] text-slate-500"><span className="text-blue-400">→ </span>{ins.fix}</p>
             </div>
           </div>
@@ -653,7 +653,7 @@ export default function OutboundSalesDashboard() {
                   <option className="text-slate-900 bg-white" key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
                 ))}
               </select>
-              <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
+              <ChevronDown size={12} className="absolute right-2 top-3 text-slate-500 pointer-events-none" />
             </div>
           )}
 
@@ -824,7 +824,7 @@ export default function OutboundSalesDashboard() {
                   {trend.map(r => (
                     <tr key={r.date} className="border-b border-slate-200 hover:bg-slate-100 transition-colors">
                       <td className="py-2.5 pr-3 font-medium text-slate-600">{r.date}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
+                      <td className="py-2.5 pr-3 text-right text-slate-500">{Number(r.calls).toLocaleString()}</td>
                       <td className="py-2.5 pr-3 text-right font-semibold" style={{ color: r.sales > 0 ? COLOR_GREEN : '#64748B' }}>
                         {Number(r.sales) > 0 ? Number(r.sales).toLocaleString() : '—'}
                       </td>
@@ -880,7 +880,7 @@ export default function OutboundSalesDashboard() {
               <span className="text-sm shrink-0">📉</span>
               <div>
                 <p className="text-xs font-bold text-red-400 mb-0.5">Below Team Average</p>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   Converts {agentDrill.conv_pct.toFixed(1)}% vs team avg {summary?.convPct.toFixed(1)}%.
                   OB Quality score: {agentDrill.ob_quality.toFixed(1)}%.
                 </p>
@@ -924,14 +924,14 @@ export default function OutboundSalesDashboard() {
                     {agentDrillRows.map((r, i) => (
                       <tr key={r.date} className={`border-b border-slate-100 ${i%2===0?'':'bg-transparent'}`}>
                         <td className="py-2 px-3 text-slate-600 font-medium">{fmtDate(r.date)}</td>
-                        <td className="py-2 px-3 text-right text-slate-400 tabular-nums">{Number(r.calls).toLocaleString()}</td>
+                        <td className="py-2 px-3 text-right text-slate-500 tabular-nums">{Number(r.calls).toLocaleString()}</td>
                         <td className="py-2 px-3 text-right font-semibold tabular-nums" style={{ color: r.sales > 0 ? COLOR_GREEN : '#64748B' }}>
                           {Number(r.sales) > 0 ? Number(r.sales).toLocaleString() : '—'}
                         </td>
                         <td className="py-2 px-3 text-right font-semibold tabular-nums" style={{ color: pctColor(r.conv_pct) }}>
                           {Number(r.conv_pct).toFixed(1)}%
                         </td>
-                        <td className="py-2 px-3 text-right text-slate-400 tabular-nums">{fmtSec(r.avg_talk_sec)}</td>
+                        <td className="py-2 px-3 text-right text-slate-500 tabular-nums">{fmtSec(r.avg_talk_sec)}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -135,12 +135,12 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, index }
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
       <div className="pl-2">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider leading-none">{label}</span>
+          <span className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider leading-none">{label}</span>
           <div className="p-1.5 rounded-lg" style={{ backgroundColor: `${color}18` }}>
             <div style={{ color }}>{icon}</div>
           </div>
         </div>
-        <div className="text-2xl font-bold text-slate-900 tracking-tight">
+        <div className="text-xl font-bold text-slate-900 tracking-tight whitespace-nowrap">
           <AnimatedNumber value={value} suffix={suffix} dec={dec} />
         </div>
         {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
@@ -196,7 +196,7 @@ function SectionCard({ title, children, className = '', accent = C_BLUE, downloa
         <div className="p-5">{children}</div>
       </motion.div>
       {expanded && createPortal(
-        <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-black/75 backdrop-blur-sm"
+        <div className="fixed inset-0 flex items-center justify-center p-4 sm:p-6 bg-slate-100 backdrop-blur-sm"
           style={{ zIndex: 9999 }} onClick={() => setExpanded(false)}>
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
             style={{ maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
@@ -234,7 +234,7 @@ function HorizBars({ data, labelKey, valueKey, color, maxItems = 10 }: {
         return (
           <div key={i} className="group">
             <div className="flex items-center justify-between mb-0.5">
-              <span className="text-[11px] text-slate-400 truncate max-w-[70%]" title={String(r[labelKey])}>{String(r[labelKey])}</span>
+              <span className="text-[11px] text-slate-500 truncate max-w-[70%]" title={String(r[labelKey])}>{String(r[labelKey])}</span>
               <span className="text-[11px] font-semibold" style={{ color: barColor }}>{typeof val === 'number' && valueKey.includes('pct') ? `${val}%` : val.toLocaleString()}</span>
             </div>
             <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
@@ -331,7 +331,7 @@ function InsightCard({ insight, index }: { insight: AIInsight; index: number }) 
                 { k: 'Impact', v: insight.impact },
                 { k: 'Action', v: insight.action },
               ].map(({ k, v }) => (
-                <div key={k} className="rounded-lg bg-black/20 px-3 py-2">
+                <div key={k} className="rounded-lg bg-slate-100 px-3 py-2">
                   <div className="text-[9px] font-bold uppercase tracking-wider mb-1" style={{ color: cfg.color }}>{k}</div>
                   <div className="text-[11px] text-slate-600 leading-relaxed">{v}</div>
                 </div>
@@ -594,7 +594,7 @@ export default function OpeningIntelligenceDashboard() {
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap">
           <button onClick={() => navigate('/call-master')}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 transition-colors text-xs">
+            className="flex items-center gap-1.5 text-slate-500 hover:text-slate-900 transition-colors text-xs">
             <ChevronLeft size={16} /> Call Master
           </button>
           <div className="w-px h-4 bg-slate-300" />
@@ -703,7 +703,7 @@ export default function OpeningIntelligenceDashboard() {
                   <div className="mt-3 space-y-1.5">
                     {openingCats.map((r, i) => (
                       <div key={i} className="flex items-center justify-between text-[11px]">
-                        <span className="flex items-center gap-1.5 text-slate-400">
+                        <span className="flex items-center gap-1.5 text-slate-500">
                           <span className="w-2 h-2 rounded-full shrink-0"
                             style={{ backgroundColor: OPENING_COLORS[r.category] || COLORS[i % COLORS.length] }} />
                           {r.category}
@@ -766,7 +766,7 @@ export default function OpeningIntelligenceDashboard() {
                   <div className="mt-3 space-y-1.5">
                     {contextCats.map((r, i) => (
                       <div key={i} className="flex items-center justify-between text-[11px]">
-                        <span className="flex items-center gap-1.5 text-slate-400 truncate max-w-[65%]" title={r.category}>
+                        <span className="flex items-center gap-1.5 text-slate-500 truncate max-w-[65%]" title={r.category}>
                           <span className="w-2 h-2 rounded-full shrink-0"
                             style={{ backgroundColor: CONTEXT_COLORS[r.category] || COLORS[i % COLORS.length] }} />
                           {r.category}
@@ -870,7 +870,7 @@ export default function OpeningIntelligenceDashboard() {
             downloadData={{ filename: 'opening_trend', rows: openingTrend as unknown as Record<string, unknown>[] }}>
             <div className="flex items-center justify-between mb-4">
               <PeriodSelector value={openingPeriod} onChange={handleOpeningPeriod} />
-              <div className="flex gap-3 text-[10px] text-slate-400">
+              <div className="flex gap-3 text-[10px] text-slate-500">
                 <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-400 inline-block" /> Good Opening %</span>
                 <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-green-400 inline-block" /> Conv %</span>
               </div>
@@ -902,7 +902,7 @@ export default function OpeningIntelligenceDashboard() {
             downloadData={{ filename: 'context_trend', rows: contextTrend as unknown as Record<string, unknown>[] }}>
             <div className="flex items-center justify-between mb-4">
               <PeriodSelector value={contextPeriod} onChange={handleContextPeriod} />
-              <div className="flex gap-3 text-[10px] text-slate-400">
+              <div className="flex gap-3 text-[10px] text-slate-500">
                 <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-teal-400 inline-block" /> Context Set %</span>
                 <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-green-400 inline-block" /> Conv %</span>
               </div>
@@ -952,7 +952,7 @@ export default function OpeningIntelligenceDashboard() {
                         <tr key={i} className="hover:bg-slate-50 transition-colors">
                           <td className="py-1.5 text-slate-500 font-bold">{i + 1}</td>
                           <td className="py-1.5 text-slate-600 truncate max-w-[120px]" title={r.name}>{r.name}</td>
-                          <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
+                          <td className="py-1.5 text-right text-slate-500">{Number(r.calls).toLocaleString()}</td>
                           <td className="py-1.5 text-right"><ScoreBadge value={r.opening_pct} /></td>
                           <td className="py-1.5 text-right">
                             <span className="font-semibold" style={{ color: pctColor(r.opening_score) }}>{Number(r.opening_score).toFixed(1)}</span>
@@ -1030,7 +1030,7 @@ export default function OpeningIntelligenceDashboard() {
           {!sec8Loading && insights.length === 0 && sec8Loaded.current && (
             <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-50 border border-slate-200">
               <Info size={16} className="text-slate-500" />
-              <span className="text-[12px] text-slate-400">AI insights will appear once data is loaded.</span>
+              <span className="text-[12px] text-slate-500">AI insights will appear once data is loaded.</span>
             </div>
           )}
         </div>
