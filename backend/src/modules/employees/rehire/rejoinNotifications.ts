@@ -108,6 +108,8 @@ async function send(
       correlationId: `rejoin:${c.requestId}`,
       data: {
         request_id: c.requestId,
+        // Relative path: notification.links.ts makes it absolute. Lands on this request's review page.
+        action_url: `/employees/reactivation/${c.requestId}/review`,
         employee_name: c.employeeName,
         employee_code: c.employeeCode,
         branch_name: c.branchName,
