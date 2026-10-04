@@ -100,19 +100,25 @@ export function Fact({ label, children }: { label: string; children: ReactNode }
   );
 }
 
-/** The chart's numbers for screen readers; the chart itself is aria-hidden behind a summary label. */
+/**
+ * The chart's numbers for screen readers; the chart itself is aria-hidden behind a summary label.
+ * `sr-only` sits on a wrapping div, not the table: a table cannot be narrower than its content, so a
+ * 1px sr-only table still laid out ~580px wide and gave the page a horizontal scroll at 390px.
+ */
 export function ChartTable({ caption, columns, rows }: { caption: string; columns: string[]; rows: (string | number)[][] }) {
   return (
-    <table className="sr-only">
-      <caption>{caption}</caption>
-      <thead>
-        <tr>{columns.map((c) => <th key={c} scope="col">{c}</th>)}</tr>
-      </thead>
-      <tbody>
-        {rows.map((r, i) => (
-          <tr key={i}>{r.map((v, j) => (j === 0 ? <th key={j} scope="row">{v}</th> : <td key={j}>{v}</td>))}</tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="sr-only">
+      <table>
+        <caption>{caption}</caption>
+        <thead>
+          <tr>{columns.map((c) => <th key={c} scope="col">{c}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>{r.map((v, j) => (j === 0 ? <th key={j} scope="row">{v}</th> : <td key={j}>{v}</td>))}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

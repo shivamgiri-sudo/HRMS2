@@ -56,7 +56,7 @@ export function ConductSectionCard({ result }: { result: SectionResult<ConductSe
               </p>
             )}
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 2xl:grid-cols-4">
               <StatTile
                 label="Active warnings"
                 value={d.activeWarnings}

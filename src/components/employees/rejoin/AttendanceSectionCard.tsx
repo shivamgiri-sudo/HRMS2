@@ -34,7 +34,7 @@ export function AttendanceSectionCard({ result, windowMonths }: { result: Sectio
         const r = d.regularizations;
         return (
           <>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 2xl:grid-cols-4">
               <StatTile
                 label="Attendance"
                 value={fmtPct(d.attendancePct)}
@@ -59,10 +59,10 @@ export function AttendanceSectionCard({ result, windowMonths }: { result: Sectio
                   role="img"
                   aria-label={`Monthly attendance percentage, ${withData.length} of ${data.length} months with working days. Overall ${fmtPct(d.attendancePct)}.`}
                 >
-                  <BarChart data={data} margin={{ top: 8, right: 4, left: -16, bottom: 0 }}>
+                  <BarChart data={data} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
                     <CartesianGrid vertical={false} />
                     <XAxis dataKey="label" tickLine={false} axisLine={false} interval="preserveStartEnd" tickMargin={6} />
-                    <YAxis domain={[0, 100]} tickLine={false} axisLine={false} width={40} tickFormatter={(v) => `${v}%`} />
+                    <YAxis domain={[0, 100]} tickLine={false} axisLine={false} width={44} tickFormatter={(v) => `${v}%`} />
                     <ReferenceLine y={MIN_ATTENDANCE} stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" />
                     <ChartTooltip content={<ChartTooltipContent formatter={(v) => (v === null ? DASH : `${v}%`)} />} />
                     <Bar dataKey="pct" fill="var(--color-pct)" radius={[3, 3, 0, 0]} />
