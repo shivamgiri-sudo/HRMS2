@@ -32,9 +32,21 @@ async function main() {
     console.table(await q(
       `SELECT a.active_status, a.effective_from, a.effective_to, ROUND(a.ctc_annual/12) AS monthly_ctc, a.structure_id IS NOT NULL AS has_structure
          FROM employee_salary_assignment a WHERE a.employee_id = ? ORDER BY a.created_at`, [e.id]));
+    console.log("joining approvals (ATS bridge -> salary_proposal_approval_step / salary_register):");
+    const [br] = await q(`SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1`, [e.id]).catch(() => []);
+    if (!br) console.log("  no ATS onboarding bridge row");
+    else {
+      console.table(await q(
+        `SELECT approval_level, status, acted_at FROM salary_proposal_approval_step WHERE candidate_id = ? ORDER BY created_at`, [br.candidate_id]).catch((x) => [{ note: String(x.message).slice(0, 80) }]));
+      console.table(await q(
+        `SELECT approved_gross_salary, salary_effective_from, lock_status, locked_at FROM salary_register WHERE candidate_id = ?`, [br.candidate_id]).catch((x) => [{ note: String(x.message).slice(0, 80) }]));
+    }
+    console.log("salary_increment_request:");
+    console.table(await q(
+      `SELECT status, proposed_ctc, effective_from, approved_at, implemented_at FROM salary_increment_request WHERE employee_id = ? ORDER BY created_at DESC LIMIT 3`, [e.id]).catch((x) => [{ note: String(x.message).slice(0, 80) }]));
     console.log("Aug 2026 prep line:");
     console.table(await q(
-      `SELECT spl.status, spl.manual_override_locked AS locked, spl.gross_salary, spl.net_salary, spl.final_payable_days, spl.updated_at
+      `SELECT spl.status, spl.manual_override_locked AS locked, spl.gross_salary, spl.net_salary, spl.final_payable_days
          FROM salary_prep_line spl JOIN salary_prep_run r ON r.id = spl.run_id
         WHERE spl.employee_id = ? AND r.run_month = '2026-08'`, [e.id]).catch(() => []));
   }

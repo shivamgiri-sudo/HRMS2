@@ -274,7 +274,7 @@ jobs:
               ;;
             salary-package-sources-audit)
               # Read-only in both modes: SELECTs only. Fixed list of the 10 employees whose package was written on 2026-10-04.
-              npx tsx scripts/salary-package-sources-audit.ts MAS63403 MAS63404 MAS63405 MAS63406 MAS63407 MAS63408 MAS63409 MAS63422 MAS63424 MAS60358
+              npx tsx scripts/salary-package-sources-audit.ts MAS63403 MAS63404 MAS63405 MAS63406 MAS63407 MAS63408 MAS63409 MAS63455 63388C MAS62054
               ;;
             apply-aug-increments-from-dbbill)
               # Dry-runs unless given --apply. Apply supersedes + inserts the db_bill package for employees whose
