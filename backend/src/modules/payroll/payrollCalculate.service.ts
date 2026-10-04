@@ -22,6 +22,7 @@ import type { SalaryPrepRun } from "./payroll.types.js";
 import { maternityService } from "../compliance/maternity.service.js";
 import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
 import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
+import { isStintPayrollEnabled, loadStintScopes, type StintScope } from "./stint-payroll.service.js";
 import { checkAndReverseLeave } from "./leave-reversal.service.js";
 import {
   detectAndCalculateHolidayWork,
@@ -974,6 +975,10 @@ export async function calculatePayrollRunScoped(
     );
   }
 
+  // Rejoin v3 stint-aware payroll (migration 2081), default OFF and fail-closed: any read error is
+  // OFF. When off, nothing below changes: stintScope is undefined for every employee.
+  const stintPayrollOn = await isStintPayrollEnabled();
+
   // Salary is resolved as of the run month, not as of today.
   //
   // The join below was "ON esa.employee_id = e.id" filtered by "esa.active_status = 1" —
@@ -1321,6 +1326,10 @@ export async function calculatePayrollRunScoped(
       );
   }
 
+  // Rejoin v3: employment stints, only when the flag is on. Only employees with employment_stint rows
+  // (rejoiners) get an entry; everyone else follows the unchanged path.
+  const stintScopes = stintPayrollOn ? await loadStintScopes(empIds, loopMonthStart, loopMonthEnd, new Map(employees.map((e) => [e.employee_id, e.salary_start_date ?? null])), new Map(employees.map((e) => [e.employee_id, e.employment_end_date ?? null]))) : new Map<string, StintScope>();
+
   try {
     for (const emp of employees) {
       const monthStart = `${run.run_month}-01`;
@@ -1347,6 +1356,12 @@ export async function calculatePayrollRunScoped(
           // Still in unpaid training — no payroll entry this month
           continue;
         }
+      }
+      // Rejoin v3: a rejoiner's month wholly inside the gap between stints gets no line, the same as
+      // the salary_start_date skip above. stintScope is undefined when the flag is off.
+      const stintScope = stintPayrollOn ? stintScopes.get(emp.employee_id) : undefined;
+      if (stintScope && stintScope.employedDays === 0) {
+        continue;
       }
       processedCount++;
 
@@ -1397,8 +1412,10 @@ export async function calculatePayrollRunScoped(
       // them: a company holiday is not a day the employee could have worked, so it must not count
       // against "did you work every available working day". This used to be resolved further down,
       // after the week-off call, which is why the test could never see it.
+      // Rejoin v3: stintScope?.ranges drops holidays that fall inside the gap between stints (undefined when
+      // the flag is off or the employee has no stints, which is the unchanged call).
       const { eligibleHolidayCount: eligibleHolidayCountRaw } =
-        await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month);
+        await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month, stintScope?.ranges);
       const holidayMinWorked = Number(
         await getPolicyValue(
           "payroll",
@@ -1412,11 +1429,14 @@ export async function calculatePayrollRunScoped(
         paidBase,
         Number.isFinite(holidayMinWorked) ? holidayMinWorked : DEFAULT_HOLIDAY_MIN_WORKED_DAYS,
       );
+      // Rejoin v3: an empty tuple when there is no scope, so the flag-off call is the same 4-argument call.
+      const stintWeekoffArg: [] | [{ employedDays: number; sundays: number }] = stintScope ? [{ employedDays: stintScope.employedDays, sundays: stintScope.sundays }] : [];
       const eligibleWeekoffs = await calculateWeekoffEligibility(
         emp.employee_id,
         paidBase,
         run.run_month,
         eligibleHolidayCount,
+        ...stintWeekoffArg,
       );
 
       // Check if auto-generation of holiday work payouts is enabled
@@ -1483,6 +1503,7 @@ export async function calculatePayrollRunScoped(
             effectivePaidBase,
             run.run_month,
             eligibleHolidayCount,
+            ...stintWeekoffArg,
           )
         : eligibleWeekoffs;
       const finalHolidays = reversalResult.reversed
@@ -1499,7 +1520,8 @@ export async function calculatePayrollRunScoped(
       // the same rule (Finance decision: align locked run to active-days cap).
       const calculatedPayable =
         effectivePaidBase + finalWeekoffs + finalHolidays;
-      const activeCals = (() => {
+      // Rejoin v3: with a stint scope the cap is the employed days (never 0 here: that case was skipped).
+      const activeCals = stintScope ? Math.min(stintScope.employedDays, daysInMonth) : (() => {
         const effectiveStart =
           emp.salary_start_date && emp.salary_start_date > monthStart
             ? emp.salary_start_date
