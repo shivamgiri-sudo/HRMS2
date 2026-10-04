@@ -66,6 +66,8 @@ on:
           - salary-assignment-deactivate-mas63386
           - sal-diff-investigate
           - saldiff-topup-duplicate-reject
+          - case-duplicates-scan
+          - salary-assignment-dedupe-identical
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -271,6 +273,15 @@ jobs:
             master-duplicate-audit)
               # Read-only in both modes.
               npx tsx scripts/master-duplicate-audit.ts
+              ;;
+            case-duplicates-scan)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/case-duplicates-scan.ts
+              ;;
+            salary-assignment-dedupe-identical)
+              # Dry-runs unless given --apply. Apply deactivates the later of two IDENTICAL active rows (soft).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/salary-assignment-dedupe-identical.ts $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"

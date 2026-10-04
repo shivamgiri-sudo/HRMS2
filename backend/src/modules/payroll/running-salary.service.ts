@@ -364,9 +364,16 @@ export async function computeRunningSalary(
   });
   // Add incentive to net after statutory deductions, matching payrollCalculate.service.ts.
   // Subtract advance recovery and loan EMI last, same as the locked payroll run.
+  // The EMI / advance recovery is a FULL-MONTH figure, taken in the locked run from a full month's pay.
+  // Subtracting all of it from a few days' earnings (MAS47814, 3 Oct: 20,000 EMI against ~3,100 earned)
+  // clamped the running net to 0 and read as "no salary". Here it is taken in proportion to the days
+  // earned so far, which reaches the full amount on the last day of the month; the projection below
+  // takes it in full.
+  const recoveryRatio = activeCalDays > 0 ? Math.min(1, cappedEarned / activeCalDays) : 1;
+  const recoveryTillDate = Math.round((advanceRecoveryEarned + loanEmiEarned) * recoveryRatio * 100) / 100;
   const earnedCalc = {
     ...earnedCalcRaw,
-    net_salary: Math.max(0, earnedCalcRaw.net_salary + approvedIncentivesEarned - advanceRecoveryEarned - loanEmiEarned),
+    net_salary: Math.max(0, earnedCalcRaw.net_salary + approvedIncentivesEarned - recoveryTillDate),
   };
   // earned_salary_till_date shown in UI = structure gross + incentive (total take-home basis)
   const earnedSalaryTillDate = earnedStructureSalary + approvedIncentivesEarned;
@@ -432,7 +439,7 @@ export async function computeRunningSalary(
   // Incentive added to net after deductions, matching payrollCalculate.service.ts.
   const projectedCalc = {
     ...projectedCalcRaw,
-    net_salary: projectedCalcRaw.net_salary + approvedIncentivesEarned,
+    net_salary: Math.max(0, projectedCalcRaw.net_salary + approvedIncentivesEarned - advanceRecoveryEarned - loanEmiEarned),
   };
   const projectedSalary = projectedStructureSalary + approvedIncentivesEarned;
 

@@ -247,6 +247,11 @@ export default function EmployeeJoiningKitEsignPage() {
                   here, in the signature area of each one.
                 </p>
               </div>
+              <p className="mt-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                Please finish signing in one go. Do not close the page, refresh, or press Back while
+                Aadhaar eSign is open. If it does get interrupted, come back to this same link and
+                click Sign again — a fresh signing session will be started for you.
+              </p>
 
               <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-4">
                 <input
