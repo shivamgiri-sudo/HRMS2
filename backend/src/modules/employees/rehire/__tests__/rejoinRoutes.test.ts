@@ -16,6 +16,11 @@ const { runRejoinFollowUps } = vi.hoisted(() => ({ runRejoinFollowUps: vi.fn() }
 vi.mock("../rejoinFollowUps.js", () => ({ runRejoinFollowUps }));
 vi.mock("../rejoinFollowUps.deps.js", () => ({ realFollowUpDeps: { marker: "deps" } }));
 
+const { notifyRejoinRequested, notifyRejoinDecided, notifyFollowUpAttention } = vi.hoisted(() => ({
+  notifyRejoinRequested: vi.fn(), notifyRejoinDecided: vi.fn(), notifyFollowUpAttention: vi.fn(),
+}));
+vi.mock("../rejoinNotifications.js", () => ({ notifyRejoinRequested, notifyRejoinDecided, notifyFollowUpAttention }));
+
 const { loadRehireFacts, activateRejoin } = vi.hoisted(() => ({ loadRehireFacts: vi.fn(), activateRejoin: vi.fn() }));
 vi.mock("../rehireFacts.js", async (orig) => ({ ...(await orig<typeof import("../rehireFacts.js")>()), loadRehireFacts }));
 vi.mock("../rejoinActivation.js", async (orig) => ({ ...(await orig<typeof import("../rejoinActivation.js")>()), activateRejoin }));
@@ -42,6 +47,9 @@ const initiateBody = { employee_id: "11111111-1111-4111-8111-111111111111", prop
 beforeEach(() => {
   dbExecute.mockReset(); getConnection.mockReset(); canViewEmployee.mockReset(); loadRehireFacts.mockReset(); activateRejoin.mockReset();
   runRejoinFollowUps.mockReset(); runRejoinFollowUps.mockResolvedValue([{ step: "auth", ok: true }]);
+  notifyRejoinRequested.mockReset().mockResolvedValue(true);
+  notifyRejoinDecided.mockReset().mockResolvedValue(true);
+  notifyFollowUpAttention.mockReset().mockResolvedValue(true);
   canViewEmployee.mockResolvedValue(true);
   dbExecute.mockResolvedValue([[], []]);
 });
@@ -58,6 +66,7 @@ describe("POST /reactivation/initiate", () => {
     loadRehireFacts.mockResolvedValue({ ...cleanFacts, facts: { ...cleanFacts.facts, exitSubType: "termination" } });
     const res = await request(app()).post("/api/employees/reactivation/initiate").send(initiateBody);
     expect(res.status).toBe(400);
+    expect(notifyRejoinRequested).not.toHaveBeenCalled();
     expect(res.body.eligibility.status).toBe("blocked");
     expect(dbExecute.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO employee_reactivation_requests"))).toBe(false);
   });
@@ -77,15 +86,32 @@ describe("POST /reactivation/initiate", () => {
       String(sql).includes("reporting_manager_id") ? [[{ is_manager: 0 }], []] : [[], []]);
     const res = await request(app()).post("/api/employees/reactivation/initiate").send(initiateBody);
     expect(res.status).toBe(403);
+    expect(notifyRejoinRequested).not.toHaveBeenCalled();
+  });
+
+  it("a throwing notifier does not change the 201", async () => {
+    authUser = { id: "u1", role: "hr", roles: ["hr"] };
+    loadRehireFacts.mockResolvedValue(cleanFacts);
+    notifyRejoinRequested.mockRejectedValue(new Error("boom"));
+    dbExecute.mockImplementation(async (sql: string) =>
+      String(sql).includes("ORDER BY created_at DESC LIMIT 1") ? [[{ id: "req-uuid-1" }], []] : [[], []]);
+    const res = await request(app()).post("/api/employees/reactivation/initiate").send(initiateBody);
+    expect(res.status).toBe(201);
   });
 
   it("creates the request for HR on an eligible employee and stores the snapshot", async () => {
     authUser = { id: "u1", role: "hr", roles: ["hr"] };
     loadRehireFacts.mockResolvedValue(cleanFacts);
-    dbExecute.mockImplementation(async (sql: string) =>
-      String(sql).includes("INSERT INTO employee_reactivation_requests") ? [{ insertId: 7 }, []] : [[], []]);
+    dbExecute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("INSERT INTO employee_reactivation_requests")) return [{ insertId: 0 }, []];
+      if (q.includes("ORDER BY created_at DESC LIMIT 1")) return [[{ id: "req-uuid-1" }], []];
+      return [[], []];
+    });
     const res = await request(app()).post("/api/employees/reactivation/initiate").send(initiateBody);
     expect(res.status).toBe(201);
+    expect(res.body.id).toBe("req-uuid-1");
+    expect(notifyRejoinRequested).toHaveBeenCalledWith("req-uuid-1");
     const ins = dbExecute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO employee_reactivation_requests"))!;
     expect(String(ins[0])).toContain("eligibility_snapshot");
     expect(ins[1]).toContain("hr");
@@ -223,5 +249,60 @@ describe("POST /reactivation/:id/hr-action", () => {
     authUser = { id: "u1", role: "hr", roles: ["hr"] };
     const res = await request(app()).post("/api/employees/reactivation/r1/hr-action").send({ action: "confirmed", remarks: "ok then" });
     expect(res.status).toBe(410);
+  });
+});
+
+describe("branch-action notifications", () => {
+  const row = { id: "r1", employee_id: "e1", status: "pending", proposed_joining_date: "2026-09-20", absconding_acknowledged: 0 };
+  function conn() {
+    const c = { execute: vi.fn(async (sql: string) => String(sql).includes("FOR UPDATE") ? [[row], []] : [{ affectedRows: 1 }, []]),
+      beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
+    getConnection.mockResolvedValue(c);
+    return c;
+  }
+  const act = (action: string) => request(app()).post("/api/employees/reactivation/r1/branch-action").send({ action, remarks: "fine to rejoin" });
+  const eligible = { status: "eligible", reasons: [], requiresFreshOnboarding: false, requiresAbscondingAck: false };
+
+  it("approve notifies the decision after the commit and the follow-ups", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    const c = conn(); activateRejoin.mockResolvedValue(eligible);
+    const order: string[] = [];
+    c.commit.mockImplementation(async () => { order.push("commit"); });
+    runRejoinFollowUps.mockImplementation(async () => { order.push("followups"); return [{ step: "auth", ok: true }]; });
+    notifyRejoinDecided.mockImplementation(async () => { order.push("notify"); return true; });
+    const res = await act("approved");
+    expect(res.status).toBe(200);
+    expect(order).toEqual(["commit", "followups", "notify"]);
+    expect(notifyRejoinDecided).toHaveBeenCalledWith("r1", "approved");
+    expect(notifyFollowUpAttention).not.toHaveBeenCalled();
+  });
+
+  it("approve with a failed follow-up also raises the attention notice", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    conn(); activateRejoin.mockResolvedValue(eligible);
+    const fu = [{ step: "it_provisioning", ok: false }];
+    runRejoinFollowUps.mockResolvedValue(fu);
+    const res = await act("approved");
+    expect(res.status).toBe(200);
+    expect(notifyFollowUpAttention).toHaveBeenCalledWith("r1", fu);
+  });
+
+  it("reject notifies the rejection", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    conn();
+    const res = await act("rejected");
+    expect(res.status).toBe(200);
+    expect(notifyRejoinDecided).toHaveBeenCalledWith("r1", "rejected");
+  });
+
+  it("a throwing notifier does not change the 200", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    conn(); activateRejoin.mockResolvedValue(eligible);
+    runRejoinFollowUps.mockResolvedValue([{ step: "x", ok: false }]);
+    notifyRejoinDecided.mockRejectedValue(new Error("boom"));
+    notifyFollowUpAttention.mockRejectedValue(new Error("boom"));
+    expect((await act("approved")).status).toBe(200);
+    notifyRejoinDecided.mockRejectedValue(new Error("boom"));
+    expect((await act("rejected")).status).toBe(200);
   });
 });

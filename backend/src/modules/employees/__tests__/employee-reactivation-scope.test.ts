@@ -36,6 +36,9 @@ vi.mock("../rehire/rejoinActivation.js", async (orig) => ({ ...(await orig<typeo
 // Post-commit follow-ups (auth cache, LMS, IT tasks) are covered in rehire/; keep their real wiring out of this file.
 vi.mock("../rehire/rejoinFollowUps.js", () => ({ runRejoinFollowUps: vi.fn(async () => []) }));
 vi.mock("../rehire/rejoinFollowUps.deps.js", () => ({ realFollowUpDeps: {} }));
+vi.mock("../rehire/rejoinNotifications.js", () => ({
+  notifyRejoinRequested: vi.fn(async () => true), notifyRejoinDecided: vi.fn(async () => true), notifyFollowUpAttention: vi.fn(async () => true),
+}));
 
 // Transactional connection for branch-action: SELECT ... FOR UPDATE returns the row, other statements succeed.
 function mockConn(row: Record<string, unknown>) {

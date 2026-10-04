@@ -11,6 +11,7 @@ import { isFormerReport } from "./rehire/rehireAccess.js";
 import { activateRejoin, RejoinBlockedError } from "./rehire/rejoinActivation.js";
 import { runRejoinFollowUps, type FollowUpResult } from "./rehire/rejoinFollowUps.js";
 import { realFollowUpDeps } from "./rehire/rejoinFollowUps.deps.js";
+import { notifyRejoinRequested, notifyRejoinDecided, notifyFollowUpAttention } from "./rehire/rejoinNotifications.js";
 
 export const employeeReactivationRouter = Router();
 
@@ -284,7 +285,7 @@ employeeReactivationRouter.post(
         });
       }
 
-      const [result] = await pool.execute<ResultSetHeader>(
+      await pool.execute<ResultSetHeader>(
         `INSERT INTO employee_reactivation_requests (
            employee_id, old_employment_status, proposed_joining_date, reinstatement_reason,
            gap_days, same_cost_centre, ff_already_paid, status, exit_request_id, initiated_by,
@@ -305,7 +306,17 @@ employeeReactivationRouter.post(
         ],
       );
 
-      res.status(201).json({ success: true, id: result.insertId, eligibility: verdict, message: "Rejoin request created" });
+      // The primary key is CHAR(36) DEFAULT (UUID()), so result.insertId is 0: read the real id back.
+      const [idRows] = await pool.execute<RowDataPacket[]>(
+        `SELECT id FROM employee_reactivation_requests WHERE employee_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
+        [body.employee_id],
+      );
+      const requestId = idRows?.[0]?.id ? String(idRows[0].id) : undefined;
+      if (requestId) {
+        try { await notifyRejoinRequested(requestId); } catch (e) { console.error("[Reactivation] notify failed:", e); }
+      }
+
+      res.status(201).json({ success: true, id: requestId, eligibility: verdict, message: "Rejoin request created" });
     } catch (err: any) {
       if (err.name === "ZodError") {
         return res.status(400).json({ success: false, message: "Invalid input", errors: err.errors });
@@ -401,6 +412,16 @@ employeeReactivationRouter.post(
           } catch (e) {
             console.error("[Reactivation] follow-ups failed after approval:", e);
           }
+        }
+
+        // Best effort, after the commit and the follow-ups: a notification problem never changes the result.
+        try {
+          await notifyRejoinDecided(String(request.id), body.action === "approved" ? "approved" : "rejected");
+          if (body.action === "approved" && followUps.some((f) => f.ok === false)) {
+            await notifyFollowUpAttention(String(request.id), followUps);
+          }
+        } catch (e) {
+          console.error("[Reactivation] notify failed:", e);
         }
 
         return res.json({
