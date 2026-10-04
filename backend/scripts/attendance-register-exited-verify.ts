@@ -2,6 +2,7 @@
  * Read-only: confirms the Attendance Register lists employees who exited mid-month.
  * Run: npx tsx scripts/attendance-register-exited-verify.ts [YYYY-MM]
  */
+import "dotenv/config";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { attendanceRegisterMonthly } from "../src/modules/reporting/executors/attendance.executor.js";
