@@ -1,0 +1,51 @@
+name: Ops HRMS apr daily counts (manual, read-only)
+
+# Prints last event_time and per-day row counts for each dialer APR table. Never writes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Start date YYYY-MM-DD"
+        required: true
+        default: "2026-09-01"
+        type: string
+
+concurrency:
+  group: ops-apr-hrms-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    name: Check APR tables (read-only)
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Check freshness
+        working-directory: backend
+        shell: bash
+        env:
+          DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
+          NODE_ENV: production
+          FROM_DATE: ${{ inputs.from }}
+        run: |
+          set -euo pipefail
+          test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found - is this the prod host?"; exit 1; }
+          npx tsx scripts/check-apr-hrms-daily.ts "$FROM_DATE"
