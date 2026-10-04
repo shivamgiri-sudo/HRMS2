@@ -14,6 +14,7 @@
 import "dotenv/config";
 import type { RowDataPacket } from "mysql2";
 import { db, closePool } from "../src/db/mysql.js";
+import { closeBillPool } from "../src/db/billDb.js";
 import { calculatePayrollRunScoped } from "../src/modules/payroll/payrollCalculate.service.js";
 import { isRunClosed } from "../src/modules/payroll/run-status.js";
 
@@ -69,4 +70,4 @@ async function main() {
   console.table(left);
 }
 
-main().then(() => closePool()).catch(async (e) => { console.error("ERR", e?.message ?? e); try { await closePool(); } catch { } process.exit(1); });
+main().then(async () => { await closeBillPool(); await closePool(); }).catch(async (e) => { console.error("ERR", e?.message ?? e); try { await closeBillPool(); await closePool(); } catch { } process.exit(1); });
