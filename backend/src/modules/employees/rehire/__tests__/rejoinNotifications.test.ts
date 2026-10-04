@@ -36,6 +36,8 @@ describe("notifyRejoinRequested", () => {
     expect(arg.entityId).toBe("r1");
     expect(arg.data).toMatchObject({ employee_name: "Asha Rao", employee_code: "MAS001", branch_name: "Pune", requester_name: "Hema HR", requester_role: "hr", gap_days: 12, eligibility_status: "review", proposed_joining_date: "2026-10-10", request_id: "r1" });
     expect(arg.data.review_reasons).toContain("Company assets were not returned.");
+    // The email's button lands on this request's review page, not the list.
+    expect(arg.data.action_url).toBe("/employees/reactivation/r1/review");
     expect(arg.specOverride).toBeUndefined();
   });
 
