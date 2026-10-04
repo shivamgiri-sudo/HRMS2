@@ -78,8 +78,15 @@ function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
 
   const basic = r2(gross * (basicPct / 100));
   const hra = r2(basic * (hraPct / 100));
-  const bonus = includeBonus ? r2(basic * BONUS_RATE) : 0;
-  const special_allowance = Math.max(0, r2(gross - basic - hra - CONV - bonus));
+  // Conveyance and bonus are carved out of the gross, never added on top of it. When basic and HRA
+  // already take the whole gross (basic = gross, HRA 0, as a low-band package can have) there is no room
+  // for them, so they are 0. Same rule as backend/src/modules/ats/salary.calculator.ts (parity test).
+  const room = r2(gross - basic - hra);
+  const bonusWanted = includeBonus ? r2(basic * BONUS_RATE) : 0;
+  const fits = room >= CONV + bonusWanted;
+  const conveyance = fits ? CONV : 0;
+  const bonus = fits ? bonusWanted : 0;
+  const special_allowance = Math.max(0, r2(room - conveyance - bonus));
 
   const pfBase = Math.min(basic, pfCap);
   const epf_employee = includePf ? r2(pfBase * PF_EMP_RATE) : 0;
@@ -95,7 +102,7 @@ function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
   const ctc = r2(gross + epf_employer + esic_employer + admin_charges);
 
   return {
-    basic, hra, conveyance: CONV, special_allowance,
+    basic, hra, conveyance, special_allowance,
     other_allowance: 0, bonus, pli: 0, portfolio: 0, medical: 0,
     gross,
     epf_employee, esic_employee, net_in_hand,
