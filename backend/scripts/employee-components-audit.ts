@@ -20,7 +20,24 @@ const q = async (sql: string, p: unknown[]) => {
   return rows as any[];
 };
 
+async function identityBreaks() {
+  console.log("active packages whose components do not add up to gross (|diff| > 1):");
+  const rows = await q(
+    `SELECT e.employee_code, e.date_of_joining, sca.gross,
+            (COALESCE(sca.basic,0)+COALESCE(sca.hra,0)+COALESCE(sca.bonus,0)+COALESCE(sca.conveyance,0)+COALESCE(sca.portfolio,0)
+             +COALESCE(sca.medical_allowance,0)+COALESCE(sca.lta,0)+COALESCE(sca.special_allowance,0)+COALESCE(sca.other_allowance,0)) AS parts,
+            sca.bonus, sca.conveyance, sca.approval_reference
+       FROM salary_component_assignments sca JOIN employees e ON e.id = sca.employee_id
+      WHERE sca.status = 'active' AND e.active_status = 1
+        AND ABS((COALESCE(sca.basic,0)+COALESCE(sca.hra,0)+COALESCE(sca.bonus,0)+COALESCE(sca.conveyance,0)+COALESCE(sca.portfolio,0)
+             +COALESCE(sca.medical_allowance,0)+COALESCE(sca.lta,0)+COALESCE(sca.special_allowance,0)+COALESCE(sca.other_allowance,0)) - sca.gross) > 1
+      ORDER BY e.date_of_joining DESC LIMIT 60`, []);
+  console.log(`count shown (max 60): ${rows.length}`);
+  console.table(rows.map((r) => ({ code: r.employee_code, joined: String(r.date_of_joining).slice(0, 10), gross: r.gross, parts: r.parts, bonus: r.bonus, conv: r.conveyance, ref: String(r.approval_reference ?? "").slice(0, 14) })));
+}
+
 async function main() {
+  await identityBreaks();
   if (!code) throw new Error("pass an employee code");
   const [e] = await q(`SELECT id, date_of_joining, employment_status FROM employees WHERE employee_code = ? LIMIT 1`, [code]);
   if (!e) { console.log(`${code}: not found`); return; }
