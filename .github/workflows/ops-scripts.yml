@@ -71,6 +71,7 @@ on:
           - rejoin-stale-exit-audit
           - attendance-register-exited-verify
           - reconcile-aug-incentives
+          - zero-day-gross-audit
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -267,6 +268,10 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            zero-day-gross-audit)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/zero-day-gross-audit.ts
               ;;
             reconcile-aug-incentives)
               # Dry-runs unless given --apply. Apply rejects the duplicate AHMJD batch and adds top-up lines (one transaction).
