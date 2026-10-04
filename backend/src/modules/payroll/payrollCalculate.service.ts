@@ -1395,11 +1395,7 @@ export async function calculatePayrollRunScoped(
       // Rejoin v3: stintScope?.ranges drops holidays that fall inside the gap between stints (undefined when
       // the flag is off or the employee has no stints, which is the unchanged call).
       // A holiday is paid when it falls after the joining date and before the exit date; no worked-days gate.
-      const { eligibleHolidayCount } = await resolveHolidaysForEmployeeV2(
-        emp.employee_id,
-        run.run_month,
-        stintScope?.ranges,
-      );
+      const { eligibleHolidayCount } = await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month, stintScope?.ranges);
       // Rejoin v3: an empty tuple when there is no scope, so the flag-off call is the same 4-argument call.
       const stintWeekoffArg: [] | [{ employedDays: number; sundays: number }] = stintScope ? [{ employedDays: stintScope.employedDays, sundays: stintScope.sundays }] : [];
       const eligibleWeekoffs = await calculateWeekoffEligibility(
