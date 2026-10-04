@@ -440,6 +440,13 @@ export const departmentService = {
       .toUpperCase()
       .replace(/[^A-Z0-9]+/g, "_")
       .slice(0, 40);
+    const [dupDept] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM department_master WHERE UPPER(TRIM(dept_name)) = UPPER(?) LIMIT 1`,
+      [deptName]
+    );
+    if ((dupDept as RowDataPacket[]).length) {
+      throw Object.assign(new Error(`Department "${deptName}" already exists`), { statusCode: 409 });
+    }
     const id = randomUUID();
     try {
       await db.execute(
@@ -510,6 +517,13 @@ export const designationService = {
   getById: (id: string) => getById("designation_master", id),
   setStatus: (id: string, status: number) => setStatus("designation_master", id, status),
   async create(data: { designation_code: string; designation_name: string; grade?: string; grade_id?: string }) {
+    const [dupDesig] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM designation_master WHERE UPPER(TRIM(designation_name)) = UPPER(TRIM(?)) LIMIT 1`,
+      [data.designation_name]
+    );
+    if ((dupDesig as RowDataPacket[]).length) {
+      throw Object.assign(new Error(`Designation "${data.designation_name}" already exists`), { statusCode: 409 });
+    }
     const id = randomUUID();
     await db.execute(
       "INSERT INTO designation_master (id, designation_code, designation_name, grade, grade_id) VALUES (?, ?, ?, ?, ?)",

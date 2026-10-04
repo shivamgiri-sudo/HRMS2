@@ -72,7 +72,9 @@ describe.each(CASES)("$name master bulk import — batched rewrite", ({ modulePa
       [row("row-1", 1, validRow), row("row-2", 2, invalidRow)],
       [],
     ]);
-    execute.mockResolvedValue([{}, []]);
+    // department/designation look up existing names before parsing (duplicate-name guard).
+    execute.mockImplementation(async (sql: string) =>
+      sql.trimStart().startsWith("SELECT") ? [[], []] : [{}, []]);
 
     const result = await importFn("batch-1", "user-1");
 
@@ -90,6 +92,7 @@ describe.each(CASES)("$name master bulk import — batched rewrite", ({ modulePa
 
     let chunkAttempted = false;
     execute.mockImplementation(async (sql: string, params: unknown[]) => {
+      if (sql.trimStart().startsWith("SELECT")) return [[], []];
       if (sql.includes(`INSERT INTO ${table}`)) {
         if (!chunkAttempted) {
           chunkAttempted = true;
@@ -105,5 +108,29 @@ describe.each(CASES)("$name master bulk import — batched rewrite", ({ modulePa
     expect(result.importedRows).toBe(0);
     expect(result.errorRows).toBe(1);
     expect(result.errors[0]).toMatch(/Duplicate entry/);
+  });
+});
+
+describe.each([
+  { name: "department", modulePath: "../department-master-bulk.service.js", exportName: "importDepartmentMasterBatch",
+    table: "department_master", existing: { code: "OPS", name: "OPERATIONS" },
+    row: { dept_code: "OPS2", dept_name: "Operations" } },
+  { name: "designation", modulePath: "../designation-master-bulk.service.js", exportName: "importDesignationMasterBatch",
+    table: "designation_master", existing: { code: "TL", name: "TEAM LEADER" },
+    row: { designation_code: "TL2", designation_name: "Team Leader" } },
+])("$name master bulk import — duplicate-name guard", ({ modulePath, exportName, table, existing, row: data }) => {
+  it("rejects a row whose name exists under a different code and does not insert it", async () => {
+    const importFn = (await import(modulePath))[exportName] as (b: string, u: string) => Promise<{ importedRows: number; errorRows: number; errors: string[] }>;
+    execute.mockReset();
+    execute.mockResolvedValueOnce([[row("row-1", 1, data)], []]);
+    execute.mockImplementation(async (sql: string) =>
+      sql.trimStart().startsWith("SELECT") ? [[existing], []] : [{}, []]);
+
+    const result = await importFn("batch-1", "user-1");
+
+    expect(result.importedRows).toBe(0);
+    expect(result.errorRows).toBe(1);
+    expect(result.errors[0]).toMatch(new RegExp(`already exists under code ${existing.code}`));
+    expect(execute.mock.calls.some(([sql]) => typeof sql === "string" && sql.includes(`INSERT INTO ${table}`))).toBe(false);
   });
 });
