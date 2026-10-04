@@ -561,26 +561,6 @@ export function calculateTds(
 // ─── Professional Tax from Slab ───────────────────────────────────────────────
 
 /**
- * A company holiday is paid only to an employee who attended enough of the month.
- *
- * db_bill's rule, read off its August 2026 salary rows for NOIDA / HEAD OFFICE employees: of 104
- * who worked 10 days or fewer, none was credited the holiday; of 374 who worked more, 364 were. HRMS credited it to everyone employed on the day, so people who had
- * hardly worked (several of whom had already left) were paid a day db_bill withholds - 57 lines
- * in that run. The threshold is the number of days that must be EXCEEDED, configurable as
- * payroll.holiday_eligibility.min_worked_days_exclusive; 0 switches the rule off.
- */
-export const DEFAULT_HOLIDAY_MIN_WORKED_DAYS = 10;
-
-export function holidayCreditAfterAttendanceGate(
-  eligibleHolidayCount: number,
-  paidBase: number,
-  minWorkedDaysExclusive: number,
-): number {
-  if (!(minWorkedDaysExclusive > 0)) return eligibleHolidayCount;
-  return paidBase > minWorkedDaysExclusive ? eligibleHolidayCount : 0;
-}
-
-/**
  * First payroll month with NO professional tax.
  *
  * PT was removed company-wide on 2026-09-11, "go-forward only" (commit 9c5212e09), and that
@@ -1414,20 +1394,11 @@ export async function calculatePayrollRunScoped(
       // after the week-off call, which is why the test could never see it.
       // Rejoin v3: stintScope?.ranges drops holidays that fall inside the gap between stints (undefined when
       // the flag is off or the employee has no stints, which is the unchanged call).
-      const { eligibleHolidayCount: eligibleHolidayCountRaw } =
-        await resolveHolidaysForEmployeeV2(emp.employee_id, run.run_month, stintScope?.ranges);
-      const holidayMinWorked = Number(
-        await getPolicyValue(
-          "payroll",
-          "holiday_eligibility",
-          "min_worked_days_exclusive",
-          String(DEFAULT_HOLIDAY_MIN_WORKED_DAYS),
-        ),
-      );
-      const eligibleHolidayCount = holidayCreditAfterAttendanceGate(
-        eligibleHolidayCountRaw,
-        paidBase,
-        Number.isFinite(holidayMinWorked) ? holidayMinWorked : DEFAULT_HOLIDAY_MIN_WORKED_DAYS,
+      // A holiday is paid when it falls after the joining date and before the exit date; no worked-days gate.
+      const { eligibleHolidayCount } = await resolveHolidaysForEmployeeV2(
+        emp.employee_id,
+        run.run_month,
+        stintScope?.ranges,
       );
       // Rejoin v3: an empty tuple when there is no scope, so the flag-off call is the same 4-argument call.
       const stintWeekoffArg: [] | [{ employedDays: number; sundays: number }] = stintScope ? [{ employedDays: stintScope.employedDays, sundays: stintScope.sundays }] : [];
