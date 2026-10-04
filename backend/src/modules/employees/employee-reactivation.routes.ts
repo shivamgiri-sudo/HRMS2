@@ -390,12 +390,18 @@ employeeReactivationRouter.post(
         );
 
         if (body.action === "approved") {
-          await activateRejoin(
+          const verdict = await activateRejoin(
             conn,
             { id: request.id, employee_id: request.employee_id, proposed_joining_date: request.proposed_joining_date, absconding_acknowledged: body.absconding_acknowledged === true ? 1 : 0 },
             actionedBy,
             body.remarks.trim(),
           );
+          // The 20-character rule above reads the snapshot stored when the request was raised, which requests from
+          // the old flow do not have. The live verdict is the authority, so enforce it here too: throwing rolls the
+          // whole activation back (the catch below does the rollback).
+          if (verdict.requiresAbscondingAck && body.remarks.trim().length < 20) {
+            throw new RejoinBlockedError(verdict, "This employee absconded: give remarks of at least 20 characters");
+          }
         }
 
         await conn.commit();

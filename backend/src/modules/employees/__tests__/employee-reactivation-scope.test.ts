@@ -96,6 +96,9 @@ beforeEach(() => {
   canViewEmployee.mockReset();
   resolveUserBusinessScope.mockReset();
   buildEmployeeScopeCondition.mockReset();
+  // The real activateRejoin always resolves with an eligibility verdict; a clean one here.
+  activateRejoin.mockReset();
+  activateRejoin.mockResolvedValue({ status: "eligible", reasons: [], requiresFreshOnboarding: false, requiresAbscondingAck: false });
 });
 
 describe("GET /reactivation/:id — role gate + scope", () => {

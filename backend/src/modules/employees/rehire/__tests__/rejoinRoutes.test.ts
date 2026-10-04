@@ -294,6 +294,31 @@ describe("legacy 'branch_head_approved' requests (old flow, stuck at the removed
     expect(c.commit).not.toHaveBeenCalled();
   });
 
+  it("a legacy absconder (no stored snapshot) approved by a direct API call with a short remark is rolled back", async () => {
+    // The route's own 20-character rule reads the stored snapshot, which legacy rows lack. The live verdict returned
+    // by activateRejoin must therefore enforce it, or a direct API call could skip what the UI demands.
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    const c = conn();
+    activateRejoin.mockResolvedValue({ ...eligible, status: "review", requiresAbscondingAck: true });
+    const res = await request(app()).post("/api/employees/reactivation/r9/branch-action")
+      .send({ action: "approved", remarks: "ok, rejoin", absconding_acknowledged: true });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/at least 20 characters/i);
+    expect(c.rollback).toHaveBeenCalledOnce();
+    expect(c.commit).not.toHaveBeenCalled();
+    expect(runRejoinFollowUps).not.toHaveBeenCalled();
+  });
+
+  it("a legacy absconder with an acknowledgement and a 20+ character remark is approved", async () => {
+    authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
+    const c = conn();
+    activateRejoin.mockResolvedValue({ ...eligible, status: "review", requiresAbscondingAck: true });
+    const res = await request(app()).post("/api/employees/reactivation/r9/branch-action")
+      .send({ action: "approved", remarks: "Reviewed the full history, accepting the risk", absconding_acknowledged: true });
+    expect(res.status).toBe(200);
+    expect(c.commit).toHaveBeenCalledOnce();
+  });
+
   it.each(["approved", "rejected", "cancelled"])("still 400s a request already '%s'", async (status) => {
     authUser = { id: "bh1", role: "branch_head", roles: ["branch_head"] };
     const c = conn({ ...legacyRow, status });
