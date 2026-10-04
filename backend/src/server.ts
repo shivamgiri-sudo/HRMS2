@@ -79,6 +79,7 @@ import { startQualityGapDetectorWorker } from "./workers/quality-gap-detector.wo
 import { startProcessDashboardAlertsWorker } from "./modules/process-dashboard/alerts/alerts.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
 import { startLeaveApprovalReminderWorker } from "./workers/leave-approval-reminder.worker.js";
+import { startRejoinPendingReminderWorker } from "./workers/rejoin-pending-reminder.worker.js";
 import { startGrnApprovalReminderWorker } from "./workers/grn-approval-reminder.worker.js";
 import { registerNotificationDeliverer } from "./modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
@@ -386,6 +387,8 @@ function startServer() {
         // 1698_noc_worker_and_release_gate_flag.sql. Registering this one in BOTH files from
         // the start, not as a follow-up fix.
         startLeaveApprovalReminderWorker();
+        // Same dual registration (rejoin v3 reminders/escalation).
+        startRejoinPendingReminderWorker();
         // Same dual registration, same reasoning.
         startGrnApprovalReminderWorker();
         console.log(

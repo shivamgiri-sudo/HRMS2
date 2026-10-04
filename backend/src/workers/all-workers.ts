@@ -88,6 +88,7 @@ import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalat
 import { startQualityGapDetectorWorker, stopQualityGapDetectorWorker } from "./quality-gap-detector.worker.js";
 import { startProcessDashboardAlertsWorker, stopProcessDashboardAlertsWorker } from "../modules/process-dashboard/alerts/alerts.worker.js";
 import { startLeaveApprovalReminderWorker, stopLeaveApprovalReminderWorker } from "./leave-approval-reminder.worker.js";
+import { startRejoinPendingReminderWorker, stopRejoinPendingReminderWorker } from "./rejoin-pending-reminder.worker.js";
 import { startGrnApprovalReminderWorker, stopGrnApprovalReminderWorker } from "./grn-approval-reminder.worker.js";
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
@@ -499,6 +500,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startLeaveApprovalReminderWorker(); return Promise.resolve(); },
   },
   {
+    // Rejoin v3: nudges the branch head at 48h/96h and escalates to HR after 5 days.
+    // Registered in BOTH this file and server.ts, same reasoning as leave-approval-reminder.
+    name: "rejoin-pending-reminder",
+    start: () => { startRejoinPendingReminderWorker(); return Promise.resolve(); },
+  },
+  {
     // Owner directive 2026-09-17: GRN approvals had no email at any stage. Registered in
     // BOTH this file and server.ts from the start, same reasoning as leave-approval-reminder
     // above.
@@ -628,6 +635,7 @@ function shutdown(): void {
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
   stopLeaveApprovalReminderWorker();
+  stopRejoinPendingReminderWorker();
   stopGrnApprovalReminderWorker();
   // social-feed exports no stop — its timers are unref'd and die with the process.
   stopMcnmeetCron();
