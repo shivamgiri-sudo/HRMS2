@@ -36,6 +36,14 @@ async function identityBreaks() {
   console.table(rows.map((r) => ({ code: r.employee_code, joined: String(r.date_of_joining).slice(0, 10), gross: r.gross, parts: r.parts, bonus: r.bonus, conv: r.conveyance, ref: String(r.approval_reference ?? "").slice(0, 14) })));
 }
 
+async function packageContext(empId: string) {
+  console.log("sca PF/ESI flags and employer fields:");
+  console.table(await q(`SELECT status, pf_applicable, esi_applicable, employer_pf, employer_esi, pf_employee, esic_employee, ctc, net_estimate, package_id FROM salary_component_assignments WHERE employee_id = ?`, [empId]).catch((x) => [{ note: String(x.message).slice(0, 100) }]));
+  console.log("salary_package_master for band F (all rows, then rows near this gross):");
+  console.table(await q(`SELECT band_code, gross, basic, hra, conveyance, bonus, special_allowance, epf_employee, esic_employee, epf_employer, esic_employer, admin_charges, ctc, net_in_hand FROM salary_package_master WHERE band_code = 'F' LIMIT 10`, []).catch((x) => [{ note: String(x.message).slice(0, 100) }]));
+  console.table(await q(`SELECT band_code, gross, basic, hra, conveyance, bonus, epf_employee, esic_employee, admin_charges, ctc, net_in_hand FROM salary_package_master WHERE ABS(gross - 11397.85) < 600 OR ABS(ctc - 13250) < 300 ORDER BY ABS(gross - 11397.85) LIMIT 10`, []).catch((x) => [{ note: String(x.message).slice(0, 100) }]));
+}
+
 async function main() {
   await identityBreaks();
   if (!code) throw new Error("pass an employee code");
@@ -43,6 +51,7 @@ async function main() {
   if (!e) { console.log(`${code}: not found`); return; }
   console.log(`== ${code} (joined ${String(e.date_of_joining).slice(0, 10)}, ${e.employment_status}), run month ${month}`);
 
+  await packageContext(e.id);
   console.log("salary_component_assignments:");
   console.table(await q(
     `SELECT status, effective_date, gross, basic, hra, conveyance, bonus, portfolio, medical_allowance, lta, special_allowance, other_allowance, pli, approval_reference
