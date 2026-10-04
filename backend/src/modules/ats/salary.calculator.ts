@@ -89,8 +89,16 @@ export async function calculateSalary(
   // deriveComponents (includeBonus defaults to true on the package page)
   const basic = r2(gross * (basicPct / 100));
   const hra = r2(basic * (hraPct / 100));
-  const bonus = r2(basic * BONUS_RATE);
-  const special = Math.max(0, r2(gross - basic - hra - CONV - bonus));
+  // Conveyance and bonus are carved out of the gross, never added on top of it. When basic and
+  // HRA already take the whole gross (a package split of basic = gross, HRA 0, as the band-package
+  // ratio can return for a low band) there is no room for them, so they are 0. Before this guard
+  // the Math.max(0, ...) below hid the overflow: 63694C's offer listed bonus 949.44 and
+  // conveyance 1,600 on top of a gross that was already all basic (components 13,947 vs gross 11,398).
+  const room = r2(gross - basic - hra);
+  const fits = room >= CONV + r2(basic * BONUS_RATE);
+  const conveyance = fits ? CONV : 0;
+  const bonus = fits ? r2(basic * BONUS_RATE) : 0;
+  const special = Math.max(0, r2(room - conveyance - bonus));
 
   const pfBase = Math.min(basic, PF_WAGE_LIMIT);
   const esicApplies = esiEligible && gross <= ESIC_LIMIT;
@@ -108,7 +116,7 @@ export async function calculateSalary(
     gross,
     basic,
     hra,
-    conveyance:        CONV,
+    conveyance,
     da:                0,
     special_allowance: special,
     other_allowance:   0,

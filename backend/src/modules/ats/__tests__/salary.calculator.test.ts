@@ -71,4 +71,23 @@ describe('calculateSalary', () => {
       gratuity: 0,
     });
   });
+
+  it('keeps conveyance and bonus inside gross: an all-basic split carries neither (63694C)', async () => {
+    // Band F CTC 13,250 resolves to basic = gross, HRA 0. Conveyance 1,600 and bonus 8.33% used to be
+    // listed on top, so the components (13,947) exceeded the gross (11,398).
+    const r = await calculateSalary(13250 * 12, 100, 0, false);
+    expect(r.basic).toBeCloseTo(r.gross, 2);
+    expect(r.conveyance).toBe(0);
+    expect(r.bonus).toBe(0);
+    const parts = r.basic + r.hra + r.conveyance + r.bonus + r.special_allowance + r.other_allowance + r.da;
+    expect(Math.abs(parts - r.gross)).toBeLessThanOrEqual(1);
+  });
+
+  it('still carves conveyance and bonus out of gross when there is room', async () => {
+    const r = await calculateSalary(240000, 40, 40, false);
+    expect(r.conveyance).toBe(1600);
+    expect(r.bonus).toBeGreaterThan(0);
+    const parts = r.basic + r.hra + r.conveyance + r.bonus + r.special_allowance;
+    expect(Math.abs(parts - r.gross)).toBeLessThanOrEqual(1);
+  });
 });

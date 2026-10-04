@@ -8,7 +8,7 @@ import { recordBranchHeadDecision, revertBranchHeadDecision } from './branch-hea
 import { resolveEmployeeIdForAuthUser, resolveBranchHeadScope } from './branch-head-scope.js';
 import { inboxService } from '../inbox/inbox.service.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
-import { resolveBandPct } from './band-package-ratio.service.js';
+import { resolveBandPct, findExactCatalogPackageId } from './band-package-ratio.service.js';
 import { parseCtcInput } from './ctc-parser.js';
 import {
   sendOnboardingTokenEmail,
@@ -1045,9 +1045,14 @@ export async function saveOffer(
   // A package picked from the catalog is saved exactly as the catalog stores it. This
   // used to be thrown away and the offer recalculated from the package's CTC, so the
   // saved breakdown drifted from the package Payroll HR had chosen.
-  const selectedPackageId = !offerData.is_proposed_exception && typeof offerData.selected_package_id === 'string'
+  const pickedPackageId = !offerData.is_proposed_exception && typeof offerData.selected_package_id === 'string'
     ? offerData.selected_package_id.trim()
     : '';
+  // No package picked, but the typed CTC is exactly one active catalog package: use that package.
+  const selectedPackageId = pickedPackageId
+    || (!offerData.is_proposed_exception
+      ? (await findExactCatalogPackageId(typeof offerData.salary_band === 'string' ? offerData.salary_band : null, annualCtcInput / 12)) ?? ''
+      : '');
   const components: SalaryComponents = selectedPackageId
     ? await componentsFromCatalogPackage(selectedPackageId, annualCtcInput / 12, pfEligible, esiEligible)
     : await calculateSalary(

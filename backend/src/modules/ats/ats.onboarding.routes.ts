@@ -9,10 +9,11 @@ import {
   sendOnboardingProgressReminder,
   markCandidateNotJoining, clearCandidateNotJoining,
   changeCandidateBranch,
+  componentsFromCatalogPackage,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
 import { parseCtcInput } from './ctc-parser.js';
-import { resolveBandPct } from './band-package-ratio.service.js';
+import { resolveBandPct, findExactCatalogPackageId } from './band-package-ratio.service.js';
 import { buildScopeWhereClause, hasScopedAccess, hasAnyRole } from '../../shared/scopeAccess.js';
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2';
@@ -305,7 +306,12 @@ router.post(
     const pfEligible = pf_eligible !== false && pf_eligible !== 0;
     const esiEligible = esi_eligible !== false && esi_eligible !== 0;
     const stateCode = branch_id ? await resolveBranchState(String(branch_id)) : null;
-    const components = await calculateSalary(annualCtc, band.basicPct, band.hraPct, Boolean(isMetro), undefined, pfEligible, esiEligible, stateCode);
+    // Exactly one active catalog package for this band and CTC: show it as stored, which is what
+    // saveOffer() will save (see findExactCatalogPackageId).
+    const exactId = await findExactCatalogPackageId(String(bandCode), annualCtc / 12);
+    const components = exactId
+      ? await componentsFromCatalogPackage(exactId, annualCtc / 12, pfEligible, esiEligible)
+      : await calculateSalary(annualCtc, band.basicPct, band.hraPct, Boolean(isMetro), undefined, pfEligible, esiEligible, stateCode);
     // The split is returned so the offer form can show it: the same CTC, Basic % and HRA %
     // entered on the Salary Package page give these exact components (same calculator).
     res.json({ ok: true, components, basic_pct: band.basicPct, hra_pct: band.hraPct, split_source: band.source });
