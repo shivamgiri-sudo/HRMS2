@@ -77,6 +77,7 @@ on:
           - salary-package-sources-audit
           - create-missing-esa-for-run-lines
           - employee-components-audit
+          - fix-63694c-package
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -273,6 +274,11 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            fix-63694c-package)
+              # Dry-runs unless given --apply. Apply corrects one employee's package row, offer and joining validation in one transaction.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/fix-63694c-package.ts $FLAG
               ;;
             employee-components-audit)
               # Read-only in both modes: SELECTs only. Fixed employee: 63694C.
