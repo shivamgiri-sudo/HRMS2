@@ -9,7 +9,7 @@
  * transaction: supersede the active row, insert a new active row copied from that db_bill row (same
  * columns and convention as rebuild-salary-package-from-dbbill.mjs), then, after commit, recalculate the
  * month's run for exactly those employees (manual-override-locked lines are skipped by the engine).
- * Employees without exactly one active row, or whose row is locked, are reported and left alone.
+ * Employees with no active row get one; employees with several active rows, or whose db_bill Gross is 0, are reported and left alone.
  * Re-running is a no-op once the packages agree. IDC codes are excluded.
  */
 import "dotenv/config";
@@ -55,27 +55,28 @@ async function main() {
   const [emps] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, TRIM(e.employee_code) AS code, spl.manual_override_locked AS locked
        FROM employees e LEFT JOIN salary_prep_line spl ON spl.employee_id = e.id AND spl.run_id = ?
-      WHERE e.active_status = 1`, [run.id]);
+      WHERE e.active_status = 1`, [run.id]);  // locked lines are skipped by the engine's recalculation itself
   const [asg] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_id, gross, status FROM salary_component_assignments WHERE status = 'active'`);
   const byEmp = new Map<string, any[]>();
   for (const a of asg as any[]) { if (!byEmp.has(a.employee_id)) byEmp.set(a.employee_id, []); byEmp.get(a.employee_id)!.push(a); }
 
-  const todo: Array<{ emp: any; b: any; old: any; vals: Record<string, number> }> = [];
+  const todo: Array<{ emp: any; b: any; old: any | undefined; vals: Record<string, number> }> = [];
   const skipped: string[] = [];
   for (const emp of emps as any[]) {
     const b = bMap.get(emp.code);
     if (!b) continue;
     const act = byEmp.get(emp.id) ?? [];
+    if (num(b.Gross) <= 0) { skipped.push(`${emp.code}(db_bill gross 0)`); continue; }
     if (act.length === 1 && Math.abs(num(act[0].gross) - num(b.Gross)) <= 1) continue;
-    if (act.length !== 1 || Number(emp.locked) === 1) { skipped.push(`${emp.code}(${act.length} active${Number(emp.locked) === 1 ? ", locked" : ""})`); continue; }
+    if (act.length > 1) { skipped.push(`${emp.code}(${act.length} active rows)`); continue; }
     const vals: Record<string, number> = {};
     for (const [bc, hc] of PKG) vals[hc] = num(b[bc]);
     todo.push({ emp, b, old: act[0], vals });
   }
 
   console.log(`${APPLY ? "APPLY" : "DRY RUN"} ${MONTH} run ${run.id} (${run.status}): ${todo.length} packages to update; ${bad.length} db_bill rows failed the sum check; ${skipped.length} skipped`);
-  console.table(todo.map((t) => ({ code: t.emp.code, hrms_gross: num(t.old.gross), bill_gross: num(t.b.Gross), bill_row: String(t.b.SalayDate).slice(0, 10) })));
+  console.table(todo.map((t) => ({ code: t.emp.code, hrms_gross: t.old ? num(t.old.gross) : null, bill_gross: num(t.b.Gross), bill_row: String(t.b.SalayDate).slice(0, 10) })));
   if (skipped.length) console.log("skipped:", skipped.join(", "));
   if (!APPLY) { console.log("Dry run complete. Re-run with --apply to write."); return; }
 
@@ -83,7 +84,7 @@ async function main() {
   try {
     await conn.beginTransaction();
     for (const t of todo) {
-      await conn.execute(`UPDATE salary_component_assignments SET status = 'superseded' WHERE id = ? AND status = 'active'`, [t.old.id]);
+      if (t.old) await conn.execute(`UPDATE salary_component_assignments SET status = 'superseded' WHERE id = ? AND status = 'active'`, [t.old.id]);
       const eff = t.b.SalayDate instanceof Date ? t.b.SalayDate.toISOString().slice(0, 10) : String(t.b.SalayDate).slice(0, 10);
       await conn.execute(
         `INSERT INTO salary_component_assignments
