@@ -84,8 +84,8 @@ async function main() {
     await conn.execute(
       `INSERT INTO incentive_upload_batch
          (id, incentive_id, batch_ref, salary_month, uploaded_by, branch_id, process_id, total_employees, total_amount,
-          status, pay_month, cost_centre_id, remarks)
-       SELECT ?, incentive_id, ?, salary_month, uploaded_by, branch_id, process_id, ?, ?, 'rejected', pay_month, cost_centre_id,
+          status, cost_centre_id, remarks)
+       SELECT ?, incentive_id, ?, salary_month, uploaded_by, branch_id, process_id, ?, ?, 'rejected', cost_centre_id,
               'Rejected: duplicate of the SAL_DIFF 258 already paid with WO_ADJ 258 (db_bill WO adjustment 516). Lines moved here, not deleted.'
          FROM incentive_upload_batch WHERE id = ?`,
       [newBatchId, REJECT_REF, CODES.length, 258 * CODES.length, src.batch_id]);
