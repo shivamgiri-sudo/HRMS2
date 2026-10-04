@@ -16,7 +16,7 @@ const [cfgs] = await db.execute<RowDataPacket[]>(
 );
 console.log(`apr_server configs: ${cfgs.length} (${cfgs.filter((c) => c.active_status === 1).length} active)`);
 for (const row of cfgs) {
-  if (row.active_status !== 1) { console.log(`${row.integration_key}: inactive created=${row.created_at} updated=${row.updated_at}`); continue; }
+  if (row.active_status !== 1) console.log(`${row.integration_key}: inactive (testing read-only anyway)`);
   try {
     const cfg = typeof row.config_json === 'string' ? JSON.parse(row.config_json) : row.config_json;
     const cr = typeof row.encrypted_credentials === 'string' ? JSON.parse(row.encrypted_credentials) : row.encrypted_credentials;
