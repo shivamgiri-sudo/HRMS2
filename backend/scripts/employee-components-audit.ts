@@ -44,7 +44,33 @@ async function packageContext(empId: string) {
   console.table(await q(`SELECT band_code, gross, basic, hra, conveyance, bonus, epf_employee, esic_employee, admin_charges, ctc, net_in_hand FROM salary_package_master WHERE ABS(gross - 11397.85) < 600 OR ABS(ctc - 13250) < 300 ORDER BY ABS(gross - 11397.85) LIMIT 10`, []).catch((x) => [{ note: String(x.message).slice(0, 100) }]));
 }
 
+async function packageMasterReview() {
+  const cols = (await q(`SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_package_master'`, [])).map((r) => String(r.c));
+  console.log("salary_package_master columns:", cols.join(", "));
+  const flag = ["active_status", "is_active", "status"].find((c) => cols.includes(c));
+  const act = flag === "status" ? `status IN ('active','ACTIVE')` : flag ? `${flag} = 1` : "1=1";
+  console.log(`active filter: ${flag ? act : "none found (all rows)"}`);
+  console.log("active packages by band: total / no-PF-no-ESI / with bonus / with admin charges");
+  console.table(await q(
+    `SELECT band_code, COUNT(*) AS total,
+            SUM(epf_employee = 0 AND esic_employee = 0) AS no_pf_esi,
+            SUM(bonus > 0) AS with_bonus, SUM(admin_charges > 0) AS with_admin,
+            SUM(conveyance > 0) AS with_conv, MIN(gross) AS min_gross, MAX(gross) AS max_gross
+       FROM salary_package_master WHERE ${act} GROUP BY band_code ORDER BY band_code`, []));
+  console.log("active no-PF/no-ESI packages (distinct gross/ctc) per band:");
+  console.table(await q(
+    `SELECT band_code, gross, basic, bonus, conveyance, ctc, net_in_hand, COUNT(*) AS n
+       FROM salary_package_master WHERE ${act} AND epf_employee = 0 AND esic_employee = 0
+      GROUP BY band_code, gross, basic, bonus, conveyance, ctc, net_in_hand ORDER BY band_code, gross LIMIT 40`, []));
+  console.log("active packages with ctc or gross within Rs 700 of 13,250 / 11,397.85:");
+  console.table(await q(
+    `SELECT band_code, gross, basic, bonus, conveyance, epf_employee, esic_employee, admin_charges, ctc, net_in_hand, COUNT(*) AS n
+       FROM salary_package_master WHERE ${act} AND (ABS(ctc - 13250) < 700 OR ABS(gross - 11397.85) < 700)
+      GROUP BY band_code, gross, basic, bonus, conveyance, epf_employee, esic_employee, admin_charges, ctc, net_in_hand ORDER BY ctc LIMIT 30`, []));
+}
+
 async function main() {
+  await packageMasterReview();
   await identityBreaks();
   if (!code) throw new Error("pass an employee code");
   const [e] = await q(`SELECT id, date_of_joining, employment_status FROM employees WHERE employee_code = ? LIMIT 1`, [code]);
