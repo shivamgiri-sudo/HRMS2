@@ -130,7 +130,7 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, index }
     <motion.div
       initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.06, duration: 0.4 }}
-      className="relative bg-gradient-to-br from-[#FFFFFF] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-slate-200 overflow-hidden"
+      className="relative bg-white shadow-sm rounded-xl p-4 flex flex-col gap-2 border border-slate-200 overflow-hidden"
     >
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
       <div className="pl-2">
@@ -214,7 +214,7 @@ function SectionCard({ title, children, className = '', accent = C_BLUE, downloa
 
 function Skeleton({ h = 200 }: { h?: number }) {
   return (
-    <div className="animate-pulse bg-slate-700/40 rounded-lg" style={{ height: h }} />
+    <div className="animate-pulse bg-slate-200 rounded-lg" style={{ height: h }} />
   );
 }
 
@@ -237,7 +237,7 @@ function HorizBars({ data, labelKey, valueKey, color, maxItems = 10 }: {
               <span className="text-[11px] text-slate-400 truncate max-w-[70%]" title={String(r[labelKey])}>{String(r[labelKey])}</span>
               <span className="text-[11px] font-semibold" style={{ color: barColor }}>{typeof val === 'number' && valueKey.includes('pct') ? `${val}%` : val.toLocaleString()}</span>
             </div>
-            <div className="h-1.5 bg-slate-700/60 rounded-full overflow-hidden">
+            <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
               <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.7, delay: i * 0.04 }}
                 className="h-full rounded-full" style={{ backgroundColor: barColor }} />
             </div>
@@ -272,7 +272,7 @@ function PeriodSelector({ value, onChange }: {
       {opts.map(o => (
         <button key={o} onClick={() => onChange(o)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-semibold capitalize transition-colors ${
-            value === o ? 'bg-blue-600 text-slate-900' : 'bg-slate-700/60 text-slate-400 hover:text-slate-700'
+            value === o ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200'
           }`}>{o}</button>
       ))}
     </div>
@@ -291,7 +291,7 @@ function DimSelector({ value, onChange }: {
       {opts.map(o => (
         <button key={o} onClick={() => onChange(o)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-semibold capitalize transition-colors ${
-            value === o ? 'bg-purple-600 text-slate-900' : 'bg-slate-700/60 text-slate-400 hover:text-slate-700'
+            value === o ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200'
           }`}>{o}</button>
       ))}
     </div>
@@ -597,7 +597,7 @@ export default function OpeningIntelligenceDashboard() {
             className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 transition-colors text-xs">
             <ChevronLeft size={16} /> Call Master
           </button>
-          <div className="w-px h-4 bg-slate-700" />
+          <div className="w-px h-4 bg-slate-300" />
           <MessageSquare size={16} className="text-blue-400 shrink-0" />
           <div>
             <h1 className="text-sm font-bold text-slate-900 leading-none">Opening Intelligence</h1>
@@ -624,8 +624,8 @@ export default function OpeningIntelligenceDashboard() {
             <select value={clientId} onChange={e => setClientId(e.target.value)}
               className="border rounded-lg text-[11px] px-2.5 py-1.5 outline-none text-white"
               style={{ background: 'linear-gradient(135deg,#0D47A1,#1565C0)', borderColor: 'rgba(255,255,255,0.25)' }}>
-              <option value="">All Process</option>
-              {clients.map(c => <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>)}
+              <option className="text-slate-900 bg-white" value="">All Process</option>
+              {clients.map(c => <option className="text-slate-900 bg-white" key={c.id} value={c.dialdesk_client_id}>{c.name}</option>)}
             </select>
           ) : (
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-900/30 border border-blue-700/30 text-[11px] text-blue-300">
@@ -657,7 +657,7 @@ export default function OpeningIntelligenceDashboard() {
         {/* ── Section 1: Executive Summary ─────────────────────────────── */}
         <div>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Executive Summary
+            <span className="w-4 h-px bg-slate-300" /> Executive Summary
           </h2>
           {loading && !summary ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
@@ -680,7 +680,7 @@ export default function OpeningIntelligenceDashboard() {
         {/* ── Section 2: Opening Intelligence ──────────────────────────── */}
         <div ref={sec2Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 2 — Opening Intelligence
+            <span className="w-4 h-px bg-slate-300" /> Section 2 — Opening Intelligence
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Opening Category Breakdown (Pie) */}
@@ -743,7 +743,7 @@ export default function OpeningIntelligenceDashboard() {
         {/* ── Section 3: Context Intelligence ──────────────────────────── */}
         <div ref={sec3Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 3 — Context Setting Intelligence
+            <span className="w-4 h-px bg-slate-300" /> Section 3 — Context Setting Intelligence
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Context 4-bucket Pie */}
@@ -818,7 +818,7 @@ export default function OpeningIntelligenceDashboard() {
         {/* ── Section 4: Opening vs Sales ───────────────────────────────── */}
         <div ref={sec4Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 4 — Opening Quality vs Sales Conversion
+            <span className="w-4 h-px bg-slate-300" /> Section 4 — Opening Quality vs Sales Conversion
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Conversion by Opening Type */}
@@ -864,7 +864,7 @@ export default function OpeningIntelligenceDashboard() {
         {/* ── Section 5: Opening Trend ──────────────────────────────────── */}
         <div ref={sec5Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 5 — Opening Trend Analysis
+            <span className="w-4 h-px bg-slate-300" /> Section 5 — Opening Trend Analysis
           </h2>
           <SectionCard title="Opening Quality Trend" accent={C_PURPLE}
             downloadData={{ filename: 'opening_trend', rows: openingTrend as unknown as Record<string, unknown>[] }}>
@@ -896,7 +896,7 @@ export default function OpeningIntelligenceDashboard() {
         {/* ── Section 6: Context Trend ──────────────────────────────────── */}
         <div ref={sec6Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 6 — Context Setting Trend
+            <span className="w-4 h-px bg-slate-300" /> Section 6 — Context Setting Trend
           </h2>
           <SectionCard title="Context Setting Trend" accent={C_TEAL}
             downloadData={{ filename: 'context_trend', rows: contextTrend as unknown as Record<string, unknown>[] }}>
@@ -928,7 +928,7 @@ export default function OpeningIntelligenceDashboard() {
         {/* ── Section 7: Opening Leaderboard ────────────────────────────── */}
         <div ref={sec7Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 7 — Opening Leaderboard
+            <span className="w-4 h-px bg-slate-300" /> Section 7 — Opening Leaderboard
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
             {/* Top 10 Agents */}
@@ -950,7 +950,7 @@ export default function OpeningIntelligenceDashboard() {
                     <tbody className="divide-y divide-slate-200">
                       {(leaderboard?.top10Agents ?? []).map((r, i) => (
                         <tr key={i} className="hover:bg-slate-50 transition-colors">
-                          <td className="py-1.5 text-slate-600 font-bold">{i + 1}</td>
+                          <td className="py-1.5 text-slate-500 font-bold">{i + 1}</td>
                           <td className="py-1.5 text-slate-600 truncate max-w-[120px]" title={r.name}>{r.name}</td>
                           <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                           <td className="py-1.5 text-right"><ScoreBadge value={r.opening_pct} /></td>
@@ -1009,7 +1009,7 @@ export default function OpeningIntelligenceDashboard() {
         {/* ── Section 8: AI Insights ────────────────────────────────────── */}
         <div ref={sec8Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 8 — AI Insights & Recommendations
+            <span className="w-4 h-px bg-slate-300" /> Section 8 — AI Insights & Recommendations
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="space-y-3">
@@ -1028,7 +1028,7 @@ export default function OpeningIntelligenceDashboard() {
             </div>
           </div>
           {!sec8Loading && insights.length === 0 && sec8Loaded.current && (
-            <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-800/40 border border-slate-200">
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-50 border border-slate-200">
               <Info size={16} className="text-slate-500" />
               <span className="text-[12px] text-slate-400">AI insights will appear once data is loaded.</span>
             </div>

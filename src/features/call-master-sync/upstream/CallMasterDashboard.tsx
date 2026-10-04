@@ -428,9 +428,9 @@ function FilterBar({
             onChange={(e) => onChange('clientId', e.target.value)}
             className="appearance-none bg-white border border-slate-200 text-sm text-slate-700 rounded-lg px-3 py-2 pr-8 outline-none"
           >
-            <option value="">All Process</option>
+            <option className="text-slate-900 bg-white" value="">All Process</option>
             {clients.map((c) => (
-              <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
+              <option className="text-slate-900 bg-white" key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
             ))}
           </select>
           <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
@@ -444,9 +444,9 @@ function FilterBar({
           onChange={(e) => onChange('lob', e.target.value)}
           className="appearance-none bg-white border border-slate-200 text-sm text-slate-700 rounded-lg px-3 py-2 pr-8 outline-none"
         >
-          <option value="All">All LOBs</option>
-          <option value="Inbound">Inbound</option>
-          <option value="Outbound">Outbound</option>
+          <option className="text-slate-900 bg-white" value="All">All LOBs</option>
+          <option className="text-slate-900 bg-white" value="Inbound">Inbound</option>
+          <option className="text-slate-900 bg-white" value="Outbound">Outbound</option>
         </select>
         <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
       </div>
@@ -458,9 +458,9 @@ function FilterBar({
           onChange={(e) => onChange('period', e.target.value)}
           className="appearance-none bg-white border border-slate-200 text-sm text-slate-700 rounded-lg px-3 py-2 pr-8 outline-none"
         >
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
+          <option className="text-slate-900 bg-white" value="daily">Daily</option>
+          <option className="text-slate-900 bg-white" value="weekly">Weekly</option>
+          <option className="text-slate-900 bg-white" value="monthly">Monthly</option>
         </select>
         <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
       </div>
@@ -628,11 +628,11 @@ function CXParametersCard({ cxData, lob }: { cxData: CXData; lob: string }) {
       {(showInbound && showOutbound) && (
         <div className="flex gap-1 mb-4 bg-slate-100 rounded-lg p-1 w-fit">
           <button onClick={() => setTab('inbound')}
-            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'inbound' ? 'bg-blue-600 text-slate-900' : 'text-slate-400 hover:text-slate-900'}`}>
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'inbound' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-900'}`}>
             Inbound (19)
           </button>
           <button onClick={() => setTab('outbound')}
-            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'outbound' ? 'bg-purple-600 text-slate-900' : 'text-slate-400 hover:text-slate-900'}`}>
+            className={`px-3 py-1 rounded text-xs font-medium transition-colors ${tab === 'outbound' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-slate-900'}`}>
             Outbound (6)
           </button>
         </div>
@@ -1200,7 +1200,7 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                       <button key={s} onClick={() => switchSource(s)}
                         className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                           source === s
-                            ? s === 'inbound' ? 'bg-blue-600 text-slate-900' : 'bg-purple-600 text-slate-900'
+                            ? s === 'inbound' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
                             : 'bg-slate-100 text-slate-400 hover:text-slate-900 hover:bg-slate-100'
                         }`}
                       >
@@ -1237,9 +1237,9 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                   <select value={exportClientId} onChange={e => setExportClientId(e.target.value)}
                     className="w-full appearance-none bg-white border border-slate-200 text-xs text-slate-700 rounded-lg px-2 py-1.5 outline-none"
                   >
-                    <option value="">All Process</option>
+                    <option className="text-slate-900 bg-white" value="">All Process</option>
                     {clients.map(c => (
-                      <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
+                      <option className="text-slate-900 bg-white" key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
                     ))}
                   </select>
                 </div>
@@ -1250,9 +1250,9 @@ function ExportModal({ open, onClose, clients, currentFilters }: {
                   <select value={rowLimit} onChange={e => setRowLimit(Number(e.target.value))}
                     className="w-full appearance-none bg-white border border-slate-200 text-xs text-slate-700 rounded-lg px-2 py-1.5 outline-none"
                   >
-                    <option value={1000}>1,000 rows</option>
-                    <option value={5000}>5,000 rows</option>
-                    <option value={10000}>10,000 rows</option>
+                    <option className="text-slate-900 bg-white" value={1000}>1,000 rows</option>
+                    <option className="text-slate-900 bg-white" value={5000}>5,000 rows</option>
+                    <option className="text-slate-900 bg-white" value={10000}>10,000 rows</option>
                   </select>
                 </div>
 

@@ -129,12 +129,12 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, trend, 
     <motion.div
       initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.4 }}
-      className="relative bg-gradient-to-br from-[#FFFFFF] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-slate-200 overflow-hidden"
+      className="relative bg-white shadow-sm rounded-xl p-4 flex flex-col gap-2 border border-slate-200 overflow-hidden"
     >
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
       <div className="pl-2">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider leading-none">{label}</span>
+          <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider leading-none">{label}</span>
           <div className="p-1.5 rounded-lg" style={{ backgroundColor: `${color}18` }}>
             <div style={{ color }}>{icon}</div>
           </div>
@@ -212,7 +212,7 @@ function SCard({ title, children, className = '', accent = C.blue, dl }: {
 // ─── Skeleton ─────────────────────────────────────────────────────────────────
 
 function SK({ h = 200 }: { h?: number }) {
-  return <div className="animate-pulse bg-slate-700/40 rounded-lg" style={{ height: h }} />;
+  return <div className="animate-pulse bg-slate-200 rounded-lg" style={{ height: h }} />;
 }
 
 // ─── HorizBars ────────────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ function HorizBars({ data, labelKey, valueKey, color, maxItems = 12, suffix = ''
               <span className="text-[11px] text-slate-400 truncate max-w-[70%]" title={String(r[labelKey])}>{String(r[labelKey])}</span>
               <span className="text-[11px] font-semibold shrink-0" style={{ color: bc }}>{Number(val).toLocaleString()}{suffix}</span>
             </div>
-            <div className="h-1.5 bg-slate-700/60 rounded-full overflow-hidden">
+            <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
               <motion.div initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.7, delay: i * 0.04 }}
                 className="h-full rounded-full" style={{ backgroundColor: bc }} />
             </div>
@@ -257,7 +257,7 @@ function PeriodSel({ value, onChange }: {
       {(['daily','weekly','monthly','quarterly','yearly'] as const).map(o => (
         <button key={o} onClick={() => onChange(o)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-semibold capitalize transition-colors ${
-            value === o ? 'bg-blue-600 text-slate-900' : 'bg-slate-700/60 text-slate-400 hover:text-slate-700'
+            value === o ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200'
           }`}>{o}</button>
       ))}
     </div>
@@ -275,7 +275,7 @@ function DimSel({ value, onChange }: {
       {(['client','agent','campaign'] as const).map(o => (
         <button key={o} onClick={() => onChange(o)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-semibold capitalize transition-colors ${
-            value === o ? 'bg-pink-600 text-slate-900' : 'bg-slate-700/60 text-slate-400 hover:text-slate-700'
+            value === o ? 'bg-pink-600 text-white' : 'bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200'
           }`}>{o}</button>
       ))}
     </div>
@@ -354,7 +354,7 @@ function JourneyFunnel({ stages }: { stages: JourneyStage[] }) {
                 <span className="text-[9px] text-red-400 w-14 text-right shrink-0">↓{s.dropoff_pct}%</span>
               )}
             </div>
-            <div className="h-2 bg-slate-700/50 rounded-full overflow-hidden">
+            <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
               <motion.div initial={{ width: 0 }} animate={{ width: `${barW}%` }}
                 transition={{ duration: 0.6, delay: i * 0.07 }}
                 className="h-full rounded-full" style={{ backgroundColor: stageColor }} />
@@ -647,7 +647,7 @@ export default function CustomerIntelligenceDashboard() {
             className="flex items-center gap-1.5 text-slate-400 hover:text-slate-900 transition-colors text-xs">
             <ChevronLeft size={16} /> Call Master
           </button>
-          <div className="w-px h-4 bg-slate-700" />
+          <div className="w-px h-4 bg-slate-300" />
           <Heart size={15} className="text-pink-400 shrink-0" />
           <div>
             <h1 className="text-sm font-bold text-slate-900 leading-none">Customer Intelligence</h1>
@@ -673,8 +673,8 @@ export default function CustomerIntelligenceDashboard() {
             <select value={clientId} onChange={e => setClientId(e.target.value)}
               className="border rounded-lg text-[11px] px-2.5 py-1.5 outline-none text-white"
               style={{ background: 'linear-gradient(135deg,#0D47A1,#1565C0)', borderColor: 'rgba(255,255,255,0.25)' }}>
-              <option value="">All Process</option>
-              {clients.map(c => <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>)}
+              <option className="text-slate-900 bg-white" value="">All Process</option>
+              {clients.map(c => <option className="text-slate-900 bg-white" key={c.id} value={c.dialdesk_client_id}>{c.name}</option>)}
             </select>
           ) : (
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-pink-900/20 border border-pink-700/30 text-[11px] text-pink-300">
@@ -706,7 +706,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 1: Executive Summary ─────────────────────────────── */}
         <section>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 1 — Executive Customer Summary
+            <span className="w-4 h-px bg-slate-300" /> Section 1 — Executive Customer Summary
           </h2>
           {!summary || sumLoading ? (
             <div className="grid grid-cols-2 sm:grid-cols-5 xl:grid-cols-10 gap-3">
@@ -731,7 +731,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 2: Customer Sentiment ────────────────────────────── */}
         <section ref={sec2Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 2 — Customer Sentiment
+            <span className="w-4 h-px bg-slate-300" /> Section 2 — Customer Sentiment
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Donut */}
@@ -791,7 +791,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 3: Voice of Customer ─────────────────────────────── */}
         <section ref={sec3Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 3 — Voice of Customer (VOC)
+            <span className="w-4 h-px bg-slate-300" /> Section 3 — Voice of Customer (VOC)
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Feedback Categories */}
@@ -854,7 +854,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 4: Customer Journey ───────────────────────────────── */}
         <section ref={sec4Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 4 — Customer Journey & Offering Funnel
+            <span className="w-4 h-px bg-slate-300" /> Section 4 — Customer Journey & Offering Funnel
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <SCard title="9-Stage Customer Journey Funnel" accent={C.blue}
@@ -879,7 +879,7 @@ export default function CustomerIntelligenceDashboard() {
                             <span className="text-[10px] text-slate-500">{s.pct}%</span>
                           </div>
                         </div>
-                        <div className="h-3 bg-slate-700/50 rounded-full overflow-hidden">
+                        <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
                           <motion.div initial={{ width: 0 }} animate={{ width: `${w}%` }}
                             transition={{ duration: 0.7, delay: i * 0.1 }}
                             className="h-full rounded-full" style={{ backgroundColor: bc }} />
@@ -896,7 +896,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 5: Feedback Intelligence ─────────────────────────── */}
         <section ref={sec5Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 5 — Feedback Intelligence
+            <span className="w-4 h-px bg-slate-300" /> Section 5 — Feedback Intelligence
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Top Objections */}
@@ -945,7 +945,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 6: CX Heatmap (feedback category grid) ───────────── */}
         <section>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 6 — Customer Experience Heatmap
+            <span className="w-4 h-px bg-slate-300" /> Section 6 — Customer Experience Heatmap
           </h2>
           <SCard title="Feedback Category — Positive vs Negative Heatmap" accent={C.pink}
             dl={{ filename: 'cx_heatmap', rows: fbCats as unknown as Record<string, unknown>[] }}>
@@ -999,7 +999,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 7: Client Comparison ─────────────────────────────── */}
         <section ref={sec6Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 7 — Client Comparison
+            <span className="w-4 h-px bg-slate-300" /> Section 7 — Client Comparison
           </h2>
           <SCard title="Client Customer Experience Ranking" accent={C.teal}
             dl={{ filename: 'client_comparison', rows: clientComp as unknown as Record<string, unknown>[] }}>
@@ -1024,7 +1024,7 @@ export default function CustomerIntelligenceDashboard() {
                   <tbody className="divide-y divide-slate-200">
                     {clientComp.map((r, i) => (
                       <tr key={i} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-1.5 text-slate-600 font-bold">{i + 1}</td>
+                        <td className="py-1.5 text-slate-500 font-bold">{i + 1}</td>
                         <td className="py-1.5 text-slate-600 font-medium">{r.client_id}</td>
                         <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                         <td className="py-1.5 text-right"><span className="font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</span></td>
@@ -1045,7 +1045,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 8: Campaign Comparison ───────────────────────────── */}
         <section ref={sec7Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 8 — Campaign Comparison
+            <span className="w-4 h-px bg-slate-300" /> Section 8 — Campaign Comparison
           </h2>
           <SCard title="Campaign Customer Experience Ranking" accent={C.purple}
             dl={{ filename: 'campaign_comparison', rows: campaignComp as unknown as Record<string, unknown>[] }}>
@@ -1066,7 +1066,7 @@ export default function CustomerIntelligenceDashboard() {
                     <tbody className="divide-y divide-slate-200">
                       {campaignComp.map((r, i) => (
                         <tr key={i} className="hover:bg-slate-50 transition-colors">
-                          <td className="py-1.5 text-slate-600 font-bold">{i + 1}</td>
+                          <td className="py-1.5 text-slate-500 font-bold">{i + 1}</td>
                           <td className="py-1.5 text-slate-600 truncate max-w-[120px]" title={r.campaign}>{r.campaign}</td>
                           <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                           <td className="py-1.5 text-right font-bold" style={{ color: pctColor(r.satisfaction_pct) }}>{r.satisfaction_pct}%</td>
@@ -1096,7 +1096,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 9: Agent CX Ranking ──────────────────────────────── */}
         <section ref={sec8Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 9 — Agent Customer Experience Ranking
+            <span className="w-4 h-px bg-slate-300" /> Section 9 — Agent Customer Experience Ranking
           </h2>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {/* Top 10 */}
@@ -1198,7 +1198,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 10: AI Insights ───────────────────────────────────── */}
         <section ref={sec9Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 10 — AI Insights & Recommendations
+            <span className="w-4 h-px bg-slate-300" /> Section 10 — AI Insights & Recommendations
           </h2>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="space-y-3">
@@ -1211,7 +1211,7 @@ export default function CustomerIntelligenceDashboard() {
             </div>
           </div>
           {sec9Loaded.current && !sec9Loading && insights.length === 0 && (
-            <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-800/40 border border-slate-200">
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-slate-50 border border-slate-200">
               <Info size={16} className="text-slate-500" />
               <span className="text-[12px] text-slate-400">AI insights will appear once data is loaded.</span>
             </div>
@@ -1221,7 +1221,7 @@ export default function CustomerIntelligenceDashboard() {
         {/* ─── Section 11: Agent-wise NPS & CSAT ────────────────────────── */}
         <section ref={sec10Ref}>
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2">
-            <span className="w-4 h-px bg-slate-600" /> Section 11 — Agent-wise NPS &amp; CSAT Analysis
+            <span className="w-4 h-px bg-slate-300" /> Section 11 — Agent-wise NPS &amp; CSAT Analysis
           </h2>
           <SCard title="Agent NPS & CSAT Summary" accent={C.pink}
             dl={{ filename: 'agent_nps_csat', rows: agentNPSCSAT as unknown as Record<string, unknown>[] }}>
@@ -1229,7 +1229,7 @@ export default function CustomerIntelligenceDashboard() {
               <input
                 type="text" placeholder="Search agent…" value={ncsatSearch}
                 onChange={e => setNcsatSearch(e.target.value)}
-                className="flex-1 bg-slate-800/60 border border-white/10 rounded-lg px-3 py-1.5 text-[11px] text-slate-300 outline-none placeholder-slate-600"
+                className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-[11px] text-slate-700 outline-none placeholder-slate-400"
               />
               <span className="text-[10px] text-slate-500 shrink-0">
                 {agentNPSCSAT.filter(r => r.agent.toLowerCase().includes(ncsatSearch.toLowerCase())).length} agents
@@ -1245,8 +1245,8 @@ export default function CustomerIntelligenceDashboard() {
                   const bv = b[ncsatSort.key] as number;
                   return ncsatSort.dir === 'desc' ? bv - av : av - bv;
                 });
-              const thCls = 'pb-2 text-left cursor-pointer select-none hover:text-slate-300 transition-colors';
-              const thR   = 'pb-2 text-right cursor-pointer select-none hover:text-slate-300 transition-colors';
+              const thCls = 'pb-2 text-left cursor-pointer select-none hover:text-slate-700 transition-colors';
+              const thR   = 'pb-2 text-right cursor-pointer select-none hover:text-slate-700 transition-colors';
               const sortIcon = (k: keyof AgentNPSCSAT) =>
                 ncsatSort.key === k ? (ncsatSort.dir === 'desc' ? ' ↓' : ' ↑') : '';
               const handleSort = (k: keyof AgentNPSCSAT) =>
@@ -1255,8 +1255,8 @@ export default function CustomerIntelligenceDashboard() {
               return (
                 <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
                   <table className="w-full text-[11px]">
-                    <thead className="sticky top-0 bg-[#1E293B] z-10">
-                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-white/5">
+                    <thead className="sticky top-0 bg-slate-100 z-10">
+                      <tr className="text-slate-500 uppercase text-[9px] tracking-wider border-b border-slate-200">
                         <th className="pb-2 text-left">#</th>
                         <th className={thCls} onClick={() => handleSort('agent')}>Agent{sortIcon('agent')}</th>
                         <th className={thR} onClick={() => handleSort('calls')}>Calls{sortIcon('calls')}</th>
@@ -1268,11 +1268,11 @@ export default function CustomerIntelligenceDashboard() {
                         <th className={thR} onClick={() => handleSort('conv_pct')}>Conv %{sortIcon('conv_pct')}</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-slate-200">
                       {filtered.map((r, i) => (
-                        <tr key={r.agent} className="hover:bg-white/[0.02] transition-colors">
-                          <td className="py-1.5 text-slate-600 font-bold pr-2">{i + 1}</td>
-                          <td className="py-1.5 text-slate-300 font-medium max-w-[120px] truncate" title={r.agent}>{r.agent}</td>
+                        <tr key={r.agent} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-1.5 text-slate-500 font-bold pr-2">{i + 1}</td>
+                          <td className="py-1.5 text-slate-700 font-medium max-w-[120px] truncate" title={r.agent}>{r.agent}</td>
                           <td className="py-1.5 text-right text-slate-400">{Number(r.calls).toLocaleString()}</td>
                           <td className="py-1.5 text-right">
                             <span className="font-bold" style={{ color: pctColor(r.csat) }}>{r.csat}%</span>
@@ -1312,7 +1312,7 @@ export default function CustomerIntelligenceDashboard() {
                       const avgNPS      = totCalls  ? +(((totPromoter - totDetractor) / totCalls) * 100).toFixed(1) : 0;
                       return (
                         <tfoot>
-                          <tr className="border-t border-white/10 text-[10px] font-bold text-slate-400">
+                          <tr className="border-t border-slate-200 text-[10px] font-bold text-slate-400">
                             <td></td>
                             <td className="py-2">Total / Avg</td>
                             <td className="py-2 text-right">{totCalls.toLocaleString()}</td>

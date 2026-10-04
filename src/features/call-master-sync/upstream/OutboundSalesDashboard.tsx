@@ -123,7 +123,7 @@ function KPICard({ label, value, suffix = '', dec = 0, icon, color, sub, index, 
       initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.06, duration: 0.4 }}
       onClick={onClick}
-      className={`relative bg-gradient-to-br from-[#FFFFFF] to-[#16213a] rounded-xl p-4 flex flex-col gap-2 border border-slate-200 overflow-hidden transition-all duration-200 ${onClick ? 'cursor-pointer hover:border-slate-300 hover:shadow-lg' : ''}`}
+      className={`relative bg-white shadow-sm rounded-xl p-4 flex flex-col gap-2 border border-slate-200 overflow-hidden transition-all duration-200 ${onClick ? 'cursor-pointer hover:border-slate-300 hover:shadow-lg' : ''}`}
     >
       <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l-xl" style={{ backgroundColor: color }} />
       <div className="pl-2">
@@ -648,9 +648,9 @@ export default function OutboundSalesDashboard() {
             <div className="relative">
               <select value={clientId} onChange={e => setClientId(e.target.value)}
                 className="appearance-none bg-white border border-slate-200 text-sm text-slate-700 rounded-lg px-3 py-2 pr-8 outline-none">
-                <option value="">All Processes</option>
+                <option className="text-slate-900 bg-white" value="">All Processes</option>
                 {clients.map(c => (
-                  <option key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
+                  <option className="text-slate-900 bg-white" key={c.id} value={c.dialdesk_client_id}>{c.name}</option>
                 ))}
               </select>
               <ChevronDown size={12} className="absolute right-2 top-3 text-slate-400 pointer-events-none" />
