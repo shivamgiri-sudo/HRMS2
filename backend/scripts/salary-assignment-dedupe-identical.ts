@@ -45,7 +45,13 @@ async function main() {
     if (list.length !== 2) { skipped.push(`${code}: ${list.length} active rows (need exactly 2)`); continue; }
     const same = Number(a.ctc_annual) === Number(b.ctc_annual) && a.structure_id === b.structure_id
       && a.governance_mode === b.governance_mode && a.effective_to == null && b.effective_to == null;
-    if (!same) { skipped.push(`${code}: rows differ in CTC/structure/mode/effective_to — left alone`); continue; }
+    if (!same) {
+      const diff = (["ctc_annual", "structure_id", "governance_mode", "effective_to"] as const)
+        .filter((k) => String(a[k] ?? "") !== String(b[k] ?? ""))
+        .map((k) => `${k}: ${a[k] ?? "NULL"} vs ${b[k] ?? "NULL"}`);
+      skipped.push(`${code}: rows differ (${diff.join("; ")}) — left alone`);
+      continue;
+    }
     plan.push({ keep: a, drop: b }); // list is ordered by effective_from, created_at: a = earliest
   }
 
