@@ -35,7 +35,7 @@ import "dotenv/config";
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
-import { billQuery } from "../src/db/billDb.js";
+import { billQuery, closeBillPool } from "../src/db/billDb.js";
 
 const APPLY = process.argv.includes("--apply");
 const MONTH = "2026-08";
@@ -220,4 +220,4 @@ async function main() {
   }
 }
 
-main().then(() => db.end?.()).catch(async (e) => { console.error("ERR", e?.message ?? e); try { await db.end?.(); } catch { } process.exit(1); });
+main().then(async () => { await closeBillPool(); await db.end?.(); }).catch(async (e) => { console.error("ERR", e?.message ?? e); try { await db.end?.(); } catch { } process.exit(1); });
