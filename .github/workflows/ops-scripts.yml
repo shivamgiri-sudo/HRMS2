@@ -76,6 +76,7 @@ on:
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
           - create-missing-esa-for-run-lines
+          - employee-components-audit
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -272,6 +273,10 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            employee-components-audit)
+              # Read-only in both modes: SELECTs only. Fixed employee: 63694C.
+              npx tsx scripts/employee-components-audit.ts 63694C
               ;;
             create-missing-esa-for-run-lines)
               # Dry-runs unless given --apply. Apply inserts the esa row the engine needs; no existing line is changed.
