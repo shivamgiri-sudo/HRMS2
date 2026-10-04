@@ -285,7 +285,7 @@ describe("shapeOf", () => {
 });
 
 describe("source-level read-only assertions", () => {
-  const files = ["scripts/rejoin-dbbill-compare.ts", "scripts/lib/rejoinCompare.ts"];
+  const files = ["scripts/rejoin-dbbill-compare.ts", "scripts/lib/rejoinCompare.ts", "scripts/lib/rejoinReport.ts"];
   const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   for (const f of files) {
     it(`${f} contains no write statements`, () => {
@@ -301,6 +301,19 @@ describe("source-level read-only assertions", () => {
     expect(src).not.toMatch(/EmpName|BioCode|DOB\b|email/i);
     expect(BILL_COLUMNS).toEqual(["EmpCode", "DOJ", "DOL", "Status", "PanNo", "AdharId", "lastUpdated", "ResignationDate", "left_type"]);
     expect(src).toMatch(/READ-ONLY: nothing was changed in db_bill or mas_hrms\./);
+  });
+  it("no printed line references PAN, Aadhaar, mobile, names or email (script + report helpers)", () => {
+    for (const f of files) {
+      const src = stripComments(readFileSync(path.join(backend, f), "utf8"));
+      expect(src, f).not.toMatch(/SELECT\s+\*/i);
+      expect(src, f).not.toMatch(/EmpName|BioCode|DOB\b|email/i);
+      expect(src, f).not.toMatch(/\bMobile\d?\b|\.mobile\b/); // the column / a field; the prose note "mobile-number matching" is allowed
+      for (const line of src.split("\n").filter((l) => /\bout\(|\blist\(|formatCapped\(|lines\.push\(/.test(l))) {
+        expect(line, `${f}: ${line.trim()}`).not.toMatch(/\.pan\b|\.aadhaar\b|PanNo|AdharId/);
+      }
+    }
+    const report = stripComments(readFileSync(path.join(backend, "scripts/lib/rejoinReport.ts"), "utf8"));
+    expect(report).not.toMatch(/\bpan\b|aadhaar|PanNo|AdharId/i);
   });
   it("main() runs only when invoked directly", () => {
     const src = readFileSync(path.join(backend, "scripts/rejoin-dbbill-compare.ts"), "utf8");

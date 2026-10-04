@@ -125,11 +125,40 @@ export interface LegacyRow {
 }
 
 export const normCode = (c: unknown) => String(c ?? "").trim().toUpperCase();
+
+export type CodeFamily = "IDC" | "MAS" | "NUMC" | "OTHER";
+/** Employee-code series on UPPER(TRIM(code)): IDC..., MAS + digits, digits + 'C', anything else. */
+export function codeFamily(code: unknown): CodeFamily {
+  const c = normCode(code);
+  if (c.startsWith("IDC")) return "IDC";
+  if (/^MAS\d+$/.test(c)) return "MAS";
+  if (/^\d+C$/.test(c)) return "NUMC";
+  return "OTHER";
+}
+
+export type LeftType = "Voluntary" | "Non Voluntary" | "Absconding";
+/** left_type reduced to one of three categories; anything else (free text, NA, empty) is null. */
+export function normLeftType(raw: unknown): LeftType | null {
+  const s = String(raw ?? "").toUpperCase().replace(/[^A-Z]/g, "");
+  if (s === "VOLUNTARY") return "Voluntary";
+  if (s === "NONVOLUNTARY" || s === "INVOLUNTARY") return "Non Voluntary";
+  if (s === "ABSCONDING" || s === "ABSCONDED") return "Absconding";
+  return null;
+}
+
+/** The db_bill fields printed for a code's current row: no identifiers, no free text. */
+export interface BillFacts { status: string; doj: string | null; left: string | null; leftType: LeftType | null }
 const isStatusActive = (s: unknown) => String(s ?? "").trim() === "1";
 /** Active stint: Status '1' and no parseable leaving date. */
 export const isActiveRow = (r: LegacyRow) => isStatusActive(r.status) && parseLegacyDate(r.dol) === null;
 /** When the stint ended: DOL, else ResignationDate. */
 export const leaveDate = (r: LegacyRow) => parseLegacyDate(r.dol) ?? parseLegacyDate(r.resignationDate);
+export const billFactsOf = (r: LegacyRow): BillFacts => ({
+  status: String(r.status ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 10),
+  doj: parseLegacyDate(r.doj),
+  left: leaveDate(r),
+  leftType: normLeftType(r.leftType),
+});
 const isEmptyDate = (raw: unknown) => { const s = String(raw ?? "").trim(); return !s || /^0000/.test(s); };
 const EMPTY_TEXT = new Set(["", "0", "-", "NA", "N/A", "NULL", "NONE"]);
 const hasText = (raw: unknown) => !EMPTY_TEXT.has(String(raw ?? "").trim().toUpperCase());
@@ -153,6 +182,8 @@ export interface Detection {
   p1DuplicateOnly: string[];
   p2: P2Case[];
   p3: P3Case[];
+  /** Current-row facts for every code that appears in p1/p2 (old and new)/p3. */
+  bill: Map<string, BillFacts>;
   stats: { rows: number; codes: number; validPan: number; validAadhaar: number; placeholderIdentifiers: number };
 }
 
@@ -218,7 +249,11 @@ export function detectCandidates(input: readonly LegacyRow[]): Detection {
   p1.sort((a, b) => a.code.localeCompare(b.code));
   p3.sort((a, b) => a.code.localeCompare(b.code));
   p1DuplicateOnly.sort();
-  return { p1, p1DuplicateOnly, p2, p3, stats: { rows: rows.length, codes: byCode.size, validPan, validAadhaar, placeholderIdentifiers } };
+  const bill = new Map<string, BillFacts>();
+  for (const code of [...p1.map((c) => c.code), ...p2.flatMap((p) => [p.oldCode, p.newCode]), ...p3.map((c) => c.code)]) {
+    if (!bill.has(code)) bill.set(code, billFactsOf(currentRow(byCode.get(code)!)));
+  }
+  return { p1, p1DuplicateOnly, p2, p3, bill, stats: { rows: rows.length, codes: byCode.size, validPan, validAadhaar, placeholderIdentifiers } };
 }
 
 export interface Candidate {
@@ -250,6 +285,8 @@ export interface HrmsFacts {
   rejoinStints: number;
   rejoinedExits: number;
   approvedReactivations: number;
+  /** All employment_stint rows for the employee (printed in detail rows only). */
+  stintRows?: number;
 }
 
 const TERMINAL = new Set(NON_REACTIVATABLE_STATUSES.map((s) => s.toLowerCase()));

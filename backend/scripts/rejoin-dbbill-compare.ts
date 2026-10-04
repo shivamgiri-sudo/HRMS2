@@ -2,8 +2,8 @@
  * Rejoin cases visible in db_bill but not reflected in mas_hrms. STRICTLY READ-ONLY on both databases:
  * HRMS queries go through readOnly() (single SELECT / WITH only), db_bill queries through readOnly() AND
  * billQuery() (SELECT/SHOW allowlist). Output is employee codes only (no names, mobile, PAN, Aadhaar,
- * email); every listed section is capped at 50 with totals always printed. Takes no write flags;
- * --apply / --dry-run are ignored.
+ * email); sections (0)-(2) list at most 50 items, the non-IDC lists in (3) and (4) at most 300, detail rows
+ * at most 100 per class; totals are always printed. Takes no write flags; --apply / --dry-run are ignored.
  *
  *   npx tsx scripts/rejoin-dbbill-compare.ts
  *
@@ -16,6 +16,10 @@ import {
   normCode, readOnly, shapeOf, toCandidates,
   type Candidate, type HrmsFacts, type LegacyRow, type RejoinClass,
 } from "./lib/rejoinCompare.js";
+import {
+  DETAIL_CAP, currentRejoiners, formatCurrentRejoiners, formatDetailRows, formatFamilySection, nonIdcAttention,
+  type ClassifiedCase,
+} from "./lib/rejoinReport.js";
 
 type Row = Record<string, unknown>;
 type Exec = (sql: string, p?: unknown[]) => Promise<[unknown, unknown]>;
@@ -137,7 +141,7 @@ async function loadHrms(codes: string[]): Promise<{ facts: Map<string, HrmsFacts
         dateOfJoining: (r.doj as string) ?? null, dateOfExit: (r.dox as string) ?? null,
         reactivationCount: r.reactivation_count == null ? null : Number(r.reactivation_count),
         previousExitDate: (r.previous_exit_date as string) ?? null,
-        rejoinStints: 0, rejoinedExits: 0, approvedReactivations: 0,
+        rejoinStints: 0, rejoinedExits: 0, approvedReactivations: 0, stintRows: hasStint ? 0 : undefined,
       };
       facts.set(code, f);
       byId.set(String(r.id), f);
@@ -145,10 +149,15 @@ async function loadHrms(codes: string[]): Promise<{ facts: Map<string, HrmsFacts
     const ids = [...byId.keys()];
     if (ids.length === 0) continue;
     const apply = (rows: Row[], key: "rejoinStints" | "rejoinedExits" | "approvedReactivations") => {
-      for (const r of rows) { const f = byId.get(String(r.employee_id)); if (f) f[key] += Number(r.n ?? 0); }
+      for (const r of rows) {
+        const f = byId.get(String(r.employee_id));
+        if (!f) continue;
+        f[key] += Number(r.n ?? 0);
+        if (key === "rejoinStints") f.stintRows = (f.stintRows ?? 0) + Number(r.total ?? 0);
+      }
     };
     if (hasStint) apply(await hq(
-      `SELECT employee_id, SUM(stint_no >= 2) n FROM employment_stint WHERE employee_id IN (${ph(ids.length)}) GROUP BY employee_id`, ids), "rejoinStints");
+      `SELECT employee_id, SUM(stint_no >= 2) n, COUNT(*) total FROM employment_stint WHERE employee_id IN (${ph(ids.length)}) GROUP BY employee_id`, ids), "rejoinStints");
     if (hasExit) apply(await hq(
       `SELECT employee_id, COUNT(*) n FROM exit_request WHERE employee_id IN (${ph(ids.length)}) AND LOWER(status) = 'rejoined' GROUP BY employee_id`, ids), "rejoinedExits");
     if (hasReact) apply(await hq(
@@ -198,8 +207,10 @@ export async function main(): Promise<void> {
 
   const byClass = new Map<RejoinClass, Candidate[]>(REJOIN_CLASSES.map((k) => [k, []]));
   const unclassified: Candidate[] = [];
+  const classified: ClassifiedCase[] = [];
   for (const c of cands) {
     const cls = classifyCase(c, facts.get(c.code) ?? null, c.oldCode ? facts.get(c.oldCode) ?? null : undefined);
+    classified.push({ cand: c, classes: cls });
     if (cls.length === 0) unclassified.push(c);
     for (const k of cls) byClass.get(k)!.push(c);
   }
@@ -215,6 +226,19 @@ export async function main(): Promise<void> {
   out(`  no class (db_bill current stint not active and HRMS not active, no trace): ${unclassified.length}`);
   out();
 
+  formatFamilySection(classified).forEach((l) => out(l));
+  out();
+  out(`== (3b) DETAIL ROWS for the actionable classes (cap ${DETAIL_CAP} each; codes, dates and status values only) ==`);
+  for (const k of ["STATUS_NOT_REFLECTED", "REJOIN_TRACE_MISSING"] as const) {
+    const items = byClass.get(k)!;
+    out(`  ${k}: ${items.length} case(s)`);
+    formatDetailRows(items, d.bill, facts).forEach((l) => out(l));
+  }
+  out();
+  const cur = currentRejoiners(cands, facts);
+  formatCurrentRejoiners(cur, facts).forEach((l) => out(l));
+  out();
+
   out("== VERDICT ==");
   const nonZero = ATTENTION_CLASSES.filter((k) => byClass.get(k)!.length > 0);
   if (nonZero.length === 0) {
@@ -225,7 +249,11 @@ export async function main(): Promise<void> {
   }
   out(`  Informational: PAIR_UNLINKED_INFO=${byClass.get("PAIR_UNLINKED_INFO")!.length} (HRMS has no field linking an old and a new code), `
     + `REFLECTED=${byClass.get("REFLECTED")!.length}`);
-  out(`  (lists capped at ${CAP}; totals are complete)`);
+  const nonIdc = nonIdcAttention(classified);
+  out(`  NON-IDC attention codes: ${nonIdc.nonIdcCodes.length} (IDC-family attention codes, excluded from the HRMS sync by design: ${nonIdc.idcCodes})`);
+  out(`  Current rejoiners under a new code (db_bill active) not reflected in HRMS: ${cur.missing.length + cur.inactive.length} `
+    + `of ${cur.total} (missing ${cur.missing.length}, present but not active ${cur.inactive.length})`);
+  out(`  (lists capped at ${CAP} in (0)-(2), 300 in (3)/(4), ${DETAIL_CAP} detail rows per class; totals are complete)`);
   out();
   out("READ-ONLY: nothing was changed in db_bill or mas_hrms.");
   await billMod.closeBillPool().catch(() => {});
