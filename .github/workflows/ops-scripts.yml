@@ -68,6 +68,7 @@ on:
           - saldiff-topup-duplicate-reject
           - case-duplicates-scan
           - salary-assignment-dedupe-identical
+          - rejoin-stale-exit-audit
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -282,6 +283,10 @@ jobs:
               # Dry-runs unless given --apply. Apply deactivates the later of two IDENTICAL active rows (soft).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/salary-assignment-dedupe-identical.ts $FLAG
+              ;;
+            rejoin-stale-exit-audit)
+              # Read-only in both modes: SELECTs only, employee_code only in the output.
+              npx tsx scripts/rejoin-stale-exit-audit.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
