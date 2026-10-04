@@ -978,7 +978,8 @@
     "migrations/2076_sbi_card_outcome.sql",
     "migrations/2077_sbi_card_roster.sql",
     "migrations/2078_restore_upload_batch_row_columns.sql",
-    "migrations/2079_employee_rejoin_v3.sql"
+    "migrations/2079_employee_rejoin_v3.sql",
+    "migrations/2080_rejoin_notifications_reminders.sql"
   ],
   "approvedDeletions": [
     {
@@ -1245,7 +1246,8 @@
     "migrations/2076_sbi_card_outcome.sql",
     "migrations/2077_sbi_card_roster.sql",
     "migrations/2078_restore_upload_batch_row_columns.sql",
-    "migrations/2079_employee_rejoin_v3.sql"
+    "migrations/2079_employee_rejoin_v3.sql",
+    "migrations/2080_rejoin_notifications_reminders.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

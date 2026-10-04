@@ -24,6 +24,15 @@ describe('linkForEvent', () => {
   });
 });
 
+describe('rejoin events', () => {
+  it.each([
+    'rejoin_requested', 'rejoin_decided', 'rejoin_pending_reminder',
+    'rejoin_pending_escalation', 'rejoin_followup_attention', 'rejoin_blocked_at_joining',
+  ])('%s links to the reactivation review page', (code) => {
+    expect(linkForEvent(code).startsWith('/employees/reactivation')).toBe(true);
+  });
+});
+
 describe('resolveActionUrl', () => {
   it('builds an absolute URL without a double slash', () => {
     expect(resolveActionUrl('payslip_ready', {})).toBe('https://hrms.example.com/profile?tab=payslips');
