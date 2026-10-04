@@ -66,6 +66,7 @@ const MASTERS: Record<Key, { table: string; name: string; fk: string[]; empFk: s
              ON x.table_schema = c.table_schema AND x.table_name = c.table_name AND x.table_type = 'BASE TABLE'
           WHERE c.table_schema = DATABASE() AND c.column_name IN (${m.fk.map(() => "?").join(",")})
             AND c.table_name <> ?
+            AND c.table_name NOT LIKE 'bkp\\_%'
           ORDER BY c.table_name`, [...m.fk, m.table]);
 
       console.log(`\n=== ${m.table}: ${dup.length} duplicate names, ${refs.length} referencing columns ===`);
