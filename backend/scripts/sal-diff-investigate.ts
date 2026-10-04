@@ -12,7 +12,7 @@ import type { RowDataPacket } from "mysql2";
 const CODES = ["62516C", "62654C", "63107C"];
 const ph = CODES.map(() => "?").join(",");
 const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPacket[]>(sql, p))[0];
-const who = (col: string) => `(SELECT CONCAT(au.email, ' [', COALESCE(au.role,'?'), ']') FROM auth_user au WHERE au.id = ${col})`;
+const who = (col: string) => `(SELECT CONCAT(au.email, ' / ', COALESCE((SELECT e2.full_name FROM employees e2 WHERE e2.user_id = au.id LIMIT 1), '?')) FROM auth_user au WHERE au.id = ${col})`;
 
 const section = async (title: string, sql: string, params: unknown[] = []) => {
   console.log(`\n== ${title} ==`);
@@ -37,7 +37,7 @@ const section = async (title: string, sql: string, params: unknown[] = []) => {
       WHERE b.pay_month = '2026-08' AND b.batch_ref LIKE '%SAL_DIFF%' ORDER BY s.step_number`);
 
   await section("SAL_DIFF lines in HRMS (Aug 2026): totals",
-    `SELECT COUNT(*) lines, COUNT(DISTINCT l.employee_code) employees, SUM(l.amount) total, MIN(l.amount) min_amt, MAX(l.amount) max_amt
+    `SELECT COUNT(*) line_count, COUNT(DISTINCT l.employee_code) employees, SUM(l.amount) total, MIN(l.amount) min_amt, MAX(l.amount) max_amt
        FROM incentive_upload_line l JOIN incentive_upload_batch b ON b.id = l.batch_id
       WHERE b.pay_month = '2026-08' AND l.incentive_code = 'SAL_DIFF'`);
 
