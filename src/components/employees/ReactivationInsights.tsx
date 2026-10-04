@@ -29,7 +29,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 const STATUS_LABELS: Record<string, string> = {
   pending: "Branch Head",
-  branch_head_approved: "HR final",
+  branch_head_approved: "Old HR step",
   approved: "Reactivated",
   rejected: "Rejected",
   cancelled: "Cancelled",
@@ -80,7 +80,8 @@ export function ReactivationInsights({ history, queue }: { history: InsightReque
       const raised = byKey.get(monthKey(new Date(r.created_at)));
       if (raised) raised.raised += 1;
       if (r.status === "approved") {
-        const done = byKey.get(monthKey(new Date(r.hr_final_actioned_at ?? r.created_at)));
+        // The branch head's approval is final now; old two-step rows were finalised by HR.
+        const done = byKey.get(monthKey(new Date(r.hr_final_actioned_at ?? r.branch_head_actioned_at ?? r.created_at)));
         if (done) done.reactivated += 1;
       }
     }
