@@ -42,18 +42,33 @@ const ABSCOND_SQL = `
    WHERE employee_id = ?
      AND (LOWER(exit_sub_type) IN ('absconding','abandonment') OR LOWER(exit_reason_category) = 'absconding')`;
 const STINT_SQL = `SELECT COUNT(*) AS n FROM employment_stint WHERE employee_id = ? AND stint_no > 1`;
+const STINT_EXCLUDING_SQL = `${STINT_SQL} AND (rejoin_request_id IS NULL OR rejoin_request_id <> ?)`;
 const REQUEST_SQL = `SELECT COUNT(*) AS n FROM employee_reactivation_requests WHERE employee_id = ? AND status = 'approved'`;
+const REQUEST_EXCLUDING_SQL = `${REQUEST_SQL} AND id <> ?`;
 
-export async function loadConductSection(db: SqlExecutor, w: DossierWindow): Promise<ConductSection> {
+export interface ConductOptions {
+  /**
+   * For an approved request's dossier: leave out the stint (and the approved request) that this
+   * very request produced, so "has rejoined before" reflects the record at decision time.
+   */
+  excludeRejoinRequestId?: string | null;
+}
+
+export async function loadConductSection(db: SqlExecutor, w: DossierWindow, opts: ConductOptions = {}): Promise<ConductSection> {
   const id = [w.employeeId];
+  const exclude = opts.excludeRejoinRequestId ?? null;
+  const rejoinSql = (base: string, excluding: string) =>
+    exclude ? ([excluding, [w.employeeId, exclude]] as const) : ([base, id] as const);
   const [warnRows] = await db.execute<RowDataPacket[]>(WARNING_SQL, id);
   const [pipRows] = await db.execute<RowDataPacket[]>(PIP_SQL, id);
   const [alertRows] = await db.execute<RowDataPacket[]>(ALERT_SQL, id);
   const [coachRows] = await db.execute<RowDataPacket[]>(COACHING_SQL, id);
   const [ctlRows] = await db.execute<RowDataPacket[]>(CONTROL_SQL, id);
   const [abscondRows] = await db.execute<RowDataPacket[]>(ABSCOND_SQL, id);
-  const [stintRows] = await db.execute<RowDataPacket[]>(STINT_SQL, id);
-  const [reqRows] = await db.execute<RowDataPacket[]>(REQUEST_SQL, id);
+  const [stintSql, stintParams] = rejoinSql(STINT_SQL, STINT_EXCLUDING_SQL);
+  const [stintRows] = await db.execute<RowDataPacket[]>(stintSql, [...stintParams]);
+  const [reqSql, reqParams] = rejoinSql(REQUEST_SQL, REQUEST_EXCLUDING_SQL);
+  const [reqRows] = await db.execute<RowDataPacket[]>(reqSql, [...reqParams]);
 
   const warnings = warnRows.map((r) => ({
     id: String(r.id),
