@@ -42,8 +42,8 @@ function buildActualQuery(groupBy: GroupByOption): string | null {
     case "branch":
       return `
         SELECT
-          bm.id                                                   AS dimension_id,
-          COALESCE(bm.branch_name, 'Unknown')                     AS dimension_name,
+          MIN(bm.id)                                                   AS dimension_id,
+          COALESCE(UPPER(TRIM(bm.branch_name)), 'UNKNOWN')                     AS dimension_name,
           COUNT(DISTINCT spl.employee_id)                         AS headcount,
           SUM(spl.basic)                                          AS total_basic,
           SUM(spl.hra + spl.special_allowance + COALESCE(spl.incentive_total, 0)) AS total_allowances,
@@ -57,14 +57,14 @@ function buildActualQuery(groupBy: GroupByOption): string | null {
         JOIN employees e ON e.id = spl.employee_id
         JOIN branch_master bm ON bm.id = e.branch_id
         WHERE spl.run_id = ?
-        GROUP BY bm.id, bm.branch_name
+        GROUP BY COALESCE(UPPER(TRIM(bm.branch_name)), 'UNKNOWN')
         ORDER BY total_gross DESC
       `;
     case "process":
       return `
         SELECT
-          pm.id                                                   AS dimension_id,
-          COALESCE(pm.process_name, 'Unknown')                    AS dimension_name,
+          MIN(pm.id)                                                   AS dimension_id,
+          COALESCE(UPPER(TRIM(pm.process_name)), 'UNKNOWN')                    AS dimension_name,
           COUNT(DISTINCT spl.employee_id)                         AS headcount,
           SUM(spl.basic)                                          AS total_basic,
           SUM(spl.hra + spl.special_allowance + COALESCE(spl.incentive_total, 0)) AS total_allowances,
@@ -78,14 +78,14 @@ function buildActualQuery(groupBy: GroupByOption): string | null {
         JOIN employees e ON e.id = spl.employee_id
         JOIN process_master pm ON pm.id = e.process_id
         WHERE spl.run_id = ?
-        GROUP BY pm.id, pm.process_name
+        GROUP BY COALESCE(UPPER(TRIM(pm.process_name)), 'UNKNOWN')
         ORDER BY total_gross DESC
       `;
     case "department":
       return `
         SELECT
-          dm.id                                                   AS dimension_id,
-          COALESCE(dm.dept_name, 'Unknown')                       AS dimension_name,
+          MIN(dm.id)                                              AS dimension_id,
+          COALESCE(UPPER(TRIM(dm.dept_name)), 'UNKNOWN')          AS dimension_name,
           COUNT(DISTINCT spl.employee_id)                         AS headcount,
           SUM(spl.basic)                                          AS total_basic,
           SUM(spl.hra + spl.special_allowance + COALESCE(spl.incentive_total, 0)) AS total_allowances,
@@ -99,7 +99,7 @@ function buildActualQuery(groupBy: GroupByOption): string | null {
         JOIN employees e ON e.id = spl.employee_id
         JOIN department_master dm ON dm.id = e.department_id
         WHERE spl.run_id = ?
-        GROUP BY dm.id, dm.dept_name
+        GROUP BY COALESCE(UPPER(TRIM(dm.dept_name)), 'UNKNOWN')
         ORDER BY total_gross DESC
       `;
     case "cost_centre":
@@ -115,8 +115,8 @@ function buildEstimateQuery(groupBy: GroupByOption): string | null {
     case "branch":
       return `
         SELECT
-          bm.id                                   AS dimension_id,
-          COALESCE(bm.branch_name, 'Unknown')     AS dimension_name,
+          MIN(bm.id)                                   AS dimension_id,
+          COALESCE(UPPER(TRIM(bm.branch_name)), 'UNKNOWN')     AS dimension_name,
           COUNT(DISTINCT esa.employee_id)         AS headcount,
           SUM(esa.ctc_annual / 12)                AS total_gross
         FROM employee_salary_assignment esa
@@ -131,14 +131,14 @@ function buildEstimateQuery(groupBy: GroupByOption): string | null {
             ORDER BY esa2.effective_from DESC
             LIMIT 1
           )
-        GROUP BY bm.id, bm.branch_name
+        GROUP BY COALESCE(UPPER(TRIM(bm.branch_name)), 'UNKNOWN')
         ORDER BY total_gross DESC
       `;
     case "process":
       return `
         SELECT
-          pm.id                                   AS dimension_id,
-          COALESCE(pm.process_name, 'Unknown')    AS dimension_name,
+          MIN(pm.id)                                   AS dimension_id,
+          COALESCE(UPPER(TRIM(pm.process_name)), 'UNKNOWN')    AS dimension_name,
           COUNT(DISTINCT esa.employee_id)         AS headcount,
           SUM(esa.ctc_annual / 12)                AS total_gross
         FROM employee_salary_assignment esa
@@ -153,14 +153,14 @@ function buildEstimateQuery(groupBy: GroupByOption): string | null {
             ORDER BY esa2.effective_from DESC
             LIMIT 1
           )
-        GROUP BY pm.id, pm.process_name
+        GROUP BY COALESCE(UPPER(TRIM(pm.process_name)), 'UNKNOWN')
         ORDER BY total_gross DESC
       `;
     case "department":
       return `
         SELECT
-          dm.id                                   AS dimension_id,
-          COALESCE(dm.dept_name, 'Unknown') AS dimension_name,
+          MIN(dm.id)                              AS dimension_id,
+          COALESCE(UPPER(TRIM(dm.dept_name)), 'UNKNOWN') AS dimension_name,
           COUNT(DISTINCT esa.employee_id)         AS headcount,
           SUM(esa.ctc_annual / 12)                AS total_gross
         FROM employee_salary_assignment esa
@@ -175,7 +175,7 @@ function buildEstimateQuery(groupBy: GroupByOption): string | null {
             ORDER BY esa2.effective_from DESC
             LIMIT 1
           )
-        GROUP BY dm.id, dm.dept_name
+        GROUP BY COALESCE(UPPER(TRIM(dm.dept_name)), 'UNKNOWN')
         ORDER BY total_gross DESC
       `;
     case "cost_centre":

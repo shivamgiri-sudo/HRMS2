@@ -55,6 +55,7 @@ on:
           - sbi-card-demo-seed
           - sbi-card-demo-remove
           - holiday-mapping-audit
+          - master-duplicate-audit
           - kit-esign-diagnose
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
@@ -252,6 +253,10 @@ jobs:
               # Dry-runs unless given --apply. Apply MOVES 3 guarded lines into a rejected batch (nothing deleted).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/saldiff-topup-duplicate-reject.ts $FLAG
+              ;;
+            master-duplicate-audit)
+              # Read-only in both modes.
+              npx tsx scripts/master-duplicate-audit.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
