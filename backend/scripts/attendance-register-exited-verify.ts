@@ -43,7 +43,8 @@ async function main() {
       scope,
       { limit: 1000, offset: 0, includeTotal: true, mode: "preview" },
     );
-    const got = new Set(res.rows.map((r) => String(r.employee_code)));
+    const got = new Set(res.rows.map((r) => String(r.emp_code)));
+    console.log(`register returned ${res.rows.length} rows for ${list.length} requested`);
     for (const r of list) {
       if (got.has(String(r.employee_code))) found++;
       else missing.push(`${r.employee_code} exit=${String(r.exit_date).slice(0, 10)} att_rows=${r.att_rows}`);
