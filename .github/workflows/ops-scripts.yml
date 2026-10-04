@@ -72,6 +72,7 @@ on:
           - attendance-register-exited-verify
           - reconcile-aug-incentives
           - zero-day-gross-audit
+          - heal-zero-day-lines
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -268,6 +269,11 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            heal-zero-day-lines)
+              # Dry-runs unless given --apply. Apply removes not-yet-joined zero-net lines and recalculates the rest, scoped.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/heal-zero-day-lines.ts $FLAG
               ;;
             zero-day-gross-audit)
               # Read-only in both modes: SELECTs only.
