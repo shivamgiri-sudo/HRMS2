@@ -36,6 +36,12 @@ const EXACT: Record<string, string> = {
   esign_escalation_hr: '/ats/joining-documents-tracker',
   esign_escalation_manager: '/ats/joining-documents-tracker',
   esign_reminder: '/profile',
+  rejoin_requested: '/employees/reactivation',
+  rejoin_decided: '/employees/reactivation',
+  rejoin_pending_reminder: '/employees/reactivation',
+  rejoin_pending_escalation: '/employees/reactivation',
+  rejoin_followup_attention: '/employees/reactivation',
+  rejoin_blocked_at_joining: '/employees/reactivation',
 };
 
 const PREFIX: Array<[string, string]> = [

@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1228,
-  "columnCount": 17877,
+  "tableCount": 1229,
+  "columnCount": 17881,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -7802,7 +7802,9 @@
       "raised_by_role",
       "eligibility_status",
       "eligibility_snapshot",
-      "absconding_acknowledged"
+      "absconding_acknowledged",
+      "reminder_count",
+      "last_reminder_at"
     ],
     "employee_rehire_control": [
       "employee_id",
@@ -20335,6 +20337,10 @@
       "approved_at",
       "created_at",
       "updated_at"
+    ],
+    "rejoin_request_escalation": [
+      "request_id",
+      "escalated_at"
     ]
   }
 }
