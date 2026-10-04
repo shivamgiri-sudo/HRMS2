@@ -69,6 +69,7 @@ on:
           - case-duplicates-scan
           - salary-assignment-dedupe-identical
           - rejoin-stale-exit-audit
+          - rejoin-dbbill-compare
           - attendance-register-exited-verify
       mode:
         description: "dry-run reports what it would do and writes nothing"
@@ -297,6 +298,10 @@ jobs:
             rejoin-stale-exit-audit)
               # Read-only in both modes: SELECTs only, employee_code only in the output.
               npx tsx scripts/rejoin-stale-exit-audit.ts
+              ;;
+            rejoin-dbbill-compare)
+              # Read-only in both modes: SELECTs against HRMS and db_bill only, employee_code only in the output.
+              npx tsx scripts/rejoin-dbbill-compare.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
