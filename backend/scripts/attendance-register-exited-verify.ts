@@ -16,7 +16,7 @@ async function main() {
   const last = `${month}-${String(new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate()).padStart(2, "0")}`;
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.company_id, e.employee_code, e.active_status,
+    `SELECT e.id, e.employee_code, e.active_status,
             COALESCE(e.date_of_exit, e.date_of_leaving) AS exit_date,
             (SELECT COUNT(*) FROM attendance_daily_record x
               WHERE x.employee_id = e.id AND x.record_date BETWEEN ? AND ?) AS att_rows
@@ -32,7 +32,7 @@ async function main() {
   let found = 0;
   const missing: string[] = [];
   const byCompany = new Map<string, RowDataPacket[]>();
-  for (const r of rows) byCompany.set(String(r.company_id), [...(byCompany.get(String(r.company_id)) ?? []), r]);
+  for (const r of rows) byCompany.set("co", [...(byCompany.get("co") ?? []), r]);
   for (const [companyId, list] of byCompany) {
     const scope: ExecScope = {
       companyId, isSuperAdmin: true, branchScope: all, processScope: all, departmentScope: all,
