@@ -419,6 +419,9 @@ export const PAGE_CODE_BY_ROUTE_PATTERN: Record<string, string> = {
   "/employees/:id": "EMPLOYEE_MANAGEMENT",
   "/employees/:id/360": "EMPLOYEE_MANAGEMENT",
   "/employees/:employeeId/joining-documents": "EMPLOYEE_JOINING_DOCUMENTS",
+  // Rejoin v3 branch head review (granted in migration 1894 to branch_head / hr / admin / super_admin / payroll_head;
+  // the route's role list narrows it to the dossier API's roles).
+  "/employees/reactivation/:id/review": "EMPLOYEE_REACTIVATION",
   "/letters/:id/preview": "LETTERS",
   // Same drift as PAYROLL_HEAD_SALARY_REVIEW_QUEUE above; this one is parameterized.
   "/payroll/salary-review/:employeeId": "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
