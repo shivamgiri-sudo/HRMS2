@@ -188,7 +188,7 @@ export const navGroups: NavGroup[] = [
           { label: "Career Planning",    href: "/career-planning",       icon: ic(TrendingUp),pageCode: "CAREER_PLANNING",   description: "Career paths" },
           { label: "Exit Command Center",  href: "/exit/command-center",     icon: ic(UserMinus), pageCode: "EXIT_COMMAND_CENTER",     description: "Exit ops" },
           { label: "Exit Management",      href: "/exit-management",         icon: ic(UserMinus), roles: ["admin","hr"],               description: "Exit" },
-          { label: "Employee Reactivation",href: "/employees/reactivation",  icon: ic(UserPlus),  roles: ["hr","admin","super_admin","branch_head","payroll_head"], description: "Reactivate ex-employees" },
+          { label: "Employee Reactivation",href: "/employees/reactivation",  icon: ic(UserPlus),  roles: ["hr","admin","super_admin","branch_head","payroll_head","manager"], description: "Reactivate ex-employees" },
           { label: "Maternity Leave",      href: "/maternity-leave",         icon: ic(Heart),     roles: ["admin","hr"],               description: "Maternity" },
         ],
       },
