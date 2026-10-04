@@ -63,6 +63,7 @@ on:
           - dbbill-validate-flagged
           - salary-assignment-deactivate-mas63386
           - sal-diff-investigate
+          - saldiff-topup-duplicate-reject
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -246,6 +247,11 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            saldiff-topup-duplicate-reject)
+              # Dry-runs unless given --apply. Apply MOVES 3 guarded lines into a rejected batch (nothing deleted).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/saldiff-topup-duplicate-reject.ts $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
