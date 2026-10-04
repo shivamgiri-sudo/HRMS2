@@ -12,11 +12,11 @@ const to = process.argv[3] ?? '2026-10-01';
 for (const v of [from, to]) if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('dates must be YYYY-MM-DD');
 
 const [cfgs] = await db.execute<RowDataPacket[]>(
-  `SELECT integration_key, active_status, config_json, encrypted_credentials FROM integration_config WHERE integration_key LIKE 'apr_server_%'`,
+  `SELECT integration_key, active_status, created_at, updated_at, config_json, encrypted_credentials FROM integration_config WHERE integration_key LIKE 'apr_server_%'`,
 );
 console.log(`apr_server configs: ${cfgs.length} (${cfgs.filter((c) => c.active_status === 1).length} active)`);
 for (const row of cfgs) {
-  if (row.active_status !== 1) { console.log(`${row.integration_key}: inactive`); continue; }
+  if (row.active_status !== 1) { console.log(`${row.integration_key}: inactive created=${row.created_at} updated=${row.updated_at}`); continue; }
   try {
     const cfg = typeof row.config_json === 'string' ? JSON.parse(row.config_json) : row.config_json;
     const cr = typeof row.encrypted_credentials === 'string' ? JSON.parse(row.encrypted_credentials) : row.encrypted_credentials;
