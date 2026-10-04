@@ -2166,6 +2166,10 @@ export async function calculatePayrollRunScoped(
           if (periodStart < run.run_month) {
             // Check if the employee had a salary_prep_line in an earlier month of
             // this period where gross was at or below the ESI wage limit.
+            // Coverage means ESIC was actually deducted. An earned (prorated) gross under
+            // the ceiling alone is not coverage: joiners and LWP months fall under it
+            // while their package is above it, and db_bill decides on the package
+            // (Aug 2026: 91 lines wrongly deducted).
             const esicWageLimit = stat.esic_wage_limit;
             const [esiPriorRows] = await db.execute<RowDataPacket[]>(
               `SELECT 1 FROM salary_prep_line spl
@@ -2176,6 +2180,7 @@ export async function calculatePayrollRunScoped(
                 AND LOWER(spr.status) NOT IN ('draft', 'cancelled')
                 AND spl.gross_salary > 0
                 AND spl.gross_salary <= ?
+                AND spl.esic_employee > 0
               LIMIT 1`,
               [emp.employee_id, periodStart, run.run_month, esicWageLimit],
             );
