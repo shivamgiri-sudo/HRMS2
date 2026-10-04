@@ -27,15 +27,17 @@ const MASTERS: Array<[string, string, string | null]> = [
       const empCnt = fk
         ? `(SELECT COUNT(*) FROM employees e WHERE e.${fk} = m.id)`
         : "NULL";
-      const rows = (await q(
-        `SELECT m.id, m.${nameCol} AS name, UPPER(TRIM(m.${nameCol})) AS norm,
-                ${empCnt} AS employees
-           FROM ${table} m
-          WHERE UPPER(TRIM(m.${nameCol})) IN (
-                SELECT UPPER(TRIM(${nameCol})) FROM ${table}
-                 GROUP BY UPPER(TRIM(${nameCol})) HAVING COUNT(*) > 1)
-          ORDER BY norm, employees DESC`)) as any[];
-      const total = (await q(`SELECT COUNT(*) c FROM ${table}`) as any[])[0].c;
+      const all = (await q(
+        `SELECT m.id, m.${nameCol} AS name, ${empCnt} AS employees FROM ${table} m`)) as any[];
+      const byNorm = new Map<string, any[]>();
+      for (const r of all) {
+        const norm = String(r.name ?? "").trim().toUpperCase();
+        (byNorm.get(norm) ?? byNorm.set(norm, []).get(norm)!).push({ ...r, norm });
+      }
+      const rows = [...byNorm.values()]
+        .filter((g) => g.length > 1)
+        .flatMap((g) => g.sort((x, y) => Number(y.employees) - Number(x.employees)));
+      const total = all.length;
       const groups = new Set(rows.map((r) => r.norm)).size;
       console.log(`\n== ${table}: ${total} rows, ${groups} duplicated names (${rows.length} rows) ==`);
       if (rows.length) console.table(rows);
