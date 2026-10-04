@@ -48,11 +48,16 @@ async function main() {
     console.table(await q(
       `SELECT component_code, component_name, component_type, amount, source, taxable FROM salary_prep_line_component WHERE line_id = ? ORDER BY component_type, component_code`, [l.id]));
   }
-  console.log("payslip components (if any):");
-  console.table(await q(
-    `SELECT sp.id AS payslip_id, sp.created_at FROM salary_payslip sp JOIN salary_prep_line spl ON spl.id = sp.prep_line_id
-      WHERE spl.employee_id = ? ORDER BY sp.created_at DESC LIMIT 2`, [e.id]).catch((x) => [{ note: String(x.message).slice(0, 80) }]));
-
+  const [br] = await q(`SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1`, [e.id]).catch(() => []);
+  if (!br) console.log("no ATS onboarding bridge row");
+  else {
+    console.log("ats_payroll_hr_validation:");
+    console.table(await q(`SELECT * FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`, [br.candidate_id]).catch((x) => [{ note: String(x.message).slice(0, 100) }]));
+    console.log("salary_register:");
+    console.table(await q(`SELECT * FROM salary_register WHERE candidate_id = ? LIMIT 1`, [br.candidate_id]).catch((x) => [{ note: String(x.message).slice(0, 100) }]));
+    console.log("ats_employment_offer:");
+    console.table(await q(`SELECT * FROM ats_employment_offer WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`, [br.candidate_id]).catch((x) => [{ note: String(x.message).slice(0, 100) }]));
+  }
   console.log("db_bill latest salary_data rows:");
   const b = await billQuery<any>(
     `SELECT SalayDate, WorkingDays, EarnedDays, Basic, HRA, Bonus, Conv, Portfolio, MedicalAllowance, SpecialAllowance, OtherAllowance, Gross,
