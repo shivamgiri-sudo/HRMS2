@@ -62,6 +62,7 @@ on:
           - salary-rows-review
           - dbbill-validate-flagged
           - salary-assignment-deactivate-mas63386
+          - sal-diff-investigate
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -241,6 +242,10 @@ jobs:
               # Dry-runs unless given --apply. Apply deactivates ONE guarded row (active_status 1 -> 0).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/salary-assignment-deactivate-mas63386.ts $FLAG
+              ;;
+            sal-diff-investigate)
+              # Read-only in both modes: SELECTs against HRMS and db_bill only.
+              npx tsx scripts/sal-diff-investigate.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
