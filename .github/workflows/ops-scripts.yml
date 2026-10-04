@@ -56,6 +56,7 @@ on:
           - sbi-card-demo-remove
           - holiday-mapping-audit
           - master-duplicate-audit
+          - master-duplicate-merge
           - kit-esign-diagnose
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
@@ -73,6 +74,10 @@ on:
         options:
           - dry-run
           - apply
+      merge_masters:
+        description: "master-duplicate-merge apply only: comma list of department,designation,branch,process,cost_centre"
+        required: false
+        type: string
       confirm:
         description: "To APPLY, type the script name exactly. Ignored for a dry run."
         required: false
@@ -253,6 +258,15 @@ jobs:
               # Dry-runs unless given --apply. Apply MOVES 3 guarded lines into a rejected batch (nothing deleted).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/saldiff-topup-duplicate-reject.ts $FLAG
+              ;;
+            master-duplicate-merge)
+              # Transactional. dry-run rolls back after running the real statements; apply is
+              # limited to the masters named in MASTERS below and commits only with zero errors.
+              if [ "$MODE" = "apply" ]; then
+                npx tsx scripts/master-duplicate-merge.ts --masters="${{ inputs.merge_masters }}" --apply
+              else
+                npx tsx scripts/master-duplicate-merge.ts
+              fi
               ;;
             master-duplicate-audit)
               # Read-only in both modes.
