@@ -69,6 +69,7 @@ on:
           - case-duplicates-scan
           - salary-assignment-dedupe-identical
           - rejoin-stale-exit-audit
+          - attendance-register-exited-verify
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -202,6 +203,15 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            attendance-register-exited-verify)
+              # Read-only: SELECTs plus the register executor. Lists inactive employees who exited in the month and
+              # checks each appears in the Attendance Register. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::attendance-register-exited-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/attendance-register-exited-verify.ts
               ;;
             sbi-card-verify)
               # Read-only: SELECTs only, in a READ ONLY session. Checks the SBI Card collections-ops migration (2075): the agent-time
