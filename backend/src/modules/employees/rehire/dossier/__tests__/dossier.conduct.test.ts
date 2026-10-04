@@ -90,3 +90,29 @@ describe("loadConductSection", () => {
     expect(s.completedCoachingSessions).toBe(5);
   });
 });
+
+describe("loadConductSection excluding the request's own rejoin", () => {
+  it("excludes the stint (and the approved request) that this request produced, binding the request id", async () => {
+    const ex = executor({ ...empty, "FROM employment_stint": [{ n: 1 }], "FROM employee_reactivation_requests": [{ n: 1 }] });
+    const s = await loadConductSection(ex as never, w, { excludeRejoinRequestId: "r9" });
+    const stint = ex.execute.mock.calls.find(([sql]) => String(sql).includes("FROM employment_stint"))!;
+    expect(String(stint[0])).toMatch(/stint_no > 1/);
+    expect(String(stint[0])).toMatch(/rejoin_request_id IS NULL OR rejoin_request_id <> \?/);
+    expect((stint as unknown[])[1]).toEqual(["e1", "r9"]);
+    const reqs = ex.execute.mock.calls.find(([sql]) => String(sql).includes("FROM employee_reactivation_requests"))!;
+    expect(String(reqs[0])).toMatch(/id <> \?/);
+    expect((reqs as unknown[])[1]).toEqual(["e1", "r9"]);
+    // An earlier rejoin is still counted.
+    expect(s.priorRejoins).toBe(1);
+    expect(s.priorRejoinRequests).toBe(1);
+  });
+
+  it("without the option the counts are unchanged (all stints after the first)", async () => {
+    const ex = executor({ ...empty, "FROM employment_stint": [{ n: 2 }] });
+    const s = await loadConductSection(ex as never, w);
+    const stint = ex.execute.mock.calls.find(([sql]) => String(sql).includes("FROM employment_stint"))!;
+    expect(String(stint[0])).not.toMatch(/rejoin_request_id/);
+    expect((stint as unknown[])[1]).toEqual(["e1"]);
+    expect(s.priorRejoins).toBe(2);
+  });
+});

@@ -110,3 +110,112 @@ describe("buildDossier", () => {
     expect(d.eligibility.reasons[0]!.code).toBe("EMPLOYEE_NOT_FOUND");
   });
 });
+
+// ── A closed (approved) request: the dossier shows the record at decision time ─────────────
+// After approval, activation sets employees.date_of_exit = NULL and the exit becomes 'rejoined',
+// so live facts no longer describe the stint that was judged. The window must end on the
+// predecessor stint's end, eligibility must be the snapshot stored when the request was raised,
+// and conduct must not count the rejoin this very request produced.
+
+const snapshot = { status: "eligible", reasons: [], requiresFreshOnboarding: false, requiresAbscondingAck: false };
+const postRejoinFacts = {
+  exitRequestId: null, previousEndDate: null, ffAlreadyPaid: false,
+  facts: { ...facts.facts, hasExitRecord: false, exitType: null, exitSubType: null, exitReasonCategory: null,
+    legacyStatusText: "Active", priorRejoinCount: 1, gapDays: 0 },
+};
+const approvedRow = { ...requestRow, status: "approved", exit_request_id: "x1", eligibility_snapshot: snapshot };
+
+type Rows = Record<string, unknown>[];
+/** Routes each query by a substring of its SQL; anything unmatched returns no rows. */
+function dbBy(map: { request: Rows; stint?: Rows | Error; exit?: Rows | Error }) {
+  return {
+    execute: vi.fn(async (sql: string) => {
+      if (sql.includes("FROM employee_reactivation_requests")) return [map.request, []];
+      if (sql.includes("employment_stint")) {
+        if (map.stint instanceof Error) throw map.stint;
+        return [map.stint ?? [], []];
+      }
+      if (sql.includes("FROM exit_request")) {
+        if (map.exit instanceof Error) throw map.exit;
+        return [map.exit ?? [], []];
+      }
+      return [[], []];
+    }),
+  };
+}
+
+describe("buildDossier for an approved (closed) request", () => {
+  beforeEach(() => { m.loadRehireFacts.mockResolvedValue(postRejoinFacts); });
+
+  it("ends the window on the predecessor stint's end date, not today", async () => {
+    const ex = dbBy({ request: [approvedRow], stint: [{ stint_no: 2, prev_end: "2026-09-24", prev_exit_lwd: "2026-09-20" }] });
+    const d = (await buildDossier(ex as never, "r1"))!;
+    expect(d.window.end).toBe("2026-09-24");
+    expect(d.window.start).toBe("2025-10-01");
+    expect(m.attendance.mock.calls[0]![1].end).toBe("2026-09-24");
+    const stintCall = ex.execute.mock.calls.find(([sql]) => String(sql).includes("employment_stint"))!;
+    expect(String(stintCall[0])).toContain("rejoin_request_id = ?");
+    expect(stintCall[1]).toEqual(["r1"]);
+  });
+
+  it("falls back to the predecessor's exit last working day when its end_date is missing", async () => {
+    const ex = dbBy({ request: [approvedRow], stint: [{ stint_no: 2, prev_end: null, prev_exit_lwd: "2026-09-20" }] });
+    const d = (await buildDossier(ex as never, "r1"))!;
+    expect(d.window.end).toBe("2026-09-20");
+  });
+
+  it("falls back to the request's own exit when there is no stint row", async () => {
+    const ex = dbBy({ request: [approvedRow], stint: [], exit: [{ lwd: "2026-09-18" }] });
+    const d = (await buildDossier(ex as never, "r1"))!;
+    expect(d.window.end).toBe("2026-09-18");
+  });
+
+  it("falls back to today without throwing when neither stint nor exit can be read", async () => {
+    const ex = dbBy({ request: [{ ...approvedRow, exit_request_id: null }], stint: new Error("no such table") });
+    const d = (await buildDossier(ex as never, "r1"))!;
+    expect(d.window.end).toBe(new Date().toISOString().slice(0, 10));
+    expect(d.eligibility).toEqual(snapshot);
+  });
+
+  it("shows the eligibility snapshot stored when the request was raised", async () => {
+    const ex = dbBy({ request: [approvedRow], stint: [{ stint_no: 2, prev_end: "2026-09-24", prev_exit_lwd: null }] });
+    const d = (await buildDossier(ex as never, "r1"))!;
+    expect(d.eligibility).toEqual(snapshot);
+    expect(d.eligibility.reasons.map((r) => r.code)).not.toContain("NO_EXIT_SIGNAL");
+  });
+
+  it("accepts the snapshot as a JSON string (mysql2 may return either)", async () => {
+    const review = { status: "review", reasons: [{ code: "ABSCONDING", severity: "review", message: "Left by absconding" }], requiresFreshOnboarding: false, requiresAbscondingAck: true };
+    const ex = dbBy({ request: [{ ...approvedRow, eligibility_snapshot: JSON.stringify(review) }], stint: [{ stint_no: 2, prev_end: "2026-09-24", prev_exit_lwd: null }] });
+    const d = (await buildDossier(ex as never, "r1"))!;
+    expect(d.eligibility).toEqual(review);
+  });
+
+  it("without a usable snapshot, evaluates live but does not count the request's own rejoin", async () => {
+    m.loadRehireFacts.mockResolvedValue({ ...facts, facts: { ...facts.facts, priorRejoinCount: 1 } });
+    for (const bad of [null, "not json", { foo: 1 }]) {
+      const ex = dbBy({ request: [{ ...approvedRow, eligibility_snapshot: bad }], stint: [{ stint_no: 2, prev_end: "2026-09-24", prev_exit_lwd: null }] });
+      const d = (await buildDossier(ex as never, "r1"))!;
+      expect(d.eligibility.status).toBe("eligible");
+      expect(d.eligibility.reasons.map((r) => r.code)).not.toContain("PREVIOUS_REJOIN");
+    }
+  });
+
+  it("passes the request id to conduct so its own stint is excluded", async () => {
+    const ex = dbBy({ request: [approvedRow], stint: [{ stint_no: 2, prev_end: "2026-09-24", prev_exit_lwd: null }] });
+    await buildDossier(ex as never, "r1");
+    expect(m.conduct.mock.calls[0]![2]).toEqual({ excludeRejoinRequestId: "r1" });
+  });
+});
+
+describe("buildDossier for requests that are not approved stays as it was", () => {
+  it.each(["pending", "branch_head_approved", "rejected", "cancelled"])("%s: fresh eligibility, live window, no exclusion", async (status) => {
+    const stale = { status: "review", reasons: [{ code: "OPEN_CLEARANCE", severity: "review", message: "x" }], requiresFreshOnboarding: false, requiresAbscondingAck: false };
+    const ex = dbBy({ request: [{ ...requestRow, status, exit_request_id: "x1", eligibility_snapshot: stale }], stint: [{ stint_no: 2, prev_end: "2026-01-01", prev_exit_lwd: null }] });
+    const d = (await buildDossier(ex as never, "r1"))!;
+    expect(d.window.end).toBe("2026-09-10");
+    expect(d.eligibility.status).toBe("eligible");
+    expect(m.conduct.mock.calls[0]![2]).toBeUndefined();
+    expect(ex.execute.mock.calls.some(([sql]) => String(sql).includes("employment_stint"))).toBe(false);
+  });
+});
