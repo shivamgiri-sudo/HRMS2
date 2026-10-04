@@ -73,6 +73,7 @@ on:
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
+          - rebuild-salary-package-from-dbbill
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -269,6 +270,11 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            rebuild-salary-package-from-dbbill)
+              # NOTE this script WRITES unless given --dry-run (reverse of most). Skips employees already equal to db_bill.
+              FLAG="--dry-run"; [ "$MODE" = "apply" ] && FLAG=""
+              node scripts/rebuild-salary-package-from-dbbill.mjs $FLAG
               ;;
             heal-zero-day-lines)
               # Dry-runs unless given --apply. Apply removes not-yet-joined zero-net lines and recalculates the rest, scoped.
