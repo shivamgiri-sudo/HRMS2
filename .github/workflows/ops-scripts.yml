@@ -93,6 +93,7 @@ on:
           - dbbill-increments-audit
           - sca-estimates-audit
           - repair-sca-estimates
+          - du-mis-apply
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -429,6 +430,11 @@ jobs:
               # Dry-run lists recipients and subject; apply EMAILS the branch head / HR / COO the corrected 2026-10-03 report.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
               npx tsx scripts/branch-activity-resend.ts 2026-10-03 NOIDA-2 $FLAG
+              ;;
+            du-mis-apply)
+              # dry-run reports table/template state (READ ONLY session). apply runs sql/1965 + sql/1966 (additive, idempotent).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/du-mis-apply.mjs $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
