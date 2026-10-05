@@ -28,6 +28,8 @@ import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
 export const heRouter = Router();
+// Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
+let masterCache: { at: number; data: unknown } | null = null;
 // Warm the Meta recruitment numbers shortly after start so the first visitor does not wait for the full computation.
 setTimeout(() => { void getMetaRecruitment().catch(() => undefined); }, 20_000).unref?.();
 const VIEW_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr", "ceo"];
@@ -73,11 +75,21 @@ heRouter.get("/leads", requireAuth, requireRole(...VIEW_ROLES), async (req, res)
     // Page first (index on updated_at), insight fetched only for those 25 rows, count cached for a minute per filter:
     // the total moves slowly and counting 38k+ rows on every page turn is what made the list slow.
     const needsInsight = typeof req.query.action === "string" && Boolean(req.query.action);
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT l.id, l.mobile10, l.full_name, l.status, l.primary_source, l.last_contact_at, l.created_at,
-              i.engagement_score, i.reliability_score, i.best_channel, i.best_hour_ist, i.next_action, i.next_action_reason
-         FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id ${w}
-        ORDER BY l.updated_at DESC LIMIT ? OFFSET ?`, [...args, size, (page - 1) * size]);
+    // Two steps so the sort never touches the wide lead rows: ids come straight off idx_he_lead_updated (index-only,
+    // LIMIT applied there), then only those 25 rows are read. On production the one-step join took 4 s per page.
+    const [idRows] = needsInsight
+      ? await db.execute<RowDataPacket[]>(`SELECT l.id FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id ${w} ORDER BY l.updated_at DESC LIMIT ? OFFSET ?`, [...args, size, (page - 1) * size])
+      : await db.execute<RowDataPacket[]>(`SELECT l.id FROM he_lead l ${w} ORDER BY l.updated_at DESC LIMIT ? OFFSET ?`, [...args, size, (page - 1) * size]);
+    const ids = idRows.map((r) => String(r.id));
+    let rows: RowDataPacket[] = [];
+    if (ids.length) {
+      const [detail] = await db.execute<RowDataPacket[]>(
+        `SELECT l.id, l.mobile10, l.full_name, l.status, l.primary_source, l.last_contact_at, l.created_at, l.updated_at,
+                i.engagement_score, i.reliability_score, i.best_channel, i.best_hour_ist, i.next_action, i.next_action_reason
+           FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id WHERE l.id IN (${ids.map(() => "?").join(",")})`, ids);
+      const pos = new Map(ids.map((id, n) => [id, n]));
+      rows = detail.sort((a, b) => (pos.get(String(a.id)) ?? 0) - (pos.get(String(b.id)) ?? 0));
+    }
     const t1 = Date.now();
     const key = JSON.stringify([w, args]);
     const hit = leadCountCache.get(key);
@@ -396,7 +408,8 @@ heRouter.get("/meta-recruitment", requireAuth, requireRole(...VIEW_ROLES), async
 // Recruitment master: rollup summary, and chunked history refresh (one 2-digit mobile prefix per call; omit prefix to list them).
 heRouter.get("/master/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try {
-    res.json(await getMasterSummary());
+    if (!masterCache || Date.now() - masterCache.at > 60_000) masterCache = { at: Date.now(), data: await getMasterSummary() };
+    res.json(masterCache.data);
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] master summary failed");
     res.status(500).json({ message: "Could not load the master summary" });
@@ -408,6 +421,7 @@ heRouter.post("/master/refresh", requireAuth, requireRole(...ADMIN_ROLES), async
     const prefix = String((req.body as { prefix?: unknown })?.prefix ?? "");
     if (!prefix) return res.json({ prefixes: await listPrefixes() });
     if (!/^\d{2}$/.test(prefix)) return res.status(400).json({ message: "prefix must be 2 digits" });
+    masterCache = null;
     const history = await refreshHistoryChunk({ prefix });
     const profiles = await refreshProfilesChunk(prefix);
     res.json({ ...history, profiles: profiles.profiles });
@@ -443,6 +457,7 @@ heRouter.post("/identity/clashes/:id/resolve", requireAuth, requireRole(...WRITE
 });
 
 heRouter.post("/master/ex-employees/refresh", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  masterCache = null;
   try { const after = (req.body as { after?: unknown })?.after; res.json({ success: true, data: await refreshExEmployees({ after: typeof after === "string" ? after : null }) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] ex-employee refresh failed"); res.status(500).json({ message: "Could not refresh former employees" }); }
 });
@@ -481,6 +496,7 @@ heRouter.post("/candidates/import", requireAuth, requireRole(...WRITE_ROLES), as
     if (!INTAKE_SOURCES.includes(source)) return res.status(400).json({ message: `source must be one of ${INTAKE_SOURCES.join(", ")}` });
     if (!Array.isArray(b.rows)) return res.status(400).json({ message: "rows must be an array" });
     const bb = req.body as { mapping?: unknown; saveMapping?: unknown };
+    masterCache = null;
     res.json({ success: true, data: await ingestCandidates(b.rows as Array<Record<string, unknown>>, source, { dryRun: b.dryRun === true, mapping: bb.mapping, saveMapping: bb.saveMapping !== false, userId: (req as AuthenticatedRequest).authUser?.id ?? null }) });
   } catch (err) {
     const e = err as Error & { statusCode?: number };
