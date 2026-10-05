@@ -1,29 +1,58 @@
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import type { Request } from "express";
+import { authService } from "../modules/auth/auth.service.js";
 
-/** 500 req/min per IP — global backstop applied before all routes */
+/*
+ * KEY BY SIGNED-IN USER, NOT BY OFFICE IP.
+ *
+ * Every limiter was keyed by client IP. A whole branch reaches HRMS from one public NAT address, so
+ * every employee in an office shared ONE 300-500 req/min bucket: measured live 2026-10-06, the
+ * remaining count on one IP fell by ~190/min with nobody on it but colleagues, and ordinary page
+ * loads (employees/me, my-pending-count) came back 429 at busy times.
+ *
+ * An authenticated request is now counted against its own user. The token is VERIFIED (signature +
+ * expiry) before its subject is used, so a forged or random token cannot mint fresh buckets — it
+ * falls back to the IP key exactly as an anonymous request does.
+ */
+export function rateLimitKey(req: Request): string {
+  const header = req.headers.authorization;
+  if (header && header.startsWith("Bearer ")) {
+    const token = header.slice(7).trim();
+    if (token && !token.startsWith("mock-token")) {
+      const user = authService.verifyAccessToken(token);
+      if (user?.id) return `user:${user.id}`;
+    }
+  }
+  return `ip:${ipKeyGenerator(req.ip ?? "")}`;
+}
+
+/** 500 req/min per signed-in user (per IP when anonymous) — global backstop applied before all routes */
 export const globalLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 500,
   standardHeaders: true,
+  keyGenerator: rateLimitKey,
   legacyHeaders: false,
   skip: (req) => req.path === "/api/health",
   message: { success: false, message: "Too many requests, please slow down" },
 });
 
-/** 300 req/min per IP — for paginated list endpoints (employees, payslips, reports) */
+/** 300 req/min per user (per IP when anonymous) — for paginated list endpoints (employees, payslips, reports) */
 export const listEndpointLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 300,
   standardHeaders: true,
+  keyGenerator: rateLimitKey,
   legacyHeaders: false,
   message: { success: false, message: "Too many requests, please slow down" },
 });
 
-/** 20 payroll runs per 5 min per IP — expensive CPU+DB operation */
+/** 20 payroll runs per 5 min per user — expensive CPU+DB operation */
 export const payrollRunLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 20,
   standardHeaders: true,
+  keyGenerator: rateLimitKey,
   legacyHeaders: false,
   message: { success: false, message: "Payroll calculation rate limit exceeded, please wait and retry" },
 });
@@ -50,11 +79,12 @@ export const publicRegistrationLimiter = rateLimit({
   },
 });
 
-/** 150 req/min per IP — for report generation endpoints */
+/** 150 req/min per user (per IP when anonymous) — for report generation endpoints */
 export const reportLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 150,
   standardHeaders: true,
+  keyGenerator: rateLimitKey,
   legacyHeaders: false,
   message: { success: false, message: "Too many report requests, please slow down" },
 });
