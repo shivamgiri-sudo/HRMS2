@@ -83,6 +83,7 @@ on:
           - align-offers-to-catalog
           - fix-offer-followups
           - salary-change-flow-audit
+          - package-in-force-diff
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -279,6 +280,10 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            package-in-force-diff)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/package-in-force-diff.ts
               ;;
             salary-change-flow-audit)
               # Read-only in both modes: SELECTs only.
