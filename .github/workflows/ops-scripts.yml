@@ -103,6 +103,7 @@ on:
           - pnl-branch-op-audit
           - dbbill-pnl-discover
           - dbbill-pnl-by-cc
+          - dbbill-invoices-audit
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -275,6 +276,10 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            dbbill-invoices-audit)
+              # Read-only in both modes: billQuery allows SELECT only.
+              npx tsx scripts/dbbill-invoices-audit.ts
               ;;
             dbbill-pnl-by-cc)
               # Read-only in both modes: billQuery allows SELECT only.
