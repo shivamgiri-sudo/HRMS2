@@ -116,6 +116,7 @@ on:
           - grn-month-basis-audit
           - trace-grn
           - grn-amount-audit
+          - repair-migrated-grn-ex-gst
           - backfill-vendor-recognition-period
           - backfill-grn-recognition-period
           - fix-process-branches
@@ -322,6 +323,11 @@ jobs:
               # Dry-runs unless given --apply. Apply adds db_bill GRNs missing from grn_request / vendor_payment_tracking for FY 2026-27 (idempotent).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/migrate-grn-from-dbbill.ts --fy=2026-27 $FLAG
+              ;;
+            repair-migrated-grn-ex-gst)
+              # Dry-runs unless given --apply. Apply moves GST out of amount_without_tax on FY 2026-27 migrated GRNs (old values logged).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/repair-migrated-grn-ex-gst.ts $FLAG
               ;;
             grn-amount-audit)
               # Read-only in both modes: aggregate SELECTs (HRMS and db_bill).
