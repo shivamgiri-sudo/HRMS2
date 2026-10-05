@@ -1291,6 +1291,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2104_hiring_engine_hr_alert.sql", // Registered 2026-10-05. he_hr_alert: one row per drive per 30-minute window so the branch arrival alert is sent once. CREATE TABLE IF NOT EXISTS.
   "migrations/2105_hiring_engine_idempotency_keys.sql", // Registered 2026-10-05. UNIQUE (provider_message_id, direction) on he_message and UNIQUE provider_call_id on he_call: webhook/call idempotency becomes a DB guarantee (a burst of the same webhook stored 29 copies before). PREPARE-guarded, safe to re-run.
   "migrations/2106_hiring_engine_bulk_calls.sql", // Registered 2026-10-05. he_call_batch + he_call_job: manual bulk voice-call uploads (phone,name,role,interview_date,interview_time,branch_address,reference_id), per-row state/retry/provider call id. CREATE TABLE IF NOT EXISTS only.
+  "migrations/2107_job_requisition_ad_required.sql", // Registered 2026-10-05. job_requisition.ad_required TINYINT(1) NOT NULL DEFAULT 1: persisted "run an ad?" decision read by the marketing brief subject. PREPARE-guarded, safe to re-run.
 ];
 
 export type MigrationHealth = {
