@@ -86,6 +86,7 @@ on:
           - heal-zero-day-lines
           - recruiter-list-diagnose
           - budget-driver-diagnose
+          - payslip-diagnose
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
           - create-missing-esa-for-run-lines
@@ -380,6 +381,10 @@ jobs:
               # Dry-runs unless given --apply. Apply removes not-yet-joined zero-net lines and recalculates the rest, scoped.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/heal-zero-day-lines.ts $FLAG
+              ;;
+            payslip-diagnose)
+              # Read-only in both modes: SELECTs only. Name or code comes from the employee_codes input.
+              npx tsx scripts/payslip-diagnose.ts "${INPUT_EMPLOYEE_CODES:-Abbir}" 2026-08
               ;;
             budget-driver-diagnose)
               # Read-only in both modes: SELECTs only.
