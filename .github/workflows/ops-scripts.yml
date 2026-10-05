@@ -75,6 +75,7 @@ on:
           - recode-63388c-dryrun
           - recode-63388c-person-check
           - recode-63388c-name-search
+          - recode-63388c-attribution
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -219,6 +220,14 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            recode-63388c-attribution)
+              # Read-only: date bands and counts per table to attribute 63388C rows to one person or the other. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::recode-63388c-attribution is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/recode-63388c-attribution.ts
               ;;
             recode-63388c-name-search)
               # Read-only: name / DOB+mobile-last4 search across db_bill and HRMS for the two 63388C people. No apply mode.
