@@ -90,6 +90,7 @@ on:
           - increment-split-what-if
           - increment-requests-audit
           - dbbill-increments-audit
+          - sca-estimates-audit
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -300,6 +301,10 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            sca-estimates-audit)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/sca-estimates-audit.ts
               ;;
             dbbill-increments-audit)
               # Read-only in both modes: SELECTs on db_bill and HRMS only.
