@@ -8,6 +8,7 @@ import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostExprsForColumns } from "./pnl-people-cost.js";
+import { vendorAccountingDateSql } from "./pnl-grn-month.js";
 import type {
   PnlQueryFilters,
   PnlSummaryResponse,
@@ -1060,8 +1061,9 @@ function actualGrnStatusExpr(alias: string) {
  */
 function vendorRecognisedDateExpr(columns: ReadonlySet<string>, withGrnBillDate = false): string {
   const fallback = withGrnBillDate ? "vpt.due_date, grn.bill_date, vpt.created_at" : "vpt.due_date, vpt.created_at";
+  // Accounting month first (owner rule 2026-10-06, pnl-grn-month.ts); the due/bill date only when there is none.
   return columns.has("recognition_period")
-    ? `COALESCE(STR_TO_DATE(CONCAT(vpt.recognition_period, '-01'), '%Y-%m-%d'), ${fallback})`
+    ? `COALESCE(${vendorAccountingDateSql("vpt")}, ${fallback})`
     : `COALESCE(${fallback})`;
 }
 
