@@ -1,40 +1,29 @@
 #!/usr/bin/env python3
 """
-Daily unattended LP Feedback pipeline -- downloads yesterday's Agent Wise
-Performance and Call Register reports from the IDCloud webconsole, converts
-them, and imports them into db_masmis.lp_feedback_apr / lp_feedback_cdr.
-Meant to run once a day via Windows Task Scheduler, the same role
-daily_owner_cdr.py plays for Housing Owner's Owner_cdr.
+Daily unattended LP Feedback pipeline -- downloads Agent Wise Performance and
+Call Register reports from the IDCloud webconsole, converts them, and imports
+them into db_masmis.lp_feedback_apr / lp_feedback_cdr.
 
-Runs each of the already-verified, independently-testable scripts in this
-folder as subprocesses, once per report ('apr' then 'cdr'):
-    download_lp_feedback_report.py --report <apr|cdr> --date <yesterday> --headless
+Catch-up behaviour: a normal run does not just look at yesterday. It walks
+every day from the 1st of the current month through yesterday and imports any
+(date, report) pair whose table has no rows yet. So a missed day (laptop off,
+task not run, etc.) is filled in automatically on the next run. Sundays are
+never attempted (per explicit user instruction, 2026-09-28: "this process not
+run in sunday"). A date already present in a table is skipped for that report.
+
+Runs each already-verified, independently-testable script in this folder as a
+subprocess, once per missing (date, report):
+    download_lp_feedback_report.py --report <apr|cdr> --date <day> --headless
     convert_lp_feedback_<apr|cdr>.py <downloaded file>
     upload_lp_feedback_<apr|cdr>.py <converted file>
-Each step's full output is captured into one timestamped log file per run
-under uploader/lp_feedback/logs/, and this script exits non-zero on any
-failure so Task Scheduler's own run history shows it clearly.
-
-Sundays are skipped entirely (no download attempted) -- per explicit user
-instruction (2026-09-28): "this process not run in sunday so you can leave
-for sunday data". A Sunday isn't a data gap to investigate; it's expected.
-
-Idempotent per report: if a table already has rows for the target date,
-that report's download/convert/import is skipped (checked independently for
-apr and cdr, since one can legitimately be re-run without the other).
-
-Setup on a new machine (see README.md in this folder for the full version):
-  1. Copy this whole uploader/lp_feedback/ folder to the target machine.
-  2. Install Python 3.11+ and Google Chrome.
-  3. py -m pip install -r requirements.txt
-  4. Fill in idcloud.env and db.env (both git-ignored) with real credentials.
-  5. Register a daily Task Scheduler job running:
-         py "<path>\\lp_feedback\\daily_lp_feedback.py"
+Each run writes one timestamped log under uploader/lp_feedback/logs/. The
+script exits non-zero if any attempted (date, report) failed, so Task
+Scheduler's run history shows it. One failure never stops the other attempts.
 
 Usage:
-    py daily_lp_feedback.py                # yesterday (the normal daily run)
-    py daily_lp_feedback.py --date 2026-09-24   # backfill one specific day
-    py daily_lp_feedback.py --force             # re-import even if rows already exist
+    py daily_lp_feedback.py                       # catch-up: current month through yesterday
+    py daily_lp_feedback.py --date 2026-10-01     # just this one day
+    py daily_lp_feedback.py --date 2026-10-01 --force   # re-import even if rows exist
 """
 from __future__ import annotations
 
@@ -42,7 +31,7 @@ import argparse
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -58,9 +47,8 @@ REPORTS = {
 MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
-def to_report_date(date_str: str) -> str:
-    y, m, d = date_str.split("-")
-    return f"{int(d)}-{MONTH_ABBR[int(m) - 1]}-{y[2:]}"
+def to_report_date(day: date) -> str:
+    return f"{day.day}-{MONTH_ABBR[day.month - 1]}-{str(day.year)[2:]}"
 
 
 def already_imported(table: str, report_date: str) -> bool:
@@ -74,17 +62,31 @@ def already_imported(table: str, report_date: str) -> bool:
         conn.close()
 
 
+def catch_up_dates(today: date) -> list[date]:
+    yesterday = today - timedelta(days=1)
+    first_of_month = yesterday.replace(day=1)
+    days = []
+    d = first_of_month
+    while d <= yesterday:
+        if d.weekday() != 6:  # Sunday is never run
+            days.append(d)
+        d += timedelta(days=1)
+    return days
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--date", help="Specific day YYYY-MM-DD to backfill (default: yesterday)")
-    ap.add_argument("--force", action="store_true", help="Import even if this date already has rows")
+    ap.add_argument("--date", help="Single day YYYY-MM-DD (default: catch up current month through yesterday)")
+    ap.add_argument("--force", action="store_true", help="Import even if the date already has rows")
     args = ap.parse_args()
-    target = args.date or (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    weekday = datetime.strptime(target, "%Y-%m-%d").weekday()  # Monday=0 ... Sunday=6
-    report_date = to_report_date(target)
+
+    if args.date:
+        targets = [datetime.strptime(args.date, "%Y-%m-%d").date()]
+    else:
+        targets = catch_up_dates(datetime.now().date())
 
     LOG_DIR.mkdir(exist_ok=True)
-    log_path = LOG_DIR / f"{target}_{int(time.time())}.log"
+    log_path = LOG_DIR / f"run_{int(time.time())}.log"
     lines: list[str] = []
 
     def log(msg: str) -> None:
@@ -105,48 +107,51 @@ def main() -> None:
             raise RuntimeError(f"Step failed (exit {result.returncode}): {' '.join(cmd)}")
         return result.stdout
 
-    log(f"=== LP Feedback daily run for {target} ({report_date}) ===")
-
-    if weekday == 6:
-        log("Target date is a Sunday -- LP Feedback does not run on Sundays. Nothing to do.")
-        log("=== SKIPPED (Sunday) ===")
+    log(f"=== LP Feedback catch-up run: {len(targets)} day(s) to check: "
+        f"{', '.join(t.isoformat() for t in targets) or 'none'} ===")
+    if not targets:
+        log("=== NOTHING TO DO ===")
         return
 
     py = sys.executable
     failed: list[str] = []
-    for report, (table, convert_script, upload_script) in REPORTS.items():
-        log(f"--- {report} ({table}) ---")
-        try:
-            if not args.force and already_imported(table, report_date):
-                log(f"{table} already has rows for {report_date} -- skipping (pass --force to re-import anyway).")
-                continue
+    for target in targets:
+        target_s = target.isoformat()
+        report_date = to_report_date(target)
+        log(f"--- {target_s} ({report_date}) ---")
+        for report, (table, convert_script, upload_script) in REPORTS.items():
+            label = f"{target_s} {report}"
+            try:
+                if not args.force and already_imported(table, report_date):
+                    log(f"{table} already has rows for {report_date} -- skipping {report}.")
+                    continue
 
-            log(f"Step 1/3: download ({report})")
-            out = run_step(py, str(HERE / "download_lp_feedback_report.py"), "--report", report, "--date", target, "--headless")
-            non_empty = [ln for ln in out.strip().splitlines() if ln.strip()]
-            if not non_empty:
-                raise RuntimeError(f"Download step ({report}) produced no output -- cannot find the downloaded file path.")
-            raw_path = non_empty[-1].strip()
+                log(f"[{label}] Step 1/3: download")
+                out = run_step(py, str(HERE / "download_lp_feedback_report.py"), "--report", report, "--date", target_s, "--headless")
+                non_empty = [ln for ln in out.strip().splitlines() if ln.strip()]
+                if not non_empty:
+                    raise RuntimeError("download step produced no output -- cannot find the downloaded file path")
+                raw_path = non_empty[-1].strip()
 
-            log(f"Step 2/3: convert ({report})")
-            converted_path = HERE / "downloads" / f"converted_{report}_{target}.csv"
-            run_step(py, str(HERE / convert_script), raw_path, "--out", str(converted_path))
+                log(f"[{label}] Step 2/3: convert")
+                converted_path = HERE / "downloads" / f"converted_{report}_{target_s}.csv"
+                run_step(py, str(HERE / convert_script), raw_path, "--out", str(converted_path))
 
-            log(f"Step 3/3: import ({report})")
-            import_args = [py, str(HERE / upload_script), str(converted_path)]
-            if args.force:
-                import_args.append("--force")
-            run_step(*import_args)
+                log(f"[{label}] Step 3/3: import")
+                import_args = [py, str(HERE / upload_script), str(converted_path)]
+                if args.force:
+                    import_args.append("--force")
+                run_step(*import_args)
 
-            log(f"{report}: SUCCESS")
-        except Exception as exc:  # noqa: BLE001 -- always logged with full context; one report's failure doesn't stop the other
-            log(f"{report}: FAILED: {exc}")
-            failed.append(report)
+                log(f"[{label}] SUCCESS")
+            except Exception as exc:  # noqa: BLE001 -- logged with context; other attempts continue
+                log(f"[{label}] FAILED: {exc}")
+                failed.append(label)
 
     if failed:
-        log(f"=== FAILED: {', '.join(failed)} ===")
+        log(f"=== FINISHED WITH FAILURES: {', '.join(failed)} ===")
         sys.exit(1)
-    log(f"=== SUCCESS: {target} imported ===")
+    log("=== SUCCESS ===")
 
 
 if __name__ == "__main__":

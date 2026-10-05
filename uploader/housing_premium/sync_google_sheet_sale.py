@@ -88,6 +88,11 @@ def main() -> None:
             save_checkpoint(current_count)
         return
 
+    if current_count < checkpoint:
+        log(f"WARNING: sheet has {current_count} data row(s) but the checkpoint is {checkpoint} -- the sheet was reset or "
+            f"shrank. Re-scanning every row; any row already in pre_sale is skipped by order_id, so nothing is doubled.")
+        checkpoint = 0
+
     if current_count <= checkpoint:
         log(f"No new rows (checkpoint {checkpoint}, sheet has {current_count}).")
         return

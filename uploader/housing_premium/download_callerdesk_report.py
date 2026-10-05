@@ -143,7 +143,42 @@ def select_range(driver: webdriver.Chrome, wait: WebDriverWait, preset_text: str
         pass
 
 
-def select_single_day(driver: webdriver.Chrome, wait: WebDriverWait, day: int) -> None:
+def set_calendar_month(driver: webdriver.Chrome, side: str, year: int, month: int) -> None:
+    """Navigates one Custom Range calendar panel (left/right) to the given
+    year/month via its own <select class="monthselect"/yearselect"> controls.
+
+    Confirmed live 2026-10-01: each panel defaults to whatever month
+    currently brackets "today" (e.g. left=September, right=October), and a
+    day belonging to a month that isn't currently displayed is still
+    present in the grid as a greyed leading/trailing-day cell with class
+    "off" -- which day_cell()'s XPath deliberately excludes (clicking an
+    "off" cell does not reliably select the month you intended). This
+    bug was invisible all prior runs because "yesterday" always fell in the
+    same month the picker already defaulted to; it first surfaced on the
+    first run after a month rollover (importing 30-Sep the day after it
+    turned 1-Oct).
+
+    The selects must be re-queried fresh via document.querySelector inside
+    the JS (not passed in as a pre-fetched Selenium element) because the
+    widget fully re-renders the panel's DOM on month change -- a Python-side
+    element reference taken beforehand goes stale the instant the month
+    select's own change fires, confirmed live via StaleElementReferenceException.
+    """
+    driver.execute_script(
+        "var sel = document.querySelector('div.calendar.' + arguments[0] + ' select.monthselect');"
+        "sel.value = arguments[1]; sel.dispatchEvent(new Event('change', {bubbles: true}));",
+        side, str(month - 1),  # 0-based: January=0 .. December=11, confirmed live
+    )
+    time.sleep(0.5)
+    driver.execute_script(
+        "var sel = document.querySelector('div.calendar.' + arguments[0] + ' select.yearselect');"
+        "sel.value = arguments[1]; sel.dispatchEvent(new Event('change', {bubbles: true}));",
+        side, str(year),
+    )
+    time.sleep(0.5)
+
+
+def select_single_day(driver: webdriver.Chrome, wait: WebDriverWait, year: int, month: int, day: int) -> None:
     """Selects a single day (start == end) via the Custom Range calendar.
 
     Confirmed live (see git history for the recon that found this): the
@@ -167,6 +202,8 @@ def select_single_day(driver: webdriver.Chrome, wait: WebDriverWait, day: int) -
     click(driver, custom)
     time.sleep(1)
 
+    set_calendar_month(driver, "left", year, month)
+
     def day_cell(side: str):
         return wait.until(EC.element_to_be_clickable((
             By.XPATH,
@@ -177,6 +214,14 @@ def select_single_day(driver: webdriver.Chrome, wait: WebDriverWait, day: int) -
     click(driver, day_cell("left"))
     time.sleep(0.5)
     driver.save_screenshot(str(DEBUG_DIR / "after_click_left.png"))
+
+    # Confirmed live 2026-10-01: clicking the LEFT panel's day cell makes the
+    # widget auto-advance the right panel's own view to left-month-plus-one
+    # (standard "pick a start date -> show the next month as the likely end
+    # date" UX), silently undoing any set_calendar_month("right", ...) done
+    # beforehand. So the right panel's month must be (re-)set *after* the
+    # left click, immediately before looking for its day cell, not before.
+    set_calendar_month(driver, "right", year, month)
     click(driver, day_cell("right"))
     time.sleep(0.5)
     driver.save_screenshot(str(DEBUG_DIR / "after_click_right.png"))
@@ -273,9 +318,9 @@ def download_day(date_str: str | None = None, range_key: str | None = None, head
         print("  logged in.")
 
         if date_str:
-            day = int(date_str.split("-")[2])
+            year, month, day = (int(x) for x in date_str.split("-"))
             print(f"Setting range to the single day {date_str}...")
-            select_single_day(driver, wait, day)
+            select_single_day(driver, wait, year, month, day)
         else:
             preset_text = RANGE_LABELS[range_key]  # type: ignore[index]
             print(f"Setting range to '{preset_text}'...")

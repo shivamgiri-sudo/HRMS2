@@ -233,12 +233,15 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="Preview only; writes nothing")
     args = ap.parse_args()
 
+    today = date.today()
     dialer_cfg = load_db_config("DIALER_")
     mas_cfg = load_db_config("")
     dialer_conn = connect(dialer_cfg)
     mas_conn = connect(mas_cfg)
     try:
         if args.date:
+            if datetime.strptime(args.date, "%Y-%m-%d").date() >= today:
+                sys.exit(f"Refusing {args.date}: only completed days (up to yesterday) are imported, not today or later.")
             print(f"Backfilling {args.date} ...")
             rows = fetch_rows(dialer_conn, "DATE(CallDate) = %s", [args.date])
             print(f"  {len(rows)} row(s) found in data_master_in.")
@@ -261,8 +264,9 @@ def main() -> None:
                 )
             checkpoint = json.loads(CHECKPOINT_FILE.read_text())
             last_id = checkpoint["last_data_id"]
-            print(f"Incremental sync: dataId > {last_id} ...")
-            rows = fetch_rows(dialer_conn, "dataId > %s", [last_id])
+            # Only completed days: CallDate strictly before today, so today's partial data is never imported.
+            print(f"Incremental sync: dataId > {last_id} and CallDate < {today} (up to yesterday) ...")
+            rows = fetch_rows(dialer_conn, "dataId > %s AND CallDate < %s", [last_id, today])
             print(f"  {len(rows)} new row(s) found.")
             if args.dry_run:
                 print("--dry-run: nothing written. Sample:", rows[:1])
