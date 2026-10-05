@@ -117,13 +117,13 @@ ledgerReportsRouter.get(
     }
     const from = req.query.from ? String(req.query.from) : undefined;
     const to = req.query.to ? String(req.query.to) : undefined;
-    const result = await ledgerReportsService.accountLedger(
-      accountType as (typeof ACCOUNT_TYPES)[number],
-      String(req.params.accountId),
-      from,
-      to,
-      await callerBranchScope(req),
-    );
+    const scope = await callerBranchScope(req);
+    const accountId = String(req.params.accountId);
+    // The balancing rows on the Trial Balance have no sub-ledger of their own.
+    if (accountId.startsWith("synthetic:")) { res.json({ success: true, data: { entries: [], closingBalance: 0 } }); return; }
+    const result = accountType === "vendor"
+      ? await ledgerReportsService.vendorAsAccountLedger(accountId, from, to, scope)
+      : await ledgerReportsService.accountLedger(accountType as (typeof ACCOUNT_TYPES)[number], accountId, from, to, scope);
     res.json({ success: true, data: result });
   }),
 );

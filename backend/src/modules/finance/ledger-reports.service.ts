@@ -168,6 +168,114 @@ function money(v: number) {
   return Math.round((Number(v) + Number.EPSILON) * 100) / 100;
 }
 
+type VendorItem = {
+  vendorId: string; day: string; branchId: unknown; particulars: string; vchType: string; vchNo: string;
+  reference: string; narration: string; debit: number; credit: number;
+  /** A bill (credit) that has no GRN journal entry, so no expense head has been debited for it. */
+  unposted: boolean;
+};
+
+/**
+ * Every bill and payment of the given vendors (all vendors when `vendorIds` is omitted), from the
+ * operational tables. Three sources, so a vendor's ledger is complete:
+ *   1. vendor_payment_tracking bills (credit at bill date);
+ *   2. their recorded payments (vendor_payment_transaction, debit), plus one "earlier payment"
+ *      debit for any paid_amount that has no payment detail behind it;
+ *   3. GRNs marked paid that pre-date payment tracking and have no tracking row (credit, and an
+ *      equal debit as "settled") — without them a vendor's history is missing years of bills.
+ */
+async function loadVendorItems(opts: {
+  vendorIds?: string[]; scope?: FinanceBranchScope; branchId?: string; costCentreId?: string; processId?: string;
+}): Promise<VendorItem[]> {
+  const items: VendorItem[] = [];
+  const vendorIn = opts.vendorIds ? `vpt.vendor_id IN (${opts.vendorIds.map(() => "?").join(",")})` : "1=1";
+
+  const bc = [vendorIn, "NOT (vpt.payment_status = 'Rejected' AND COALESCE(vpt.paid_amount,0) = 0)"];
+  const bp: unknown[] = [...(opts.vendorIds ?? [])];
+  if (opts.branchId) { bc.push("vpt.branch_id = ?"); bp.push(opts.branchId); }
+  if (opts.costCentreId) { bc.push("vpt.cost_centre_id = ?"); bp.push(opts.costCentreId); }
+  if (opts.processId) { bc.push("vpt.process_id = ?"); bp.push(opts.processId); }
+  pushBranchScope(bc, bp, opts.scope, "vpt.branch_id");
+  const [bills] = await db.execute<RowDataPacket[]>(
+    `SELECT vpt.id, vpt.vendor_id, vpt.branch_id, vpt.due_amount, vpt.paid_amount, vpt.payment_date, vpt.payment_mode,
+            vpt.bank_name AS vpt_bank, vpt.transaction_id AS vpt_txn, COALESCE(g.bill_date, DATE(vpt.created_at)) AS bill_day,
+            g.grn_number, g.invoice_number,
+            EXISTS (SELECT 1 FROM journal_entry je WHERE je.source_type = 'grn' AND je.source_id = vpt.grn_request_id
+                      AND je.reversed_by_entry_id IS NULL) AS journaled
+       FROM vendor_payment_tracking vpt LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
+      WHERE ${bc.join(" AND ")}`, bp);
+
+  const billIds = (bills as RowDataPacket[]).map((r) => String(r.id));
+  const txByBill = new Map<string, RowDataPacket[]>();
+  for (let i = 0; i < billIds.length; i += 1000) {
+    const chunk = billIds.slice(i, i + 1000);
+    const [tx] = await db.execute<RowDataPacket[]>(
+      `SELECT vendor_payment_id, payment_date, payment_mode, bank_name, transaction_id, amount, net_amount, tds_amount, remarks
+         FROM vendor_payment_transaction WHERE vendor_payment_id IN (${chunk.map(() => "?").join(",")})`, chunk);
+    for (const t of tx as RowDataPacket[]) {
+      const list = txByBill.get(String(t.vendor_payment_id)) ?? [];
+      list.push(t);
+      txByBill.set(String(t.vendor_payment_id), list);
+    }
+  }
+
+  for (const b of bills as RowDataPacket[]) {
+    const vendorId = String(b.vendor_id);
+    const billNo = String(b.grn_number ?? "");
+    const ref = billNo ? `Against ${billNo}${b.invoice_number ? ` / ${b.invoice_number}` : ""}` : "";
+    const due = money(Number(b.due_amount));
+    if (due !== 0) {
+      items.push({ vendorId, day: dayOf(b.bill_day), branchId: b.branch_id, particulars: "By Purchase", vchType: "Purchase", vchNo: billNo,
+        reference: String(b.invoice_number ?? ""), narration: "", debit: 0, credit: due, unposted: !Number(b.journaled) });
+    }
+    let recorded = 0;
+    for (const t of txByBill.get(String(b.id)) ?? []) {
+      const amt = money(Number(t.amount));
+      recorded = money(recorded + amt);
+      items.push({ vendorId, day: dayOf(t.payment_date), branchId: b.branch_id,
+        particulars: `To ${t.bank_name || t.payment_mode || "Bank"}`, vchType: "Payment", vchNo: String(t.transaction_id || billNo || ""), reference: ref,
+        narration: `${t.payment_mode ?? ""}${Number(t.tds_amount) > 0 ? ` (net ${money(Number(t.net_amount))}, TDS ${money(Number(t.tds_amount))})` : ""}${t.remarks ? ` - ${t.remarks}` : ""}`.trim(),
+        debit: amt, credit: 0, unposted: false });
+    }
+    const gap = money(Number(b.paid_amount) - recorded);
+    if (Math.abs(gap) > 0.005) {
+      items.push({ vendorId, day: dayOf(b.payment_date ?? b.bill_day), branchId: b.branch_id,
+        particulars: gap > 0 ? `To ${b.vpt_bank || b.payment_mode || "Payment"} (earlier payment)` : "By Payment adjustment",
+        vchType: gap > 0 ? "Payment" : "Journal", vchNo: String(b.vpt_txn || billNo || ""), reference: ref,
+        narration: "Payment recorded on the bill without individual payment details",
+        debit: gap > 0 ? gap : 0, credit: gap < 0 ? -gap : 0, unposted: false });
+    }
+  }
+
+  // Old GRNs settled before payment tracking existed. The process filter cannot be applied to them.
+  if (!opts.processId) {
+    const gc = ["g.status = 'paid'", "g.vendor_id IS NOT NULL",
+      opts.vendorIds ? `g.vendor_id IN (${opts.vendorIds.map(() => "?").join(",")})` : "1=1",
+      "NOT EXISTS (SELECT 1 FROM vendor_payment_tracking t WHERE t.grn_request_id = g.id)"];
+    const gp: unknown[] = [...(opts.vendorIds ?? [])];
+    if (opts.branchId) { gc.push("g.branch_id = ?"); gp.push(opts.branchId); }
+    if (opts.costCentreId) { gc.push("g.cost_centre_id = ?"); gp.push(opts.costCentreId); }
+    pushBranchScope(gc, gp, opts.scope, "g.branch_id");
+    const [legacy] = await db.execute<RowDataPacket[]>(
+      `SELECT g.vendor_id, g.branch_id, g.grn_number, g.invoice_number, COALESCE(g.bill_date, DATE(g.created_at)) AS bill_day,
+              COALESCE(NULLIF(g.amount_with_tax, 0), g.amount) AS amt,
+              EXISTS (SELECT 1 FROM journal_entry je WHERE je.source_type = 'grn' AND je.source_id = g.id AND je.reversed_by_entry_id IS NULL) AS journaled
+         FROM grn_request g WHERE ${gc.join(" AND ")}`, gp);
+    for (const g of legacy as RowDataPacket[]) {
+      const amt = money(Number(g.amt));
+      if (!amt) continue;
+      const vendorId = String(g.vendor_id);
+      const billNo = String(g.grn_number ?? "");
+      items.push({ vendorId, day: dayOf(g.bill_day), branchId: g.branch_id, particulars: "By Purchase", vchType: "Purchase", vchNo: billNo,
+        reference: String(g.invoice_number ?? ""), narration: "", debit: 0, credit: amt, unposted: !Number(g.journaled) });
+      items.push({ vendorId, day: dayOf(g.bill_day), branchId: g.branch_id, particulars: "To Payment (settled before payment tracking)", vchType: "Payment", vchNo: billNo,
+        reference: billNo ? `Against ${billNo}` : "", narration: "GRN marked paid; the payment itself was not recorded individually",
+        debit: amt, credit: 0, unposted: false });
+    }
+  }
+  return items;
+}
+
 export type TrialBalanceRow = {
   accountType: AccountType;
   accountId: string;
@@ -246,12 +354,32 @@ export const ledgerReportsService = {
       params,
     );
 
-    const refs = (rows as RowDataPacket[]).map((r) => ({ accountType: r.account_type as AccountType, accountId: String(r.account_id) }));
+    // Vendor accounts are NOT taken from the journal: it holds the bills but almost none of the
+    // payments, so every vendor showed as owed its whole history. They are rebuilt from the bill
+    // and payment records (the same source as the Vendor Ledger), and two balancing rows carry
+    // the other side so the report still has to add up on its own:
+    //   - payments made (Cr bank/cash) - the other half of every vendor debit;
+    //   - purchases with no expense-head posting yet (Dr) - bills that have no GRN journal entry.
+    const journalRows = (rows as RowDataPacket[]).filter((r) => r.account_type !== "vendor");
+    const refs = journalRows.map((r) => ({ accountType: r.account_type as AccountType, accountId: String(r.account_id) }));
     const names = await resolveAccountNames(refs);
+
+    const items = (await loadVendorItems({ scope, branchId: filters?.branchId, costCentreId: filters?.costCentreId, processId: filters?.processId }))
+      .filter((it) => !asOfDate || it.day <= asOfDate);
+    const byVendor = new Map<string, { d: number; c: number }>();
+    let paymentsTotal = 0, unpostedTotal = 0;
+    for (const it of items) {
+      const v = byVendor.get(it.vendorId) ?? { d: 0, c: 0 };
+      v.d += it.debit; v.c += it.credit;
+      byVendor.set(it.vendorId, v);
+      paymentsTotal += it.debit; // the other half of every vendor debit
+      if (it.unposted) unpostedTotal += it.credit;
+    }
+    const vendorNames = await resolveAccountNames([...byVendor.keys()].map((id) => ({ accountType: "vendor" as AccountType, accountId: id })));
 
     let totalDebit = 0;
     let totalCredit = 0;
-    const result: TrialBalanceRow[] = (rows as RowDataPacket[]).map((r) => {
+    const result: TrialBalanceRow[] = journalRows.map((r) => {
       const totalD = money(Number(r.total_debit));
       const totalC = money(Number(r.total_credit));
       totalDebit += totalD;
@@ -265,6 +393,24 @@ export const ledgerReportsService = {
         netBalance: money(totalD - totalC),
       };
     });
+    for (const [vendorId, v] of byVendor) {
+      const totalD = money(v.d), totalC = money(v.c);
+      if (totalD === 0 && totalC === 0) continue;
+      totalDebit += totalD; totalCredit += totalC;
+      result.push({
+        accountType: "vendor", accountId: vendorId,
+        accountName: vendorNames.get(`vendor:${vendorId}`) ?? `(unresolved vendor ${vendorId})`,
+        totalDebit: totalD, totalCredit: totalC, netBalance: money(totalD - totalC),
+      });
+    }
+    const synth = (name: string, debit: number, credit: number) => {
+      const d = money(debit), c = money(credit);
+      if (!d && !c) return;
+      totalDebit += d; totalCredit += c;
+      result.push({ accountType: "payable_account", accountId: `synthetic:${name}`, accountName: name, totalDebit: d, totalCredit: c, netBalance: money(d - c) });
+    };
+    synth("Payments made to vendors (bank / cash)", 0, paymentsTotal);
+    synth("Purchases not yet posted to an expense head", unpostedTotal, 0);
 
     return { rows: result, balanced: money(totalDebit) === money(totalCredit), totalDebit: money(totalDebit), totalCredit: money(totalCredit) };
   },
@@ -365,69 +511,11 @@ export const ledgerReportsService = {
     const [idRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM vendor_master WHERE UPPER(TRIM(vendor_name)) = UPPER(TRIM(?))`, [vendor.vendor_name]);
     const ids = [...new Set([vendorId, ...(idRows as RowDataPacket[]).map((r) => String(r.id))])];
-    const inIds = ids.map(() => "?").join(",");
 
-    const bc = [`vpt.vendor_id IN (${inIds})`, "NOT (vpt.payment_status = 'Rejected' AND COALESCE(vpt.paid_amount,0) = 0)"];
-    const bp: unknown[] = [...ids];
-    pushBranchScope(bc, bp, scope, "vpt.branch_id");
-    const [bills] = await db.execute<RowDataPacket[]>(
-      `SELECT vpt.id, vpt.branch_id, vpt.due_amount, vpt.paid_amount, vpt.payment_date, vpt.payment_mode, vpt.bank_name AS vpt_bank,
-              vpt.transaction_id AS vpt_txn, COALESCE(g.bill_date, DATE(vpt.created_at)) AS bill_day,
-              g.grn_number, g.invoice_number
-         FROM vendor_payment_tracking vpt LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
-        WHERE ${bc.join(" AND ")}`, bp);
-
-    const billIds = (bills as RowDataPacket[]).map((r) => String(r.id));
-    const txByBill = new Map<string, RowDataPacket[]>();
-    for (let i = 0; i < billIds.length; i += 500) {
-      const chunk = billIds.slice(i, i + 500);
-      const [tx] = await db.execute<RowDataPacket[]>(
-        `SELECT vendor_payment_id, payment_date, payment_mode, bank_name, transaction_id, amount, net_amount, tds_amount, remarks, sequence_no
-           FROM vendor_payment_transaction WHERE vendor_payment_id IN (${chunk.map(() => "?").join(",")})`, chunk);
-      for (const t of tx as RowDataPacket[]) {
-        const list = txByBill.get(String(t.vendor_payment_id)) ?? [];
-        list.push(t);
-        txByBill.set(String(t.vendor_payment_id), list);
-      }
-    }
-
-    type Item = { day: string; branchId: unknown; particulars: string; vchType: string; vchNo: string; reference: string; narration: string; debit: number; credit: number };
-    const items: Item[] = [];
-    for (const b of bills as RowDataPacket[]) {
-      const billNo = String(b.grn_number ?? "");
-      const billDay = dayOf(b.bill_day);
-      const due = money(Number(b.due_amount));
-      if (due !== 0) {
-        items.push({ day: billDay, branchId: b.branch_id, particulars: "By Purchase", vchType: "Purchase", vchNo: billNo, reference: String(b.invoice_number ?? ""), narration: "", debit: 0, credit: due });
-      }
-      const txs = txByBill.get(String(b.id)) ?? [];
-      let recorded = 0;
-      for (const t of txs) {
-        const amt = money(Number(t.amount));
-        recorded = money(recorded + amt);
-        items.push({
-          day: dayOf(t.payment_date), branchId: b.branch_id,
-          particulars: `To ${t.bank_name || t.payment_mode || "Bank"}`, vchType: "Payment",
-          vchNo: String(t.transaction_id || billNo || ""),
-          reference: billNo ? `Against ${billNo}${b.invoice_number ? ` / ${b.invoice_number}` : ""}` : "",
-          narration: `${t.payment_mode ?? ""}${Number(t.tds_amount) > 0 ? ` (net ${money(Number(t.net_amount))}, TDS ${money(Number(t.tds_amount))})` : ""}${t.remarks ? ` - ${t.remarks}` : ""}`.trim(),
-          debit: amt, credit: 0,
-        });
-      }
-      const gap = money(Number(b.paid_amount) - recorded);
-      if (Math.abs(gap) > 0.005) {
-        items.push({
-          day: dayOf(b.payment_date ?? b.bill_day), branchId: b.branch_id,
-          particulars: gap > 0 ? `To ${b.vpt_bank || b.payment_mode || "Payment"} (earlier payment)` : "By Payment adjustment",
-          vchType: gap > 0 ? "Payment" : "Journal", vchNo: String(b.vpt_txn || billNo || ""),
-          reference: billNo ? `Against ${billNo}${b.invoice_number ? ` / ${b.invoice_number}` : ""}` : "",
-          narration: "Payment recorded on the bill without individual payment details",
-          debit: gap > 0 ? gap : 0, credit: gap < 0 ? -gap : 0,
-        });
-      }
-    }
+    const items = (await loadVendorItems({ vendorIds: ids, scope })).map((it) => ({ ...it }));
     items.sort((x, y) => x.day.localeCompare(y.day) || (x.credit > 0 ? 0 : 1) - (y.credit > 0 ? 0 : 1));
 
+    type Item = VendorItem;
     let opening = 0;
     const inPeriod: Item[] = [];
     for (const it of items) {
@@ -497,6 +585,23 @@ export const ledgerReportsService = {
       };
     });
     return { bills, buckets, total: money(bills.reduce((sum, b) => sum + b.balance, 0)) };
+  },
+
+  /** Account-ledger shape (used by the Trial Balance drill-down) for a vendor, from the statement. */
+  async vendorAsAccountLedger(vendorId: string, from?: string, to?: string, scope?: FinanceBranchScope) {
+    const st = await ledgerReportsService.vendorStatement(vendorId, from, to, scope);
+    if (!st) return { entries: [], closingBalance: 0 };
+    let running = st.opening.side === "Cr" ? -st.opening.amount : st.opening.amount;
+    const entries = st.rows.map((r, i) => {
+      running = money(running + r.debit - r.credit);
+      return {
+        journalEntryId: `vs:${i}`, entryDate: r.date, narration: [r.particulars, r.vchNo, r.reference].filter(Boolean).join(" · "),
+        sourceType: r.vchType === "Purchase" ? "grn" : "vendor_payment", sourceId: r.vchNo, branchId: null, branchName: r.branchName,
+        costCentreId: null, costCentreName: null, processId: null, processName: null,
+        debitAmount: r.debit, creditAmount: r.credit, runningBalance: running,
+      };
+    });
+    return { entries, closingBalance: running };
   },
 
   async vendorLedger(vendorId: string, from?: string, to?: string, scope?: FinanceBranchScope) {

@@ -8,15 +8,25 @@ import { ledgerReportsService } from "../ledger-reports.service.js";
 beforeEach(() => { execute.mockReset(); });
 
 describe("ledgerReportsService.trialBalance", () => {
-  it("reports balanced=true and matching totals when debits equal credits across all accounts", async () => {
+  it("vendors come from bills and payments, and two balancing rows keep the report adding up", async () => {
     execute.mockImplementation(async (sql: string) => {
       if (/GROUP BY jel.account_type/.test(sql)) {
+        // The journal: GRN of 10,000 -> Dr expense 10,000, Cr vendor 9,500, Cr TDS 500. Its vendor row is ignored.
         return [[
           { account_type: "expense_sub_head", account_id: "sh-1", total_debit: "10000.00", total_credit: "0.00" },
           { account_type: "vendor", account_id: "v-1", total_debit: "0.00", total_credit: "9500.00" },
           { account_type: "payable_account", account_id: "pam-tds", total_debit: "0.00", total_credit: "500.00" },
         ]];
       }
+      if (/FROM vendor_payment_tracking vpt LEFT JOIN grn_request/.test(sql)) {
+        // one bill of 9,500 (journaled) with 4,000 paid, and one 1,000 bill never posted to a head
+        return [[
+          { id: "b1", vendor_id: "v-1", branch_id: null, due_amount: "9500", paid_amount: "4000", payment_date: "2026-06-01", bill_day: "2026-05-01", grn_number: "G1", journaled: 1 },
+          { id: "b2", vendor_id: "v-1", branch_id: null, due_amount: "1000", paid_amount: "0", bill_day: "2026-05-02", grn_number: "G2", journaled: 0 },
+        ]];
+      }
+      if (/FROM vendor_payment_transaction/.test(sql)) return [[]];
+      if (/FROM grn_request g WHERE/.test(sql)) return [[]];
       if (/finance_expense_sub_head_master/.test(sql)) return [[{ id: "sh-1", head_name: "Repairs", sub_head_name: "AC Servicing" }]];
       if (/vendor_master/.test(sql)) return [[{ id: "v-1", vendor_name: "Acme Traders" }]];
       if (/payable_account_master/.test(sql)) return [[{ id: "pam-tds", account_name: "TDS Payable" }]];
@@ -24,13 +34,15 @@ describe("ledgerReportsService.trialBalance", () => {
     });
 
     const result = await ledgerReportsService.trialBalance();
-    expect(result.balanced).toBe(true);
-    expect(result.totalDebit).toBe(10000);
-    expect(result.totalCredit).toBe(10000);
-    expect(result.rows).toHaveLength(3);
     const vendorRow = result.rows.find((r) => r.accountType === "vendor")!;
     expect(vendorRow.accountName).toBe("Acme Traders (Sundry Creditor)");
-    expect(vendorRow.netBalance).toBe(-9500);
+    expect(vendorRow.totalCredit).toBe(10500);
+    expect(vendorRow.totalDebit).toBe(4000);
+    expect(vendorRow.netBalance).toBe(-6500); // what is still owed, not the whole history
+    expect(result.rows.find((r) => r.accountName === "Payments made to vendors (bank / cash)")!.totalCredit).toBe(4000);
+    expect(result.rows.find((r) => r.accountName === "Purchases not yet posted to an expense head")!.totalDebit).toBe(1000);
+    expect(result.totalDebit).toBe(result.totalCredit);
+    expect(result.balanced).toBe(true);
   });
 
   it("filters to entries on or before asOfDate when supplied", async () => {
