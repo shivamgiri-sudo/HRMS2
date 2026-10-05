@@ -1296,6 +1296,18 @@ async function getSpendProcessIds(period: string): Promise<string[]> {
     );
     for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
   }
+  // Smart-GRN allocations (the allocation view the overlay adds per process): a consumed allocation to a process
+  // that is not a row is lost the same way, and the overlay has already removed the matching legacy amount.
+  if (await tableExists("vw_process_pnl_grn_allocation")) {
+    const rows = await safeRows<RowDataPacket>(
+      `SELECT DISTINCT v.process_id AS process_id
+         FROM vw_process_pnl_grn_allocation v
+         LEFT JOIN branch_master bm ON bm.id = v.branch_id
+        WHERE v.period_code COLLATE utf8mb4_unicode_ci = ? AND v.process_id IS NOT NULL AND ${ownCompanyBranchSql("bm")}`,
+      [period]
+    );
+    for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
+  }
   return Array.from(ids);
 }
 
