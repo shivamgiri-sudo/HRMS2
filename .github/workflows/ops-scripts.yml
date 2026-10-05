@@ -86,6 +86,7 @@ on:
           - tally-gaps-detail
           - unposted-grn-diagnose
           - fix-gst-credit-note-roundoff
+          - backfill-grn-journal
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -401,6 +402,11 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            backfill-grn-journal)
+              # Dry-runs unless given --apply. Apply posts a journal entry for every vendor GRN that has none (same code path as live approval); GRNs with no vendor or an unmatched ledger head are reported, not posted.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/backfill-journal-entries.ts --grn $FLAG
               ;;
             fix-gst-credit-note-roundoff)
               # Dry-runs unless given --apply. Apply flips the round-off sign on credit-note rows that do not add up.
