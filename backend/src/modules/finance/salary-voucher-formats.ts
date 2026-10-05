@@ -106,7 +106,7 @@ const xmlEscape = (value: unknown) =>
  * ISDEEMEDPOSITIVE=No with a POSITIVE amount. Cohort split columns are not carried — XML has one
  * amount per ledger line. Zero-value lines are skipped, since Tally rejects a zero ledger entry.
  */
-export function buildTallyXml(vouchers: Voucher[]): string {
+export function buildTallyXml(vouchers: Voucher[], company?: string): string {
   const messages = vouchers.map((v) => {
     const date = v.date.slice(0, 10).replace(/-/g, "");
     const entries = v.lines
@@ -146,7 +146,11 @@ ${entries}
     <ID>Vouchers</ID>
   </HEADER>
   <BODY>
-    <DESC></DESC>
+    ${company ? `<DESC>
+      <STATICVARIABLES>
+        <SVCURRENTCOMPANY>${xmlEscape(company)}</SVCURRENTCOMPANY>
+      </STATICVARIABLES>
+    </DESC>` : "<DESC></DESC>"}
     <DATA>
 ${messages.join("\n")}
     </DATA>

@@ -109,6 +109,31 @@ export function SalaryVoucherPanel() {
     enabled: Boolean(runId),
     queryFn: async () => unwrap<Payload>(await hrmsApi.get<any>(previewUrl)),
   });
+  const tallyStatus = useQuery({
+    queryKey: ["salary-voucher-tally-status"],
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => unwrap<{ configured: boolean; reachable: boolean; company: string | null; message: string }>(
+      await hrmsApi.get<any>("/api/finance/payroll/tally/status")),
+  });
+  const [pushing, setPushing] = useState(false);
+  const [pushResult, setPushResult] = useState<{ posted: number; failed: number; skipped: number; results: { voucher_no: string; branch_name: string; outcome: string; detail: string }[] } | null>(null);
+  const [pushError, setPushError] = useState("");
+  const postToTally = async () => {
+    if (!runId) return;
+    if (!serialFrom.trim()) { setPushError("Enter the next voucher number from Tally (the serial field) before posting."); return; }
+    const count = voucherQuery.data?.vouchers.length ?? 0;
+    if (!window.confirm(`Post ${count} salary voucher(s) to Tally now? Vouchers already posted from this run are skipped.`)) return;
+    setPushing(true); setPushError(""); setPushResult(null);
+    try {
+      const body = { serialFrom: serialFrom.trim(), companyCode: companyCode || undefined };
+      setPushResult(unwrap(await hrmsApi.post<any>(`/api/finance/payroll/runs/${runId}/vouchers/push-to-tally`, body)));
+    } catch (error) {
+      setPushError(error instanceof Error ? error.message : "Posting to Tally failed");
+    } finally {
+      setPushing(false);
+    }
+  };
   const data = voucherQuery.data;
   const vouchers = data?.vouchers ?? [];
   const excluded = (data?.unassigned.length ?? 0) + (data?.unpaid.length ?? 0);
@@ -152,12 +177,34 @@ export function SalaryVoucherPanel() {
                   {format === "csv" ? "Export for Tally (CSV)" : label}
                 </GrnChip>
               ))}
+              <GrnChip active={false} onClick={postToTally}>
+                {pushing ? "Posting…" : "Post to Tally"}
+              </GrnChip>
               <GrnIconButton aria-label="Refresh" onClick={() => voucherQuery.refetch()}>
                 <RefreshCw className={`h-3.5 w-3.5 ${voucherQuery.isFetching ? "animate-spin" : ""}`} />
               </GrnIconButton>
             </div>
           }
         />
+
+        {(tallyStatus.data || pushError || pushResult) && (
+          <div className="space-y-1 border-b border-grn-line px-4 py-2 text-[11px]">
+            {tallyStatus.data && (
+              <div className={tallyStatus.data.reachable ? "text-emerald-700" : "text-amber-700"}>
+                Tally gateway: {tallyStatus.data.reachable ? `connected${tallyStatus.data.company ? ` (${tallyStatus.data.company})` : ""}` : `not available — ${tallyStatus.data.message}`}
+              </div>
+            )}
+            {pushError && <div className="text-rose-600">{pushError}</div>}
+            {pushResult && (
+              <div>
+                <div className="font-semibold text-gray-800">Posted {pushResult.posted} · failed {pushResult.failed} · skipped {pushResult.skipped}</div>
+                {pushResult.results.filter((r) => r.outcome !== "posted").map((r) => (
+                  <div key={r.voucher_no} className={r.outcome === "failed" ? "text-rose-600" : "text-gray-500"}>{r.voucher_no} — {r.outcome}: {r.detail}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-end gap-2 border-b border-grn-line px-4 py-3">
           <label className="text-[11px] font-semibold text-grn-ink">

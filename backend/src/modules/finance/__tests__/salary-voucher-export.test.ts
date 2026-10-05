@@ -124,8 +124,8 @@ describe("authorisation", () => {
 
   it("applies branch scope on top of the role, on both endpoints", () => {
     const calls = SRC.match(/await scopeVouchers\(req, /g) ?? [];
-    // list, export, and the db_bill IDC endpoint — all three scope.
-    expect(calls.length, "every voucher endpoint must scope").toBe(3);
+    // list, export, the db_bill IDC endpoint and the Tally push — all scope.
+    expect(calls.length, "every voucher endpoint must scope").toBe(4);
   });
 
   it("scopes by the voucher's branch id rather than its name", () => {
@@ -136,7 +136,9 @@ describe("authorisation", () => {
 
   it("never writes — the voucher is a view of a run that already exists", () => {
     expect(SRC).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
-    expect(SRC).not.toMatch(/salaryVoucherRouter\.(post|put|patch|delete)/);
+    // The one POST sends vouchers OUT to Tally; it writes nothing to payroll.
+    const writes = [...SRC.matchAll(/salaryVoucherRouter\.(post|put|patch|delete)\(\s*"([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`);
+    expect(writes).toEqual(["post /runs/:runId/vouchers/push-to-tally"]);
   });
 });
 
@@ -187,5 +189,32 @@ describe("the voucher serial is Tally's, not ours", () => {
     // Falling back to the provisional numbering the UI warns about is better than a 400 on a
     // read-only preview, and better than printing NaN.
     expect(SRC).toContain("return undefined;");
+  });
+});
+
+describe("Tally HTTP gateway push", () => {
+  it("parses Tally's import response", async () => {
+    const { parseTallyResponse } = await import("../salary-voucher-tally-push.service.js");
+    expect(parseTallyResponse("<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><ERRORS>0</ERRORS><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>"))
+      .toEqual({ created: 1, altered: 0, errors: 0, exceptions: 0, lineErrors: [] });
+    expect(parseTallyResponse("<RESPONSE><CREATED>0</CREATED><ERRORS>1</ERRORS><LINEERROR>Ledger 'X' does not exist!</LINEERROR></RESPONSE>"))
+      .toMatchObject({ created: 0, errors: 1, lineErrors: ["Ledger 'X' does not exist!"] });
+  });
+
+  it("takes the gateway address from the environment, never from the request", () => {
+    const svc = readFileSync(at("../salary-voucher-tally-push.service.ts"), "utf8");
+    expect(svc).toContain("process.env.TALLY_GATEWAY_URL");
+    expect(SRC).not.toMatch(/req\.(body|query)\??\.(url|gateway|host)/i);
+  });
+
+  it("refuses to post without a Tally serial and narrows the roles", () => {
+    expect(SRC).toContain("Enter the next voucher number from Tally");
+    expect(SRC).toContain('requireRole("finance_head", "accounts_head", "super_admin")');
+  });
+
+  it("sends the company to Tally when one is configured", async () => {
+    const { buildTallyXml } = await import("../salary-voucher-formats.js");
+    expect(buildTallyXml([], "MAS Callnet")).toContain("<SVCURRENTCOMPANY>MAS Callnet</SVCURRENTCOMPANY>");
+    expect(buildTallyXml([])).toContain("<DESC></DESC>");
   });
 });

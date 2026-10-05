@@ -5,6 +5,8 @@ import { SYNTHETIC_RUN_CREATORS } from "../payroll/payroll.service.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { resolveFinanceBranchScopeSet } from "./finance-access-scope.js";
 import { buildCsv, buildTallyXml, buildXlsx, parseFormat } from "./salary-voucher-formats.js";
+import { salaryVoucherTallyPush } from "./salary-voucher-tally-push.service.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 import { salaryVoucherService, type Voucher } from "./salary-voucher.service.js";
 import { billSalaryVoucherService } from "./salary-voucher-bill.service.js";
 
@@ -150,6 +152,55 @@ salaryVoucherRouter.get(
         success: false,
         error: error instanceof Error ? error.message : "Unable to export the salary voucher",
       });
+    }
+  }),
+);
+
+/** Whether the Tally HTTP gateway is configured and answering. */
+salaryVoucherRouter.get(
+  "/tally/status",
+  requireRole(...VOUCHER_ROLES),
+  h(async (_req, res) => {
+    res.json({ success: true, data: await salaryVoucherTallyPush.status() });
+  }),
+);
+
+/**
+ * Post a run's vouchers straight into Tally over its HTTP gateway.
+ *
+ * The only route here that sends data out. It writes nothing to payroll, and it needs an explicit
+ * `serialFrom`: Tally owns the voucher-number sequence, and posting the provisional "…/1" numbers
+ * would put wrongly numbered vouchers into the books. Narrower role list than viewing — finance
+ * and super_admin only. Vouchers already posted from the same run are skipped, not re-sent.
+ */
+salaryVoucherRouter.post(
+  "/runs/:runId/vouchers/push-to-tally",
+  requireRole("finance_head", "accounts_head", "super_admin"),
+  h(async (req, res) => {
+    try {
+      const serialFrom = parseSerial(req.body?.serialFrom);
+      if (!serialFrom) {
+        return res.status(400).json({ success: false, error: "Enter the next voucher number from Tally (serial) before posting." });
+      }
+      const generated = await salaryVoucherService.generate(req.params.runId, {
+        companyCode: req.body?.companyCode ? String(req.body.companyCode) : undefined,
+        serialFrom,
+      });
+      const vouchers = await scopeVouchers(req, generated.vouchers);
+      if (!vouchers.length) return res.status(400).json({ success: false, error: "There is no voucher to post for this run." });
+      const result = await salaryVoucherTallyPush.push(req.params.runId, vouchers, String(req.authUser?.id ?? ""));
+      await logSensitiveAction({
+        actor_user_id: String(req.authUser?.id ?? ""),
+        actor_role: String(req.authUser?.role ?? ""),
+        action_type: "SALARY_VOUCHER_TALLY_PUSH",
+        module_key: "FINANCE",
+        entity_type: "salary_prep_run",
+        entity_id: req.params.runId,
+        change_summary: { period: generated.period, posted: result.posted, failed: result.failed, skipped: result.skipped },
+      }).catch(() => undefined);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      res.status(400).json({ success: false, error: error instanceof Error ? error.message : "Unable to post to Tally" });
     }
   }),
 );
