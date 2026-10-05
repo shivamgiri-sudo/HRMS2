@@ -78,6 +78,7 @@ on:
           - recode-63388c-attribution
           - recode-63388c-apply
           - recode-63388c-phase2
+          - recode-63388c-payroll-check
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -222,6 +223,14 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            recode-63388c-payroll-check)
+              # Read-only: August payroll lines for both 63388C people vs db_bill salary_data. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::recode-63388c-payroll-check is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/recode-63388c-payroll-check.ts
               ;;
             recode-63388c-phase2)
               # PHASE 2 of the 63388C clash: Tina's salary package and attendance from db_bill. dry-run writes nothing.
