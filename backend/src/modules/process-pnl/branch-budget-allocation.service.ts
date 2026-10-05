@@ -134,6 +134,11 @@ export interface MonthlyDriverRecord {
   /** "planned" when Finance typed a headcount, "live_employees" when it was derived from the
    *  staff actually posted to the cost centre. */
   headcountSource?: "planned" | "live_employees";
+  /** Where seatCount came from: typed for this month, carried from the latest earlier month that
+   *  had one, or the cost centre's own mandated seats. Null when no source has a value. */
+  seatSource?: "monthly" | "prior_month" | "cost_centre_master" | null;
+  /** The earlier period a carried-forward value (seat/area/device/hiring) was taken from. */
+  carriedFromPeriod?: string | null;
   costCentreId: string;
   costCentreName: string;
   plannedHeadcount: number;
@@ -269,11 +274,64 @@ export async function getMonthlyDrivers(
     liveHeadcountRows.map((row) => [String(row.cost_centre_id), Number(row.live_headcount ?? 0)])
   );
 
+  /*
+   * SEAT / AREA / DEVICE / HIRING CARRY FORWARD, THE SAME WAY HEADCOUNT FALLS BACK.
+   *
+   * These are typed once per cost centre per month, and every sharing method that divides by one
+   * refuses the whole line while all of them read zero. A new month starts with no rows, so a
+   * branch that set its seats last month hit "no cost centre has any seat count" on the 1st —
+   * and saving the screen before re-typing them wrote zero rows that kept it failing (NOIDA-2,
+   * 2026-10: 7 rows, seat_count 0, while 2026-09 held 6 typed counts).
+   *
+   * A value typed for THIS month always wins. Where it is zero or absent, the latest earlier month
+   * that has one is used, then the cost centre's own mandated seats (Cost Centre sheet) for seats.
+   * Revenue rate is deliberately not carried: it changes money, not just a split ratio.
+   */
+  const [priorRows] = (await executor.execute(
+    `SELECT cost_centre_id, period_code, seat_count, floor_area_sqft, device_count, hiring_volume
+       FROM finance_cost_centre_monthly_driver
+      WHERE branch_id = ? AND period_code < ?
+      ORDER BY period_code DESC`,
+    [branchId, periodCode]
+  )) as [RowDataPacket[], unknown];
+  const [masterSeatRows] = (await executor.execute(
+    `SELECT id, mandated_seats FROM cost_centre_master WHERE branch_id = ?`,
+    [branchId]
+  )) as [RowDataPacket[], unknown];
+  const masterSeats = new Map(masterSeatRows.map((r) => [String(r.id), Number(r.mandated_seats ?? 0)]));
+  const priorFor = (costCentreId: string, column: string): { value: number; period: string } | null => {
+    for (const r of priorRows) {
+      if (String(r.cost_centre_id) === costCentreId && Number(r[column] ?? 0) > 0) {
+        return { value: Number(r[column]), period: String(r.period_code) };
+      }
+    }
+    return null;
+  };
+
   return costCentres.map((cc) => {
     const row = byCostCentre.get(cc.id);
     const typedHeadcount = Number(row?.planned_headcount ?? 0);
     const plannedHeadcount = typedHeadcount > 0 ? typedHeadcount : (liveHeadcount.get(cc.id) ?? 0);
     const revenueRatePerHead = Number(row?.revenue_rate_per_head ?? 0);
+
+    let carriedFromPeriod: string | null = null;
+    const resolve = (typed: unknown, column: string): number => {
+      const value = Number(typed ?? 0);
+      if (value > 0) return value;
+      const prior = priorFor(cc.id, column);
+      if (prior) { carriedFromPeriod = carriedFromPeriod ?? prior.period; return prior.value; }
+      return 0;
+    };
+    const typedSeats = Number(row?.seat_count ?? 0);
+    const priorSeats = typedSeats > 0 ? null : priorFor(cc.id, "seat_count");
+    const masterSeat = masterSeats.get(cc.id) ?? 0;
+    const seatCount = typedSeats > 0 ? typedSeats : (priorSeats?.value ?? (masterSeat > 0 ? masterSeat : 0));
+    const seatSource: MonthlyDriverRecord["seatSource"] =
+      typedSeats > 0 ? "monthly" : priorSeats ? "prior_month" : masterSeat > 0 ? "cost_centre_master" : null;
+    if (priorSeats) carriedFromPeriod = priorSeats.period;
+    const floorAreaSqft = resolve(row?.floor_area_sqft, "floor_area_sqft");
+    const deviceCount = resolve(row?.device_count, "device_count");
+    const hiringVolume = resolve(row?.hiring_volume, "hiring_volume");
     return {
       costCentreId: cc.id,
       costCentreName: cc.costCentreName,
@@ -283,10 +341,12 @@ export async function getMonthlyDrivers(
       /** Where plannedHeadcount came from, so a screen can show a derived number as derived
        *  rather than passing it off as something Finance entered. */
       headcountSource: typedHeadcount > 0 ? ("planned" as const) : ("live_employees" as const),
-      seatCount: Number(row?.seat_count ?? 0),
-      floorAreaSqft: Number(row?.floor_area_sqft ?? 0),
-      deviceCount: Number(row?.device_count ?? 0),
-      hiringVolume: Number(row?.hiring_volume ?? 0),
+      seatSource,
+      carriedFromPeriod,
+      seatCount,
+      floorAreaSqft,
+      deviceCount,
+      hiringVolume,
       remarks: row?.remarks ?? null,
       status: (row?.status as "draft" | "approved") ?? "draft",
       updatedBy: row?.updated_by ? String(row.updated_by) : null,

@@ -50,12 +50,17 @@ function fakeExecutor(
   /** Live staff per cost centre, from `employees`. planned_headcount falls back to this when
    *  Finance has not typed one — see getMonthlyDrivers. Empty by default, so every existing
    *  fixture keeps behaving as though only the typed drivers exist. */
-  liveHeadcount: Array<{ cost_centre_id: string; live_headcount: number }> = []
+  liveHeadcount: Array<{ cost_centre_id: string; live_headcount: number }> = [],
+  /** Earlier months' driver rows, for the carry-forward of seat/area/device/hiring. */
+  priorDrivers: Array<Record<string, unknown>> = []
 ) {
   return {
     async execute(sql: string, params?: unknown[]) {
       if (sql.includes("FROM cost_centre_master")) {
         return [costCentres, []];
+      }
+      if (sql.includes("FROM finance_cost_centre_monthly_driver") && sql.includes("period_code < ?")) {
+        return [priorDrivers, []];
       }
       if (sql.includes("FROM finance_cost_centre_monthly_driver")) {
         return [drivers, []];
@@ -241,6 +246,40 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     expect(byId.cc1.grossAmount).toBe(byId.cc2.grossAmount); // 10 planned vs 10 live, so an even split
     expect(byId.cc3.grossAmount).toBe(0); // no plan, no staff
     expect(sumOf(rows, "grossAmount")).toBe(72500);
+  });
+
+  it("carries last month's seat counts forward when this month's rows hold zero (NOIDA-2, 2026-10)", async () => {
+    // Oct had driver rows with seat_count 0 while Sep held typed seats. Zero is "not typed", so the
+    // latest earlier month that has a value is used rather than refusing the whole budget.
+    const drivers: FakeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 0, remarks: null, status: "draft", updated_by: null, updated_at: null } as FakeDriver,
+    ];
+    const prior = [
+      { cost_centre_id: "cc1", period_code: "2026-09", seat_count: 300, floor_area_sqft: 0, device_count: 0, hiring_volume: 0 },
+      { cost_centre_id: "cc1", period_code: "2026-08", seat_count: 100, floor_area_sqft: 0, device_count: 0, hiring_volume: 0 },
+      { cost_centre_id: "cc2", period_code: "2026-09", seat_count: 100, floor_area_sqft: 0, device_count: 0, hiring_volume: 0 },
+    ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-10", "seat_count", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, drivers, [], [], [], [], prior)
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.driverValue).toBe(300); // latest earlier month wins over the older one
+    expect(byId.cc2.driverValue).toBe(100);
+    expect(byId.cc3.grossAmount).toBe(0);
+    expect(sumOf(rows, "grossAmount")).toBe(72500);
+  });
+
+  it("a seat count typed for this month wins over any earlier month", async () => {
+    const drivers = [
+      { cost_centre_id: "cc1", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 50, remarks: null, status: "draft", updated_by: null, updated_at: null },
+    ] as unknown as FakeDriver[];
+    const prior = [{ cost_centre_id: "cc1", period_code: "2026-09", seat_count: 300, floor_area_sqft: 0, device_count: 0, hiring_volume: 0 }];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-10", "seat_count", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, drivers, [], [], [], [], prior)
+    );
+    expect(Object.fromEntries(rows.map((r) => [r.costCentreId, r])).cc1.driverValue).toBe(50);
   });
 
   it("still refuses when NO cost centre has the driver — there is nothing to share by", async () => {
