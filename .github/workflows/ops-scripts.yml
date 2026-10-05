@@ -56,6 +56,7 @@ on:
           - sbi-card-demo-remove
           - holiday-mapping-audit
           - branch-activity-audit
+          - ats-candidate-created-date-repair
           - master-duplicate-audit
           - master-duplicate-merge
           - kit-esign-diagnose
@@ -365,6 +366,11 @@ jobs:
             branch-activity-audit)
               # Read-only in both modes.
               npx tsx scripts/branch-activity-audit.ts 2026-10-03 NOIDA-2
+              ;;
+            ats-candidate-created-date-repair)
+              # dry-runs unless given --apply.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/ats-candidate-created-date-repair.mjs $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
