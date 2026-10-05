@@ -23,6 +23,7 @@ import { format } from "date-fns";
 import { formatIST, formatISTDate } from "@/lib/utils";
 import { PlusCircle, RefreshCw, History } from "lucide-react";
 import { EmployeePicker, type EmployeeSearchResult } from "@/components/payroll/EmployeePicker";
+import { INCREMENT_ACTIONS_FOR_STATUS } from "@/components/payroll/incrementActions";
 
 type IncrStatus =
   | "submitted"
@@ -172,15 +173,7 @@ export function IncrementRequestsPanel() {
     setActionOpen(true);
   }
 
-  const APPROVE = { action: "approve", label: "Approve & Apply" };
-  const REJECT = { action: "reject", label: "Reject", variant: "destructive" as const };
-  const CANCEL = { action: "cancel", label: "Cancel", variant: "outline" as const };
-  const ACTIONS_FOR_STATUS: Record<string, Array<{ action: string; label: string; variant?: "default" | "destructive" | "outline" }>> = {
-    submitted:         [{ action: "hr_validate", label: "HR Validate", variant: "outline" }, APPROVE, REJECT, CANCEL],
-    hr_validated:      [APPROVE, REJECT, CANCEL],
-    finance_validated: [APPROVE, REJECT],
-    approved:          [{ action: "implement", label: "Apply" }],
-  };
+  const ACTIONS_FOR_STATUS = INCREMENT_ACTIONS_FOR_STATUS;
 
   return (
     <div className="space-y-6">

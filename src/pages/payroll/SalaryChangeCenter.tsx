@@ -43,6 +43,15 @@ import { IncrementRequestsPanel } from "@/components/payroll/IncrementRequestsPa
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
+interface SuccessData {
+  employeeName: string;
+  employeeCode: string;
+  oldCtc: number;
+  newCtc: number;
+  effectiveDate: string;
+  requestedBy: string;
+}
+
 // ── Success popup ────────────────────────────────────────────────────────────
 
 function SalaryChangedDialog({

@@ -9,6 +9,7 @@ describe("Salary Change & Increment is one page", () => {
   const panel = read("components/payroll/IncrementRequestsPanel.tsx");
   const picker = read("components/payroll/EmployeePicker.tsx");
   const incrementPage = read("pages/NativeSalaryIncrement.tsx");
+  const actions = read("components/payroll/incrementActions.ts");
 
   it("the hub has a Change salary tab and an Increment requests tab", () => {
     expect(hub).toContain("export function SalaryChangeHub");
@@ -34,6 +35,8 @@ describe("Salary Change & Increment is one page", () => {
   it("has no Finance step: the Payroll Head approves and the approval applies the increment", () => {
     expect(panel).not.toContain('action: "finance_validate"');
     expect(panel).not.toContain('label: "Finance Validate"');
-    expect(panel).toContain("Approve & Apply");
+    expect(panel).toContain("INCREMENT_ACTIONS_FOR_STATUS");
+    expect(actions).toContain("Approve & Apply");
+    expect(actions).not.toContain('action: "finance_validate"');
   });
 });
