@@ -16,10 +16,9 @@ const Q = process.argv[2] ?? "";
 const MONTH = process.argv[3] ?? "2026-08";
 
 async function main() {
-  const like = `%${Q}%`;
   const [emps] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code, first_name, last_name, active_status, date_of_joining, branch_id
-       FROM employees WHERE employee_code = ? OR CONCAT(first_name,' ',COALESCE(last_name,'')) LIKE ? LIMIT 10`, [Q, like]);
+       FROM employees WHERE employee_code = ? OR first_name LIKE ? OR last_name LIKE '%vacheer%' OR last_name LIKE '%vaheer%' LIMIT 10`, [Q, `${Q}%`]);
   console.log("EMPLOYEES", JSON.stringify(emps));
   for (const e of emps) {
     const id = String(e.id);
@@ -44,8 +43,8 @@ async function main() {
     const ytd = await payslipService.getYtdForEmployee(id, MONTH);
     console.log("YTD BY TYPE", JSON.stringify(ytd.ytd_by_type));
     const [att] = await db.execute<RowDataPacket[]>(
-      `SELECT status, COUNT(*) AS n FROM attendance_daily_record
-        WHERE employee_id = ? AND DATE_FORMAT(CONVERT_TZ(record_date, '+00:00', '+05:30'),'%Y-%m') = ? GROUP BY status`, [id, MONTH]);
+      `SELECT attendance_status AS status, COUNT(*) AS n FROM attendance_daily_record
+        WHERE employee_id = ? AND DATE_FORMAT(CONVERT_TZ(record_date, '+00:00', '+05:30'),'%Y-%m') = ? GROUP BY attendance_status`, [id, MONTH]);
     console.log("ATTENDANCE", MONTH, JSON.stringify(att));
   }
   process.exit(0);
