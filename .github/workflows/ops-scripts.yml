@@ -97,6 +97,7 @@ on:
           - salary-package-sources-audit
           - sep-attendance-vs-dbbill
           - sep-attendance-grid
+          - night-shift-apr-attribution-audit
           - create-missing-esa-for-run-lines
           - employee-components-audit
           - fix-63694c-package
@@ -374,6 +375,11 @@ jobs:
               # Dry-runs unless given --apply. Apply inserts the esa row the engine needs; no existing line is changed.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/create-missing-esa-for-run-lines.ts $FLAG
+              ;;
+            night-shift-apr-attribution-audit)
+              # Read-only in both modes: SELECTs only, prints counts only (no per-employee rows).
+              npx tsx scripts/night-shift-apr-attribution-audit.ts 2026-09
+              npx tsx scripts/night-shift-apr-attribution-audit.ts 2026-08
               ;;
             sep-attendance-grid)
               # Read-only in both modes: SELECTs against HRMS and db_bill only. Codes from employee_codes (comma list).
