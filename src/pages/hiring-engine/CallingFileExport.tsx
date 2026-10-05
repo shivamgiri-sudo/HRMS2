@@ -55,7 +55,7 @@ export default function CallingFileExport({ rows, label, onLogged }: { rows: Exp
       // Phone numbers and times must stay text so Excel does not turn 9999746258 into 1E+10 or "10:30 AM" into a fraction.
       for (let r = 1; r < aoa.length; r++) for (const c of [0, 3, 4]) { const ref = XLSX.utils.encode_cell({ r, c }); if (ws[ref]) { ws[ref].t = "s"; ws[ref].z = "@"; } }
       ws["!cols"] = [{ wch: 14 }, { wch: 20 }, { wch: 34 }, { wch: 18 }, { wch: 12 }, { wch: 70 }, { wch: 20 }];
-      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      const stamp = new Date().toISOString().slice(0, 16).replace(/\D/g, "");
       if (kind === "xlsx") {
         const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "calls");
         XLSX.writeFile(wb, `calling_file_${stamp}.xlsx`, { bookType: "xlsx" });
