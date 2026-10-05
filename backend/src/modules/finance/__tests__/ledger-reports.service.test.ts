@@ -18,15 +18,11 @@ describe("ledgerReportsService.trialBalance", () => {
           { account_type: "payable_account", account_id: "pam-tds", total_debit: "0.00", total_credit: "500.00" },
         ]];
       }
-      if (/FROM vendor_payment_tracking vpt LEFT JOIN grn_request/.test(sql)) {
-        // one bill of 9,500 (journaled) with 4,000 paid, and one 1,000 bill never posted to a head
-        return [[
-          { id: "b1", vendor_id: "v-1", branch_id: null, due_amount: "9500", paid_amount: "4000", payment_date: "2026-06-01", bill_day: "2026-05-01", grn_number: "G1", journaled: 1 },
-          { id: "b2", vendor_id: "v-1", branch_id: null, due_amount: "1000", paid_amount: "0", bill_day: "2026-05-02", grn_number: "G2", journaled: 0 },
-        ]];
+      if (/GROUP BY vpt\.vendor_id/.test(sql)) {
+        // bills 10,500 (1,000 of it never posted to a head), 4,000 paid
+        return [[{ vendor_id: "v-1", bills: "10500", unposted: "1000", tx_paid: "4000", gap_paid: "0", adj: "0" }]];
       }
-      if (/FROM vendor_payment_transaction/.test(sql)) return [[]];
-      if (/FROM grn_request g WHERE/.test(sql)) return [[]];
+      if (/GROUP BY g\.vendor_id/.test(sql)) return [[]];
       if (/finance_expense_sub_head_master/.test(sql)) return [[{ id: "sh-1", head_name: "Repairs", sub_head_name: "AC Servicing" }]];
       if (/vendor_master/.test(sql)) return [[{ id: "v-1", vendor_name: "Acme Traders" }]];
       if (/payable_account_master/.test(sql)) return [[{ id: "pam-tds", account_name: "TDS Payable" }]];

@@ -276,6 +276,70 @@ async function loadVendorItems(opts: {
   return items;
 }
 
+/**
+ * Per-vendor totals of the same bills and payments loadVendorItems() lists, summed in SQL so the
+ * Trial Balance does not pull ~35,000 rows into memory. Same rules: a bill is a credit, recorded
+ * payments plus any paid_amount without detail are debits, a paid_amount smaller than the recorded
+ * payments is a credit adjustment, GRNs settled before tracking count as bill + equal payment.
+ */
+async function loadVendorTotals(opts: {
+  asOf?: string; scope?: FinanceBranchScope; branchId?: string; costCentreId?: string; processId?: string;
+}): Promise<Map<string, { bills: number; payments: number; adjustments: number; unposted: number }>> {
+  const asOf = opts.asOf ?? "9999-12-31";
+  const out = new Map<string, { bills: number; payments: number; adjustments: number; unposted: number }>();
+  const slot = (id: string) => { let v = out.get(id); if (!v) { v = { bills: 0, payments: 0, adjustments: 0, unposted: 0 }; out.set(id, v); } return v; };
+
+  const bc = ["NOT (vpt.payment_status = 'Rejected' AND COALESCE(vpt.paid_amount,0) = 0)"];
+  const bp: unknown[] = [asOf, asOf, asOf, asOf, asOf];
+  if (opts.branchId) { bc.push("vpt.branch_id = ?"); bp.push(opts.branchId); }
+  if (opts.costCentreId) { bc.push("vpt.cost_centre_id = ?"); bp.push(opts.costCentreId); }
+  if (opts.processId) { bc.push("vpt.process_id = ?"); bp.push(opts.processId); }
+  pushBranchScope(bc, bp, opts.scope, "vpt.branch_id");
+  const [tracked] = await db.execute<RowDataPacket[]>(
+    `SELECT vpt.vendor_id,
+            SUM(CASE WHEN COALESCE(g.bill_date, DATE(vpt.created_at)) <= ? THEN vpt.due_amount ELSE 0 END) AS bills,
+            SUM(CASE WHEN COALESCE(g.bill_date, DATE(vpt.created_at)) <= ? AND jj.source_id IS NULL THEN vpt.due_amount ELSE 0 END) AS unposted,
+            SUM(COALESCE(x.s_asof, 0)) AS tx_paid,
+            SUM(CASE WHEN vpt.paid_amount - COALESCE(x.s, 0) > 0.005 AND COALESCE(vpt.payment_date, g.bill_date, DATE(vpt.created_at)) <= ?
+                     THEN vpt.paid_amount - COALESCE(x.s, 0) ELSE 0 END) AS gap_paid,
+            SUM(CASE WHEN vpt.paid_amount - COALESCE(x.s, 0) < -0.005 AND COALESCE(vpt.payment_date, g.bill_date, DATE(vpt.created_at)) <= ?
+                     THEN COALESCE(x.s, 0) - vpt.paid_amount ELSE 0 END) AS adj
+       FROM vendor_payment_tracking vpt
+       LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
+       LEFT JOIN (SELECT vendor_payment_id, SUM(amount) AS s, SUM(CASE WHEN payment_date <= ? THEN amount ELSE 0 END) AS s_asof
+                    FROM vendor_payment_transaction GROUP BY vendor_payment_id) x ON x.vendor_payment_id = vpt.id
+       LEFT JOIN (SELECT DISTINCT source_id FROM journal_entry WHERE source_type = 'grn' AND reversed_by_entry_id IS NULL) jj
+              ON jj.source_id = vpt.grn_request_id
+      WHERE ${bc.join(" AND ")}
+      GROUP BY vpt.vendor_id`, bp);
+  for (const r of tracked as RowDataPacket[]) {
+    const v = slot(String(r.vendor_id));
+    v.bills += Number(r.bills); v.unposted += Number(r.unposted);
+    v.payments += Number(r.tx_paid) + Number(r.gap_paid); v.adjustments += Number(r.adj);
+  }
+
+  if (!opts.processId) {
+    const gc = ["g.status = 'paid'", "g.vendor_id IS NOT NULL", "COALESCE(g.bill_date, DATE(g.created_at)) <= ?",
+      "NOT EXISTS (SELECT 1 FROM vendor_payment_tracking t WHERE t.grn_request_id = g.id)"];
+    const gp: unknown[] = [asOf];
+    if (opts.branchId) { gc.push("g.branch_id = ?"); gp.push(opts.branchId); }
+    if (opts.costCentreId) { gc.push("g.cost_centre_id = ?"); gp.push(opts.costCentreId); }
+    pushBranchScope(gc, gp, opts.scope, "g.branch_id");
+    const [legacy] = await db.execute<RowDataPacket[]>(
+      `SELECT g.vendor_id, SUM(COALESCE(NULLIF(g.amount_with_tax, 0), g.amount)) AS amt,
+              SUM(CASE WHEN jj.source_id IS NULL THEN COALESCE(NULLIF(g.amount_with_tax, 0), g.amount) ELSE 0 END) AS unposted
+         FROM grn_request g
+         LEFT JOIN (SELECT DISTINCT source_id FROM journal_entry WHERE source_type = 'grn' AND reversed_by_entry_id IS NULL) jj ON jj.source_id = g.id
+        WHERE ${gc.join(" AND ")}
+        GROUP BY g.vendor_id`, gp);
+    for (const r of legacy as RowDataPacket[]) {
+      const v = slot(String(r.vendor_id));
+      v.bills += Number(r.amt); v.payments += Number(r.amt); v.unposted += Number(r.unposted);
+    }
+  }
+  return out;
+}
+
 export type TrialBalanceRow = {
   accountType: AccountType;
   accountId: string;
@@ -364,18 +428,10 @@ export const ledgerReportsService = {
     const refs = journalRows.map((r) => ({ accountType: r.account_type as AccountType, accountId: String(r.account_id) }));
     const names = await resolveAccountNames(refs);
 
-    const items = (await loadVendorItems({ scope, branchId: filters?.branchId, costCentreId: filters?.costCentreId, processId: filters?.processId }))
-      .filter((it) => !asOfDate || it.day <= asOfDate);
-    const byVendor = new Map<string, { d: number; c: number }>();
+    const totals = await loadVendorTotals({ asOf: asOfDate, scope, branchId: filters?.branchId, costCentreId: filters?.costCentreId, processId: filters?.processId });
     let paymentsTotal = 0, unpostedTotal = 0;
-    for (const it of items) {
-      const v = byVendor.get(it.vendorId) ?? { d: 0, c: 0 };
-      v.d += it.debit; v.c += it.credit;
-      byVendor.set(it.vendorId, v);
-      paymentsTotal += it.debit; // the other half of every vendor debit
-      if (it.unposted) unpostedTotal += it.credit;
-    }
-    const vendorNames = await resolveAccountNames([...byVendor.keys()].map((id) => ({ accountType: "vendor" as AccountType, accountId: id })));
+    for (const v of totals.values()) { paymentsTotal += v.payments - v.adjustments; unpostedTotal += v.unposted; }
+    const vendorNames = await resolveAccountNames([...totals.keys()].map((id) => ({ accountType: "vendor" as AccountType, accountId: id })));
 
     let totalDebit = 0;
     let totalCredit = 0;
@@ -393,8 +449,8 @@ export const ledgerReportsService = {
         netBalance: money(totalD - totalC),
       };
     });
-    for (const [vendorId, v] of byVendor) {
-      const totalD = money(v.d), totalC = money(v.c);
+    for (const [vendorId, v] of totals) {
+      const totalD = money(v.payments), totalC = money(v.bills + v.adjustments);
       if (totalD === 0 && totalC === 0) continue;
       totalDebit += totalD; totalCredit += totalC;
       result.push({
