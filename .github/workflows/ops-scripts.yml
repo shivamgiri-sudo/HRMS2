@@ -85,6 +85,7 @@ on:
           - tally-reports-validate
           - tally-gaps-detail
           - unposted-grn-diagnose
+          - fix-gst-credit-note-roundoff
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -400,6 +401,11 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            fix-gst-credit-note-roundoff)
+              # Dry-runs unless given --apply. Apply flips the round-off sign on credit-note rows that do not add up.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/fix-gst-credit-note-roundoff.ts $FLAG
               ;;
             unposted-grn-diagnose)
               # Read-only in both modes: SELECTs only.
