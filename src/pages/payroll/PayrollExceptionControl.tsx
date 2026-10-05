@@ -14,7 +14,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { EmployeePicker, displayName as employeeDisplayName, type EmployeeSearchResult } from '@/components/payroll/EmployeePicker';
+import { EmployeePicker, employeeDisplayName, type EmployeeSearchResult } from '@/components/payroll/EmployeePicker';
 import {
   Loader2, ShieldCheck, CalendarDays, AlertTriangle, CheckCircle2, X, Fingerprint, Clock,
   Users, Search,
