@@ -39,14 +39,11 @@ describe("master rules", () => {
   });
 });
 
-import { prefixUpper } from "../he-master.service.js";
-describe("prefix ranges", () => {
-  it("covers every number starting with the prefix, including 99", () => {
-    for (const p of ["60", "89", "99"]) {
-      const lo = p, hi = prefixUpper(p);
-      expect(`${p}12345678` >= lo && `${p}12345678` < hi).toBe(true);
-      expect(`${p}99999999` < hi).toBe(true);
-    }
-    expect("9812345678" < prefixUpper("97")).toBe(false);
+import { prefixLike } from "../he-master.service.js";
+describe("prefix patterns", () => {
+  it("prefix -> LIKE pattern, full number -> exact, junk refused", () => {
+    expect(prefixLike("99")).toBe("99%");
+    expect(prefixLike("9876543210")).toBe("9876543210");
+    expect(() => prefixLike("9'%")).toThrow();
   });
 });

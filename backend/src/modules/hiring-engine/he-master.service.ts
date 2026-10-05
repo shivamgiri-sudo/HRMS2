@@ -31,10 +31,12 @@ export async function listPrefixes(): Promise<string[]> {
   return rows.map((r) => String(r.p));
 }
 
-/** Exclusive upper bound for a mobile-prefix range. "~" sorts after every digit, so "99" -> "99~" (not "100", which sorts
- *  BEFORE "99..." as text and silently matched nothing - the 99xx leads were skipped on the first live refresh). */
-export function prefixUpper(p: string): string {
-  return p + "~";
+/** LIKE pattern for a mobile prefix ("60" -> "60%") or one exact number. A range with an upper bound is not safe here:
+ *  under utf8mb4_unicode_ci punctuation such as "~" sorts BEFORE digits, so "60~" < "601..." and the range is empty
+ *  (and "100" sorts before "99..."). LIKE 'nn%' is collation-independent and still an index range scan. */
+export function prefixLike(p: string): string {
+  if (!/^\d{1,10}$/.test(p)) throw new Error("prefix must be digits");
+  return p.length === 10 ? p : p + "%";
 }
 
 const ymd = (v: unknown): string | null => (v ? new Date(v as string).toISOString().slice(0, 10) : null);
@@ -42,8 +44,7 @@ const ymd = (v: unknown): string | null => (v ? new Date(v as string).toISOStrin
 /** Recompute history + effort for every lead whose mobile starts with `prefix` (2 digits), or one exact mobile. */
 export async function refreshHistoryChunk(opts: { prefix?: string; mobile10?: string; employees?: Set<string> }): Promise<HistoryRefreshResult> {
   const prefix = opts.prefix ?? (opts.mobile10 ? opts.mobile10.slice(0, 2) : "00");
-  const lo = opts.mobile10 ?? prefix;
-  const hiExclusive = prefixUpper(opts.mobile10 ?? prefix);
+  const like = prefixLike(opts.mobile10 ?? prefix);
   const employees = opts.employees ?? (await activeEmployeeMobiles());
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -64,18 +65,18 @@ export async function refreshHistoryChunk(opts: { prefix?: string; mobile10?: st
                 COUNT(DISTINCT CASE WHEN a.walkin_flag OR a.final_selection_flag OR a.joined_flag
                          THEN COALESCE(a.walkin_date, a.pi_hr_interviewer_date, a.activity_date) END) AS walkin_days
            FROM ats_recruiter_hiring_activity a
-          WHERE a.mobile10 >= ? AND a.mobile10 < ?
+          WHERE a.mobile10 LIKE ?
           GROUP BY a.mobile10
        ) h ON h.mobile10 = l.mobile10
        LEFT JOIN (
          SELECT x.mobile10, x.remark FROM (
            SELECT a.mobile10, COALESCE(NULLIF(a.recruiter_remarks,''), a.current_status) AS remark,
                   ROW_NUMBER() OVER (PARTITION BY a.mobile10 ORDER BY a.activity_date DESC, a.created_at DESC) AS rn
-             FROM ats_recruiter_hiring_activity a WHERE a.mobile10 >= ? AND a.mobile10 < ?
+             FROM ats_recruiter_hiring_activity a WHERE a.mobile10 LIKE ?
          ) x WHERE x.rn = 1
        ) lr ON lr.mobile10 = l.mobile10
-      WHERE l.mobile10 >= ? AND l.mobile10 < ?`,
-    [lo, hiExclusive, lo, hiExclusive, lo, hiExclusive],
+      WHERE l.mobile10 LIKE ?`,
+    [like, like, like],
   );
 
   const byTier: Record<string, number> = {};

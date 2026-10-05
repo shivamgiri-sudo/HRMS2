@@ -6,7 +6,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { extractProfile, type LeadProfile } from "./he-profile.js";
 import { recordIdentities } from "./he-identity.service.js";
-import { prefixUpper } from "./he-master.service.js";
+import { prefixLike } from "./he-master.service.js";
 
 const BATCH = 500;
 const norm = (k: string) => k.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
@@ -28,13 +28,13 @@ function gender(v: unknown): LeadProfile["gender"] {
 }
 
 export async function refreshProfilesChunk(prefix: string): Promise<{ profiles: number }> {
-  const hi = prefixUpper(prefix);
+  const like = prefixLike(prefix);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT l.id, mr.raw_payload, c.gender AS ats_gender, c.aadhar_number_hash AS aadhaar_hash, c.pan_number_hash AS pan_hash
        FROM he_lead l
        LEFT JOIN meta_lead_raw mr ON mr.id = l.meta_lead_id
        LEFT JOIN ats_candidate c ON c.id = l.ats_candidate_id
-      WHERE l.mobile10 >= ? AND l.mobile10 < ? AND (l.meta_lead_id IS NOT NULL OR l.ats_candidate_id IS NOT NULL)`, [prefix, hi]);
+      WHERE l.mobile10 LIKE ? AND (l.meta_lead_id IS NOT NULL OR l.ats_candidate_id IS NOT NULL)`, [like]);
   const out: unknown[][] = [];
   for (const r of rows) {
     if (r.aadhaar_hash || r.pan_hash) await recordIdentities(r.id, { aadhaarHash: r.aadhaar_hash, panHash: r.pan_hash, source: "ats" });
