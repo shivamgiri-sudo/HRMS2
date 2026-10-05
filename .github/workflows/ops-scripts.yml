@@ -384,7 +384,7 @@ jobs:
               ;;
             payslip-diagnose)
               # Read-only in both modes: SELECTs only. Name or code comes from the employee_codes input.
-              npx tsx scripts/payslip-diagnose.ts "${INPUT_EMPLOYEE_CODES:-Abbir}" 2026-08
+              npx tsx scripts/payslip-diagnose.ts "${INPUT_EMPLOYEE_CODES:-abbir}" 2026-08
               ;;
             budget-driver-diagnose)
               # Read-only in both modes: SELECTs only.

@@ -16,10 +16,16 @@ const Q = process.argv[2] ?? "";
 const MONTH = process.argv[3] ?? "2026-08";
 
 async function main() {
+  // Comma-separated fragments; an employee matches when its full name contains ALL of them
+  // (so "abbir,vache" is narrower than "abbir"). An exact employee code also matches.
+  const frags = Q.split(",").map((f) => f.trim().toLowerCase()).filter(Boolean);
+  const nameClauses = frags.map(() => `LOWER(CONCAT(first_name,' ',COALESCE(last_name,''))) LIKE ?`).join(" AND ");
   const [emps] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code, first_name, last_name, active_status, date_of_joining, branch_id
-       FROM employees WHERE employee_code = ? OR first_name LIKE ? OR last_name LIKE '%vacheer%' OR last_name LIKE '%vaheer%' LIMIT 10`, [Q, `${Q}%`]);
+       FROM employees WHERE employee_code = ? OR (${nameClauses || "1=0"}) LIMIT 30`,
+    [Q, ...frags.map((f) => `%${f}%`)]);
   console.log("EMPLOYEES", JSON.stringify(emps));
+  if (emps.length > 4) { console.log("too many matches, narrow the fragments"); process.exit(0); }
   for (const e of emps) {
     const id = String(e.id);
     console.log(`\n=== ${e.employee_code} ${e.first_name} ${e.last_name ?? ""} ===`);
