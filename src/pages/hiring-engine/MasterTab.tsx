@@ -8,6 +8,7 @@ import { RefreshCcw, ShieldAlert } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState, num } from "@/components/analytics/analytics-kit";
 import Candidate360Drawer from "./Candidate360Drawer";
+import CandidateImport from "./CandidateImport";
 
 interface Summary {
   byTier: Array<{ tier: string; n: number }>;
@@ -127,6 +128,8 @@ export default function MasterTab() {
           {data && <p className="mt-3 text-xs text-slate-500">Former employees on file: {num(data.exEmployees.total)}, of which {num(data.exEmployees.clean)} left voluntarily and cleanly. They are contacted last.</p>}
         </section>
       </div>
+
+      <CandidateImport onDone={() => void load()} />
 
       <section className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><ShieldAlert className="h-4 w-4 text-amber-600" aria-hidden /> Possible same person ({clashes.length})</h2>

@@ -47,6 +47,9 @@
     "he_consent",
     "he_lead"
   ],
+  "modules/hiring-engine/he-profile.service.ts": [
+    "he_lead_profile"
+  ],
   "modules/integrations/cosec/cosec-registration.service.ts": [
     "mx_usermst"
   ],

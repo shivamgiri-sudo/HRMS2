@@ -6,6 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { applyEligibilityGate, type LeadFactsRow } from "./he-eligibility.service.js";
 import { refreshHistoryChunk } from "./he-master.service.js";
+import { loadProfiles } from "./he-profile.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { eduRank } from "../meta-campaign/lead-screener.service.js";
@@ -30,7 +31,24 @@ interface ReqRow extends RowDataPacket {
   requested_headcount: number; fulfilled_headcount: number; approval_status: string; active_status: number;
   meta_target_age_min: number | null; meta_target_age_max: number | null; meta_target_radius_km: number | null;
   education_requirement: string | null; experience_min_years: number | null; night_shift_required: number;
+  salary_max?: number | null; meta_screening_config?: unknown;
   blat: number | null; blng: number | null;
+}
+
+/** JD requirements beyond age/education: gender, languages, certifications, typing, written English (MetaScreeningConfig). */
+function screeningOf(raw: unknown): Pick<MatchRequisition, "gender" | "languages" | "certifications" | "minTypingWpm" | "englishLevel"> {
+  let c: Record<string, unknown> = {};
+  try { c = (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, unknown> ?? {}; } catch { c = {}; }
+  const g = c.gender === "male" || c.gender === "female" ? c.gender : null;
+  const langs = Array.isArray(c.language_requirements) ? (c.language_requirements as Array<{ language?: string }>).map((l) => String(l.language ?? "").toLowerCase()).filter(Boolean) : [];
+  const certs = Array.isArray(c.certifications) ? (c.certifications as unknown[]).map((x) => String(x).toUpperCase()).filter(Boolean) : [];
+  const wpm = Number(c.min_typing_speed_wpm);
+  const eng = c.written_english_level;
+  return {
+    gender: g as "male" | "female" | null, languages: langs.length ? langs : null, certifications: certs.length ? certs : null,
+    minTypingWpm: Number.isFinite(wpm) && wpm > 0 ? wpm : null,
+    englishLevel: eng === "basic" || eng === "intermediate" || eng === "advanced" ? eng : null,
+  };
 }
 
 export function toMatchRequisition(r: ReqRow): MatchRequisition & { id: string } {
@@ -43,6 +61,8 @@ export function toMatchRequisition(r: ReqRow): MatchRequisition & { id: string }
     nightShift: Boolean(r.night_shift_required),
     branchLat: r.blat, branchLng: r.blng, maxDistanceKm: r.meta_target_radius_km,
     processName: r.process_name,
+    salaryMax: r.salary_max != null && Number(r.salary_max) > 0 ? Number(r.salary_max) : null,
+    ...screeningOf(r.meta_screening_config),
   };
 }
 
@@ -50,7 +70,7 @@ async function loadRequisition(id: string): Promise<ReqRow | null> {
   const [rows] = await db.execute<ReqRow[]>(
     `SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount,
             jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km,
-            jr.education_requirement, jr.experience_min_years, jr.night_shift_required,
+            jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config,
             bm.latitude AS blat, bm.longitude AS blng
        FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE jr.id = ? LIMIT 1`, [id]);
@@ -140,18 +160,20 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   }
   const gate = await applyEligibilityGate(leads as unknown as LeadFactsRow[], { id: req.id, processName: req.process_name ?? null });
   const allowed = leads.filter((l) => gate.verdicts.get(l.id)?.eligible);
+  const profiles = await loadProfiles(allowed.map((l) => l.id as string));
   const scored = allowed
-    .map((l) => ({ id: l.id as string, priority: gate.verdicts.get(l.id)!.priority, consented: Number(l.has_consent) === 1, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng) }, mreq), eng: Number(l.eng) }))
+    .map((l) => ({ id: l.id as string, priority: gate.verdicts.get(l.id)!.priority, consented: Number(l.has_consent) === 1, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng), ...profiles.get(l.id as string) }, mreq), eng: Number(l.eng) }))
     .filter((x) => x.res.eligible)
     // Reachable people first (only consented leads can be messaged), then eligibility priority (ex-employees always last), then fit.
-    .sort((a, b) => (Number(b.consented) * 1000 - b.priority * 10 + b.res.score + b.eng * 0.2) - (Number(a.consented) * 1000 - a.priority * 10 + a.res.score + a.eng * 0.2))
+    // rankScore = fit weighted by how much of the JD we actually know, so a phone-only record does not outrank a proven fit.
+    .sort((a, b) => (Number(b.consented) * 1000 - b.priority * 10 + b.res.rankScore + b.eng * 0.2) - (Number(a.consented) * 1000 - a.priority * 10 + a.res.rankScore + a.eng * 0.2))
     .slice(0, want);
   for (const s of scored) {
     await db.execute(
       `INSERT INTO he_match (lead_id, requisition_id, drive_id, score, reasons_json, distance_km, state, token)
        VALUES (?,?,?,?,?,?, 'suggested', ?)
        ON DUPLICATE KEY UPDATE drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)`,
-      [s.id, drive.requisition_id, driveId, s.res.score, JSON.stringify({ reasons: s.res.reasons, unknown: s.res.unknown }), s.res.distanceKm, randomBytes(16).toString("hex")]);
+      [s.id, drive.requisition_id, driveId, s.res.score, JSON.stringify({ reasons: s.res.reasons, unknown: s.res.unknown, confidence: s.res.confidence, priority: s.priority }), s.res.distanceKm, randomBytes(16).toString("hex")]);
   }
   return { suggested: scored.length, blockedByReason: gate.blockedByReason, considered: leads.length };
 }
@@ -163,12 +185,13 @@ export async function alternativeRequisitions(leadId: string, excludeRequisition
   if (!l) return [];
   const [reqs] = await db.execute<ReqRow[]>(
     `SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.approval_status, jr.active_status,
-            jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required,
+            jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config,
             bm.latitude AS blat, bm.longitude AS blng
        FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount AND jr.id <> ? LIMIT 200`, [excludeRequisitionId]);
+  const prof = (await loadProfiles([leadId])).get(leadId) ?? {};
   const ranked = rankRequisitions(
-    { age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng) },
+    { age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng), ...prof },
     reqs.map(toMatchRequisition), limit);
   return ranked.map((x) => ({ requisitionId: x.req.id, score: x.result.score, reasons: x.result.reasons }));
 }

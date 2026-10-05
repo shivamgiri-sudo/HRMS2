@@ -12,6 +12,7 @@ const loaders = {
   drives: () => import("./DrivesTab"),
   leads: () => import("./LeadsTab"),
   master: () => import("./MasterTab"),
+  planner: () => import("./PlannerTab"),
   calls: () => import("./BulkCallsTab"),
   templates: () => import("./TemplatesTab"),
 };
@@ -21,12 +22,14 @@ const BoardTab = lazy(loaders.board);
 const TemplatesTab = lazy(loaders.templates);
 const BulkCallsTab = lazy(loaders.calls);
 const MasterTab = lazy(loaders.master);
+const PlannerTab = lazy(loaders.planner);
 
 const TABS = [
   { id: "board", label: "Walk-in board" },
   { id: "drives", label: "Drives" },
   { id: "leads", label: "Lead pool" },
   { id: "master", label: "Master" },
+  { id: "planner", label: "Planner" },
   { id: "calls", label: "Bulk calls" },
   { id: "templates", label: "Templates" },
 ] as const;
@@ -66,6 +69,7 @@ export default function HiringEnginePage() {
           {tab === "drives" && <DrivesTab />}
           {tab === "leads" && <LeadsTab />}
           {tab === "master" && <MasterTab />}
+          {tab === "planner" && <PlannerTab />}
           {tab === "calls" && <BulkCallsTab />}
           {tab === "templates" && <TemplatesTab />}
         </Suspense>

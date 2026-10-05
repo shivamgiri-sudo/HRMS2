@@ -14,6 +14,12 @@ export interface MatchLead {
   lat?: number | null;
   lng?: number | null;
   pastProcesses?: string[]; // processes the lead cleared a round for before
+  gender?: "male" | "female" | "other" | null;
+  languages?: string[] | null; // null = never asked; [] = asked, none confirmed
+  certifications?: string[] | null;
+  typingWpm?: number | null;
+  englishLevel?: "basic" | "intermediate" | "advanced" | null;
+  salaryExpectation?: number | null; // monthly INR
 }
 
 export interface MatchRequisition {
@@ -26,6 +32,12 @@ export interface MatchRequisition {
   branchLng?: number | null;
   maxDistanceKm?: number | null;
   processName?: string | null;
+  gender?: "male" | "female" | null; // null/any = no requirement
+  languages?: string[] | null;
+  certifications?: string[] | null;
+  minTypingWpm?: number | null;
+  englishLevel?: "basic" | "intermediate" | "advanced" | null;
+  salaryMax?: number | null; // monthly INR
 }
 
 export interface MatchResult {
@@ -34,7 +46,13 @@ export interface MatchResult {
   reasons: string[];
   unknown: string[];
   distanceKm: number | null;
+  /** Share of this JD's requirements we actually know about the lead (0..1). Thin records rank below proven fits. */
+  confidence: number;
+  /** Ordering key: fit score weighted by confidence. */
+  rankScore: number;
 }
+
+const ENG = { basic: 1, intermediate: 2, advanced: 3 } as const;
 
 export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
   const reasons: string[] = [];
@@ -84,8 +102,47 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
     reasons.push("cleared a round for this process before");
   }
 
+  if (req.gender) {
+    if (!lead.gender) unknown.push("gender");
+    else if (lead.gender !== req.gender) { eligible = false; reasons.push(`JD asks for ${req.gender} candidates`); }
+  }
+  if (req.languages?.length) {
+    if (lead.languages == null) unknown.push("languages");
+    else {
+      const missing = req.languages.filter((l) => !lead.languages!.includes(l.toLowerCase()));
+      if (missing.length) { eligible = false; reasons.push(`language not confirmed: ${missing.join(", ")}`); }
+      else score += 10;
+    }
+  }
+  if (req.certifications?.length) {
+    if (lead.certifications == null) unknown.push("certifications");
+    else {
+      const missing = req.certifications.filter((c) => !lead.certifications!.includes(c.toUpperCase()));
+      // Soft: certifications like DRA can be obtained during training, so it lowers the rank instead of excluding.
+      if (missing.length) { score -= 15; reasons.push(`needs ${missing.join(", ")}`); } else { score += 10; reasons.push("has required certification"); }
+    }
+  }
+  if (req.minTypingWpm) {
+    if (lead.typingWpm == null) unknown.push("typing");
+    else if (lead.typingWpm >= req.minTypingWpm) score += 5;
+    else { score -= 10; reasons.push(`typing ${lead.typingWpm} wpm < ${req.minTypingWpm}`); }
+  }
+  if (req.englishLevel) {
+    if (!lead.englishLevel) unknown.push("english");
+    else if (ENG[lead.englishLevel] >= ENG[req.englishLevel]) score += 5;
+    else { score -= 10; reasons.push(`english ${lead.englishLevel}, JD wants ${req.englishLevel}`); }
+  }
+  if (req.salaryMax && lead.salaryExpectation) {
+    if (lead.salaryExpectation > req.salaryMax * 1.15) { score -= 15; reasons.push(`expects ${lead.salaryExpectation}, JD max ${req.salaryMax}`); }
+    else score += 5;
+  }
+
+  const asked = [req.ageMin != null || req.ageMax != null, req.minEducationRank != null, (req.minExperienceYears ?? 0) > 0, req.nightShift === true,
+    true /* distance */, !!req.gender, !!req.languages?.length, !!req.certifications?.length, !!req.minTypingWpm, !!req.englishLevel].filter(Boolean).length;
+  const confidence = asked ? Math.max(0, Math.round(((asked - unknown.length) / asked) * 100) / 100) : 1;
   if (!eligible) score = 0;
-  return { score: Math.max(0, Math.min(100, score)), eligible, reasons, unknown, distanceKm };
+  const finalScore = Math.max(0, Math.min(100, score));
+  return { score: finalScore, eligible, reasons, unknown, distanceKm, confidence, rankScore: Math.round(finalScore * (0.6 + 0.4 * confidence) * 10) / 10 };
 }
 
 /** Best open requisitions for one lead, strongest first, ineligible dropped. */
@@ -97,6 +154,6 @@ export function rankRequisitions<R extends MatchRequisition & { id: string }>(
   return reqs
     .map((req) => ({ req, result: scoreLead(lead, req) }))
     .filter((x) => x.result.eligible)
-    .sort((a, b) => b.result.score - a.result.score)
+    .sort((a, b) => b.result.rankScore - a.result.rankScore)
     .slice(0, limit);
 }

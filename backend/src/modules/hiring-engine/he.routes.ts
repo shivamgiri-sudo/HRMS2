@@ -16,6 +16,10 @@ import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
 import { listPrepareCampaigns, prepareMissedWalkins, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
 import { applyCallResults, markExportedForCalling, previewCallResults } from "./he-call-results.service.js";
 import { getCandidate360 } from "./he-candidate360.service.js";
+import { refreshProfilesChunk } from "./he-profile.service.js";
+import { planHiring } from "./he-planner.service.js";
+import { ingestCandidates } from "./he-intake.service.js";
+import { INTAKE_SOURCES, type IntakeSource } from "./he-intake.js";
 import { listOpenClashes, resolveClash } from "./he-identity.service.js";
 import { refreshExEmployees } from "./he-ex-employee.service.js";
 import { getMasterSummary, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
@@ -379,7 +383,9 @@ heRouter.post("/master/refresh", requireAuth, requireRole(...ADMIN_ROLES), async
     const prefix = String((req.body as { prefix?: unknown })?.prefix ?? "");
     if (!prefix) return res.json({ prefixes: await listPrefixes() });
     if (!/^\d{2}$/.test(prefix)) return res.status(400).json({ message: "prefix must be 2 digits" });
-    res.json(await refreshHistoryChunk({ prefix }));
+    const history = await refreshHistoryChunk({ prefix });
+    const profiles = await refreshProfilesChunk(prefix);
+    res.json({ ...history, profiles: profiles.profiles });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] master refresh failed");
     res.status(500).json({ message: "Could not refresh history" });
@@ -414,4 +420,33 @@ heRouter.post("/identity/clashes/:id/resolve", requireAuth, requireRole(...WRITE
 heRouter.post("/master/ex-employees/refresh", requireAuth, requireRole(...ADMIN_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: await refreshExEmployees() }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] ex-employee refresh failed"); res.status(500).json({ message: "Could not refresh former employees" }); }
+});
+
+// Hiring planner: what to do per source per day (and how many recruiters) to reach a selection target by a date.
+heRouter.get("/planner", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+    const deadline = q.deadline && /^\d{4}-\d{2}-\d{2}$/.test(q.deadline) ? q.deadline : null;
+    const num = (v?: string) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
+    res.json({ success: true, data: await planHiring({ requisitionId: q.requisitionId ?? null, branch: q.branch ?? null, process: q.process ?? null, targetSelected: num(q.target), deadline, months: num(q.months), bufferPct: num(q.buffer) }) });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] planner failed");
+    res.status(500).json({ message: "Could not build the plan" });
+  }
+});
+
+// Candidate upload from any pool (portal export, vendor list, walk-in sheet...). Rows are parsed in the browser.
+heRouter.post("/candidates/import", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const b = req.body as { rows?: unknown; source?: unknown; dryRun?: unknown };
+    const source = String(b.source ?? "other") as IntakeSource;
+    if (!INTAKE_SOURCES.includes(source)) return res.status(400).json({ message: `source must be one of ${INTAKE_SOURCES.join(", ")}` });
+    if (!Array.isArray(b.rows)) return res.status(400).json({ message: "rows must be an array" });
+    res.json({ success: true, data: await ingestCandidates(b.rows as Array<Record<string, unknown>>, source, { dryRun: b.dryRun === true }) });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    if (e.statusCode === 400) return res.status(400).json({ message: e.message });
+    logger.error({ err: e.message }, "[he] candidate import failed");
+    res.status(500).json({ message: "Could not import candidates" });
+  }
 });

@@ -14,6 +14,7 @@ import type { EmailEvent } from "./he-signals.js";
 import { mapVapiEndOfCall, type VapiEndOfCall } from "./he-voice.js";
 import { loadToolResult, toolNextSlot, toolReportResult } from "./he-voice.service.js";
 import { completeBulkJob } from "./he-bulk-call.service.js";
+import { ingestCandidates } from "./he-intake.service.js";
 
 export const heWebhookRouter = Router();
 
@@ -126,5 +127,22 @@ heWebhookRouter.post("/voice-vapi", async (req, res) => {
   } catch (err) {
     logger.error({ err: (err as Error).message, type: msg.type }, "[he-hook] vapi failed");
     return res.status(500).json({ success: false });
+  }
+});
+
+// Job website / portal feed: POST {source?: "website", candidates: [{mobile, name, email, ...}]} with x-he-token.
+heWebhookRouter.post("/candidates", async (req, res) => {
+  if (!authorised(req, res)) return;
+  try {
+    const b = req.body as { candidates?: unknown; source?: unknown };
+    if (!Array.isArray(b.candidates) || b.candidates.length === 0) return res.status(400).json({ success: false, message: "candidates must be a non-empty array" });
+    if (b.candidates.length > 500) return res.status(400).json({ success: false, message: "max 500 candidates per call" });
+    const source = b.source === "portal" || b.source === "vendor" || b.source === "referral" ? b.source : "website";
+    res.json({ success: true, data: await ingestCandidates(b.candidates as Array<Record<string, unknown>>, source) });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    if (e.statusCode === 400) return res.status(400).json({ success: false, message: e.message });
+    logger.error({ err: e.message }, "[he-hook] candidate feed failed");
+    res.status(500).json({ success: false, message: "could not ingest" });
   }
 });
