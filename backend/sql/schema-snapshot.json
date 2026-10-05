@@ -1867,7 +1867,8 @@
       "followup_rescheduled_to",
       "is_followup_attempt",
       "followup_of_activity_id",
-      "walkin_date"
+      "walkin_date",
+      "mobile10"
     ],
     "ats_recruiter_hiring_import_batch": [
       "id",

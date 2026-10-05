@@ -15,6 +15,7 @@ import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches
 import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
 import { listPrepareCampaigns, prepareMissedWalkins, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
 import { applyCallResults, markExportedForCalling, previewCallResults } from "./he-call-results.service.js";
+import { getMasterSummary, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
@@ -358,4 +359,26 @@ heRouter.post("/call-results", requireAuth, requireRole(...WRITE_ROLES), async (
 heRouter.get("/meta-recruitment", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: await getMetaRecruitment() }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] meta recruitment failed"); res.status(500).json({ success: false, message: "Could not load the recruitment numbers" }); }
+});
+
+// Recruitment master: rollup summary, and chunked history refresh (one 2-digit mobile prefix per call; omit prefix to list them).
+heRouter.get("/master/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try {
+    res.json(await getMasterSummary());
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] master summary failed");
+    res.status(500).json({ message: "Could not load the master summary" });
+  }
+});
+
+heRouter.post("/master/refresh", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  try {
+    const prefix = String((req.body as { prefix?: unknown })?.prefix ?? "");
+    if (!prefix) return res.json({ prefixes: await listPrefixes() });
+    if (!/^\d{2}$/.test(prefix)) return res.status(400).json({ message: "prefix must be 2 digits" });
+    res.json(await refreshHistoryChunk({ prefix }));
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] master refresh failed");
+    res.status(500).json({ message: "Could not refresh history" });
+  }
 });
