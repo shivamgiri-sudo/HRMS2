@@ -869,6 +869,72 @@ export async function getBgvPendingDetail(
   }));
 }
 
+
+// ── 11b. Address verification awaiting HR review ────────────────────────────────────────────
+// candidate_bgv_address_verification: the candidate submits a geo-tagged selfie; it auto-passes only within 50 m of the
+// declared address' reference point (a pincode centre, so it practically never does) and otherwise sits at
+// status 'submitted' until HR decides pass / fail / review on that candidate's BGV report page. There was no list of
+// those waiting cases anywhere: live 2026-10-05, 33 submissions (up to 17 days old), 0 ever decided. This block is
+// that list. Not nudgeable: the open action is HR's, not the joiner's. A candidate with a verified attempt is done.
+const ADDRESS_REVIEW_WHERE = `v.status = 'submitted' AND (v.hr_decision IS NULL OR v.hr_decision = 'review')
+        AND NOT EXISTS (SELECT 1 FROM candidate_bgv_address_verification vv WHERE vv.candidate_id = v.candidate_id AND vv.status = 'verified')`;
+
+export async function getAddressReviewPendingBlock(): Promise<CountBlock> {
+  const branches = await allBranches();
+  const rows = await query<RowDataPacket>(
+    "address-review-pending",
+    `SELECT e.branch_id, COUNT(DISTINCT e.id) AS n
+       FROM candidate_bgv_address_verification v
+       JOIN ats_onboarding_bridge b ON b.candidate_id = v.candidate_id
+       JOIN employees e ON e.id = b.employee_id
+      WHERE ${ADDRESS_REVIEW_WHERE}
+        AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+      GROUP BY e.branch_id`,
+    [NEW_JOINER_WINDOW_DAYS],
+  );
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
+}
+
+export async function getAddressReviewPendingDetail(
+  branchId: string,
+): Promise<OnboardingDetailRow[]> {
+  const rows = await query<RowDataPacket>(
+    "address-review-pending-detail",
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, v.submitted_at,
+            CASE WHEN v.gps_distance_m IS NULL THEN 'No GPS captured'
+                 WHEN v.gps_distance_m < 1000 THEN CONCAT(ROUND(v.gps_distance_m), ' m from declared address')
+                 WHEN v.gps_distance_m < 100000 THEN CONCAT(ROUND(v.gps_distance_m / 1000, 1), ' km from declared address')
+                 ELSE CONCAT(ROUND(v.gps_distance_m / 1000), ' km away - different city') END AS status,
+            DATEDIFF(CURDATE(), DATE(v.submitted_at)) AS days_open
+       FROM candidate_bgv_address_verification v
+       JOIN ats_onboarding_bridge b ON b.candidate_id = v.candidate_id
+       JOIN employees e ON e.id = b.employee_id
+      WHERE e.branch_id = ? AND ${ADDRESS_REVIEW_WHERE}
+        AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+      ORDER BY v.submitted_at DESC
+      LIMIT 400`,
+    [branchId, NEW_JOINER_WINDOW_DAYS],
+  );
+  const seen = new Set<string>();
+  const out: OnboardingDetailRow[] = [];
+  for (const r of rows) {
+    const id = String(r.employee_id);
+    if (seen.has(id)) continue; // newest attempt per employee
+    seen.add(id);
+    out.push({
+      employeeId: id,
+      employeeCode: String(r.employee_code ?? ""),
+      employeeName: String(r.full_name ?? ""),
+      status: String(r.status),
+      daysOpen: Number(r.days_open ?? 0),
+    });
+  }
+  return out.sort((a, b) => b.daysOpen - a.daysOpen).slice(0, 200);
+}
+
 // ── 12-14. IT / Admin / WFM Provisioning pending ────────────────────────────────────────────
 // it_provisioning_request.assigned_role distinguishes the three onboarding provisioning owners
 // sharing one table shape. request_type='join' scopes to onboarding (vs 'exit'). Live data
@@ -970,6 +1036,7 @@ export interface OpsControlTowerSummary {
   accountDetailsMissing: CountBlock;
   docsPending: CountBlock;
   bgvPending: CountBlock;
+  addressReviewPending: CountBlock;
   itProvisioningPending: CountBlock;
   adminProvisioningPending: CountBlock;
   wfmProvisioningPending: CountBlock;
@@ -992,6 +1059,7 @@ export async function getOpsControlTowerSummary(
     accountDetailsMissing,
     docsPending,
     bgvPending,
+    addressReviewPending,
     itProvisioningPending,
     adminProvisioningPending,
     wfmProvisioningPending,
@@ -1008,6 +1076,7 @@ export async function getOpsControlTowerSummary(
     getAccountDetailsMissingBlock(),
     getDocsPendingBlock(),
     getBgvPendingBlock(),
+    getAddressReviewPendingBlock(),
     getItProvisioningPendingBlock(),
     getAdminProvisioningPendingBlock(),
     getWfmProvisioningPendingBlock(),
@@ -1028,6 +1097,7 @@ export async function getOpsControlTowerSummary(
     accountDetailsMissing,
     docsPending,
     bgvPending,
+    addressReviewPending,
     itProvisioningPending,
     adminProvisioningPending,
     wfmProvisioningPending,

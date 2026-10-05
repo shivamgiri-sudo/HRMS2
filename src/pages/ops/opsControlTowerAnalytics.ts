@@ -21,6 +21,7 @@ export function buildFunnel(d: OpsControlTowerSummary): FunnelStep[] {
     { key: "esign-pending", label: "Joining-kit eSign", sectionId: "esign", total: d.esignPending.grandTotal },
     { key: "appointment-letter", label: "Appointment letter", sectionId: "appt", total: d.appointmentLetter.grandTotal },
     { key: "bgv-pending", label: "BGV", sectionId: "bgv", total: d.bgvPending.grandTotal },
+    { key: "address-review-pending", label: "Address review", sectionId: "address-review", total: d.addressReviewPending.grandTotal },
     { key: "it-provisioning-pending", label: "IT", sectionId: "it-prov", total: d.itProvisioningPending.grandTotal },
     { key: "admin-provisioning-pending", label: "Admin", sectionId: "admin-prov", total: d.adminProvisioningPending.grandTotal },
     { key: "wfm-provisioning-pending", label: "WFM", sectionId: "wfm-prov", total: d.wfmProvisioningPending.grandTotal },
@@ -44,7 +45,7 @@ export function rankBranches(d: OpsControlTowerSummary, limit = 8): BranchRank[]
     ["fnf-pending", "F&F", d.fnfPending], ["noc-pending", "NOC", d.nocPending],
     ["digilocker-pending", "DigiLocker", d.digilockerPending], ["esign-pending", "eSign", d.esignPending],
     ["appointment-letter", "Appt. letter", d.appointmentLetter], ["penny-drop-missing", "Penny drop", d.pennyDropMissing],
-    ["account-details-missing", "Bank details", d.accountDetailsMissing], ["docs-pending", "Documents", d.docsPending], ["bgv-pending", "BGV", d.bgvPending],
+    ["account-details-missing", "Bank details", d.accountDetailsMissing], ["docs-pending", "Documents", d.docsPending], ["bgv-pending", "BGV", d.bgvPending], ["address-review-pending", "Address review", d.addressReviewPending],
     ["it-provisioning-pending", "IT", d.itProvisioningPending], ["admin-provisioning-pending", "Admin", d.adminProvisioningPending],
     ["wfm-provisioning-pending", "WFM", d.wfmProvisioningPending],
   ];
@@ -107,7 +108,10 @@ export function rowLinks(block: DetailBlockKey, r: { employeeId: string; candida
   if (block === "docs-pending") { fix("documents", "Upload documents"); links.push({ label: "Joining docs", href: `/employees/${r.employeeId}/joining-documents` }); }
   if (block === "digilocker-pending" || block === "bgv-pending") fix("bgv", "Verification (DigiLocker / BGV)");
   if (block === "esign-pending") links.push({ label: "Joining docs", href: `/employees/${r.employeeId}/joining-documents` });
-  if (block === "bgv-pending" && r.candidateId) links.push({ label: "BGV report", href: `/bgv-report-view/${r.candidateId}` });
+  if ((block === "bgv-pending" || block === "address-review-pending") && r.candidateId) {
+    const l = { label: block === "address-review-pending" ? "Review address (BGV report)" : "BGV report", href: `/bgv-report-view/${r.candidateId}` };
+    if (block === "address-review-pending") links.unshift({ ...l, primary: true }); else links.push(l);
+  }
   return links;
 }
 

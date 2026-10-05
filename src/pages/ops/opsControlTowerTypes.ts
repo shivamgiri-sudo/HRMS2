@@ -60,6 +60,7 @@ export interface OpsControlTowerSummary {
   accountDetailsMissing: CountBlock;
   docsPending: CountBlock;
   bgvPending: CountBlock;
+  addressReviewPending: CountBlock;
   itProvisioningPending: CountBlock;
   adminProvisioningPending: CountBlock;
   wfmProvisioningPending: CountBlock;
@@ -76,6 +77,7 @@ export type DetailBlockKey =
   | "account-details-missing"
   | "docs-pending"
   | "bgv-pending"
+  | "address-review-pending"
   | "it-provisioning-pending"
   | "admin-provisioning-pending"
   | "wfm-provisioning-pending";

@@ -22,7 +22,7 @@ vi.mock("../../communication/providers/provider.factory.js", () => ({
 vi.mock("../ops-control-tower.service.js", () => ({
   allBranches: vi.fn(async () => []),
   getAccountDetailsMissingDetail: vi.fn(), getDocsPendingDetail: vi.fn(), getAppointmentLetterDetail: vi.fn(),
-  getBgvPendingDetail: vi.fn(), getDigilockerPendingDetail: vi.fn(), getEsignPendingDetail: vi.fn(), getPennyDropMissingDetail: vi.fn(),
+  getBgvPendingDetail: vi.fn(), getAddressReviewPendingDetail: vi.fn(), getDigilockerPendingDetail: vi.fn(), getEsignPendingDetail: vi.fn(), getPennyDropMissingDetail: vi.fn(),
 }));
 
 import { emailOnboardingLink } from "../ops-nudge.service.js";

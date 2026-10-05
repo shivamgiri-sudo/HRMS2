@@ -61,6 +61,8 @@ describe("joiner-journey sections drop anyone who has since left, but keep pre-j
     ["Bank details list", () => svc.getAccountDetailsMissingDetail(B)],
     ["BGV summary", () => svc.getBgvPendingBlock()],
     ["BGV list", () => svc.getBgvPendingDetail(B)],
+    ["Address review summary", () => svc.getAddressReviewPendingBlock()],
+    ["Address review list", () => svc.getAddressReviewPendingDetail(B)],
     ["IT provisioning summary", () => svc.getItProvisioningPendingBlock()],
     ["IT provisioning list", () => svc.getItProvisioningPendingDetail(B)],
     ["Admin provisioning list", () => svc.getAdminProvisioningPendingDetail(B)],

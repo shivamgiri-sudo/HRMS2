@@ -27,7 +27,7 @@ const summary = {
   rosterUploaded: { branches: [{ branchId: "b1", branchName: "NOIDA", lastDateMs: null, stale: true }] },
   joining: { branches: [{ branchId: "b1", branchName: "NOIDA", total: 1, buckets: { "Same day": 1 } }], grandTotal: 1, grandBuckets: { "Same day": 1 } },
   fnfPending: block(1), nocPending: block(1), digilockerPending: block(2), esignPending: block(1), appointmentLetter: block(1),
-  pennyDropMissing: block(4), accountDetailsMissing: block(5), docsPending: block(6), bgvPending: block(1),
+  pennyDropMissing: block(4), accountDetailsMissing: block(5), docsPending: block(6), bgvPending: block(1), addressReviewPending: block(0),
   itProvisioningPending: block(1), adminProvisioningPending: block(1), wfmProvisioningPending: block(1),
 };
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });

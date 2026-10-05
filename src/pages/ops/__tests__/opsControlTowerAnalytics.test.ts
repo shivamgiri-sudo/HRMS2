@@ -17,7 +17,7 @@ function summary(over: Partial<OpsControlTowerSummary> = {}): OpsControlTowerSum
     attendanceMismatch: { branches: [{ branchId: "b1", branchName: "NOIDA", count: 2, stale: false, correctionLastDateMs: null }], grandTotal: 2 },
     rosterUploaded: { branches: [] }, joining: { branches: [], grandTotal: 0, grandBuckets: {} },
     fnfPending: empty, nocPending: empty, digilockerPending: empty, esignPending: empty, appointmentLetter: empty,
-    pennyDropMissing: empty, accountDetailsMissing: empty, docsPending: empty, bgvPending: empty,
+    pennyDropMissing: empty, accountDetailsMissing: empty, docsPending: empty, bgvPending: empty, addressReviewPending: empty,
     itProvisioningPending: empty, adminProvisioningPending: empty, wfmProvisioningPending: empty,
     ...over,
   } as unknown as OpsControlTowerSummary;
@@ -26,7 +26,7 @@ function summary(over: Partial<OpsControlTowerSummary> = {}): OpsControlTowerSum
 describe("funnel", () => {
   it("lists joiner steps in journey order with totals", () => {
     const f = buildFunnel(summary({ digilockerPending: blk([["b1", "NOIDA", 5]]) }));
-    expect(f.map((s) => s.label)).toEqual(["Bank details", "Documents", "Penny drop", "DigiLocker", "Joining-kit eSign", "Appointment letter", "BGV", "IT", "Admin", "WFM"]);
+    expect(f.map((s) => s.label)).toEqual(["Bank details", "Documents", "Penny drop", "DigiLocker", "Joining-kit eSign", "Appointment letter", "BGV", "Address review", "IT", "Admin", "WFM"]);
     expect(f.find((s) => s.key === "digilocker-pending")?.total).toBe(5);
   });
   it("bottleneck is the biggest step, or null when nothing is pending", () => {

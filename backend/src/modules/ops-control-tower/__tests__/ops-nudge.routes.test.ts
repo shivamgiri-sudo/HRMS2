@@ -38,7 +38,7 @@ vi.mock('../ops-control-tower.service.js', () => ({
   getAttendanceMismatchDetail: vi.fn(), getFnfPendingDetail: vi.fn(), getNocPendingDetail: vi.fn(),
   getDigilockerPendingDetail: (...a: unknown[]) => m.loader(...a),
   getEsignPendingDetail: vi.fn(), getAppointmentLetterDetail: vi.fn(), getPennyDropMissingDetail: vi.fn(),
-  getAccountDetailsMissingDetail: vi.fn(), getDocsPendingDetail: vi.fn(), getBgvPendingDetail: vi.fn(), getItProvisioningPendingDetail: vi.fn(),
+  getAccountDetailsMissingDetail: vi.fn(), getDocsPendingDetail: vi.fn(), getBgvPendingDetail: vi.fn(), getAddressReviewPendingDetail: vi.fn(), getItProvisioningPendingDetail: vi.fn(),
   getAdminProvisioningPendingDetail: vi.fn(), getWfmProvisioningPendingDetail: vi.fn(),
 }));
 vi.mock('../ops-nudge.service.js', () => ({
