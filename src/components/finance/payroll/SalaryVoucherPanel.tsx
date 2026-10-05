@@ -121,30 +121,37 @@ export function SalaryVoucherPanel() {
           description="What will post to Tally for this payroll run, one journal per company and branch."
           action={
             <div className="flex items-center gap-1">
-              <GrnChip
-                active={false}
-                onClick={async () => {
-                  if (!runId) return;
-                  // Fetched through hrmsApi so the bearer token goes with it — a bare
-                  // window.open sends no Authorization header and the API answers
-                  // "Missing authorization token". Same API route, so the file still comes from
-                  // the same scope resolution as the table and the column order Tally imports by.
-                  try {
-                    const blob = await hrmsApi.getBlob(exportUrl);
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `salary-voucher-${period || runId}.csv`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  } catch (error) {
-                    window.alert(error instanceof Error ? error.message : "Export failed");
-                  }
-                }}
-              >
-                <Download className="mr-1 h-3.5 w-3.5" />
-                Export for Tally
-              </GrnChip>
+              {([
+                ["csv", "CSV", "csv"],
+                ["xlsx", "Excel", "xlsx"],
+                ["xml", "Tally XML", "xml"],
+              ] as const).map(([format, label, ext]) => (
+                <GrnChip
+                  key={format}
+                  active={false}
+                  onClick={async () => {
+                    if (!runId) return;
+                    // Fetched through hrmsApi so the bearer token goes with it — a bare
+                    // window.open sends no Authorization header and the API answers
+                    // "Missing authorization token". Same API route, so the file still comes from
+                    // the same scope resolution as the table.
+                    try {
+                      const blob = await hrmsApi.getBlob(`${exportUrl}${query ? "&" : "?"}format=${format}`);
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `salary-voucher-${period || runId}.${ext}`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    } catch (error) {
+                      window.alert(error instanceof Error ? error.message : "Export failed");
+                    }
+                  }}
+                >
+                  <Download className="mr-1 h-3.5 w-3.5" />
+                  {format === "csv" ? "Export for Tally (CSV)" : label}
+                </GrnChip>
+              ))}
               <GrnIconButton aria-label="Refresh" onClick={() => voucherQuery.refetch()}>
                 <RefreshCw className={`h-3.5 w-3.5 ${voucherQuery.isFetching ? "animate-spin" : ""}`} />
               </GrnIconButton>

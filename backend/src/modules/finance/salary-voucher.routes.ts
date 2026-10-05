@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { SYNTHETIC_RUN_CREATORS } from "../payroll/payroll.service.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { resolveFinanceBranchScopeSet } from "./finance-access-scope.js";
+import { buildCsv, buildTallyXml, buildXlsx, parseFormat } from "./salary-voucher-formats.js";
 import { salaryVoucherService, type Voucher } from "./salary-voucher.service.js";
 import { billSalaryVoucherService } from "./salary-voucher-bill.service.js";
 
@@ -129,60 +130,21 @@ salaryVoucherRouter.get(
       });
       const vouchers = await scopeVouchers(req, generated.vouchers);
 
-      // Split columns are per company, and an export spanning two companies with different
-      // cohort counts would have a ragged header. The widest wins; narrower rows pad with blanks.
-      const splitCount = vouchers.reduce(
-        (max, v) => Math.max(max, v.cohort_labels.length > 1 ? v.cohort_labels.length : 0), 0);
-
-      // The reference leaves these two headers blank; they are named here (cohort first, then the
-      // remainder — the same order the row values are printed in) so the file is readable. Tally
-      // maps by position, so the text does not affect the import.
-      const widest = vouchers.reduce<string[]>(
-        (best, v) => (v.cohort_labels.length > best.length ? v.cohort_labels : best), []);
-      const splitHeaders = [...widest.slice(1), widest[0] ?? ""];
-
-      const header = [
-        "Vch No", "Date", "Details", "Amount",
-        ...Array.from({ length: splitCount }, (_, i) => splitHeaders[i] ?? ""),
-        "DebitCredit", "Cost Category", "Cost Centre",
-        "Narration for Each Entry", "Narration", "VchType",
-      ];
-
-      const rows: unknown[][] = [];
-      for (const voucher of vouchers) {
-        for (const line of voucher.lines) {
-          // The reference prints the cohort column FIRST and the remainder second, which is the
-          // reverse of how they are held internally.
-          const split = splitCount
-            ? [...line.columns.slice(1), line.columns[0], ...Array.from({ length: Math.max(0, splitCount - line.columns.length) }, () => "")]
-            : [];
-          rows.push([
-            voucher.voucher_no,
-            voucher.date,
-            line.ledger_name,
-            line.amount,
-            ...split,
-            line.debit_credit,
-            voucher.cost_category,
-            voucher.cost_centre,
-            voucher.narration,
-            `${voucher.narration} Vch No:${voucher.voucher_no}`,
-            voucher.voucher_type,
-          ]);
-        }
+      const format = parseFormat(req.query.format);
+      const base = `salary-voucher-${generated.period}`;
+      if (format === "xlsx") {
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename="${base}.xlsx"`);
+        return res.send(await buildXlsx(vouchers));
       }
-
-      const escape = (value: unknown) => {
-        const text = String(value ?? "");
-        return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-      };
-      const csv = [header, ...rows].map((r) => r.map(escape).join(",")).join("\n");
+      if (format === "xml") {
+        res.setHeader("Content-Type", "application/xml; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${base}.xml"`);
+        return res.send(buildTallyXml(vouchers));
+      }
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="salary-voucher-${generated.period}.csv"`,
-      );
-      res.send(csv);
+      res.setHeader("Content-Disposition", `attachment; filename="${base}.csv"`);
+      res.send(buildCsv(vouchers));
     } catch (error) {
       res.status(400).json({
         success: false,
