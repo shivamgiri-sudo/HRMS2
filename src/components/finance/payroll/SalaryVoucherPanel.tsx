@@ -139,11 +139,23 @@ export function SalaryVoucherPanel() {
             <div className="flex items-center gap-1">
               <GrnChip
                 active={false}
-                onClick={() => {
+                onClick={async () => {
                   if (!runId) return;
-                  // Straight to the API so the file is produced by the same scope resolution as
-                  // the table, and in the column order Tally imports by position.
-                  window.open(exportUrl, "_blank", "noopener");
+                  // Fetched through hrmsApi so the bearer token goes with it — a bare
+                  // window.open sends no Authorization header and the API answers
+                  // "Missing authorization token". Same API route, so the file still comes from
+                  // the same scope resolution as the table and the column order Tally imports by.
+                  try {
+                    const blob = await hrmsApi.getBlob(exportUrl);
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `salary-voucher-${period || runId}.${isBillSourced ? "json" : "csv"}`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch (error) {
+                    window.alert(error instanceof Error ? error.message : "Export failed");
+                  }
                 }}
               >
                 <Download className="mr-1 h-3.5 w-3.5" />

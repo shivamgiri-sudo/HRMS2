@@ -21,7 +21,7 @@ import { billSalaryVoucherService } from "./salary-voucher-bill.service.js";
  * branches' vouchers, not the whole company's.
  */
 
-const VOUCHER_ROLES = ["finance_head", "payroll_hr", "super_admin"] as const;
+const VOUCHER_ROLES = ["finance_head", "accounts_head", "payroll_head", "payroll_hr", "super_admin"] as const;
 
 export const salaryVoucherRouter = Router();
 

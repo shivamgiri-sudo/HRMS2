@@ -112,7 +112,7 @@ describe("authorisation", () => {
   it("restricts the voucher to finance and payroll roles", () => {
     // Not the broad GRN read set, and never branch_admin: one response carries a branch's whole
     // payroll and what each person had recovered from them.
-    expect(SRC).toContain('const VOUCHER_ROLES = ["finance_head", "payroll_hr", "super_admin"] as const;');
+    expect(SRC).toContain('const VOUCHER_ROLES = ["finance_head", "accounts_head", "payroll_head", "payroll_hr", "super_admin"] as const;');
     // Checked against the role list rather than the whole file: the prose above it names
     // branch_admin precisely to say it is excluded.
     const roleList = SRC.slice(SRC.indexOf("const VOUCHER_ROLES"), SRC.indexOf("as const;") + 9);

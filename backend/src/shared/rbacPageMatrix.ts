@@ -946,6 +946,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "FINANCE_BILLABILITY_SEAT_COST",
     "FINANCE_GRN",
+    "FINANCE_SALARY_VOUCHER",
     "FINANCE_PROCESS_PNL",
     "FINANCE_VENDOR_PAYMENTS",
     "PAYROLL_AUDIT_TRAIL",
@@ -1012,6 +1013,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "FINANCE_BRANCH_BUDGET",
     "FINANCE_GRN",
+    "FINANCE_SALARY_VOUCHER",
     "FINANCE_PROCESS_PNL",
     "FINANCE_VENDOR_PAYMENTS",
     "PAYROLL_HR_DASHBOARD",

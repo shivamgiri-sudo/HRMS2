@@ -114,7 +114,7 @@ export const financeRouteElements = (
       <Route path="/finance/grn"                     element={<ProtectedRoute roles={grnRoles}><Gate pageCode="FINANCE_GRN"><NativeGRNManagement /></Gate></ProtectedRoute>} />
       {/* Roles match migration 1104's grants and the API's VOUCHER_ROLES exactly. A salary
           voucher renders a whole branch payroll, so this stays narrower than the GRN set. */}
-      <Route path="/finance/salary-voucher"          element={<ProtectedRoute roles={['super_admin','finance_head','payroll_hr']}><Gate pageCode="FINANCE_SALARY_VOUCHER"><SalaryVoucherPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/salary-voucher"          element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','payroll_head','payroll_hr']}><Gate pageCode="FINANCE_SALARY_VOUCHER"><SalaryVoucherPage /></Gate></ProtectedRoute>} />
       {/* Roles must match GST_READ_ROLES in backend/src/modules/gst/gst-export.routes.ts and the
           grant in backend/sql/1652_gst_tally_export_page_access.sql — write actions (generate,
           mark downloaded) are further gated inside the page/API to GST_WRITE_ROLES. */}
