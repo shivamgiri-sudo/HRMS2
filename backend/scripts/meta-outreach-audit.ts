@@ -54,6 +54,17 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
   }
   console.table(Object.entries(buckets).map(([reason, count]) => ({ reason, count, oldest: oldestPending[reason] })));
 
+  const reqs = await q(
+    `SELECT jr.requisition_code, jr.branch_name, jr.designation_name, jr.approval_status, jr.active_status,
+            jr.closed_at, jr.requested_headcount, jr.fulfilled_headcount, jr.created_at,
+            COUNT(*) pending_leads, MIN(ml.created_at) first_lead, MAX(ml.created_at) last_lead
+       FROM meta_lead_raw ml JOIN job_requisition jr ON jr.id = ml.requisition_id
+      WHERE ml.screening_result = 'qualified' AND ml.notification_sent_at IS NULL
+        AND ml.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      GROUP BY jr.id ORDER BY pending_leads DESC`, [DAYS]);
+  console.log("\nrequisitions behind the un-notified qualified leads:");
+  console.table(reqs);
+
   const days = await q(
     `SELECT DATE(created_at) d, COUNT(*) qualified, SUM(notification_sent_at IS NOT NULL) notified
        FROM meta_lead_raw WHERE screening_result='qualified' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
