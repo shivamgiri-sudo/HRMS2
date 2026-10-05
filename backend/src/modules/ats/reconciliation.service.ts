@@ -482,9 +482,11 @@ export async function getReconciliationSummary() {
        (SELECT COUNT(*) FROM ats_employment_offer o
          WHERE o.gross > 0 AND o.offered_ctc > 0 AND ABS(o.offered_ctc - o.gross) / o.gross < 0.05)
          AS salary_annual_equals_monthly_count,
-       (SELECT COUNT(*) FROM employee_salary_assignment sa
+       -- Count the employees, not one row per employee: the bare GROUP BY returned a row per
+       -- duplicated employee and failed with ER_SUBQUERY_NO_1_ROW once there were two of them.
+       (SELECT COUNT(*) FROM (SELECT sa.employee_id FROM employee_salary_assignment sa
          WHERE sa.active_status = 1
-         GROUP BY sa.employee_id HAVING COUNT(*) > 1)
+         GROUP BY sa.employee_id HAVING COUNT(*) > 1) dup_sa)
          AS employees_with_duplicate_salary,
 
        -- Lifecycle
