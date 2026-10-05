@@ -92,6 +92,7 @@ on:
           - duplicate-grn-forensics
           - grn-pair-deepdive
           - grn-false-paid-audit
+          - grn-split-children-check
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -417,6 +418,10 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            grn-split-children-check)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/grn-split-children-check.ts
               ;;
             grn-false-paid-audit)
               # Read-only in both modes: SELECTs only (HRMS and db_bill).
