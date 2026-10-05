@@ -83,6 +83,7 @@ on:
           - vendor-ledger-tally-audit
           - trial-balance-timing
           - tally-reports-validate
+          - tally-gaps-detail
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -398,6 +399,10 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            tally-gaps-detail)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/tally-gaps-detail.ts
               ;;
             tally-reports-validate)
               # Read-only in both modes: SELECTs only; nothing is exported or locked.
