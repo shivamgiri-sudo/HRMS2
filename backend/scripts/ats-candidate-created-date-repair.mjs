@@ -32,7 +32,7 @@ console.log(`mode=${APPLY ? "APPLY (writes)" : "DRY-RUN (no writes)"}  table=ats
 
 const WHERE = `created_at IS NOT NULL AND created_date IS NOT NULL
    AND created_date <> DATE(created_at)
-   AND DATE_FORMAT(created_date,'%Y-%d-%m') = DATE(created_at)`;
+   AND DATE_FORMAT(created_date,'%Y-%d-%m') = DATE_FORMAT(created_at,'%Y-%m-%d')`;
 
 const [[scope]] = await conn.query(`SELECT COUNT(*) target, SUM(q_token LIKE 'OX%') ox, MIN(created_at) first_at, MAX(created_at) last_at FROM ats_candidate WHERE ${WHERE}`);
 console.log(`target=${scope.target} (OX tokens: ${scope.ox}) created_at range ${scope.first_at} .. ${scope.last_at}`);

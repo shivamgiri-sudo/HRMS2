@@ -83,7 +83,7 @@ const B_CLOSE = `COALESCE(s.submitted_at, c.hr_form_submission_time)`;
  */
 const DATE_NOT_SWAPPED = `NOT (c.created_at IS NOT NULL
         AND c.created_date <> DATE(c.created_at)
-        AND DATE_FORMAT(c.created_date,'%Y-%d-%m') = DATE(c.created_at))`;
+        AND DATE_FORMAT(c.created_date,'%Y-%d-%m') = DATE_FORMAT(c.created_at,'%Y-%m-%d'))`;
 const NO_QUEUE_ROW = `NOT EXISTS (SELECT 1 FROM ats_queue_token q WHERE q.candidate_id = c.id)`;
 async function tokenOnlyRegistrations(
   from: string,
