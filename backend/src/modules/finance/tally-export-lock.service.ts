@@ -40,14 +40,22 @@ export const tallyExportLock = {
       params.push(...keys);
     }
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT l.item_key, l.item_label, l.status, l.format, l.exported_by, l.exported_at, l.reexport_count,
-              NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') AS exported_by_name
+      `SELECT l.item_key, l.item_label, l.status, l.format, l.exported_by, l.exported_at, l.reexport_count
          FROM tally_export_lock l
-         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) u ON u.user_id = l.exported_by
         WHERE l.export_type = ? AND l.scope_key = ? AND l.active = 1${keyFilter}`, params);
+    // Names are looked up separately, not joined: the two tables' ids need not share a collation,
+    // and a join between them would then fail the whole page.
+    const userIds = [...new Set((rows as RowDataPacket[]).map((r) => r.exported_by).filter(Boolean).map(String))];
+    const names = new Map<string, string>();
+    if (userIds.length) {
+      const [emps] = await db.execute<RowDataPacket[]>(
+        `SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees
+          WHERE user_id IN (${userIds.map(() => "?").join(",")}) GROUP BY user_id`, userIds);
+      for (const e of emps as RowDataPacket[]) names.set(String(e.user_id), `${e.first_name ?? ""} ${e.last_name ?? ""}`.trim());
+    }
     return new Map((rows as RowDataPacket[]).map((r) => [String(r.item_key), {
       item_key: String(r.item_key), item_label: r.item_label ?? null, status: r.status, format: r.format ?? null,
-      exported_by: r.exported_by ?? null, exported_by_name: r.exported_by_name ?? null,
+      exported_by: r.exported_by ?? null, exported_by_name: (r.exported_by && names.get(String(r.exported_by))) || null,
       exported_at: r.exported_at instanceof Date ? r.exported_at.toISOString() : String(r.exported_at), reexport_count: Number(r.reexport_count),
     } as LockRow]));
   },
@@ -72,9 +80,10 @@ export const tallyExportLock = {
     const got: string[] = [];
     for (const it of items) {
       const [res] = await db.execute<any>(
-        `INSERT INTO tally_export_lock (id, export_type, scope_key, item_key, item_label, status, format, exported_by, active)
-         VALUES (?,?,?,?,?,'exported',?,?,1)
-         ON DUPLICATE KEY UPDATE id = id`,
+        // INSERT IGNORE: a key that is already locked inserts nothing and reports 0 rows. (ON DUPLICATE
+        // KEY UPDATE would report the matched row as 1 under mysql2's default FOUND_ROWS flag.)
+        `INSERT IGNORE INTO tally_export_lock (id, export_type, scope_key, item_key, item_label, status, format, exported_by, active)
+         VALUES (?,?,?,?,?,'exported',?,?,1)`,
         [randomUUID(), type, scope, it.key, (it.label ?? "").slice(0, 190) || null, format, userId || null]);
       if (Number(res.affectedRows) === 1) got.push(it.key);
     }
