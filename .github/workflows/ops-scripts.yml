@@ -55,6 +55,7 @@ on:
           - sbi-card-demo-seed
           - sbi-card-demo-remove
           - holiday-mapping-audit
+          - meta-outreach-audit
           - branch-activity-audit
           - ats-candidate-created-date-repair
           - branch-activity-resend-noida2
@@ -243,6 +244,10 @@ jobs:
               SUB="seed"; [ "${{ inputs.script }}" = "sbi-card-demo-remove" ] && SUB="remove"
               if [ "$MODE" = "dry-run" ]; then SUB="dry-run"; fi
               npx tsx scripts/sbi-card-demo-seed.ts --mode=$SUB
+              ;;
+            meta-outreach-audit)
+              # Read-only in both modes.
+              npx tsx scripts/meta-outreach-audit.ts 7
               ;;
             holiday-mapping-audit)
               # Read-only in both modes.

@@ -168,19 +168,29 @@ async function notifyNewQualifiedLeads(): Promise<void> {
 
   console.log(`[meta-sync] Triggering outreach for ${(leads as any[]).length} new qualified lead(s)...`);
   let sent = 0;
+  let skipped = 0;
   let failed = 0;
 
   for (const lead of leads as any[]) {
     try {
-      await notifyQualifiedLead(lead.id);
-      sent++;
+      // notifyQualifiedLead reports refusals/skips in its outcome instead of throwing, so count
+      // by what actually landed. Counting every non-throw as "sent" hid leads that never got a message.
+      const outcome = await notifyQualifiedLead(lead.id);
+      if (outcome.succeeded.length > 0) sent++;
+      else skipped++;
+      for (const s of outcome.skipped) {
+        console.warn(`[meta-sync] Lead ${lead.id} ${s.channel} skipped: ${s.reason}`);
+      }
+      for (const f of outcome.failed) {
+        console.warn(`[meta-sync] Lead ${lead.id} ${f.channel} failed: ${f.error}`);
+      }
     } catch (err: any) {
       failed++;
       console.warn(`[meta-sync] Outreach failed for lead ${lead.id}:`, err?.message ?? err);
     }
   }
 
-  console.log(`[meta-sync] Outreach complete: ${sent} sent, ${failed} failed`);
+  console.log(`[meta-sync] Outreach complete: ${sent} delivered, ${skipped} nothing sent (see skip reasons above), ${failed} errored`);
 }
 
 function scheduleNext(): void {
