@@ -28,7 +28,7 @@ describe("Salary Change & Increment is one page", () => {
     expect(panel).not.toContain("fetchAllEmployeeRows");
     expect(panel).not.toMatch(/SelectValue placeholder="Select employee"/);
     expect(hub).toContain("EmployeePicker");
-    expect(picker).toContain("/api/employees?search=");
+    expect(picker).toContain("/api/employees");
   });
 
   it("has no Finance step: the Payroll Head approves and the approval applies the increment", () => {

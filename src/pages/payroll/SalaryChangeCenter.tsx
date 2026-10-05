@@ -38,7 +38,7 @@ import {
  * salary_component_assignments row and supersedes the old one, plus a full audit trail.
  */
 
-import { EmployeePicker, displayName, type EmployeeSearchResult } from "@/components/payroll/EmployeePicker";
+import { EmployeePicker, employeeDisplayName as displayName, type EmployeeSearchResult } from "@/components/payroll/EmployeePicker";
 import { IncrementRequestsPanel } from "@/components/payroll/IncrementRequestsPanel";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
