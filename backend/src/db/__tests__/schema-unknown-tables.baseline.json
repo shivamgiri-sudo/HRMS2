@@ -50,6 +50,10 @@
   "modules/process-dashboard/pd.inbound.service.ts": [
     "process_inbound_config"
   ],
+  "modules/process-performance/mis-schedule.service.ts": [
+    "mis_email_schedule",
+    "mis_email_schedule_run"
+  ],
   "modules/process-performance/process-targets.service.ts": [
     "db_masmis"
   ],

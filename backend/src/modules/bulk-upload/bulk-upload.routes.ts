@@ -616,6 +616,8 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_housing_owner_sale_raw_batch",
   "import_du_apr_korea_batch",
   "import_du_apr_thailand_batch",
+  "import_du_cdr_korea_batch",
+  "import_du_cdr_thailand_batch",
   "import_du_team_mapping_korea_batch",
   "import_du_team_mapping_thailand_batch",
   "import_bella_repeat_alignment_batch",

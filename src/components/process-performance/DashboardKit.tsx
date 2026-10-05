@@ -1,7 +1,8 @@
 import { Fragment, useState, type ComponentType, type ReactNode } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Download, FileText, FileSpreadsheet, Layers, Loader2 } from "lucide-react";
+import { CalendarClock, Download, FileText, FileSpreadsheet, Layers, Loader2 } from "lucide-react";
+import { MisEmailScheduleDrawer } from "./MisEmailScheduleDrawer";
 import { getAuthToken } from "@/lib/hrmsApi";
 import { apiUrl } from "@/lib/apiBase";
 import {
@@ -572,6 +573,7 @@ export function DashboardExportMenu({
   raw: ExportRawSpec;
 }) {
   const [busy, setBusy] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const activeSlide = slides.find((s) => s.title === activeSlideTitle) ?? slides[0];
   const stamp = localDateStr(new Date());
   const safeFileBase = fileBaseName.replace(/\s+/g, "_");
@@ -597,6 +599,7 @@ export function DashboardExportMenu({
   };
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
@@ -637,7 +640,19 @@ export function DashboardExportMenu({
         <DropdownMenuItem onClick={() => void runExcel(`${safeFileBase}_All_${stamp}.xlsx`, slides)}>
           <Layers className="mr-2 h-3.5 w-3.5" /> Download All Views (Excel + raw data)
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => setScheduleOpen(true)}>
+          <CalendarClock className="mr-2 h-3.5 w-3.5" /> Schedule email…
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    <MisEmailScheduleDrawer
+      open={scheduleOpen}
+      onClose={() => setScheduleOpen(false)}
+      dashboardKey={raw.dashboard}
+      reportTitle={reportTitle}
+      lob={raw.lob}
+    />
+    </>
   );
 }

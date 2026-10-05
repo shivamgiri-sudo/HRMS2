@@ -48,6 +48,8 @@ export const AUTO_RETRY_SAFE_RPCS: ReadonlySet<string> = new Set([
   "import_domestic_billing_approved_hc_batch",
   "import_du_apr_korea_batch",
   "import_du_apr_thailand_batch",
+  "import_du_cdr_korea_batch",
+  "import_du_cdr_thailand_batch",
   "import_du_team_mapping_korea_batch",
   "import_du_team_mapping_thailand_batch",
   "import_email_ticket_daily_batch",

@@ -761,6 +761,18 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_du_cdr_korea_batch") {
+    const { importDuCdrKoreaBatch } = await import("./du-cdr-bulk.service.js");
+    const data = await importDuCdrKoreaBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_cdr_thailand_batch") {
+    const { importDuCdrThailandBatch } = await import("./du-cdr-bulk.service.js");
+    const data = await importDuCdrThailandBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_du_team_mapping_korea_batch") {
     const { importDuTeamMappingKoreaBatch } = await import("./du-team-mapping-bulk.service.js");
     const data = await importDuTeamMappingKoreaBatch(id, userId);

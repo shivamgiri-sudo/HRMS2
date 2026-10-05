@@ -5,7 +5,7 @@ import { pollBatchJob, isBatchJobStarted } from "@/lib/bulkBatchJob";
 import { apiUrl } from "@/lib/apiBase";
 import { TONE_SOLID_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { Upload, Loader2, CheckCircle2, XCircle, Trash2, UploadCloud, Download, CheckCircle } from "lucide-react";
-import { UploadCoverageBanner, useRefreshUploadCoverage, useUploadCoverage } from "./UploadCoverage";
+import { UploadCoverageBanner, LiveSourceBanner, useRefreshUploadCoverage, useUploadCoverage } from "./UploadCoverage";
 import { useSortableRows } from "./useSortableRows";
 import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
@@ -73,6 +73,8 @@ const RPC_BY_TYPE: Record<string, string> = {
   LP_ONBOARDING_CDR_MASMIS: "import_lp_onboarding_cdr_batch",
   GNC_CHAT_MASMIS: "import_gnc_chat_batch",
   NEEMANS_CHAT_MASMIS: "import_neemans_chat_batch",
+  DU_CDR_KOREA: "import_du_cdr_korea_batch",
+  DU_CDR_THAILAND: "import_du_cdr_thailand_batch",
   DALMIA_DD_RAW: "import_dalmia_dd_batch",
   DALMIA_OUTBOUND_RAW: "import_dalmia_outbound_batch",
   DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",
@@ -558,6 +560,7 @@ export function BellavitaMasmisUploader({
 
   return (
     <div className="space-y-4">
+      <LiveSourceBanner uploadTypeCode={templateCode} />
       <UploadCoverageBanner coverage={coverageQ.data?.[templateCode]} loading={coverageQ.isLoading} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Dropzone + status */}
