@@ -134,9 +134,16 @@ salaryVoucherRouter.get(
       const splitCount = vouchers.reduce(
         (max, v) => Math.max(max, v.cohort_labels.length > 1 ? v.cohort_labels.length : 0), 0);
 
+      // The reference leaves these two headers blank; they are named here (cohort first, then the
+      // remainder — the same order the row values are printed in) so the file is readable. Tally
+      // maps by position, so the text does not affect the import.
+      const widest = vouchers.reduce<string[]>(
+        (best, v) => (v.cohort_labels.length > best.length ? v.cohort_labels : best), []);
+      const splitHeaders = [...widest.slice(1), widest[0] ?? ""];
+
       const header = [
         "Vch No", "Date", "Details", "Amount",
-        ...Array.from({ length: splitCount }, () => ""),
+        ...Array.from({ length: splitCount }, (_, i) => splitHeaders[i] ?? ""),
         "DebitCredit", "Cost Category", "Cost Centre",
         "Narration for Each Entry", "Narration", "VchType",
       ];
