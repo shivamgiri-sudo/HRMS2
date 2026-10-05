@@ -10,7 +10,8 @@ beforeEach(() => { execute.mockReset(); });
 describe("ledgerReportsService.trialBalance", () => {
   it("vendors come from bills and payments, and two balancing rows keep the report adding up", async () => {
     execute.mockImplementation(async (sql: string) => {
-      if (/GROUP BY jel.account_type/.test(sql)) {
+      if (/reversed_by_entry_id IS NOT NULL/.test(sql)) return [[]]; // no reversed entries
+      if (/GROUP BY (jel\.)?account_type/.test(sql)) {
         // The journal: GRN of 10,000 -> Dr expense 10,000, Cr vendor 9,500, Cr TDS 500. Its vendor row is ignored.
         return [[
           { account_type: "expense_sub_head", account_id: "sh-1", total_debit: "10000.00", total_credit: "0.00" },
@@ -51,7 +52,7 @@ describe("ledgerReportsService.trialBalance", () => {
 
   it("excludes reversed entries via the WHERE clause", async () => {
     execute.mockResolvedValue([[]]);
-    await ledgerReportsService.trialBalance();
+    await ledgerReportsService.trialBalance("2026-08-31");
     expect(execute.mock.calls[0][0]).toMatch(/je\.reversed_by_entry_id IS NULL/);
   });
 });

@@ -350,6 +350,44 @@ export type TrialBalanceRow = {
   netBalance: number;
 };
 
+type TbResult = { rows: TrialBalanceRow[]; balanced: boolean; totalDebit: number; totalCredit: number };
+const TB_FRESH_MS = 5 * 60_000;
+const TB_STALE_MS = 60 * 60_000;
+const tbCache = new Map<string, { at: number; value: TbResult; inflight?: Promise<TbResult> }>();
+
+/**
+ * The Trial Balance reads ~40,000 journal entries plus every vendor bill and payment over a slow
+ * link to the database, which takes a minute. Served from a short-lived cache: fresh for 5 minutes,
+ * then returned stale for up to an hour while one background refresh runs. Off under tests.
+ */
+async function cachedTrialBalance(
+  asOfDate: string | undefined, filters: { branchId?: string; costCentreId?: string; processId?: string } | undefined,
+  scope: FinanceBranchScope | undefined, compute: () => Promise<TbResult>,
+): Promise<TbResult> {
+  if (process.env.VITEST) return compute();
+  const key = JSON.stringify([asOfDate ?? null, filters ?? null, !scope || scope.mode === "all" ? "all" : [...scope.branchIds].sort()]);
+  const now = Date.now();
+  const hit = tbCache.get(key);
+  const refresh = () => {
+    const inflight = compute().then((value) => { tbCache.set(key, { at: Date.now(), value }); return value; })
+      .catch((e) => { const cur = tbCache.get(key); if (cur) tbCache.set(key, { at: cur.at, value: cur.value }); throw e; });
+    tbCache.set(key, { at: hit?.at ?? 0, value: hit?.value as TbResult, inflight });
+    return inflight;
+  };
+  if (hit?.value && now - hit.at < TB_FRESH_MS) return hit.value;
+  if (hit?.value && now - hit.at < TB_STALE_MS) { if (!hit.inflight) refresh().catch(() => undefined); return hit.value; }
+  if (hit?.inflight) return hit.inflight;
+  return refresh();
+}
+
+/** Keeps the default (org-wide, unfiltered) Trial Balance warm so the first open is instant. */
+export function startTrialBalanceWarmer() {
+  if (process.env.VITEST || process.env.NODE_ENV !== "production") return;
+  const warm = () => { void ledgerReportsService.trialBalance(undefined, undefined, { mode: "all" } as FinanceBranchScope).catch(() => undefined); };
+  setTimeout(warm, 45_000).unref?.();
+  setInterval(warm, 8 * 60_000).unref?.();
+}
+
 export const ledgerReportsService = {
   /**
    * Branch/Cost Centre/Process pickers for the depth filters below — dedicated to this
@@ -399,6 +437,14 @@ export const ledgerReportsService = {
     filters?: { branchId?: string; costCentreId?: string; processId?: string },
     scope?: FinanceBranchScope,
   ): Promise<{ rows: TrialBalanceRow[]; balanced: boolean; totalDebit: number; totalCredit: number }> {
+    return cachedTrialBalance(asOfDate, filters, scope, () => ledgerReportsService.computeTrialBalance(asOfDate, filters, scope));
+  },
+
+  async computeTrialBalance(
+    asOfDate?: string,
+    filters?: { branchId?: string; costCentreId?: string; processId?: string },
+    scope?: FinanceBranchScope,
+  ): Promise<{ rows: TrialBalanceRow[]; balanced: boolean; totalDebit: number; totalCredit: number }> {
     const conditions = ["je.reversed_by_entry_id IS NULL"];
     const params: unknown[] = [];
     if (asOfDate) { conditions.push("je.entry_date <= ?"); params.push(asOfDate); }
@@ -407,16 +453,38 @@ export const ledgerReportsService = {
     if (filters?.processId) { conditions.push("je.process_id = ?"); params.push(filters.processId); }
     pushBranchScope(conditions, params, scope, "je.branch_id");
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT jel.account_type, jel.account_id,
-              SUM(jel.debit_amount) AS total_debit, SUM(jel.credit_amount) AS total_credit
-         FROM journal_entry_line jel
-         JOIN journal_entry je ON je.id = jel.journal_entry_id
-        WHERE ${conditions.join(" AND ")}
-        GROUP BY jel.account_type, jel.account_id
-        ORDER BY jel.account_type, jel.account_id`,
-      params,
-    );
+    // Unfiltered (the default view): one sequential pass over the lines, minus the lines of the few
+    // reversed entries, instead of a per-entry join — the join is ~40,000 lookups and took ~47s.
+    const unfiltered = !asOfDate && !filters?.branchId && !filters?.costCentreId && !filters?.processId && (!scope || scope.mode === "all");
+    const journalPromise: Promise<RowDataPacket[]> = unfiltered
+      ? (async () => {
+          const [all] = await db.execute<RowDataPacket[]>(
+            `SELECT account_type, account_id, SUM(debit_amount) AS total_debit, SUM(credit_amount) AS total_credit
+               FROM journal_entry_line GROUP BY account_type, account_id`);
+          const [reversed] = await db.execute<RowDataPacket[]>(
+            `SELECT jel.account_type, jel.account_id, SUM(jel.debit_amount) AS total_debit, SUM(jel.credit_amount) AS total_credit
+               FROM journal_entry_line jel JOIN journal_entry je ON je.id = jel.journal_entry_id
+              WHERE je.reversed_by_entry_id IS NOT NULL GROUP BY jel.account_type, jel.account_id`);
+          const minus = new Map((reversed as RowDataPacket[]).map((r) => [`${r.account_type}:${r.account_id}`, r]));
+          return (all as RowDataPacket[]).map((r) => {
+            const m = minus.get(`${r.account_type}:${r.account_id}`);
+            return { ...r, total_debit: Number(r.total_debit) - Number(m?.total_debit ?? 0), total_credit: Number(r.total_credit) - Number(m?.total_credit ?? 0) } as RowDataPacket;
+          }).filter((r) => Number(r.total_debit) !== 0 || Number(r.total_credit) !== 0).sort((x, y) => String(x.account_type).localeCompare(String(y.account_type)) || String(x.account_id).localeCompare(String(y.account_id)));
+        })()
+      : db.execute<RowDataPacket[]>(
+          `SELECT jel.account_type, jel.account_id,
+                  SUM(jel.debit_amount) AS total_debit, SUM(jel.credit_amount) AS total_credit
+             FROM journal_entry_line jel
+             JOIN journal_entry je ON je.id = jel.journal_entry_id
+            WHERE ${conditions.join(" AND ")}
+            GROUP BY jel.account_type, jel.account_id
+            ORDER BY jel.account_type, jel.account_id`,
+          params,
+        ).then(([r]) => r as RowDataPacket[]);
+    const [rows, totals] = await Promise.all([
+      journalPromise,
+      loadVendorTotals({ asOf: asOfDate, scope, branchId: filters?.branchId, costCentreId: filters?.costCentreId, processId: filters?.processId }),
+    ]);
 
     // Vendor accounts are NOT taken from the journal: it holds the bills but almost none of the
     // payments, so every vendor showed as owed its whole history. They are rebuilt from the bill
@@ -424,11 +492,10 @@ export const ledgerReportsService = {
     // the other side so the report still has to add up on its own:
     //   - payments made (Cr bank/cash) - the other half of every vendor debit;
     //   - purchases with no expense-head posting yet (Dr) - bills that have no GRN journal entry.
-    const journalRows = (rows as RowDataPacket[]).filter((r) => r.account_type !== "vendor");
+    const journalRows = rows.filter((r) => r.account_type !== "vendor");
     const refs = journalRows.map((r) => ({ accountType: r.account_type as AccountType, accountId: String(r.account_id) }));
     const names = await resolveAccountNames(refs);
 
-    const totals = await loadVendorTotals({ asOf: asOfDate, scope, branchId: filters?.branchId, costCentreId: filters?.costCentreId, processId: filters?.processId });
     let paymentsTotal = 0, unpostedTotal = 0;
     for (const v of totals.values()) { paymentsTotal += v.payments - v.adjustments; unpostedTotal += v.unposted; }
     const vendorNames = await resolveAccountNames([...totals.keys()].map((id) => ({ accountType: "vendor" as AccountType, accountId: id })));

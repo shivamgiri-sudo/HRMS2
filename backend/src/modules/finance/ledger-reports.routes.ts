@@ -3,7 +3,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { BANK_ACCOUNT_READ_ROLES } from "./company-bank-account.routes.js";
 import { callerBranchScope } from "./finance-branch-guard.js";
-import { ledgerReportsService } from "./ledger-reports.service.js";
+import { ledgerReportsService, startTrialBalanceWarmer } from "./ledger-reports.service.js";
 
 /**
  * Own prefix (/api/finance/ledger-reports), same rationale as every other finance router that
@@ -14,6 +14,8 @@ import { ledgerReportsService } from "./ledger-reports.service.js";
  * "who can see the bank ledger" and "who can see the trial balance/vendor ledger/head-subhead
  * ledger" are the same people in every finance role model this codebase already has.
  */
+startTrialBalanceWarmer();
+
 export const ledgerReportsRouter = Router();
 
 const h =
