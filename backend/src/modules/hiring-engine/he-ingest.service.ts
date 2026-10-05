@@ -3,6 +3,7 @@
  * stored raw, mined into signals, applied to lead/match state, mirrored to meta_lead_raw so the existing
  * Meta inbox pages stay correct, then the lead insight is recomputed.
  */
+import { refreshLeadHistoryById } from "./he-master.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -92,6 +93,7 @@ export async function recordInboundReply(p: { mobile: string; text: string; prov
   const plan = planFromReply(lead.status, intent, match?.slotOffers ?? 0);
   await applyPlan(lead.id, lead.status, plan, { matchId: match?.id ?? null, channel, detail: p.text, metaLeadId: lead.meta_lead_id, replyText: p.text });
   await recomputeInsight(lead.id);
+  await refreshLeadHistoryById(lead.id);
   return { leadId: lead.id, intent };
 }
 
@@ -193,5 +195,6 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
   }
   await recomputeInsight(l.id);
   logger.info({ leadId: l.id, outcome: outcomeText }, "[hiring-engine] voice result recorded");
+  await refreshLeadHistoryById(l.id);
   return { leadId: l.id, outcome: outcomeText };
 }

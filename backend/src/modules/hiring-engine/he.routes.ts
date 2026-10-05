@@ -15,6 +15,9 @@ import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches
 import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
 import { listPrepareCampaigns, prepareMissedWalkins, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
 import { applyCallResults, markExportedForCalling, previewCallResults } from "./he-call-results.service.js";
+import { getCandidate360 } from "./he-candidate360.service.js";
+import { listOpenClashes, resolveClash } from "./he-identity.service.js";
+import { refreshExEmployees } from "./he-ex-employee.service.js";
 import { getMasterSummary, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -381,4 +384,34 @@ heRouter.post("/master/refresh", requireAuth, requireRole(...ADMIN_ROLES), async
     logger.error({ err: (err as Error).message }, "[he] master refresh failed");
     res.status(500).json({ message: "Could not refresh history" });
   }
+});
+
+heRouter.get("/leads/:id/360", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try {
+    const data = await getCandidate360(String(req.params.id));
+    if (!data) return res.status(404).json({ message: "Lead not found" });
+    res.json({ success: true, data });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] candidate 360 failed");
+    res.status(500).json({ message: "Could not load the candidate record" });
+  }
+});
+
+heRouter.get("/identity/clashes", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await listOpenClashes() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] clashes failed"); res.status(500).json({ message: "Could not load identity clashes" }); }
+});
+
+heRouter.post("/identity/clashes/:id/resolve", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const status = String((req.body as { status?: unknown })?.status ?? "");
+    if (!["same_person", "different", "ignored"].includes(status)) return res.status(400).json({ message: "status must be same_person, different or ignored" });
+    await resolveClash(Number(req.params.id), status as "same_person" | "different" | "ignored", (req as AuthenticatedRequest).authUser?.id ?? null);
+    res.json({ success: true });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] resolve clash failed"); res.status(500).json({ message: "Could not resolve the clash" }); }
+});
+
+heRouter.post("/master/ex-employees/refresh", requireAuth, requireRole(...ADMIN_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await refreshExEmployees() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] ex-employee refresh failed"); res.status(500).json({ message: "Could not refresh former employees" }); }
 });

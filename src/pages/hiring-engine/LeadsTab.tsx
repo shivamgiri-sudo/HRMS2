@@ -10,6 +10,7 @@ import { ChevronLeft, ChevronRight, MessageCircle, Phone, RefreshCcw, Search, Us
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { EmptyState, StatTile, num } from "@/components/analytics/analytics-kit";
+import Candidate360Drawer from "./Candidate360Drawer";
 
 type Count = { n: number };
 interface Summary {
@@ -74,6 +75,7 @@ export default function LeadsTab() {
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [fullRecord, setFullRecord] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -176,6 +178,7 @@ export default function LeadsTab() {
       <Sheet open={detailLoading || detail != null} onOpenChange={(o) => { if (!o) { setDetail(null); setDetailLoading(false); } }}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
           <SheetHeader><SheetTitle>{detail?.lead.full_name || "Candidate"}</SheetTitle></SheetHeader>
+          {detail && <button type="button" onClick={() => setFullRecord(detail.lead.id)} className="mt-2 cursor-pointer rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-semibold text-blue-700 hover:bg-blue-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Open full record</button>}
           {detailLoading && <p className="p-4 text-sm text-slate-500">Loading…</p>}
           {detail && (
             <div className="space-y-5 p-1 text-sm">
@@ -219,6 +222,7 @@ export default function LeadsTab() {
           <button type="button" onClick={() => { setDetail(null); setDetailLoading(false); }} aria-label="Close" className="sr-only"><X /></button>
         </SheetContent>
       </Sheet>
+      <Candidate360Drawer leadId={fullRecord} onClose={() => setFullRecord(null)} />
     </>
   );
 }

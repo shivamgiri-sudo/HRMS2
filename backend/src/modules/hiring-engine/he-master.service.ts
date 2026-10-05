@@ -6,6 +6,7 @@
  */
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { logger } from "../../logger.js";
 import { classifyOutcome, conversionType, deriveFinalStatus, effortTier, type FinalStatus } from "./he-master.js";
 
 const UPDATE_BATCH = 500;
@@ -121,9 +122,20 @@ export async function refreshLeadHistory(mobile10: string): Promise<void> {
   await refreshHistoryChunk({ mobile10 });
 }
 
+/** After a connect attempt: refresh by lead id. Never throws - the attempt itself is already recorded and must not fail on a rollup. */
+export async function refreshLeadHistoryById(leadId: string): Promise<void> {
+  try {
+    const [r] = await db.execute<RowDataPacket[]>("SELECT mobile10 FROM he_lead WHERE id = ? LIMIT 1", [leadId]);
+    if (r[0]?.mobile10) await refreshHistoryChunk({ mobile10: String(r[0].mobile10) });
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, leadId }, "[he] history refresh after attempt failed");
+  }
+}
+
 /** Master view for the UI: pool by effort tier, and why. */
 export async function getMasterSummary(): Promise<{
-  byTier: RowDataPacket[]; byReason: RowDataPacket[]; byConversion: RowDataPacket[]; refreshedAt: string | null; stale: number;
+  byTier: RowDataPacket[]; byReason: RowDataPacket[]; byConversion: RowDataPacket[]; bySource: RowDataPacket[];
+  exEmployees: { total: number; clean: number }; openClashes: number; refreshedAt: string | null; stale: number;
 }> {
   const [byTier] = await db.execute<RowDataPacket[]>("SELECT effort_tier AS tier, COUNT(*) AS n FROM he_lead GROUP BY effort_tier");
   const [byReason] = await db.execute<RowDataPacket[]>(
@@ -136,5 +148,8 @@ export async function getMasterSummary(): Promise<{
     "SELECT MAX(history_refreshed_at) AS at, SUM(history_refreshed_at IS NULL) AS stale FROM he_lead",
   );
   const meta = metaRows[0];
-  return { byTier, byReason, byConversion, refreshedAt: meta?.at ? new Date(meta.at).toISOString() : null, stale: Number(meta?.stale ?? 0) };
+  const [bySource] = await db.execute<RowDataPacket[]>("SELECT primary_source AS source, COUNT(*) AS n FROM he_lead GROUP BY primary_source ORDER BY n DESC");
+  const [exRows] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total, COALESCE(SUM(clean_voluntary), 0) AS clean FROM he_ex_employee");
+  const [clashRows] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_identity_clash WHERE status = 'open'");
+  return { byTier, byReason, byConversion, bySource, exEmployees: { total: Number(exRows[0]?.total ?? 0), clean: Number(exRows[0]?.clean ?? 0) }, openClashes: Number(clashRows[0]?.n ?? 0), refreshedAt: meta?.at ? new Date(meta.at).toISOString() : null, stale: Number(meta?.stale ?? 0) };
 }
