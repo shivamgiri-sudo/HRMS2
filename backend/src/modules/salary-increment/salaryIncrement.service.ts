@@ -59,12 +59,42 @@ async function writeAudit(
 }
 
 export const salaryIncrementService = {
-  async list(filters: { employee_id?: string; status?: string; scope?: { sql: string; params: unknown[] } }) {
+  /**
+   * One page of requests plus the total, never the whole table. A July 2026 bulk import left 14,467 implemented
+   * requests, and returning them all (14 MB) froze the Increment tab for minutes. `status: "pending"` means
+   * everything still waiting for an approval step. Search is the typed employee code (prefix) or name.
+   */
+  async list(filters: {
+    employee_id?: string;
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+    scope?: { sql: string; params: unknown[] };
+  }) {
     const conds: string[] = ["1=1"];
     const params: unknown[] = [];
     if (filters.scope && filters.scope.sql !== "1=1") { conds.push(`(${filters.scope.sql})`); params.push(...filters.scope.params); }
     if (filters.employee_id) { conds.push("sir.employee_id = ?"); params.push(filters.employee_id); }
-    if (filters.status)      { conds.push("sir.status = ?");      params.push(filters.status); }
+    if (filters.status === "pending") {
+      conds.push("sir.status IN ('submitted','hr_validated','finance_validated')");
+    } else if (filters.status) {
+      conds.push("sir.status = ?"); params.push(filters.status);
+    }
+    const term = (filters.search ?? "").trim();
+    if (term) {
+      conds.push("(e.employee_code LIKE ? OR CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) LIKE ?)");
+      params.push(`${term}%`, `%${term}%`);
+    }
+    // Validated integers interpolated, not bound: a bound LIMIT/OFFSET has failed on this driver before.
+    const limit = Math.min(Math.max(Math.trunc(Number(filters.limit) || 25), 1), 200);
+    const page = Math.max(Math.trunc(Number(filters.page) || 1), 1);
+    const offset = (page - 1) * limit;
+    const from = `FROM salary_increment_request sir
+       JOIN employees e ON e.id = sir.employee_id
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN designation_master d ON d.id = e.designation_id
+       WHERE ${conds.join(" AND ")}`;
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT sir.*,
@@ -72,15 +102,13 @@ export const salaryIncrementService = {
               e.employee_code,
               b.branch_name,
               d.designation_name
-       FROM salary_increment_request sir
-       JOIN employees e ON e.id = sir.employee_id
-       LEFT JOIN branch_master b ON b.id = e.branch_id
-       LEFT JOIN designation_master d ON d.id = e.designation_id
-       WHERE ${conds.join(" AND ")}
-       ORDER BY sir.created_at DESC`,
+       ${from}
+       ORDER BY sir.created_at DESC, sir.id DESC
+       LIMIT ${limit} OFFSET ${offset}`,
       params
     );
-    return rows;
+    const [countRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n ${from}`, params);
+    return { rows: rows as RowDataPacket[], total: Number((countRows as RowDataPacket[])[0]?.n ?? 0), page, limit };
   },
 
   async getById(id: string) {

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -105,7 +105,17 @@ function AuditTimeline({ requestId }: { requestId: string }) {
  */
 export function IncrementRequestsPanel() {
   const qc = useQueryClient();
-  const [statusFilter, setStatusFilter] = useState("all");
+  // Server-side paging: the table holds 14k+ imported requests, so the page asks for 25 at a time, defaults to
+  // what is waiting for approval, and searches by the typed employee code or name.
+  const PAGE_SIZE = 25;
+  const [statusFilter, setStatusFilter] = useState("pending");
+  const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => { setSearch(searchInput.trim()); setPage(1); }, 350);
+    return () => clearTimeout(t);
+  }, [searchInput]);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [actionOpen, setActionOpen] = useState(false);
@@ -123,13 +133,21 @@ export function IncrementRequestsPanel() {
     business_justification: "",
   });
 
-  const { data: requests = [], isLoading } = useQuery({
-    queryKey: ["salary-increments", statusFilter],
-    queryFn: () =>
-      hrmsApi
-        .get<{ data: any[] }>(`/api/salary-increment${statusFilter !== "all" ? `?status=${statusFilter}` : ""}`)
-        .then((r) => r.data ?? []),
+  const { data: listData, isLoading, isFetching } = useQuery({
+    queryKey: ["salary-increments", statusFilter, page, search],
+    queryFn: () => {
+      const qs = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
+      if (statusFilter !== "all") qs.set("status", statusFilter);
+      if (search) qs.set("search", search);
+      return hrmsApi
+        .get<{ data: any[]; total?: number }>(`/api/salary-increment?${qs.toString()}`)
+        .then((r) => ({ rows: r.data ?? [], total: Number(r.total ?? (r.data ?? []).length) }));
+    },
+    placeholderData: keepPreviousData,
   });
+  const requests = listData?.rows ?? [];
+  const total = listData?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const createMutation = useMutation({
     mutationFn: (body: typeof form) =>
@@ -195,19 +213,25 @@ export function IncrementRequestsPanel() {
 
       {/* Status filter */}
       <div className="flex gap-2 flex-wrap">
-        {["all", "submitted", "hr_validated", "approved", "implemented", "rejected"].map((s) => (
+        {["pending", "all", "approved", "implemented", "rejected"].map((s) => (
           <button
             key={s}
-            onClick={() => setStatusFilter(s)}
+            onClick={() => { setStatusFilter(s); setPage(1); }}
             className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
               statusFilter === s
                 ? "bg-primary text-primary-foreground border-primary"
                 : "bg-background border-border hover:bg-muted"
             }`}
           >
-            {s === "all" ? "All" : STATUS_LABELS[s as IncrStatus]}
+            {s === "all" ? "All" : s === "pending" ? "Pending approval" : STATUS_LABELS[s as IncrStatus]}
           </button>
         ))}
+        <Input
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search employee code or name…"
+          className="h-8 w-64 text-xs ml-auto"
+        />
       </div>
 
       {/* Table */}
@@ -274,6 +298,18 @@ export function IncrementRequestsPanel() {
           </Table>
         </CardContent>
       </Card>
+
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>
+          {total.toLocaleString("en-IN")} request{total === 1 ? "" : "s"}
+          {isFetching && !isLoading ? " · updating…" : ""}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
+          <span>Page {page} of {pageCount}</span>
+          <Button variant="outline" size="sm" disabled={page >= pageCount} onClick={() => setPage((p) => Math.min(pageCount, p + 1))}>Next</Button>
+        </div>
+      </div>
 
       {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

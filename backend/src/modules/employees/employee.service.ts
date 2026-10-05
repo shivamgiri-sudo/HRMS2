@@ -1,3 +1,4 @@
+import { employeeFulltextAvailable } from "./employee-search-index.js";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
 import type { RowDataPacket } from "mysql2";
@@ -380,9 +381,13 @@ export const employeeService = {
       } else if (term.length < 3) {
         filterConds.push("(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)");
         filterParams.push(`${term}%`, `${term}%`, `${term}%`);
-      } else {
+      } else if (await employeeFulltextAvailable()) {
         filterConds.push("MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)");
         filterParams.push(`${term}*`);
+      } else {
+        // No FULLTEXT index on this database (see employee-search-index.ts): plain LIKE instead of an error.
+        filterConds.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)");
+        filterParams.push(`%${term}%`, `%${term}%`);
       }
     }
 

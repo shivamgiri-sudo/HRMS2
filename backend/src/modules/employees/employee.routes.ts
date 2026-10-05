@@ -1,3 +1,4 @@
+import { employeeFulltextAvailable } from "./employee-search-index.js";
 import { Router } from "express";
 import { resolvePii } from "../../shared/piiCiphertext.js";
 import type { RowDataPacket } from "mysql2";
@@ -2061,13 +2062,17 @@ router.get(
           // Below the FULLTEXT token floor — LIKE is the only thing that can match.
           conds.push(`(${derivedName} LIKE ? OR e.employee_code LIKE ?)`);
           params.push(`%${term}%`, `%${term}%`);
-        } else {
+        } else if (await employeeFulltextAvailable()) {
           conds.push(
             `(MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)
             OR e.employee_code LIKE ?
             OR ${derivedName} LIKE ?)`,
           );
           params.push(`${term}*`, `%${term}%`, `%${term}%`);
+        } else {
+          // No FULLTEXT index on this database (see employee-search-index.ts): plain LIKE, same matches.
+          conds.push(`(e.employee_code LIKE ? OR ${derivedName} LIKE ?)`);
+          params.push(`%${term}%`, `%${term}%`);
         }
       }
     }

@@ -53,10 +53,18 @@ describe("Salary Change & Increment hub", () => {
     expect(html).not.toContain("Step 1");
   });
 
-  it("the status filter has no Finance chip", () => {
+  it("the status filter has no Finance chip and defaults to what is waiting for approval", () => {
     roles = ["payroll_head"];
     const html = render("increment");
-    expect(html).toContain("HR Validated");
+    expect(html).toContain("Pending approval");
     expect(html).not.toContain("Finance Validated");
+  });
+
+  it("has a typed search and paging controls instead of listing every request", () => {
+    roles = ["payroll_head"];
+    const html = render("increment");
+    expect(html).toContain("Search employee code or name");
+    expect(html).toContain("Previous");
+    expect(html).toContain("Next");
   });
 });

@@ -39,4 +39,11 @@ describe("Salary Change & Increment is one page", () => {
     expect(actions).toContain("Approve & Apply");
     expect(actions).not.toContain('action: "finance_validate"');
   });
+
+  it("asks the server for one page at a time (14k+ imported requests froze the tab when all were fetched)", () => {
+    expect(panel).toContain("PAGE_SIZE");
+    expect(panel).toContain("limit: String(PAGE_SIZE)");
+    expect(panel).toContain("keepPreviousData");
+    expect(panel).not.toMatch(/\/api\/salary-increment\$\{statusFilter/);
+  });
 });

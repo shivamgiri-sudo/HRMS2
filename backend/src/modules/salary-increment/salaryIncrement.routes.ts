@@ -14,17 +14,18 @@ router.use(requireAuth);
 // GET /api/salary-increment — list (hr / payroll head / admin see all; others see own)
 router.get("/", h(async (req: any, res: any) => {
   const userId: string = req.authUser!.id;
-  const { status } = req.query as Record<string, string>;
+  const { status, search, page, limit } = req.query as Record<string, string>;
+  const paging = { search, page: Number(page) || 1, limit: Number(limit) || 25 };
 
+  let result;
   if (await hasRole(userId, ...INCREMENT_VIEW_ROLES)) {
-    const data = await salaryIncrementService.list({ status, scope: await employeeScopeFor(req, "e") });
-    return res.json({ success: true, data, total: data.length });
+    result = await salaryIncrementService.list({ status, ...paging, scope: await employeeScopeFor(req, "e") });
+  } else {
+    const emp = await getEmployeeForUser(userId);
+    if (!emp) return res.status(403).json({ success: false, error: "No employee record" });
+    result = await salaryIncrementService.list({ employee_id: emp.id, status, ...paging });
   }
-
-  const emp = await getEmployeeForUser(userId);
-  if (!emp) return res.status(403).json({ success: false, error: "No employee record" });
-  const data = await salaryIncrementService.list({ employee_id: emp.id, status });
-  return res.json({ success: true, data, total: data.length });
+  return res.json({ success: true, data: result.rows, total: result.total, page: result.page, limit: result.limit });
 }));
 
 // GET /api/salary-increment/:id — detail

@@ -118,3 +118,19 @@ describe("raising a request", () => {
     expect(transition.mock.calls.every((c) => c[1] !== "implement")).toBe(true);
   });
 });
+
+describe("listing requests", () => {
+  it("passes paging, status and the typed search to the service and returns the total", async () => {
+    list.mockResolvedValue({ rows: [{ id: "r1" }], total: 14467, page: 2, limit: 25 });
+    const res = await request(appFor("payroll_head")).get("/api/salary-increment?status=pending&search=63694C&page=2&limit=25");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ success: true, total: 14467, page: 2, limit: 25 });
+    expect(list.mock.calls[0]![0]).toMatchObject({ status: "pending", search: "63694C", page: 2, limit: 25 });
+  });
+
+  it("defaults to 25 per page when the client sends no paging", async () => {
+    list.mockResolvedValue({ rows: [], total: 0, page: 1, limit: 25 });
+    await request(appFor("hr")).get("/api/salary-increment");
+    expect(list.mock.calls[0]![0]).toMatchObject({ page: 1, limit: 25 });
+  });
+});

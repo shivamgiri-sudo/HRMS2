@@ -23,14 +23,18 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+const { execute, fulltextAvailable } = vi.hoisted(() => ({ execute: vi.fn(), fulltextAvailable: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute }, pingDb: vi.fn() }));
+// The FULLTEXT index may be missing on a database (production on 2026-10-05): the probe decides MATCH vs LIKE.
+vi.mock("../employee-search-index.js", () => ({ employeeFulltextAvailable: fulltextAvailable }));
 
 import { employeeService } from "../employee.service.js";
 
 beforeEach(() => {
   execute.mockReset();
   execute.mockResolvedValue([[], []]);
+  fulltextAvailable.mockReset();
+  fulltextAvailable.mockResolvedValue(true);
 });
 
 function lastEmployeeSelectCall(): { sql: string; params: unknown[] } {
@@ -38,6 +42,18 @@ function lastEmployeeSelectCall(): { sql: string; params: unknown[] } {
   expect(call, "no employee SELECT was issued").toBeDefined();
   return { sql: String(call![0]), params: call![1] as unknown[] };
 }
+
+describe("employee search when the FULLTEXT index does not exist", () => {
+  it("never issues MATCH...AGAINST (that raised ER_FT_MATCHING_KEY_NOT_FOUND, a 500, on every name search)", async () => {
+    fulltextAvailable.mockResolvedValue(false);
+    await employeeService.listEmployees({ page: 1, limit: 50, search: "Naresh", includeAnalytics: false } as never);
+    const { sql, params } = lastEmployeeSelectCall();
+    expect(sql).not.toMatch(/MATCH\s*\(/i);
+    expect(sql).not.toMatch(/AGAINST/i);
+    expect(sql).toMatch(/e\.full_name LIKE \?/);
+    expect(params).toEqual(expect.arrayContaining(["%Naresh%"]));
+  });
+});
 
 describe("employee search — no leading-wildcard LIKE OR'd with MATCH", () => {
   it("term >= 3 chars: uses MATCH() alone, no OR with any LIKE", async () => {
