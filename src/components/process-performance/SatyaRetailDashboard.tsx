@@ -3,7 +3,7 @@ import {
   ComposedChart, Bar, Line, BarChart, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import {
-  Store, Eye, Users, PhoneCall, PhoneForwarded, ShoppingBag, Gauge, Clock, Sun, Moon, IndianRupee, Filter, TrendingUp, ListChecks, Layers,
+  Store, Eye, Users, PhoneCall, PhoneForwarded, PhoneOff, ShoppingBag, Gauge, Clock, Sun, Moon, IndianRupee, Filter, TrendingUp, ListChecks, Layers,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -329,6 +329,15 @@ export function SatyaRetailDashboard() {
 
       {tab === "overview" && (
         <>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Live dialer CDR (all dial attempts in range)</p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <KpiCard icon={PhoneCall} label="Dial attempts" value={fmtInt(data.calls.headline.attempts)} tone="indigo" sub="from dialer CDR, not allocation" />
+            <KpiCard icon={PhoneForwarded} label="Connected (dialer)" value={fmtInt(data.calls.headline.connected)} tone="emerald" sub={`${data.calls.headline.connectedPct}% of attempts`} />
+            <KpiCard icon={PhoneOff} label="Dropped (dialer)" value={fmtInt(data.calls.headline.dropped)} tone="rose" />
+            <KpiCard icon={ShoppingBag} label="Order calls (dialer)" value={fmtInt(data.calls.headline.orderCalls)} tone="amber" />
+
+          </div>
+
           <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Allocation &amp; calls</p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
             {kpi(Store, "Overall Allocation", fmtInt(h.allocation), "amber", [S("allocation", "Overall", "int", "#f59e0b"), S("morning", "Morning", "int", "#0ea5e9"), S("absentee", "Absentee", "int", "#8b5cf6")])}

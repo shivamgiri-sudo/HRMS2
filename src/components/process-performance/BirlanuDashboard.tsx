@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { RefreshCw, Inbox } from "lucide-react";
+import { RefreshCw, Inbox, Users } from "lucide-react";
 import { DashboardExportMenu, Spinner, type ExportSlide } from "./DashboardKit";
-import { BirlanuDrawer, BirlanuHeader, int, inr, lacs, pct1, pct2, type DrawerSpec, type FilterDef } from "./BirlanuKit";
+import { BirlanuDrawer, BirlanuHeader, BCard, Empty, int, inr, lacs, pct1, pct2, type DrawerSpec, type FilterDef } from "./BirlanuKit";
 import type { BirlanuMis } from "./birlanuTypes";
 import { BirlanuSlidePerformance } from "./BirlanuSlidePerformance";
 import { BirlanuSlideBusiness } from "./BirlanuSlideBusiness";
@@ -10,6 +10,8 @@ import { BirlanuSlideDisposition } from "./BirlanuSlideDisposition";
 import { BirlanuSlideLeadTat } from "./BirlanuSlideLeadTat";
 import { BirlanuSlideEnquiry } from "./BirlanuSlideEnquiry";
 import { BirlanuSlideProductWise } from "./BirlanuSlideProductWise";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 /**
  * Birlanu MIS -- six slides built from the reference workbook "Birlanu_MR ...xlsb":
@@ -20,7 +22,7 @@ import { BirlanuSlideProductWise } from "./BirlanuSlideProductWise";
  * (backend/scripts/verify-birlanu-mis.ts). Nothing on these slides is estimated.
  */
 
-type SlideKey = "performance" | "business" | "disposition" | "leadTat" | "enquiry" | "productWise";
+type SlideKey = "performance" | "business" | "disposition" | "leadTat" | "enquiry" | "productWise" | "agentWise";
 const SLIDES: Array<{ key: SlideKey; label: string; accent: string; title: string; subtitle: string }> = [
   { key: "performance", label: "Performance", accent: "Business", title: "Performance Dashboard", subtitle: "Enquiries → Leads → Conversions | Channel Performance | Volume & Value" },
   { key: "business", label: "Business", accent: "Business", title: "Dashboard", subtitle: "Enquiries → Leads → Conversions | Digital Performance Overview" },
@@ -28,20 +30,44 @@ const SLIDES: Array<{ key: SlideKey; label: string; accent: string; title: strin
   { key: "leadTat", label: "Lead TAT", accent: "Lead", title: "TAT Dashboard", subtitle: "Source Wise Lead Turn Around Time (TAT) Analysis" },
   { key: "enquiry", label: "Enquiry", accent: "Enquiry Count by", title: "Channels", subtitle: "Track and analyse enquiries across all marketing channels" },
   { key: "productWise", label: "Product & Source", accent: "Product Wise &", title: "Source Wise", subtitle: "Overall performance and lead-closer-month view by product" },
+  { key: "agentWise", label: "Agent Wise", accent: "Agent Wise", title: "Performance", subtitle: "Leads, connect/conversion rate and sale value by agent -- from birlanu_sale (agent_name)" },
 ];
+
+interface BirlanuAgentRow { label: string; leads: number; connected: number; connectedPct: number; converted: number; conversionPct: number; saleValue: number }
+interface BirlanuAgentWiseData { byAgent: BirlanuAgentRow[]; productivity: { agentsInRoster: number; agentsWithMetrics: number; note: string } }
 
 type Filters = Record<string, string>;
 
 export function BirlanuDashboard() {
   const [slide, setSlide] = useState<SlideKey>("performance");
   const [filtersBySlide, setFiltersBySlide] = useState<Record<SlideKey, Filters>>({
-    performance: {}, business: {}, disposition: {}, leadTat: {}, enquiry: {}, productWise: {},
+    performance: {}, business: {}, disposition: {}, leadTat: {}, enquiry: {}, productWise: {}, agentWise: {},
   });
   const [data, setData] = useState<BirlanuMis | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [drawer, setDrawer] = useState<DrawerSpec | null>(null);
+  const [agentWiseData, setAgentWiseData] = useState<BirlanuAgentWiseData | null>(null);
   const filters = filtersBySlide[slide];
+
+  useEffect(() => {
+    let cancelled = false;
+    hrmsApi
+      .get<{ success: boolean; data: BirlanuAgentWiseData }>(`/api/process-performance/birlanu-dashboard`)
+      .then((res) => { if (!cancelled) setAgentWiseData(res.data); })
+      .catch(() => { if (!cancelled) setAgentWiseData(null); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Excel-style sort + filter for the Agent Wise table -- hooks must run every render.
+  const AGENT_FILTER_COLS: Array<FilterColumn<BirlanuAgentRow>> = [
+    { key: "label", get: (a) => a.label }, { key: "leads", get: (a) => a.leads }, { key: "connected", get: (a) => a.connected },
+    { key: "connectedPct", get: (a) => a.connectedPct }, { key: "converted", get: (a) => a.converted },
+    { key: "conversionPct", get: (a) => a.conversionPct }, { key: "saleValue", get: (a) => a.saleValue },
+  ];
+  const agentColGetter = (a: BirlanuAgentRow, key: string) => AGENT_FILTER_COLS.find((c) => c.key === key)?.get(a);
+  const agentFilters = useColumnFilters(agentWiseData?.byAgent ?? [], AGENT_FILTER_COLS);
+  const { sorted: sortedAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -119,8 +145,20 @@ export function BirlanuDashboard() {
           { title: "Product Wise (by Lead Closer Month)", columns: ["Product", "Enquiries", "Leads (LAS)", "Conversions", "Conv %", "Revenue"], rows: w.byCloser.rows.map((r) => [r.brand, r.overall.enquiries, r.overall.leads, r.overall.conversions, pct1(r.overall.convPct), inr(r.overall.revenue)]) },
         ],
       },
+      ...(agentWiseData && agentWiseData.byAgent.length > 0 ? [{
+        title: "Agent Wise Performance",
+        kpis: [
+          { label: "Agents in roster", value: int(agentWiseData.productivity.agentsInRoster) },
+          { label: "Agents with call/login metrics", value: int(agentWiseData.productivity.agentsWithMetrics) },
+        ],
+        tables: [{
+          title: "Agent Wise Performance",
+          columns: ["Agent", "Leads", "Connected", "Connected %", "Converted", "Conversion %", "Sale Value"],
+          rows: agentWiseData.byAgent.map((a) => [a.label, a.leads, a.connected, pct1(a.connectedPct), a.converted, pct1(a.conversionPct), inr(a.saleValue)]),
+        }],
+      }] : []),
     ];
-  }, [data]);
+  }, [data, agentWiseData]);
 
   return (
     <div className="space-y-3">
@@ -157,6 +195,51 @@ export function BirlanuDashboard() {
             {slide === "leadTat" && <BirlanuSlideLeadTat data={data} open={open} />}
             {slide === "enquiry" && <BirlanuSlideEnquiry data={data} open={open} />}
             {slide === "productWise" && <BirlanuSlideProductWise data={data} open={open} />}
+            {slide === "agentWise" && (
+              <BCard
+                title="Agent Wise Performance" icon={Users}
+                footnote={agentWiseData?.productivity.note}
+                action={agentFilters.activeCount > 0 ? (
+                  <button type="button" onClick={agentFilters.clearAll} className="rounded-md bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-slate-100">
+                    Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+                  </button>
+                ) : undefined}
+              >
+                {!agentWiseData || agentWiseData.byAgent.length === 0 ? <Empty text="No agent-attributed leads in birlanu_sale yet." /> : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr>
+                          <FilterSortTh label="Agent" columnKey="label" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-left text-[10px] font-bold text-white" />
+                          <FilterSortTh label="Leads" columnKey="leads" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white" />
+                          <FilterSortTh label="Connected" columnKey="connected" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white" />
+                          <FilterSortTh label="Connected %" columnKey="connectedPct" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white" />
+                          <FilterSortTh label="Converted" columnKey="converted" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white" />
+                          <FilterSortTh label="Conversion %" columnKey="conversionPct" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white" />
+                          <FilterSortTh label="Sale Value" columnKey="saleValue" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="whitespace-nowrap bg-[#0b2a5b] px-2 py-1.5 text-center text-[10px] font-bold text-white" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedAgents.map((a) => (
+                          <tr key={a.label} className="border-b border-slate-50 last:border-0 even:bg-slate-50/50">
+                            <td className="px-2 py-1.5 text-left text-[11px] font-semibold text-slate-700">{a.label}</td>
+                            <td className="px-2 py-1.5 text-center text-[11px] text-slate-600">{int(a.leads)}</td>
+                            <td className="px-2 py-1.5 text-center text-[11px] text-slate-600">{int(a.connected)}</td>
+                            <td className="px-2 py-1.5 text-center text-[11px] text-slate-600">{pct1(a.connectedPct)}</td>
+                            <td className="px-2 py-1.5 text-center text-[11px] text-slate-600">{int(a.converted)}</td>
+                            <td className="px-2 py-1.5 text-center text-[11px] font-semibold text-emerald-700">{pct1(a.conversionPct)}</td>
+                            <td className="px-2 py-1.5 text-center text-[11px] font-semibold text-slate-800">{inr(a.saleValue)}</td>
+                          </tr>
+                        ))}
+                        {sortedAgents.length === 0 && (
+                          <tr><td colSpan={7} className="py-6 text-center text-xs text-slate-400">No agents match the current filters.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </BCard>
+            )}
           </div>
         </>
       )}

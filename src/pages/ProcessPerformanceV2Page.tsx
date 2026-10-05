@@ -21,6 +21,9 @@ import { HousingPremiumSaleDashboard } from "@/components/process-performance/Ho
 import { LpFeedbackDashboard } from "@/components/process-performance/LpFeedbackDashboard";
 import { LpOnboardingDashboard } from "@/components/process-performance/LpOnboardingDashboard";
 import { SatyaRetailDashboard } from "@/components/process-performance/SatyaRetailDashboard";
+import { AltRxDashboard } from "@/components/process-performance/AltRxDashboard";
+import { AltRxMisPanel } from "@/components/process-performance/AltRxMisPanel";
+import { MisEmailScheduleDrawer } from "@/components/process-performance/MisEmailScheduleDrawer";
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
 import { DuDigitalDashboard } from "@/components/process-performance/DuDigitalDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
@@ -38,6 +41,7 @@ import {
   Mail, Star, ShieldCheck, Repeat, RotateCcw, TrendingUp,
   Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
   Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud, Sparkles, Download,
+  CalendarClock,
 } from "lucide-react";
 
 /**
@@ -46,7 +50,7 @@ import {
  * company is passed straight through as projectKey with no separate
  * mapping table, same as bellavita/gnc/clovia/neemans already are.
  */
-type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "du_thailand" | "du_korea";
+type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "alt_rx" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "du_thailand" | "du_korea";
 type SectionKey = "dashboards" | "uploader" | "mis";
 
 const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
@@ -59,6 +63,7 @@ const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "clovia", label: "Clovia" },
   { key: "birlanu", label: "Birlanu" },
   { key: "satya_retail", label: "Satya Retail" },
+  { key: "alt_rx", label: "ALT RX" },
   { key: "lp_feedback", label: "LP Feedback" },
   { key: "lp_onboarding", label: "LP Onboarding" },
   { key: "puresta", label: "Puresta" },
@@ -82,6 +87,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
   clovia: { icon: Shirt, tone: "red" },
   birlanu: { icon: FileText, tone: "indigo" },
   satya_retail: { icon: Tag, tone: "yellow" },
+  alt_rx: { icon: Tag, tone: "emerald" },
   lp_feedback: { icon: MessageSquare, tone: "blue" },
   lp_onboarding: { icon: Users, tone: "pink" },
   puresta: { icon: Sparkles, tone: "slate" },
@@ -103,7 +109,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "du_digital_thailand" | "du_digital_korea" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "du_digital_thailand" | "du_digital_korea" | "alt_rx" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -123,6 +129,9 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   ],
   lp_onboarding: [
     { key: "call_performance", label: "Onboarding Call Performance", description: "Login/calls/connectivity, lead-source, week-wise & agent-wise — live from uploaded APR/CDR data", kind: "lp_onboarding" },
+  ],
+  alt_rx: [
+    { key: "alt_rx_dashboard", label: "ALT RX Dashboard", description: "Upload the ticket Dump to see Inflow, Closure, TAT and FRT by agent, comment type and brand, by day, week and MTD, and download the MIS workbook", kind: "alt_rx" },
   ],
   satya_retail: [
     { key: "satya_dashboard", label: "Satya Retail Dashboard", description: "Morning/Absentee allocation, calls, connect, orders & conversion, outcomes, agent-wise and daily tracker — live from uploaded allocation/CDR data", kind: "satya_retail_dashboard" },
@@ -290,6 +299,10 @@ const BIRLANU_UPLOADERS = [
 
 /** Satya Retail's 2 uploaders, writing into brand-new db_masmis tables
  * (satya_allocation/satya_cdr, sql/1770). Same status as above. */
+const ALT_RX_UPLOADERS = [
+  { code: "ALT_RX_DUMP_MASMIS", label: "Dump", description: "Upload the ALT RX ticket Dump. Each upload replaces the previous Dump.", icon: Upload },
+];
+
 const SATYA_RETAIL_UPLOADERS = [
   { code: "SATYA_ALLOCATION_MASMIS", label: "Allocation", description: "Upload Satya Retail beat/shop allocation data", icon: Target },
   { code: "SATYA_CDR_MASMIS",        label: "CDR",         description: "Upload Satya Retail call detail records",      icon: PhoneOutgoing },
@@ -339,6 +352,7 @@ const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   dalmia: DALMIA_UPLOADERS,
   birlanu: BIRLANU_UPLOADERS,
   satya_retail: SATYA_RETAIL_UPLOADERS,
+  alt_rx: ALT_RX_UPLOADERS,
   lp_feedback: LP_FEEDBACK_UPLOADERS,
   lp_onboarding: LP_ONBOARDING_UPLOADERS,
   du_thailand: DU_THAILAND_UPLOADERS,
@@ -470,6 +484,7 @@ function MisPanel({ companyKey, companyLabel }: { companyKey: CompanyKey; compan
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const download = async () => {
     setBusy(true);
@@ -546,9 +561,16 @@ function MisPanel({ companyKey, companyLabel }: { companyKey: CompanyKey; compan
           </button>
           <button
             type="button"
+            onClick={() => setScheduleOpen(true)}
+            className="ml-auto flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-50"
+          >
+            <CalendarClock className="h-3.5 w-3.5" /> Schedule email
+          </button>
+          <button
+            type="button"
             onClick={() => void download()}
             disabled={busy}
-            className="ml-auto flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:cursor-wait disabled:opacity-70"
+            className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:cursor-wait disabled:opacity-70"
           >
             <Download className="h-3.5 w-3.5" /> {busy ? "Preparing MIS…" : "Download MIS Report"}
           </button>
@@ -557,6 +579,12 @@ function MisPanel({ companyKey, companyLabel }: { companyKey: CompanyKey; compan
         {error && <div className="mt-3 rounded-lg border border-red-100 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
         {notice && <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs text-amber-800">{notice}</div>}
       </div>
+      <MisEmailScheduleDrawer
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        dashboardKey={`mis:${companyKey}`}
+        reportTitle={`${companyLabel} MIS`}
+      />
     </div>
   );
 }
@@ -565,7 +593,7 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "alt_rx" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -768,6 +796,8 @@ export default function ProcessPerformanceV2Page() {
               <LpFeedbackDashboard />
             ) : selectedDashboard.kind === "lp_onboarding" ? (
               <LpOnboardingDashboard />
+            ) : selectedDashboard.kind === "alt_rx" ? (
+              <AltRxDashboard />
             ) : selectedDashboard.kind === "satya_retail_dashboard" ? (
               <SatyaRetailDashboard />
             ) : selectedDashboard.kind === "clovia_dashboard" ? (
@@ -792,6 +822,7 @@ export default function ProcessPerformanceV2Page() {
         {/* Level 3: Uploader hub + workspace — every company with a real uploader
             array (all except Dalmia/DU Bangladesh/Viega/Exicom, Inbound-only so
             far) shares this one design instead of a duplicated block each. */}
+
         {company && UPLOADERS_BY_COMPANY[company] && section === "uploader" && !selectedUploader && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
@@ -834,7 +865,14 @@ export default function ProcessPerformanceV2Page() {
         {/* Level 3: MIS — every company (the "puresta" placeholder has no
             dashboards to bundle, so the server 404s with a plain message
             the panel shows inline rather than a dead grid here). */}
-        {company && section === "mis" && (
+        {company === "alt_rx" && section === "mis" && (
+          <div className="space-y-4">
+            <Breadcrumb parts={[companyLabel, "MIS"]} onBack={backToCompany} />
+            <AltRxMisPanel />
+          </div>
+        )}
+
+        {company && company !== "alt_rx" && section === "mis" && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "MIS"]} onBack={backToCompany} />
             <MisPanel companyKey={company} companyLabel={companyLabel} />

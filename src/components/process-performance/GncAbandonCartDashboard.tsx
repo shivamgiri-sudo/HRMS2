@@ -64,6 +64,13 @@ interface AbandonCartData {
   target?: { tableAvailable: boolean; configured: boolean; monthlyTarget: number | null; rangeTarget: number | null; perAgentMonthlyTarget: number | null; agentCount: number | null; uncoveredMonths: string[]; revenue: number; achPct: number | null };
 }
 
+interface AgentRow {
+  empId: string; name: string;
+  totalAllocation: number; connected: number; notConnected: number; connectedPct: number; sameDayConnected: number;
+  saleCount: number; revenue: number; aov: number; codCount: number; paidCount: number; convOnConnectPct: number;
+}
+interface AgentWiseData { from: string; to: string; agents: AgentRow[] }
+
 const FUNNEL_COLORS = ["#ec4899", "#a855f7", "#3b82f6", "#10b981", "#f59e0b"];
 const ORDER_COLORS = ["#f59e0b", "#10b981"];
 const TOOLTIP_STYLE = { fontSize: 11, borderRadius: 10, border: "1px solid #e2e8f0" } as const;
@@ -154,6 +161,7 @@ export function GncAbandonCartDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [drawer, setDrawer] = useState<{ title: string; series: DrawerSeries[] } | null>(null);
+  const [agentData, setAgentData] = useState<AgentWiseData | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -171,6 +179,28 @@ export function GncAbandonCartDashboard() {
   }, [from, to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    hrmsApi
+      .get<{ success: boolean; data: AgentWiseData }>(`/api/process-performance/gnc-abandon-cart-dashboard/agent-wise?from=${from}&to=${to}`)
+      .then((res) => { if (!cancelled) setAgentData(res.data); })
+      .catch(() => { if (!cancelled) setAgentData(null); });
+    return () => { cancelled = true; };
+  }, [from, to]);
+
+  // Excel-style sort + filter for the Agent Wise Performance table -- hooks must run every
+  // render, so this is computed before the early returns further down that guard on `data`.
+  const AGENT_FILTER_COLS: Array<FilterColumn<AgentRow>> = [
+    { key: "name", get: (a) => a.name }, { key: "totalAllocation", get: (a) => a.totalAllocation },
+    { key: "connected", get: (a) => a.connected }, { key: "notConnected", get: (a) => a.notConnected },
+    { key: "connectedPct", get: (a) => a.connectedPct }, { key: "sameDayConnected", get: (a) => a.sameDayConnected },
+    { key: "saleCount", get: (a) => a.saleCount }, { key: "revenue", get: (a) => a.revenue }, { key: "aov", get: (a) => a.aov },
+    { key: "codCount", get: (a) => a.codCount }, { key: "paidCount", get: (a) => a.paidCount }, { key: "convOnConnectPct", get: (a) => a.convOnConnectPct },
+  ];
+  const agentColGetter = (a: AgentRow, key: string) => AGENT_FILTER_COLS.find((c) => c.key === key)?.get(a);
+  const agentFilters = useColumnFilters(agentData?.agents ?? [], AGENT_FILTER_COLS);
+  const { sorted: sortedAgents, sortKey: agentSortKey, sortDir: agentSortDir, toggleSort: toggleAgentSort } = useSortableRows(agentFilters.filtered, agentColGetter);
 
   // Excel-style sort + filter for the Top Products table -- hooks must run every render, so this is computed before
   // the early returns further down that guard on `data` being loaded.
@@ -242,9 +272,17 @@ export function GncAbandonCartDashboard() {
         { title: "Daily Trend", columns: ["Date", "Base", "Attempted", "Connected", "Sale Count", "Revenue"], rows: data.dailyTrend.map((d) => [formatShortDate(d.date), d.base, d.attempted, d.connected, d.saleCount, formatINR(d.revenue)]) },
         { title: "Week Wise Comparison", columns: ["Week", "Sale Count", "Revenue"], rows: data.weeklyTrend.map((w) => [w.label, w.saleCount, formatINR(w.revenue)]) },
         { title: "Top Products", columns: ["Product", "Sale Count", "Revenue", "AOV"], rows: data.topProducts.map((p) => [p.product, p.saleCount, formatINR(p.revenue), formatINR(p.aov)]) },
+        ...(agentData && agentData.agents.length > 0 ? [{
+          title: "Agent Wise Performance",
+          columns: ["Agent", "Emp ID", "Total Allocation", "Connected", "Not Connected", "Connected %", "Same Day Connected", "Sale Count", "Revenue", "AOV", "COD", "Prepaid", "Conv % (Connect)"],
+          rows: agentData.agents.map((a) => [
+            a.name, a.empId, a.totalAllocation, a.connected, a.notConnected, `${a.connectedPct}%`, a.sameDayConnected,
+            a.saleCount, formatINR(a.revenue), formatINR(a.aov), a.codCount, a.paidCount, `${a.convOnConnectPct}%`,
+          ]),
+        }] : []),
       ],
     }];
-  }, [data]);
+  }, [data, agentData]);
 
   if (loading && !data) return <Spinner />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -510,6 +548,58 @@ export function GncAbandonCartDashboard() {
           </div>
         </SectionCard>
       </div>
+
+      <SectionCard
+        icon={Users} title="Agent Wise Performance" tone="indigo"
+        footnote="Total Allocation / Connected from gnc_allocation; Sale Count, Revenue and Orders from gnc_sale (Abandon Cart only), merged by agent."
+        action={agentFilters.activeCount > 0 ? (
+          <button type="button" onClick={agentFilters.clearAll} className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-white/20">
+            Clear {agentFilters.activeCount} filter{agentFilters.activeCount > 1 ? "s" : ""}
+          </button>
+        ) : undefined}
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-400">
+                <FilterSortTh label="Agent" columnKey="name" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-left font-bold" />
+                <FilterSortTh label="Allocation" columnKey="totalAllocation" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="Connected" columnKey="connected" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="Not Connected" columnKey="notConnected" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="Connected %" columnKey="connectedPct" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="Same Day Conn." columnKey="sameDayConnected" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="Sale Count" columnKey="saleCount" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="Revenue" columnKey="revenue" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="AOV" columnKey="aov" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="COD" columnKey="codCount" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="Prepaid" columnKey="paidCount" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-2 text-right font-bold" />
+                <FilterSortTh label="Conv % (Connect)" columnKey="convOnConnectPct" sortKey={agentSortKey} sortDir={agentSortDir} onSort={toggleAgentSort} filters={agentFilters} className="py-2 px-0 text-right font-bold" />
+              </tr>
+            </thead>
+            <tbody>
+              {sortedAgents.map((a) => (
+                <tr key={a.empId} className="border-b border-slate-50 last:border-0 hover:bg-indigo-50/40">
+                  <td className="py-2 px-2"><div className="font-medium text-slate-700">{a.name}</div><div className="text-[10px] text-slate-400">{a.empId}</div></td>
+                  <td className="py-2 px-2 text-right text-slate-600">{a.totalAllocation.toLocaleString("en-IN")}</td>
+                  <td className="py-2 px-2 text-right text-slate-600">{a.connected.toLocaleString("en-IN")}</td>
+                  <td className="py-2 px-2 text-right text-slate-600">{a.notConnected.toLocaleString("en-IN")}</td>
+                  <td className="py-2 px-2 text-right text-slate-600">{a.connectedPct}%</td>
+                  <td className="py-2 px-2 text-right text-slate-600">{a.sameDayConnected.toLocaleString("en-IN")}</td>
+                  <td className="py-2 px-2 text-right text-slate-600">{a.saleCount.toLocaleString("en-IN")}</td>
+                  <td className="py-2 px-2 text-right font-semibold text-slate-800">{formatINR(a.revenue)}</td>
+                  <td className="py-2 px-2 text-right text-slate-600">{formatINR(a.aov)}</td>
+                  <td className="py-2 px-2 text-right text-slate-600">{a.codCount}</td>
+                  <td className="py-2 px-2 text-right text-slate-600">{a.paidCount}</td>
+                  <td className="py-2 px-0 text-right font-semibold text-indigo-700">{a.convOnConnectPct}%</td>
+                </tr>
+              ))}
+              {sortedAgents.length === 0 && (
+                <tr><td colSpan={12} className="py-6 text-center text-slate-400">{(agentData?.agents.length ?? 0) === 0 ? "No agent data for this period." : "No agents match the current filters."}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
 
       {drawer && (
         <GncDetailDrawer

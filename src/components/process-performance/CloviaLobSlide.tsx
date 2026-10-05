@@ -4,7 +4,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner, DashboardHero, DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 import {
-  KpiGrid, InsightList, ChartCard, DataTable, DetailDrawer, NotesPanel, periodExportTables, specTableExport, fmtDate, fmtVal,
+  KpiGrid, InsightList, ChartCard, DataTable, DetailDrawer, NotesPanel, periodExportTables, specTableExport, fmtDate, fmtVal, ImportExcelIcon,
   type LobPayload, type PeriodBreakdown, type DrillTarget,
 } from "./CloviaReportKit";
 
@@ -18,11 +18,13 @@ import {
 
 export type CloviaLob = "overview" | "inbound" | "email" | "chat" | "outbound";
 
-const META: Record<CloviaLob, { icon: React.ComponentType<{ className?: string }>; eyebrow: string; title: string; gradient: string; raw: string; filter?: { key: "dept" | "campaign"; label: string; all: string } }> = {
+const META: Record<CloviaLob, { icon: React.ComponentType<{ className?: string }>; eyebrow: string; title: string; gradient: string; raw: string; filter?: { key: "dept" | "campaign"; label: string; all: string }; uploadType?: string }> = {
   overview: { icon: LayoutDashboard, eyebrow: "Clovia · Process Performance", title: "Scorecard — all LOBs", gradient: "from-purple-600 via-fuchsia-600 to-purple-700", raw: "clovia" },
   inbound: { icon: PhoneIncoming, eyebrow: "Clovia · Inbound", title: "CSAT, Quality, Rechurn & Tickets", gradient: "from-blue-600 via-indigo-600 to-blue-700", raw: "clovia_inbound" },
-  email: { icon: Mail, eyebrow: "Clovia · Process Performance", title: "Email Performance", gradient: "from-sky-600 via-cyan-600 to-sky-700", raw: "clovia_email" },
-  chat: { icon: MessageSquare, eyebrow: "Clovia · Process Performance", title: "Chat Performance", gradient: "from-emerald-600 via-teal-600 to-emerald-700", raw: "clovia_chat", filter: { key: "dept", label: "Filter by department", all: "All departments" } },
+  email: { icon: Mail, eyebrow: "Clovia · Process Performance", title: "Email Performance", gradient: "from-sky-600 via-cyan-600 to-sky-700", raw: "clovia_email", uploadType: "CL_EMAIL_RAW_MASMIS" },
+  chat: { icon: MessageSquare, eyebrow: "Clovia · Process Performance", title: "Chat Performance", gradient: "from-emerald-600 via-teal-600 to-emerald-700", raw: "clovia_chat", filter: { key: "dept", label: "Filter by department", all: "All departments" }, uploadType: "CL_CHAT_MASMIS" },
+  // No uploadType here: this slide is live from dialer_db.cdr_ob_250 (see clovia-lob-outbound.service.ts),
+  // not db_masmis.cl_outbound -- an upload icon would import data that never reaches this screen.
   outbound: { icon: PhoneOutgoing, eyebrow: "Clovia · Process Performance", title: "Outbound Performance", gradient: "from-violet-600 via-purple-600 to-violet-700", raw: "clovia_outbound", filter: { key: "campaign", label: "Filter by campaign", all: "All campaigns" } },
 };
 
@@ -117,6 +119,7 @@ export function CloviaLobSlide({ lob, from, to, onRangeChange, hideHero }: { lob
               slides={exportSlides} activeSlideTitle={activeLabel}
             />
           )}
+          {meta.uploadType && <ImportExcelIcon templateCode={meta.uploadType} label={meta.title} />}
           {meta.filter && opts.length > 0 && (
             <Select value={filter} onValueChange={setFilter}>
               <SelectTrigger className="h-8 w-[200px] bg-white text-xs" aria-label={meta.filter.label}><SelectValue /></SelectTrigger>

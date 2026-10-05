@@ -3,6 +3,7 @@ import {
   ComposedChart, Bar, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
+import * as XLSX from "xlsx";
 import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
 
 /**
@@ -58,30 +59,30 @@ const ACCENT: Record<Country, { accent: string; soft: string; label: string }> =
 const CSS = `
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 .du-root{--canvas:${PALETTE.canvas};--ink:${PALETTE.ink};--muted:${PALETTE.muted};--line:${PALETTE.line};--answered:${PALETTE.answered};--abandoned:${PALETTE.abandoned};--sl:${PALETTE.sl};
-  font-family:"Inter",ui-sans-serif,system-ui,sans-serif;color:var(--ink);background:var(--canvas);border-radius:28px;padding:20px;position:relative;overflow:hidden}
+  font-family:"Inter",ui-sans-serif,system-ui,sans-serif;color:var(--ink);background:var(--canvas);border-radius:18px;padding:12px;position:relative;overflow:hidden}
 .du-root *{box-sizing:border-box}
 .du-serif{font-family:"Inter",ui-sans-serif,system-ui,sans-serif;font-weight:700;letter-spacing:-.02em}
 .du-mono{font-family:"Inter",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums}
 .du-eyebrow{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-.du-card{background:${PALETTE.card};border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 1px 0 rgba(15,27,45,.03),0 8px 24px -16px rgba(15,27,45,.18)}
-.du-hero{display:grid;gap:18px;grid-template-columns:1.4fr 1fr;align-items:end;padding:22px 24px;border-radius:22px;color:#fff;background:radial-gradient(120% 140% at 0% 0%,var(--accent-hi) 0%,var(--accent) 55%,#0B1530 100%)}
-.du-hero-num{font-size:86px;line-height:.9;letter-spacing:-.03em;font-weight:700}
+.du-card{background:${PALETTE.card};border:1px solid var(--line);border-radius:12px;padding:10px;box-shadow:0 1px 0 rgba(15,27,45,.03),0 8px 24px -16px rgba(15,27,45,.18)}
+.du-hero{display:grid;gap:12px;grid-template-columns:1.4fr 1fr;align-items:end;padding:14px 16px;border-radius:14px;color:#fff;background:radial-gradient(120% 140% at 0% 0%,var(--accent-hi) 0%,var(--accent) 55%,#0B1530 100%)}
+.du-hero-num{font-size:60px;line-height:.9;letter-spacing:-.03em;font-weight:700}
 .du-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:600}
-.du-tiles{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(138px,1fr))}
-.du-tile{all:unset;cursor:pointer;background:${PALETTE.card};border:1px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
+.du-tiles{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
+.du-tile{all:unset;cursor:pointer;background:${PALETTE.card};border:1px solid var(--line);border-radius:12px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease}
 .du-tile:hover{transform:translateY(-2px);box-shadow:0 14px 28px -18px rgba(15,27,45,.45);border-color:#cbd5e1}
 .du-tile:focus-visible,.du-slot:focus-visible,.du-row:focus-visible,.du-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .du-tile-static{background:${PALETTE.card};border:1px dashed #cbd5e1;border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;opacity:.9}
-.du-val{font-family:"Inter",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;font-size:20px;font-weight:600;letter-spacing:-.02em}
+.du-val{font-family:"Inter",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;font-size:16px;font-weight:600;letter-spacing:-.02em}
 .du-slots{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:4px}
-.du-slot{all:unset;cursor:pointer;height:46px;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:"Inter",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;font-size:10px;color:#fff;transition:transform .15s ease}
+.du-slot{all:unset;cursor:pointer;height:36px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:"Inter",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;font-size:10px;color:#fff;transition:transform .15s ease}
 .du-slot:hover{transform:translateY(-2px)}
 .du-slot-empty{background:#E2E8F0;color:#94A3B8}
 .du-slot-sel{box-shadow:0 0 0 2px var(--ink) inset}
-.du-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
-.du-table th{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:right;padding:8px 10px;border-bottom:1px solid var(--line);background:#F8FAFC;position:sticky;top:0}
+.du-table{width:100%;border-collapse:separate;border-spacing:0;font-size:11px}
+.du-table th{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:right;padding:5px 8px;border-bottom:1px solid var(--line);background:#F8FAFC;position:sticky;top:0}
 .du-table th:first-child,.du-table td:first-child{text-align:left}
-.du-table td{padding:9px 10px;text-align:right;border-bottom:1px solid #F1F5F9;font-family:"Inter",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;color:#334155}
+.du-table td{padding:5px 8px;text-align:right;border-bottom:1px solid #F1F5F9;font-family:"Inter",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;color:#334155}
 .du-table td:first-child{font-family:"Inter",ui-sans-serif,system-ui,sans-serif;font-weight:600;color:var(--ink)}
 .du-row{cursor:pointer;transition:background .15s ease}
 .du-row:hover{background:#F8FAFC}
@@ -93,6 +94,22 @@ const CSS = `
 @media (prefers-reduced-motion: reduce){.du-enter,.du-enter-2,.du-enter-3,.du-enter-4{animation:none}.du-tile,.du-slot,.du-row{transition:none}.du-tile:hover,.du-slot:hover{transform:none}}
 @media (max-width: 860px){.du-hero{grid-template-columns:1fr}.du-hero-num{font-size:64px}.du-slots{grid-template-columns:repeat(12,minmax(0,1fr))}}
 `;
+
+function downloadCsv(fileBase: string, rows: Array<Record<string, string | number>>): void {
+  if (rows.length === 0) return;
+  const cols = Object.keys(rows[0]);
+  const esc = (v: string | number) => {
+    const s = String(v ?? "");
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const body = [cols.join(","), ...rows.map((r) => cols.map((c) => esc(r[c])).join(","))].join("\n");
+  const url = URL.createObjectURL(new Blob([body], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${fileBase}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function localDateStr(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -213,6 +230,35 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
   const dailyAsc = [...data.daily].reverse();
   const series = (f: (d: DayRow) => number) => dailyAsc.map(f);
   const openKpi = (title: string, s: DrawerSeries[]) => setDrawer({ title, series: s, daily: dailyRows, weekly: weeklyRollup(dailyRows) });
+
+  // One workbook with the same breakdowns as the page: headline, week-wise, date-wise, agent-wise, slot-wise.
+  const exportExcel = () => {
+    const wb = XLSX.utils.book_new();
+    const headline = [
+      ["Metric", "Value"], ["Offered", k.offered], ["Answered", k.answered], ["Answered ≤ 20 s", k.answeredWithin20],
+      ["Abandoned", k.abandoned], ["Abandoned ≤ 20 s", k.abandonedWithin20], ["SL %", k.slPct], ["AL %", k.alPct],
+      ["Abandon %", k.abandonPct], ["AHT", k.aht], ["Agents", k.agentCount],
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(headline), "Dashboard");
+    const weekly = weeklyRollup(dailyRows);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["Week", "Offered", "Answered", "Answered ≤ 20 s", "Abandoned", "SL %", "AL %", "Abandon %", "AHT (sec)"],
+      ...weekly.map((w) => [String(w.label), Number(w.offered), Number(w.answered), Number(w.answeredWithin20), Number(w.abandoned), Number(w.slPct), Number(w.alPct), Number(w.abandonPct), Number(w.ahtSec)]),
+    ]), "Week-wise");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["Date", "Offered", "Answered", "Answered ≤ 20 s", "Abandoned", "SL %", "AL %", "AHT (sec)", "Agents"],
+      ...data.daily.map((d) => [d.date, d.offered, d.answered, d.answeredWithin20, d.abandoned, d.slPct, d.alPct, d.ahtSec, d.agentCount]),
+    ]), "Date-wise");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["Agent", "Offered", "Answered", "Abandoned", "AL %", "Calls", "Login", "Talk"],
+      ...data.agents.map((a) => [a.agent, a.offered, a.answered, a.abandoned, a.alPct, a.calls, a.login, a.talk]),
+    ]), "Agent-wise");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+      ["Date", "Hour", "Offered", "Answered", "Answered ≤ 20 s", "Abandoned", "SL %", "AL %", "AHT (sec)"],
+      ...data.slots.map((s) => [s.date, s.hour, s.offered, s.answered, s.answeredWithin20, s.abandoned, s.slPct, s.alPct, s.ahtSec]),
+    ]), "Slot-wise");
+    XLSX.writeFile(wb, `du_digital_${country.toLowerCase()}_${from}_${to}.xlsx`);
+  };
   const openAgent = (agent: string) => {
     const rows = data.agentDaily.filter((r) => r.agent === agent) as unknown as Array<Record<string, string | number>>;
     setDrawer({
@@ -241,11 +287,11 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
       <section className="du-hero du-enter">
         <div>
           <p className="du-eyebrow" style={{ color: "rgba(255,255,255,.75)" }}>DU Digital · {meta.label} · Voice operations</p>
-          <h2 className="du-serif" style={{ margin: "6px 0 0", fontSize: 34, fontWeight: 700, letterSpacing: "-.01em" }}>
+          <h2 className="du-serif" style={{ margin: "2px 0 0", fontSize: 24, fontWeight: 700, letterSpacing: "-.01em" }}>
             Service level, {from === to ? dayLabel(to) : `${dayLabel(from)} – ${dayLabel(to)}`}
           </h2>
           <div style={{ marginTop: 14, display: "flex", alignItems: "flex-end", gap: 14 }}>
-            <span className="du-hero-num du-serif">{k.slPct}<span style={{ fontSize: 38, opacity: .8 }}>%</span></span>
+            <span className="du-hero-num du-serif">{k.slPct}<span style={{ fontSize: 28, opacity: .8 }}>%</span></span>
             <div style={{ paddingBottom: 10 }}>
               <span className="du-pill" style={{ background: verdictOk ? "rgba(14,159,142,.22)" : "rgba(228,87,46,.25)", color: "#fff" }}>
                 {verdictOk ? "✓ On target" : "▼ Below target"} · target {SL_TARGET}%
@@ -264,7 +310,7 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
             { label: "Agents active", value: int(k.agentCount) },
           ].map((m) => (
             <div key={m.label} style={{ background: "rgba(255,255,255,.12)", border: "1px solid rgba(255,255,255,.18)", borderRadius: 14, padding: "10px 12px" }}>
-              <div className="du-mono" style={{ fontSize: 20, fontWeight: 600 }}>{m.value}</div>
+              <div className="du-mono" style={{ fontSize: 16, fontWeight: 600 }}>{m.value}</div>
               <div style={{ fontSize: 11, opacity: .8 }}>{m.label}</div>
             </div>
           ))}
@@ -397,7 +443,7 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
       </section>
 
       {/* Intraday + service-level rings */}
-      <div className="du-enter du-enter-3" style={{ display: "grid", gap: 14, gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", marginBottom: 16 }}>
+      <div className="du-enter du-enter-3" style={{ display: "grid", gap: 10, gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", marginBottom: 10 }}>
         <section className="du-card">
           <p className="du-eyebrow">Intraday call flow</p>
           <p style={{ margin: "2px 0 8px", fontSize: 14, fontWeight: 600 }}>Offered and answered by hour, {data.intradayDate}</p>
@@ -429,7 +475,7 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
       </div>
 
       {/* Agent wise + language */}
-      <div className="du-enter du-enter-4" style={{ display: "grid", gap: 14, gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", marginBottom: 16 }}>
+      <div className="du-enter du-enter-4" style={{ display: "grid", gap: 10, gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", marginBottom: 10 }}>
         <section className="du-card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <div>
@@ -486,7 +532,7 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
       </div>
 
       {/* Snapshots */}
-      <section className="du-enter du-enter-4" style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", marginBottom: 16 }}>
+      <section className="du-enter du-enter-4" style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", marginBottom: 10 }}>
         {[
           { title: "Today", sub: data.snapshot.today.date, kk: data.snapshot.today },
           { title: "Week to date", sub: `through ${to}`, kk: data.snapshot.wtd },
@@ -497,7 +543,7 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
               <p style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>{s.title}</p>
               <span style={{ fontSize: 10, color: PALETTE.muted }} className="du-mono">{s.sub}</span>
             </div>
-            <p className="du-serif" style={{ margin: "8px 0 2px", fontSize: 40, fontWeight: 700, letterSpacing: "-.02em", color: slColor(s.kk.slPct, s.kk.offered > 0) || PALETTE.ink }}>
+            <p className="du-serif" style={{ margin: "6px 0 2px", fontSize: 30, fontWeight: 700, letterSpacing: "-.02em", color: slColor(s.kk.slPct, s.kk.offered > 0) || PALETTE.ink }}>
               {s.kk.slPct}<span style={{ fontSize: 20 }}>%</span>
             </p>
             <p style={{ margin: 0, fontSize: 11, color: PALETTE.muted }}>service level</p>
@@ -511,9 +557,37 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
         ))}
       </section>
 
-      {/* Daily detail */}
+      {/* Week-wise: same 7-day blocks as the MIS (W-1 = days 1-7, ...) */}
+      <section className="du-card du-enter du-enter-4" style={{ marginBottom: 10 }}>
+        <p className="du-eyebrow">Week-wise</p>
+        <p style={{ margin: "2px 0 8px", fontSize: 14, fontWeight: 600 }}>Week 1 = days 1–7, Week 2 = days 8–14, and so on</p>
+        <div style={{ overflowX: "auto" }}>
+          <table className="du-table">
+            <thead><tr><th>Week</th><th>Offered</th><th>Answered</th><th>≤ 20 s</th><th>Abandoned</th><th>SL %</th><th>AL %</th><th>Abandon %</th><th>AHT</th></tr></thead>
+            <tbody>
+              {weeklyRollup(dailyRows).map((w) => (
+                <tr key={String(w.label)}>
+                  <td>{String(w.label)}</td><td>{int(Number(w.offered))}</td><td>{int(Number(w.answered))}</td><td>{int(Number(w.answeredWithin20))}</td>
+                  <td style={{ color: PALETTE.abandoned }}>{int(Number(w.abandoned))}</td>
+                  <td style={{ color: slColor(Number(w.slPct), Number(w.offered) > 0), fontWeight: 600 }}>{Number(w.slPct)}%</td>
+                  <td>{Number(w.alPct)}%</td><td>{Number(w.abandonPct)}%</td><td>{fmtHms(Number(w.ahtSec))}</td>
+                </tr>
+              ))}
+              {data.daily.length === 0 && <tr><td colSpan={9} style={{ textAlign: "center", color: PALETTE.muted, fontFamily: "Inter" }}>No data for this range.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Daily detail: date-wise */}
       <section className="du-card du-enter du-enter-4">
-        <p className="du-eyebrow">Daily detail</p>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <p className="du-eyebrow" style={{ margin: 0 }}>Daily detail</p>
+          <button type="button" className="du-btn" onClick={exportExcel}
+            style={{ border: "1px solid var(--line)", background: "#fff", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+            Export Excel
+          </button>
+        </div>
         <p style={{ margin: "2px 0 8px", fontSize: 14, fontWeight: 600 }}>Each day in range</p>
         <div style={{ overflowX: "auto", maxHeight: 360, overflowY: "auto" }}>
           <table className="du-table">
@@ -537,6 +611,7 @@ export function DuDigitalDashboard({ country }: { country: Country }) {
         <GncDetailDrawer
           title={drawer.title} eyebrow={`DU Digital ${meta.label} · Week-wise & date-wise`} gradient="from-slate-800 via-slate-700 to-slate-900"
           series={drawer.series} dailyRows={drawer.daily} weeklyRows={drawer.weekly} onClose={() => setDrawer(null)}
+          onExport={() => downloadCsv(`du_${meta.label.toLowerCase()}_${drawer.title.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}_${from}_${to}`, drawer.daily)}
         />
       )}
     </div>

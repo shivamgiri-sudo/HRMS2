@@ -6,13 +6,43 @@ import {
   Mail, MailOpen, MailCheck, Gauge, Inbox, Hourglass, RotateCcw, Trash2, Users, ShieldCheck, ClipboardCheck, ClipboardList, MessageSquare,
   UserRound, Repeat, Timer, Clock3, MessageSquareOff, Smartphone, MessageCircleQuestion, BadgeCheck, PhoneOutgoing, PhoneCall, Hash, PhoneOff,
   PieChart, MessageSquareHeart, Smile, Frown, Languages, PhoneForwarded, PhoneMissed, PhoneIncoming, OctagonAlert, TrendingDown, CheckCircle2,
-  ArrowUpRight, AlertTriangle, Star, Search, Lightbulb, Info, ChevronLeft, LayoutGrid,
+  ArrowUpRight, AlertTriangle, Star, Search, Lightbulb, Info, ChevronLeft, LayoutGrid, UploadCloud,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { KpiCard, SectionCard, type KpiTone, type ExportTable } from "./DashboardKit";
 import { useSortableRows } from "./useSortableRows";
 import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
+import { BellavitaMasmisUploader } from "./BellavitaMasmisUploader";
+import type { Tone } from "@/lib/processPerformanceTones";
+
+/** Small icon-only trigger for a view whose data comes from one Clovia Excel upload type
+ * (CL_*_MASMIS) -- opens the same proven uploader (BellavitaMasmisUploader, despite its name a
+ * generic, company-agnostic component already wired for every CL_*_MASMIS type's RPC) in a modal,
+ * so each Clovia view gets a one-click import without leaving the page or re-implementing upload
+ * mechanics. Not added to Overview/Inbound: both are roll-ups of several upload types plus the
+ * live dialer, so no single templateCode describes them -- adding an icon there would silently
+ * import into the wrong table. */
+export function ImportExcelIcon({ templateCode, label, tone = "violet" }: { templateCode: string; label: string; tone?: Tone }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button" title={`Import ${label} (Excel)`}
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
+        >
+          <UploadCloud className="h-4 w-4" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+        <DialogHeader><DialogTitle>Import {label}</DialogTitle></DialogHeader>
+        <BellavitaMasmisUploader templateCode={templateCode} label={label} tone={tone} />
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 /**
  * Generic renderer for the Clovia LOB report specs (backend/.../clovia-lob.shared.ts).

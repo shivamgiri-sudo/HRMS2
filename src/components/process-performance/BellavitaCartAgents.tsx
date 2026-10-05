@@ -15,7 +15,7 @@ import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilte
  * Every row opens a drill-down drawer.
  */
 
-interface AgentRow {
+export interface AgentRow {
   empId: string; name: string; doj: string | null; tenureDays: number | null; bucket: string | null;
   status: "Active" | "InActive" | "Not in APR"; tl: string;
   saleMade: number; cod: number; paid: number; rto: number; codPct: number; paidPct: number; rtoPct: number;

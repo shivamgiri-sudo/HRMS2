@@ -5,10 +5,10 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   PhoneIncoming, PhoneOutgoing, PhoneCall, Users, Mail, MessageSquare, ShieldCheck, Smile, Frown, Gauge, Eye,
-  RefreshCw, ArrowUp, ArrowDown, Lightbulb, Trophy, UsersRound, Headset, TrendingUp, LayoutDashboard,
+  RefreshCw, ArrowUp, ArrowDown, Lightbulb, Trophy, UsersRound, Headset, TrendingUp, LayoutDashboard, Download,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Spinner, DashboardExportMenu, formatShortDate, KPI_TONES, type KpiTone, type ExportSlide } from "./DashboardKit";
+import { Spinner, DashboardExportMenu, formatShortDate, downloadDrawerExcel, KPI_TONES, type KpiTone, type ExportSlide } from "./DashboardKit";
 import { useSortableRows } from "./useSortableRows";
 import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
@@ -35,11 +35,18 @@ interface InboundBlock {
   aht: number; avgTalk: number; avgHold: number; avgAcw: number; asa: number; uniqueCallers: number; repeatCallers: number; repeatCallerPct: number;
   agentsActive: number; callsPerAgent: number; daily: Day[];
 }
-interface AgentMix { empId: string; agent: string; inbound: number; email: number; chat: number; outbound: number; total: number; lobs: number; quality: number | null; audits: number }
+interface AgentMix {
+  empId: string; agent: string; inbound: number; email: number; chat: number; outbound: number; total: number; lobs: number; quality: number | null; audits: number;
+  // Agent Productivity (APR), live from dialer_db.vicidial_agent_log_250 -- null means the agent
+  // has no login-log rows at all in this range, not a real 0:00.
+  avgLoginSec: number | null; avgTalkSec: number | null; avgBreakSec: number | null; aprDays: number;
+}
+interface Productivity { agentCount: number; presentDays: number; avgLoginSec: number; avgTalkSec: number; avgBreakSec: number }
 interface Overview {
   from: string; to: string; prevFrom: string; prevTo: string;
-  deltas: Record<"offered" | "answered" | "uniqueCallers" | "slPct" | "connectPct" | "emails" | "chats" | "quality" | "csat" | "dsat", number | null>;
+  deltas: Record<"offered" | "answered" | "uniqueCallers" | "slPct" | "connectPct" | "emails" | "chats" | "quality" | "csat" | "dsat" | "avgLoginSec" | "avgTalkSec" | "avgBreakSec", number | null>;
   insights: Array<{ tone: "good" | "warn" | "info"; text: string }>;
+  productivity: Productivity;
   inbound: InboundBlock | null;
   rechurn: { calls: number; unique: number; abandon: number; avgDelayMin: number };
   outbound: { metrics: Record<string, number>; daily: Day[] };
@@ -222,6 +229,7 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
   const AGENT_FILTER_COLS: Array<FilterColumn<AgentMix>> = [
     { key: "agent", get: (a) => a.agent }, { key: "inbound", get: (a) => a.inbound }, { key: "email", get: (a) => a.email },
     { key: "chat", get: (a) => a.chat }, { key: "outbound", get: (a) => a.outbound }, { key: "total", get: (a) => a.total }, { key: "quality", get: (a) => a.quality },
+    { key: "avgLoginSec", get: (a) => a.avgLoginSec }, { key: "avgTalkSec", get: (a) => a.avgTalkSec }, { key: "avgBreakSec", get: (a) => a.avgBreakSec },
   ];
   const agentColGetter = (a: AgentMix, key: string) => AGENT_FILTER_COLS.find((c) => c.key === key)?.get(a);
   const agentFilters = useColumnFilters(agentRowsAll, AGENT_FILTER_COLS);
@@ -287,13 +295,19 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
   const d = data.deltas;
   const qLob = (lob: string) => data.quality.byLob.find((q) => q.lob === lob);
   const qText = (lob: string) => { const q = qLob(lob); return q && q.audits > 0 ? `${q.avg}%` : "—"; };
-  const callChart = (callMode === "daily" ? rows.ib.daily.map((r) => ({ ...r, x: formatShortDate(String(r.date)) })) : rows.ib.weekly.map((r) => ({ ...r, x: String(r.label).replace(/\s*\(.*\)/, "") })));
-  const connChart = (connMode === "daily" ? rows.ob.daily.map((r) => ({ ...r, x: formatShortDate(String(r.date)) })) : rows.ob.weekly.map((r) => ({ ...r, x: String(r.label).replace(/\s*\(.*\)/, "") })));
+  // Trend-row cards show only the last 7 days inline (the rest of the requested range is still one
+  // click away via "View details", which reads from rows.ib/rows.ob/rows.em/rows.ch directly -- the
+  // full, un-sliced daily arrays -- so the drawer always shows the complete current range regardless
+  // of this card-level trim). Weekly mode is left alone: a month of weeks is already only 4-5 points.
+  const TREND_CARD_DAYS = 7;
+  const callChart = (callMode === "daily" ? rows.ib.daily.slice(-TREND_CARD_DAYS).map((r) => ({ ...r, x: formatShortDate(String(r.date)) })) : rows.ib.weekly.map((r) => ({ ...r, x: String(r.label).replace(/\s*\(.*\)/, "") })));
+  const connChart = (connMode === "daily" ? rows.ob.daily.slice(-TREND_CARD_DAYS).map((r) => ({ ...r, x: formatShortDate(String(r.date)) })) : rows.ob.weekly.map((r) => ({ ...r, x: String(r.label).replace(/\s*\(.*\)/, "") })));
   const msgChart = (() => {
     const src = msgMode === "daily"
       ? { em: rows.em.daily as Array<Record<string, string | number>>, ch: rows.ch.daily as Array<Record<string, string | number>>, key: "date" }
       : { em: rows.em.weekly, ch: rows.ch.weekly, key: "label" };
-    const keys = [...new Set([...src.em.map((r) => String(r[src.key])), ...src.ch.map((r) => String(r[src.key]))])].sort();
+    const allKeys = [...new Set([...src.em.map((r) => String(r[src.key])), ...src.ch.map((r) => String(r[src.key]))])].sort();
+    const keys = msgMode === "daily" ? allKeys.slice(-TREND_CARD_DAYS) : allKeys;
     return keys.map((k) => {
       const e = src.em.find((r) => String(r[src.key]) === k); const c = src.ch.find((r) => String(r[src.key]) === k);
       return { x: msgMode === "daily" ? formatShortDate(k) : k.replace(/\s*\(.*\)/, ""), emails: e ? Number(e.assigned) : undefined, chats: c ? Number(c.chats) : undefined };
@@ -518,7 +532,7 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
 
         <div className="lg:col-span-2">
           <Card title="Top Performing Agents" icon={Trophy} tone="amber"
-            footnote="Ranked by contacts handled across the four channels (units differ; they are counts of contacts). Click an agent for their per-channel detail."
+            footnote="Ranked by contacts handled across the four channels (units differ; they are counts of contacts). Avg Login/Talk/Break is live Agent Productivity (APR) per agent-day (dialer_db.vicidial_agent_log_250) -- — means no login-log rows for that agent in range. Click an agent for their per-channel detail."
             action={
               <div className="flex items-center gap-2">
                 {agentFilters.activeCount > 0 && (
@@ -531,6 +545,21 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
                     {showAllAgents ? "Show top 5" : `Show all ${data.agents.length}`}
                   </button>
                 )}
+                <button
+                  type="button" title="Download this table as Excel"
+                  onClick={() => void downloadDrawerExcel("Clovia_Top_Performing_Agents", [{
+                    name: "Agents",
+                    columns: ["Agent", "Emp ID", "Inbound", "Email", "Chat", "Outbound", "Total", "Quality %", "Avg Login", "Avg Talk", "Avg Break"],
+                    rows: sortedAgentRows.map((a) => [
+                      a.agent, a.empId, a.inbound, a.email, a.chat, a.outbound, a.total,
+                      a.quality === null ? "—" : `${a.quality}%`,
+                      a.avgLoginSec === null ? "—" : hms(a.avgLoginSec), a.avgTalkSec === null ? "—" : hms(a.avgTalkSec), a.avgBreakSec === null ? "—" : hms(a.avgBreakSec),
+                    ]),
+                  }])}
+                  className="rounded-lg bg-white/70 p-1.5 text-slate-500 hover:bg-white hover:text-slate-700"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </button>
               </div>
             }>
             <div className="max-h-[300px] overflow-auto">
@@ -544,7 +573,10 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
                     <FilterSortTh label="Chat" columnKey="chat" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
                     <FilterSortTh label="Outbound" columnKey="outbound" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
                     <FilterSortTh label="Total" columnKey="total" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
-                    <FilterSortTh label="Quality" columnKey="quality" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="rounded-r-md px-2 py-1.5 font-bold text-white" />
+                    <FilterSortTh label="Quality" columnKey="quality" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
+                    <FilterSortTh label="Avg Login" columnKey="avgLoginSec" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
+                    <FilterSortTh label="Avg Talk" columnKey="avgTalkSec" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="px-2 py-1.5 font-bold text-white" />
+                    <FilterSortTh label="Avg Break" columnKey="avgBreakSec" sortKey={agentSortKey} sortDir={agentSortDir} onSort={agentToggleSort} filters={agentFilters} className="rounded-r-md px-2 py-1.5 font-bold text-white" />
                   </tr>
                 </thead>
                 <tbody>
@@ -557,9 +589,12 @@ export function CloviaOverviewDashboard({ from, to }: { from: string; to: string
                       <td className="px-2 py-1.5 text-slate-600">{int(a.chat)}</td><td className="px-2 py-1.5 text-slate-600">{int(a.outbound)}</td>
                       <td className="px-2 py-1.5 font-bold text-slate-800">{int(a.total)}</td>
                       <td className={`px-2 py-1.5 font-semibold ${a.quality === null ? "text-slate-300" : a.quality >= 90 ? "text-emerald-600" : "text-amber-600"}`}>{a.quality === null ? "—" : `${a.quality}%`}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{a.avgLoginSec === null ? "—" : hms(a.avgLoginSec)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{a.avgTalkSec === null ? "—" : hms(a.avgTalkSec)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{a.avgBreakSec === null ? "—" : hms(a.avgBreakSec)}</td>
                     </tr>
                   ))}
-                  {sortedAgentRows.length === 0 && <tr><td colSpan={8} className="py-6 text-center text-slate-400">{agentRowsAll.length === 0 ? "No agent activity in this range." : "No agents match the current filters."}</td></tr>}
+                  {sortedAgentRows.length === 0 && <tr><td colSpan={11} className="py-6 text-center text-slate-400">{agentRowsAll.length === 0 ? "No agent activity in this range." : "No agents match the current filters."}</td></tr>}
                 </tbody>
               </table>
             </div>

@@ -67,6 +67,7 @@ const RPC_BY_TYPE: Record<string, string> = {
   BIRLANU_APR_MASMIS: "import_birlanu_apr_batch",
   SATYA_ALLOCATION_MASMIS: "import_satya_allocation_batch",
   SATYA_CDR_MASMIS: "import_satya_cdr_batch",
+  ALT_RX_DUMP_MASMIS: "import_alt_rx_dump_batch",
   LP_FEEDBACK_APR_MASMIS: "import_lp_feedback_apr_batch",
   LP_FEEDBACK_CDR_MASMIS: "import_lp_feedback_cdr_batch",
   LP_ONBOARDING_APR_MASMIS: "import_lp_onboarding_apr_batch",
