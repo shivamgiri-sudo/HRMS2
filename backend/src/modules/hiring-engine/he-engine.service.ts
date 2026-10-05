@@ -8,6 +8,7 @@
  *   5 no-shows           - slot passed with no arrival -> no_show + one recovery message
  *   2b cadence follow-up - email sent an hour ago -> WhatsApp invite (HE_CADENCE_GAP_MIN, default 60)
  *   6 voice calls        - invited, one cadence gap since the WhatsApp invite, no reply -> BRD confirmation call (1 retry after 2h)
+ *   8 other roles        - rejected in the last 3 days -> one offer for the best other eligible requisition (different process)
  *   7 bulk calls         - jobs of ACTIVE manual bulk-upload batches (same rules: 09-20 IST, 1 retry after 2h)
  */
 import type { RowDataPacket } from "mysql2";
@@ -22,6 +23,7 @@ import { bestHourWait, cadenceGapMin, nextCadenceStep } from "./he-cadence.js";
 import { istHour } from "./he-guardrails.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
+import { offerOtherRoles, type RerouteSummary } from "./he-reroute.service.js";
 
 export interface TickSummary {
   dryRun: boolean;
@@ -34,6 +36,7 @@ export interface TickSummary {
   recovery: Counts;
   calls: Counts;
   bulkCalls: RunSummary | null;
+  otherRoles: RerouteSummary | null;
 }
 interface Counts { sent: number; blocked: Record<string, number>; failed: number; dryRun: number }
 const counts = (): Counts => ({ sent: 0, blocked: {}, failed: 0, dryRun: 0 });
@@ -197,7 +200,7 @@ async function noShows(dryRun: boolean, c: Counts): Promise<number> {
 
 export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number } = {}): Promise<TickSummary> {
   const dryRun = o.dryRun !== false; // safe default: only an explicit false sends
-  const s: TickSummary = { dryRun, paused: sendsPaused(), replacementSlots: counts(), invites: counts(), reminders: counts(), arrivals: 0, noShows: 0, recovery: counts(), calls: counts(), bulkCalls: null };
+  const s: TickSummary = { dryRun, paused: sendsPaused(), replacementSlots: counts(), invites: counts(), reminders: counts(), arrivals: 0, noShows: 0, recovery: counts(), calls: counts(), bulkCalls: null, otherRoles: null };
   const guard = async (name: string, fn: () => Promise<void>) => { try { await fn(); } catch (err) { logger.error({ err: (err as Error).message, step: name }, "[he-engine] step failed"); } };
   // Arrival + no-show bookkeeping is state hygiene, not outreach, so it runs even while sends are paused.
   await guard("arrival", async () => { s.arrivals = await arrivalSync(dryRun); });
@@ -209,6 +212,7 @@ export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number }
     await guard("reminders", () => reminders(dryRun, s.reminders));
     await guard("voice", () => voiceCalls(dryRun, s.calls, 20));
     await guard("bulk-calls", async () => { s.bulkCalls = await runBulkCallJobs({ dryRun, max: 20 }); });
+    await guard("other-role-offers", async () => { s.otherRoles = await offerOtherRoles({ dryRun, max: 50 }); });
   }
   return s;
 }
