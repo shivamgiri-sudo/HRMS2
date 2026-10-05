@@ -14,6 +14,7 @@ import { placeVoiceCall } from "./he-voice.service.js";
 import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches, previewBulkCalls, runBulkCallJobs, startBulkBatch } from "./he-bulk-call.service.js";
 import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
 import { listPrepareCampaigns, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
+import { applyCallResults, markExportedForCalling, previewCallResults } from "./he-call-results.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
 export const heRouter = Router();
@@ -255,7 +256,7 @@ heRouter.post("/bulk-calls/prepare", requireAuth, requireRole(...WRITE_ROLES), a
   const b = (req.body ?? {}) as { campaignIds?: unknown; includeConfirmed?: unknown; requireInviteSent?: unknown };
   if (!Array.isArray(b.campaignIds) || b.campaignIds.length === 0) return res.status(400).json({ success: false, message: "Select at least one campaign" });
   try {
-    res.json({ success: true, data: await prepareRowsFromCampaigns({ campaignIds: b.campaignIds.map(String), includeConfirmed: b.includeConfirmed === true, requireInviteSent: b.requireInviteSent !== false }) });
+    res.json({ success: true, data: await prepareRowsFromCampaigns({ campaignIds: b.campaignIds.map(String), includeConfirmed: b.includeConfirmed === true, requireInviteSent: b.requireInviteSent !== false, includeRecentlyExported: (req.body as { includeRecentlyExported?: unknown }).includeRecentlyExported === true }) });
   } catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk prepare failed"); res.status(500).json({ success: false, message: "Could not prepare the list" }); }
 });
 
@@ -305,4 +306,32 @@ heRouter.post("/bulk-calls/:id/start", requireAuth, requireRole(...WRITE_ROLES),
 heRouter.post("/bulk-calls/:id/cancel", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
   try { res.json({ success: true, data: await cancelBulkBatch(String(req.params.id)) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk cancel failed"); res.status(500).json({ success: false }); }
+});
+
+/** Log that a calling file was downloaded for the third-party tool (audit + stops the same people being exported again). */
+heRouter.post("/bulk-calls/exported", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  const b = (req.body ?? {}) as { mobiles?: unknown; label?: unknown };
+  if (!Array.isArray(b.mobiles) || b.mobiles.length === 0 || b.mobiles.length > BULK_CALL_MAX_ROWS) return res.status(400).json({ success: false, message: "mobiles (1-500) is required" });
+  try { res.json({ success: true, data: await markExportedForCalling(b.mobiles.map(String), { userId: (req as AuthenticatedRequest).authUser?.id ?? null, label: typeof b.label === "string" ? b.label : undefined }) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] export log failed"); res.status(500).json({ success: false }); }
+});
+
+// ── Results coming back from the third-party calling tool ─────────────────────────────────────────────────────────
+heRouter.post("/call-results/preview", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  const rows = bulkRows(req.body);
+  if (!rows || rows.length === 0) return res.status(400).json({ success: false, message: "rows (a non-empty array of objects) is required" });
+  if (rows.length > 2000) return res.status(400).json({ success: false, message: "At most 2000 rows per import" });
+  try { res.json({ success: true, data: await previewCallResults(rows) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] results preview failed"); res.status(500).json({ success: false, message: "Could not read the results" }); }
+});
+
+heRouter.post("/call-results", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  const rows = bulkRows(req.body);
+  if (!rows || rows.length === 0) return res.status(400).json({ success: false, message: "rows (a non-empty array of objects) is required" });
+  try { res.json({ success: true, data: await applyCallResults(rows, { userId: (req as AuthenticatedRequest).authUser?.id ?? null }) }); }
+  catch (err) {
+    const status = (err as { statusCode?: number }).statusCode ?? 500;
+    if (status === 500) logger.error({ err: (err as Error).message }, "[he] results import failed");
+    res.status(status).json({ success: false, message: status === 500 ? "Could not import the results" : (err as Error).message });
+  }
 });

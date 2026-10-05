@@ -22,6 +22,8 @@ export interface LeadInput {
   source: string;
   atsCandidateId?: string | null;
   metaLeadId?: string | null;
+  /** Look the Meta lead up by phone when none is given, so results can later be mirrored onto it. */
+  linkMeta?: boolean;
 }
 
 export interface HeLead {
@@ -34,10 +36,19 @@ export interface HeLead {
   meta_lead_id: string | null;
 }
 
+/** Most relevant Meta lead for a number: qualified first, then newest. */
+async function findMetaLeadId(mobile10: string): Promise<string | null> {
+  const [r] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM meta_lead_raw WHERE RIGHT(REGEXP_REPLACE(parsed_phone, '[^0-9]', ''), 10) = ?
+      ORDER BY (screening_result = 'qualified') DESC, created_at DESC LIMIT 1`, [mobile10]);
+  return (r[0]?.id as string | undefined) ?? null;
+}
+
 /** Create or enrich a lead. Existing non-null values are never overwritten by nulls; sources accumulate. */
 export async function upsertLead(input: LeadInput): Promise<{ id: string; created: boolean } | null> {
   const mobile10 = normalizeMobile10(input.mobile);
   if (!mobile10) return null;
+  if (input.linkMeta && !input.metaLeadId) input = { ...input, metaLeadId: await findMetaLeadId(mobile10) };
   const [existing] = await db.execute<RowDataPacket[]>("SELECT id, sources_json FROM he_lead WHERE mobile10 = ? LIMIT 1", [mobile10]);
   if (existing[0]) {
     const id = existing[0].id as string;

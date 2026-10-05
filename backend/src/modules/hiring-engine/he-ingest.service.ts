@@ -178,8 +178,9 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
   const plan = planFromCallOutcome(l.status, outcome);
   await applyPlan(l.id, l.status, plan, { matchId: match?.id ?? null, channel: "voice", detail: outcomeText, metaLeadId: l.meta_lead_id, replyText: null });
   // A rescheduled call moves the slot to the one the slot service reserved mid-call (never invented here).
-  if (outcome === "WALKIN_RESCHEDULED" && offeredSlotAt && match) {
-    await db.execute("UPDATE he_match SET slot_at = ? WHERE id = ?", [offeredSlotAt, match.id]);
+  if (outcome === "WALKIN_RESCHEDULED" && offeredSlotAt) {
+    if (match) await db.execute("UPDATE he_match SET slot_at = ? WHERE id = ?", [offeredSlotAt, match.id]);
+    // Also for results that come back from an external calling tool, which has no he_match to move.
     if (l.meta_lead_id) await db.execute("UPDATE meta_lead_raw SET interview_date = DATE(?), interview_time = TIME(?) WHERE id = ?", [offeredSlotAt, offeredSlotAt, l.meta_lead_id]);
   }
   if (l.meta_lead_id) {

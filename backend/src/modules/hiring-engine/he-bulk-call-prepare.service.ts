@@ -14,12 +14,18 @@ export interface PrepareOptions {
   includeConfirmed?: boolean;
   /** Only leads whose invite was actually sent (BRD: the call follows the email/WhatsApp). Default true. */
   requireInviteSent?: boolean;
+  /** Include candidates already put in a calling file in the last 18 hours. Default false, so the same person is not sent twice. */
+  includeRecentlyExported?: boolean;
 }
 
 /** Heuristic the UI uses to pre-select the Ahmedabad (AHM) campaigns. */
 export const isAhmedabad = (...parts: Array<string | null | undefined>): boolean => /ahmedabad|\bahm\b|\bahd\b|amdavad/i.test(parts.filter(Boolean).join(" "));
 
 const FUTURE = "TIMESTAMP(ml.interview_date, ml.interview_time) > DATE_ADD(NOW(), INTERVAL 30 MINUTE)";
+/** Candidates handed to the calling tool in the last 18h (event written when a file is downloaded). */
+const RECENT_EXPORT = `EXISTS (SELECT 1 FROM he_lead_event ev JOIN he_lead hl ON hl.id = ev.lead_id
+   WHERE ev.event_type = 'exported_for_calling' AND ev.created_at > DATE_SUB(NOW(), INTERVAL 18 HOUR)
+     AND hl.mobile10 = RIGHT(REGEXP_REPLACE(ml.parsed_phone, '[^0-9]', ''), 10))`;
 const OPEN_REQ = "jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount";
 
 export async function listPrepareCampaigns(): Promise<Array<{ id: string; campaignName: string; requisitionCode: string | null; role: string | null; branchName: string | null; city: string | null; isAhmedabad: boolean; qualifiedFuture: number; invitedFuture: number }>> {
@@ -61,6 +67,7 @@ export async function prepareRowsFromCampaigns(o: PrepareOptions): Promise<{ row
               WHEN NOT (${OPEN_REQ}) THEN 'requisition_closed_or_filled'
               WHEN ml.walkin_confirmed = 1 AND ${o.includeConfirmed ? "0" : "1"} THEN 'already_confirmed'
               WHEN ml.notification_sent_at IS NULL AND ${requireInvite ? "1" : "0"} THEN 'invite_not_sent_yet'
+              WHEN ${o.includeRecentlyExported ? "0" : RECENT_EXPORT} THEN 'already_sent_to_calling_tool'
               ELSE 'included' END AS reason, COUNT(*) AS n
        FROM meta_lead_raw ml JOIN job_requisition jr ON jr.id = ml.requisition_id
       WHERE ml.campaign_id IN (${ph}) AND ml.screening_result = 'qualified'
@@ -78,6 +85,7 @@ export async function prepareRowsFromCampaigns(o: PrepareOptions): Promise<{ row
         AND ml.interview_date IS NOT NULL AND ml.interview_time IS NOT NULL AND ${FUTURE}
         AND ml.walkin_declined = 0 ${o.includeConfirmed ? "" : "AND ml.walkin_confirmed = 0"}
         ${requireInvite ? "AND ml.notification_sent_at IS NOT NULL" : ""}
+        ${o.includeRecentlyExported ? "" : `AND NOT ${RECENT_EXPORT}`}
         AND ${OPEN_REQ}
       ORDER BY ml.interview_date, ml.interview_time, ml.id
       LIMIT ${BULK_CALL_MAX_ROWS + 1}`, ids);

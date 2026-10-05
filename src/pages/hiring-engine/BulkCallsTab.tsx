@@ -10,8 +10,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, FileSpreadsheet, ListChecks, Phone, PhoneOff, Upload } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState, StatTile, num } from "@/components/analytics/analytics-kit";
+import CallingFileExport from "./CallingFileExport";
+import CallResultsImport from "./CallResultsImport";
 
-interface PreviewRow { display: { phone: string; name: string; role: string; when: string }; rowNo: number; ok: boolean; errors: string[]; warnings: string[]; notes: string[]; row?: { mobile10: string; name: string; role: string; interviewAt: string; referenceId: string } }
+interface PreviewRow { display: { phone: string; name: string; role: string; when: string }; rowNo: number; ok: boolean; errors: string[]; warnings: string[]; notes: string[]; row?: { mobile10: string; name: string; role: string; interviewAt: string; branchAddress: string; referenceId: string } }
 interface Preview { missingColumns: string[]; tooMany: boolean; rows: PreviewRow[]; summary: { total: number; valid: number; rejected: number; willSkip: number } }
 interface Batch { id: string; label: string | null; status: string; total_rows: number; rejected_rows: number; created_at: string; queued: number | null; in_progress: number | null; completed: number | null; skipped: number | null; cancelled: number | null; confirmed: number | null; rescheduled: number | null; declined: number | null; no_answer: number | null }
 interface Campaign { id: string; campaignName: string; requisitionCode: string | null; role: string | null; branchName: string | null; city: string | null; isAhmedabad: boolean; qualifiedFuture: number; invitedFuture: number }
@@ -26,7 +28,7 @@ const TEMPLATE = [
 const OUTCOME: Record<string, string> = { WALKIN_CONFIRMED_YES: "Confirmed", WALKIN_RESCHEDULED: "Rescheduled", WALKIN_DECLINED_NEEDS_FOLLOWUP: "Declined - needs follow-up", NO_ANSWER: "No answer", WRONG_PERSON_REACHED: "Wrong person" };
 const outcomeLabel = (o: string | null) => (o ? (OUTCOME[o] ?? (o.startsWith("CALL_FAILED") ? "Call failed" : o)) : "—");
 const pill = (s: string) => ({ active: "bg-emerald-50 text-emerald-700 ring-emerald-200", queued: "bg-blue-50 text-blue-700 ring-blue-200", done: "bg-slate-100 text-slate-600 ring-slate-200", cancelled: "bg-rose-50 text-rose-700 ring-rose-200", placed: "bg-amber-50 text-amber-700 ring-amber-200", completed: "bg-emerald-50 text-emerald-700 ring-emerald-200", skipped: "bg-slate-100 text-slate-500 ring-slate-200" }[s] ?? "bg-slate-50 text-slate-600 ring-slate-200");
-const EXCLUDED: Record<string, string> = { already_confirmed: "already confirmed on WhatsApp", invite_not_sent_yet: "invite not sent yet", interview_date_passed: "interview date has passed", no_interview_assigned: "no interview slot assigned", declined: "declined", requisition_closed_or_filled: "requisition closed or filled" };
+const EXCLUDED: Record<string, string> = { already_sent_to_calling_tool: "already sent to the calling tool today", already_confirmed: "already confirmed on WhatsApp", invite_not_sent_yet: "invite not sent yet", interview_date_passed: "interview date has passed", no_interview_assigned: "no interview slot assigned", declined: "declined", requisition_closed_or_filled: "requisition closed or filled" };
 const field = "rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500";
 
 export default function BulkCallsTab() {
@@ -45,6 +47,7 @@ export default function BulkCallsTab() {
   const [picked, setPicked] = useState<string[]>([]);
   const [includeConfirmed, setIncludeConfirmed] = useState(false);
   const [requireInvite, setRequireInvite] = useState(true);
+  const [includeExported, setIncludeExported] = useState(false);
   const [excluded, setExcluded] = useState<Record<string, number> | null>(null);
 
   const loadBatches = useCallback(async () => {
@@ -99,7 +102,7 @@ export default function BulkCallsTab() {
   const prepare = async () => {
     setMsg(null); setPreview(null); setRows([]); setAttest(false); setExcluded(null); setBusy("prepare");
     try {
-      const r = await hrmsApi.post<{ data: { rows: Array<Record<string, unknown>>; truncated: boolean; excluded: Record<string, number> } }>("/api/he/bulk-calls/prepare", { campaignIds: picked, includeConfirmed, requireInviteSent: requireInvite });
+      const r = await hrmsApi.post<{ data: { rows: Array<Record<string, unknown>>; truncated: boolean; excluded: Record<string, number> } }>("/api/he/bulk-calls/prepare", { campaignIds: picked, includeConfirmed, requireInviteSent: requireInvite, includeRecentlyExported: includeExported });
       setExcluded(r.data.excluded);
       if (!r.data.rows.length) { setMsg({ ok: false, text: "No qualified candidates with a future interview match these campaigns right now." }); return; }
       const names = campaigns.filter((c) => picked.includes(c.id)).map((c) => c.campaignName).join(", ");
@@ -177,6 +180,7 @@ export default function BulkCallsTab() {
         <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-700">
           <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="h-4 w-4 cursor-pointer" checked={requireInvite} onChange={(e) => setRequireInvite(e.target.checked)} /> Only candidates who were already sent the invite</label>
           <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="h-4 w-4 cursor-pointer" checked={includeConfirmed} onChange={(e) => setIncludeConfirmed(e.target.checked)} /> Include those who already confirmed on WhatsApp</label>
+          <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="h-4 w-4 cursor-pointer" checked={includeExported} onChange={(e) => setIncludeExported(e.target.checked)} /> Include those already sent to the calling tool in the last 18 hours</label>
           <button type="button" disabled={picked.length === 0 || busy !== null} onClick={() => void prepare()} className="ml-auto cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">{busy === "prepare" ? "Preparing…" : `Prepare calling list (${picked.length} campaign${picked.length === 1 ? "" : "s"})`}</button>
         </div>
         {excluded && Object.keys(excluded).length > 0 && (
@@ -236,8 +240,11 @@ export default function BulkCallsTab() {
                   </tbody>
                 </table>
               </div>
+              {s.valid > 0 && <CallingFileExport rows={preview.rows.filter((r) => r.ok && r.row).map((r) => ({ mobile10: r.row!.mobile10, name: r.row!.name, role: r.row!.role, interviewAt: r.row!.interviewAt, branchAddress: r.row!.branchAddress, referenceId: r.row!.referenceId }))} label={fileName} />}
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="grid gap-4 md:grid-cols-2">
+                <h3 className="font-semibold text-slate-900">Or call from the HRMS</h3>
+                <p className="mt-1 text-sm text-slate-600">Only when voice calling is configured in the HRMS. Not needed if you are uploading the file to the third-party tool.</p>
+                <div className="mt-3 grid gap-4 md:grid-cols-2">
                   <label className="block text-sm"><span className="mb-1 block font-medium text-slate-700">Batch name (optional)</span><input className={`${field} w-full`} value={label} onChange={(e) => setLabel(e.target.value)} placeholder={fileName} maxLength={150} /></label>
                   <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1 h-4 w-4 cursor-pointer" checked={attest} onChange={(e) => setAttest(e.target.checked)} /><span className="text-slate-700">I confirm these candidates applied for the role and agreed to be contacted. <span className="text-slate-500">This is recorded against each candidate.</span></span></label>
                 </div>
@@ -251,6 +258,8 @@ export default function BulkCallsTab() {
           )}
         </section>
       )}
+
+      <CallResultsImport />
 
       <section aria-label="Batches">
         <h2 className="mb-2 font-semibold text-slate-900">Batches</h2>
