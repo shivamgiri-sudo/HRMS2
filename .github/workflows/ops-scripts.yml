@@ -89,6 +89,7 @@ on:
           - backfill-grn-journal
           - voucher-unassigned-detail
           - unposted-grn-forensics
+          - duplicate-grn-forensics
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -404,6 +405,10 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            duplicate-grn-forensics)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/duplicate-grn-forensics.ts
               ;;
             unposted-grn-forensics)
               # Read-only in both modes: SELECTs only.
