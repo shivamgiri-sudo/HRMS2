@@ -78,6 +78,7 @@ on:
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - aug-payroll-vs-dbbill-gap
+          - match-month-to-dbbill
           - heal-zero-day-lines
           - recruiter-list-diagnose
           - apply-aug-increments-from-dbbill
@@ -378,6 +379,11 @@ jobs:
             recruiter-list-diagnose)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/recruiter-list-diagnose.ts
+              ;;
+            match-month-to-dbbill)
+              # Dry-runs unless given --apply. Apply sets voucher-relevant line figures to db_bill (backup table first, one transaction).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/match-month-to-dbbill.ts 2026-08 $FLAG
               ;;
             aug-payroll-vs-dbbill-gap)
               # Read-only in both modes: SELECTs only. Per-employee HRMS vs db_bill salary_data for the month.
