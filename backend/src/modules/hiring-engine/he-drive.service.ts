@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { applyEligibilityGate, type LeadFactsRow } from "./he-eligibility.service.js";
 import { refreshHistoryChunk } from "./he-master.service.js";
 import { loadProfiles } from "./he-profile.service.js";
+import { parseJdText } from "./he-jd-parse.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { eduRank } from "../meta-campaign/lead-screener.service.js";
@@ -31,7 +32,7 @@ interface ReqRow extends RowDataPacket {
   requested_headcount: number; fulfilled_headcount: number; approval_status: string; active_status: number;
   meta_target_age_min: number | null; meta_target_age_max: number | null; meta_target_radius_km: number | null;
   education_requirement: string | null; experience_min_years: number | null; night_shift_required: number;
-  salary_max?: number | null; meta_screening_config?: unknown;
+  salary_max?: number | null; meta_screening_config?: unknown; skills_required?: string | null;
   blat: number | null; blng: number | null;
 }
 
@@ -62,7 +63,21 @@ export function toMatchRequisition(r: ReqRow): MatchRequisition & { id: string }
     branchLat: r.blat, branchLng: r.blng, maxDistanceKm: r.meta_target_radius_km,
     processName: r.process_name,
     salaryMax: r.salary_max != null && Number(r.salary_max) > 0 ? Number(r.salary_max) : null,
-    ...screeningOf(r.meta_screening_config),
+    ...withJdText(screeningOf(r.meta_screening_config), r),
+  };
+}
+
+/** Configured screening wins; anything left empty is filled from the requisition's free-text skills/education. */
+function withJdText(cfg: ReturnType<typeof screeningOf>, r: ReqRow): ReturnType<typeof screeningOf> & Pick<MatchRequisition, "nightShift" | "minExperienceYears"> {
+  const jd = parseJdText(`${r.skills_required ?? ""}. ${r.education_requirement ?? ""}`);
+  return {
+    gender: cfg.gender ?? jd.gender,
+    languages: cfg.languages ?? (jd.languages.length ? jd.languages : null),
+    certifications: cfg.certifications ?? (jd.certifications.length ? jd.certifications : null),
+    minTypingWpm: cfg.minTypingWpm ?? jd.minTypingWpm,
+    englishLevel: cfg.englishLevel ?? jd.englishLevel,
+    ...(r.night_shift_required ? {} : jd.nightShift ? { nightShift: true } : {}),
+    ...(r.experience_min_years == null && jd.minExperienceYears != null ? { minExperienceYears: jd.minExperienceYears } : {}),
   };
 }
 
@@ -70,7 +85,7 @@ async function loadRequisition(id: string): Promise<ReqRow | null> {
   const [rows] = await db.execute<ReqRow[]>(
     `SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount,
             jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km,
-            jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config,
+            jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required,
             bm.latitude AS blat, bm.longitude AS blng
        FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE jr.id = ? LIMIT 1`, [id]);
@@ -185,7 +200,7 @@ export async function alternativeRequisitions(leadId: string, excludeRequisition
   if (!l) return [];
   const [reqs] = await db.execute<ReqRow[]>(
     `SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.approval_status, jr.active_status,
-            jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config,
+            jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required,
             bm.latitude AS blat, bm.longitude AS blng
        FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount AND jr.id <> ? LIMIT 200`, [excludeRequisitionId]);
