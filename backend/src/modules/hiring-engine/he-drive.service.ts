@@ -13,7 +13,7 @@ import { loadMatchParams } from "./he-showup.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { eduRank } from "../meta-campaign/lead-screener.service.js";
-import { rankRequisitions, scoreLead, type MatchRequisition } from "./he-matcher.js";
+import { industriesForProcess, rankRequisitions, scoreLead, type MatchRequisition } from "./he-matcher.js";
 import { driveCapacity, inviteTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
 import { addEvent } from "./he-lead.service.js";
 
@@ -35,7 +35,7 @@ interface ReqRow extends RowDataPacket {
   meta_target_age_min: number | null; meta_target_age_max: number | null; meta_target_radius_km: number | null;
   education_requirement: string | null; experience_min_years: number | null; night_shift_required: number;
   salary_max?: number | null; meta_screening_config?: unknown; skills_required?: string | null;
-  blat: number | null; blng: number | null;
+  blat: number | null; blng: number | null; bcity?: string | null; bstate?: string | null;
 }
 
 /** JD requirements beyond age/education: gender, languages, certifications, typing, written English (MetaScreeningConfig). */
@@ -65,12 +65,13 @@ export function toMatchRequisition(r: ReqRow): MatchRequisition & { id: string }
     branchLat: r.blat, branchLng: r.blng, maxDistanceKm: r.meta_target_radius_km,
     processName: r.process_name,
     salaryMax: r.salary_max != null && Number(r.salary_max) > 0 ? Number(r.salary_max) : null,
+    branchCity: r.bcity ?? null, branchState: r.bstate ?? null, goodIndustries: industriesForProcess(r.process_name),
     ...withJdText(screeningOf(r.meta_screening_config), r),
   };
 }
 
 /** Configured screening wins; anything left empty is filled from the requisition's free-text skills/education. */
-function withJdText(cfg: ReturnType<typeof screeningOf>, r: ReqRow): ReturnType<typeof screeningOf> & Pick<MatchRequisition, "nightShift" | "minExperienceYears"> {
+function withJdText(cfg: ReturnType<typeof screeningOf>, r: ReqRow): ReturnType<typeof screeningOf> & Pick<MatchRequisition, "nightShift" | "minExperienceYears" | "streams"> {
   const jd = parseJdText(`${r.skills_required ?? ""}. ${r.education_requirement ?? ""}`);
   return {
     gender: cfg.gender ?? jd.gender,
@@ -78,6 +79,7 @@ function withJdText(cfg: ReturnType<typeof screeningOf>, r: ReqRow): ReturnType<
     certifications: cfg.certifications ?? (jd.certifications.length ? jd.certifications : null),
     minTypingWpm: cfg.minTypingWpm ?? jd.minTypingWpm,
     englishLevel: cfg.englishLevel ?? jd.englishLevel,
+    streams: jd.streams.length ? jd.streams : null,
     ...(r.night_shift_required ? {} : jd.nightShift ? { nightShift: true } : {}),
     ...(r.experience_min_years == null && jd.minExperienceYears != null ? { minExperienceYears: jd.minExperienceYears } : {}),
   };
@@ -88,7 +90,7 @@ async function loadRequisition(id: string): Promise<ReqRow | null> {
     `SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount,
             jr.approval_status, jr.active_status, jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km,
             jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required,
-            bm.latitude AS blat, bm.longitude AS blng
+            bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate
        FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE jr.id = ? LIMIT 1`, [id]);
   return rows[0] ?? null;
@@ -157,7 +159,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   if (mreq.nightShift === true) pre.push("(l.night_shift_ok IS NULL OR l.night_shift_ok = 1)");
   const selectCandidates = async () => (await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.primary_source, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
-            l.history_refreshed_at, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng,
+            l.history_refreshed_at, l.locality, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng,
             EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
        FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
@@ -180,7 +182,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   const profiles = await loadProfiles(allowed.map((l) => l.id as string));
   const learned = await loadMatchParams();
   const scored = allowed
-    .map((l) => ({ id: l.id as string, priority: gate.verdicts.get(l.id)!.priority, consented: Number(l.has_consent) === 1, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng), ...profiles.get(l.id as string) }, mreq), eng: Number(l.eng) }))
+    .map((l) => ({ id: l.id as string, priority: gate.verdicts.get(l.id)!.priority, consented: Number(l.has_consent) === 1, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng), city: l.locality ?? null, ...profiles.get(l.id as string) }, mreq), eng: Number(l.eng) }))
     .filter((x) => x.res.eligible)
     .map((x) => {
       // Learned from past walk-ins of this process: profiles that tend to get selected here move up, others down.
@@ -212,7 +214,7 @@ export async function alternativeRequisitions(leadId: string, excludeRequisition
   const [reqs] = await db.execute<ReqRow[]>(
     `SELECT jr.id, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.approval_status, jr.active_status,
             jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required,
-            bm.latitude AS blat, bm.longitude AS blng
+            bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate
        FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount AND jr.id <> ? LIMIT 200`, [excludeRequisitionId]);
   const prof = (await loadProfiles([leadId])).get(leadId) ?? {};

@@ -63,16 +63,18 @@ const parseList = (v: unknown): string[] | null => {
 };
 
 /** Profile facts in matcher shape, keyed by lead id. */
-export async function loadProfiles(leadIds: string[]): Promise<Map<string, Partial<LeadProfile>>> {
-  const out = new Map<string, Partial<LeadProfile>>();
+export type MatchProfile = Partial<LeadProfile> & { educationStatus?: "completed" | "pursuing" | "dropped" | null; stream?: string | null; lastSalary?: number | null; prevIndustry?: string | null; state?: string | null };
+export async function loadProfiles(leadIds: string[]): Promise<Map<string, MatchProfile>> {
+  const out = new Map<string, MatchProfile>();
   for (let i = 0; i < leadIds.length; i += 1000) {
     const part = leadIds.slice(i, i + 1000);
     if (!part.length) continue;
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT lead_id, gender, languages, certifications, typing_wpm, english_level, salary_expectation FROM he_lead_profile WHERE lead_id IN (${part.map(() => "?").join(",")})`, part);
+      `SELECT lead_id, gender, languages, certifications, typing_wpm, english_level, salary_expectation, education_status, stream, last_salary, prev_industry, state FROM he_lead_profile WHERE lead_id IN (${part.map(() => "?").join(",")})`, part);
     for (const r of rows) out.set(r.lead_id, {
       gender: r.gender ?? null, languages: parseList(r.languages), certifications: parseList(r.certifications),
       typingWpm: r.typing_wpm ?? null, englishLevel: r.english_level ?? null, salaryExpectation: r.salary_expectation ?? null,
+      educationStatus: r.education_status ?? null, stream: r.stream ?? null, lastSalary: r.last_salary ?? null, prevIndustry: r.prev_industry ?? null, state: r.state ?? null,
     });
   }
   return out;

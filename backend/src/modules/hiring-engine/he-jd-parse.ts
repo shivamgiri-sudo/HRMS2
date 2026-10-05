@@ -10,6 +10,7 @@ export interface JdRules {
   gender: "male" | "female" | null;
   nightShift: boolean | null;
   minExperienceYears: number | null;
+  streams: string[];
 }
 
 const LANGS = ["english", "hindi", "marathi", "gujarati", "punjabi", "bengali", "tamil", "telugu", "kannada", "malayalam", "odia", "urdu", "assamese"];
@@ -17,7 +18,7 @@ const CERT: Record<string, RegExp> = { DRA: /(^|[^a-z])dra([^a-z]|$)/i, IRDA: /i
 
 export function parseJdText(text: string | null | undefined): JdRules {
   const t = String(text ?? "").toLowerCase();
-  const r: JdRules = { languages: [], certifications: [], minTypingWpm: null, englishLevel: null, gender: null, nightShift: null, minExperienceYears: null };
+  const r: JdRules = { languages: [], certifications: [], minTypingWpm: null, englishLevel: null, gender: null, nightShift: null, minExperienceYears: null, streams: [] };
   if (!t.trim()) return r;
   for (const l of LANGS) {
     const re = new RegExp(`(fluent|good|excellent|strong|proficient|speak|spoken|communication)[^.;,\\n]{0,30}${l}|${l}[^.;,\\n]{0,25}(fluen|speak|spoken|communication|proficien|mandatory|must|required)`);
@@ -35,5 +36,8 @@ export function parseJdText(text: string | null | undefined): JdRules {
   const exp = t.match(/(\d+(?:\.\d+)?)\s*\+?\s*(?:-\s*\d+\s*)?(?:years?|yrs?)\s*(?:of\s*)?(?:relevant\s*)?(?:experience|exp)/);
   if (exp) r.minExperienceYears = Number(exp[1]);
   else if (/fresher/.test(t)) r.minExperienceYears = 0;
+  for (const [st, re] of [["commerce", /commerce|b\.? ?com\b/], ["science", /science graduate|b\.? ?sc\b/], ["it_engineering", /\bbca\b|b\.? ?tech|engineering graduate|\bit graduate/], ["management", /\bbba\b|\bmba\b/], ["arts", /arts graduate|\bb\.? ?a\b graduate/]] as const) {
+    if (re.test(t)) r.streams.push(st);
+  }
   return r;
 }

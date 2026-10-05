@@ -40,6 +40,9 @@ export async function getCandidate360(leadId: string): Promise<Record<string, un
     [interviews] = await db.execute<RowDataPacket[]>(
       `SELECT interviewed_for_process AS process, final_decision, walkin_end_stage, submitted_at FROM ats_interview_submission WHERE candidate_id = ? ORDER BY submitted_at DESC LIMIT 50`, [atsId]);
   }
+  const [prof] = await db.execute<RowDataPacket[]>(
+    `SELECT gender, languages, certifications, typing_wpm, english_level, salary_expectation, last_salary, education_status, stream, prev_industry, last_employer, state, address, dob
+       FROM he_lead_profile WHERE lead_id = ? LIMIT 1`, [leadId]);
   const [ex] = await db.execute<RowDataPacket[]>("SELECT exit_type, exit_sub_type, exit_reason, exit_date, would_rejoin, clean_voluntary FROM he_ex_employee WHERE mobile10 = ? LIMIT 1", [lead.mobile10]);
 
   const [open] = await db.execute<RowDataPacket[]>(
@@ -56,5 +59,5 @@ export async function getCandidate360(leadId: string): Promise<Record<string, un
   const approachesByRequisition: Record<string, number> = {};
   for (const a of attempts) if (a.requisition_id) approachesByRequisition[a.requisition_id as string] = (approachesByRequisition[a.requisition_id as string] ?? 0) + 1;
 
-  return { lead, identities, clashes, attempts, approachesByRequisition, requisitions: { engine: matches, linked }, walkins, interviews, exEmployee: ex[0] ?? null, eligibility };
+  return { lead, profile: prof[0] ?? null, identities, clashes, attempts, approachesByRequisition, requisitions: { engine: matches, linked }, walkins, interviews, exEmployee: ex[0] ?? null, eligibility };
 }

@@ -70,3 +70,36 @@ describe("value parsing", () => {
     expect(parseMoney("25")).toBeNull();
   });
 });
+
+import { isoDob, parseEducationStatus, parseIndustry, parseStream } from "../he-intake.js";
+import { industriesForProcess, scoreLead } from "../he-matcher.js";
+describe("portal screening facts", () => {
+  const rows = [{ "Name": "Kavya", "Mobile": "9811100011", "Date Of Birth": "12-03-2002", "Qualification": "B.Com", "Education Status": "Pursuing (Final Year)", "Stream": "Commerce",
+    "Previous Company": "Teleperformance", "Last Designation": "Customer Care Executive", "Last Drawn Salary": "14,500", "State": "Uttar Pradesh", "City": "Noida", "Address": "B-12, Sector 62" }];
+  it("maps and parses DOB, education status, stream, previous industry, last salary, state, address", () => {
+    const d = detectColumns(rows);
+    expect(d.mapping).toMatchObject({ dob: "Date Of Birth", educationStatus: "Education Status", stream: "Stream", lastEmployer: "Previous Company", prevRole: "Last Designation", currentSalary: "Last Drawn Salary", state: "State", address: "Address" });
+    const r = mapIntakeRows(rows).rows[0];
+    expect(r).toMatchObject({ dob: "2002-03-12", educationStatus: "pursuing", stream: "commerce", prevIndustry: "bpo", lastSalary: 14500, state: "Uttar Pradesh", address: "B-12, Sector 62", lastEmployer: "Teleperformance" });
+  });
+  it("parsers", () => {
+    expect(parseEducationStatus(null, "12th appearing")).toBe("pursuing");
+    expect(parseEducationStatus("Completed", "BA")).toBe("completed");
+    expect(parseEducationStatus(null, "Graduation dropout")).toBe("dropped");
+    expect(parseStream(null, "BCA")).toBe("it_engineering");
+    expect(parseIndustry("Banking", null)).toBe("bfsi");
+    expect(parseIndustry(null, "Recovery agent")).toBe("collections");
+    expect(isoDob("05/10/1999")).toBe("1999-10-05");
+    expect(isoDob("31/13/2000")).toBeNull();
+  });
+  it("screening uses them", () => {
+    const req = { minEducationRank: 5, goodIndustries: industriesForProcess("SBI Card Collections"), salaryMax: 15000, branchCity: "Noida", branchState: "Uttar Pradesh", streams: ["commerce"] };
+    const strong = scoreLead({ educationRank: 5, educationStatus: "completed", prevIndustry: "collections", lastSalary: 12000, city: "Noida", stream: "commerce" }, req);
+    const weak = scoreLead({ educationRank: 5, educationStatus: "pursuing", prevIndustry: "retail", lastSalary: 25000, state: "Bihar", stream: "arts" }, req);
+    expect(strong.score).toBeGreaterThan(weak.score + 30);
+    expect(strong.reasons.join(" ")).toMatch(/collections experience|same city/);
+    expect(weak.reasons.join(" ")).toMatch(/still pursuing/);
+    expect(weak.reasons.join(" ")).toMatch(/Bihar/);
+    expect(scoreLead({ educationRank: 5, educationStatus: "dropped" }, req).eligible).toBe(false);
+  });
+});

@@ -9,6 +9,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 interface Elig { requisitionId: string; code: string; process: string | null; position: string | null; branch: string | null; eligible: boolean; priority: number; blocks: string[]; warnings: string[] }
 interface Rec360 {
   lead: { full_name: string | null; mobile10: string; email: string | null; status: string; final_status: string; effort_tier: string; effort_reason: string | null; attempt_count: number; walkin_count: number; last_walkin_date: string | null; conversion_type: string | null; is_employee: number; primary_source: string };
+  profile: { gender: string | null; languages: string[] | string | null; certifications: string[] | string | null; typing_wpm: number | null; english_level: string | null; salary_expectation: number | null; last_salary: number | null; education_status: string | null; stream: string | null; prev_industry: string | null; last_employer: string | null; state: string | null; address: string | null; dob: string | null } | null;
   identities: Array<{ kind: string; value: string; is_primary: number }>;
   clashes: Array<{ id: number; kind: string; value: string; status: string; other_mobile: string; other_name: string | null }>;
   attempts: Array<{ attempted_at: string; channel: string; source: string | null; process: string | null; actor: string | null; outcome: string | null }>;
@@ -60,6 +61,23 @@ export default function Candidate360Drawer({ leadId, onClose }: { leadId: string
             {rec.lead.is_employee === 1 && <p className="mt-3 rounded-lg bg-rose-50 p-2 text-sm text-rose-700">Current employee - never shortlisted.</p>}
             {rec.exEmployee && <p className="mt-3 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">Former employee ({words(rec.exEmployee.exit_sub_type)}, left {day(rec.exEmployee.exit_date)}) - {rec.exEmployee.clean_voluntary ? "clean voluntary exit, can be contacted but always last priority" : "not eligible to be contacted"}.</p>}
             {rec.clashes.length > 0 && <p className="mt-3 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">Same {rec.clashes[0].kind} also on {rec.clashes.map((c) => `${c.other_name ?? "unnamed"} (${c.other_mobile})`).join(", ")} - flagged for HR review.</p>}
+
+            {rec.profile && (() => {
+              const p = rec.profile; const list = (v: string[] | string | null) => (Array.isArray(v) ? v : (() => { try { return v ? (JSON.parse(v) as string[]) : []; } catch { return []; } })());
+              const facts: Array<[string, string | null]> = [
+                ["Gender", p.gender], ["Date of birth", day(p.dob)], ["Education", [words(p.education_status), words(p.stream)].filter((x) => x && x !== "-").join(", ") || null],
+                ["Previous work", [p.last_employer, p.prev_industry ? words(p.prev_industry) : null].filter(Boolean).join(" · ") || null],
+                ["Last salary", p.last_salary ? `Rs ${p.last_salary.toLocaleString("en-IN")}` : null], ["Expected salary", p.salary_expectation ? `Rs ${p.salary_expectation.toLocaleString("en-IN")}` : null],
+                ["Languages", list(p.languages).join(", ") || null], ["Certifications", list(p.certifications).join(", ") || null], ["Typing", p.typing_wpm ? `${p.typing_wpm} wpm` : null],
+                ["English", p.english_level], ["Location", [p.address, p.state].filter(Boolean).join(", ") || null],
+              ];
+              const shown = facts.filter(([, v]) => v && v !== "-");
+              return shown.length ? (
+                <Section title="Profile used for screening">
+                  <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-2">{shown.map(([k, v]) => <div key={k} className="flex gap-2"><dt className="w-28 shrink-0 text-slate-500">{k}</dt><dd className="capitalize text-slate-800">{v}</dd></div>)}</dl>
+                </Section>
+              ) : null;
+            })()}
 
             <Section title="Can be lined up for">
               {fit.length === 0 && <p className="text-sm text-slate-500">No open requisition fits right now.</p>}

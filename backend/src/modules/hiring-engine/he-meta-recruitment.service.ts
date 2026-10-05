@@ -24,10 +24,12 @@ const SELECTED_STAGES = new Set(["selected", "offered", "joined", "converted"]);
 type MetaRecruitment = { campaigns: CampaignRecruitment[]; total: RecruitmentCounts };
 let _cache: { at: number; data: MetaRecruitment } | null = null;
 let _inflight: Promise<MetaRecruitment> | null = null;
-const CACHE_MS = 5 * 60_000;
+// HE_META_CACHE_MS overrides the 5 min cache (0 = always fresh, used by the test environment).
+const CACHE_MS = Number.isFinite(Number(process.env.HE_META_CACHE_MS)) && process.env.HE_META_CACHE_MS !== undefined ? Number(process.env.HE_META_CACHE_MS) : 5 * 60_000;
 
 /** Cached for 5 minutes (stale-while-revalidate): the strip sits on every tab and the numbers move slowly. */
 export async function getMetaRecruitment(): Promise<MetaRecruitment> {
+  if (CACHE_MS <= 0) return computeMetaRecruitment();
   const fresh = _cache && Date.now() - _cache.at < CACHE_MS;
   if (_cache && !fresh && !_inflight) _inflight = computeMetaRecruitment().then((d) => { _cache = { at: Date.now(), data: d }; return d; }).finally(() => { _inflight = null; });
   if (_cache) return _cache.data;

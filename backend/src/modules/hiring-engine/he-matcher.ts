@@ -20,6 +20,12 @@ export interface MatchLead {
   typingWpm?: number | null;
   englishLevel?: "basic" | "intermediate" | "advanced" | null;
   salaryExpectation?: number | null; // monthly INR
+  lastSalary?: number | null; // monthly INR, used when no expectation is known
+  educationStatus?: "completed" | "pursuing" | "dropped" | null;
+  stream?: string | null;
+  prevIndustry?: string | null;
+  city?: string | null;
+  state?: string | null;
 }
 
 export interface MatchRequisition {
@@ -38,6 +44,11 @@ export interface MatchRequisition {
   minTypingWpm?: number | null;
   englishLevel?: "basic" | "intermediate" | "advanced" | null;
   salaryMax?: number | null; // monthly INR
+  branchCity?: string | null;
+  branchState?: string | null;
+  /** Industries whose experience helps for this process (derived from the process name). */
+  goodIndustries?: string[] | null;
+  streams?: string[] | null;
 }
 
 export interface MatchResult {
@@ -95,7 +106,13 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
       score -= 25;
       reasons.push(`${distanceKm} km away`);
     } else score += distanceKm <= 8 ? 15 : 5;
-  } else unknown.push("distance");
+  } else {
+    // No map location: fall back to city / state text, which every portal export carries.
+    const c = (v: string | null | undefined) => String(v ?? "").toLowerCase().replace(/[^a-z]/g, "");
+    if (lead.city && req.branchCity && (c(lead.city).includes(c(req.branchCity)) || c(req.branchCity).includes(c(lead.city))) && c(lead.city).length >= 3) { score += 10; reasons.push("same city as the branch"); }
+    else if (lead.state && req.branchState && c(lead.state) !== c(req.branchState)) { score -= 15; reasons.push(`lives in ${lead.state}, branch in ${req.branchState}`); }
+    else unknown.push("distance");
+  }
 
   if (req.processName && lead.pastProcesses?.some((p) => p.toLowerCase() === req.processName!.toLowerCase())) {
     score += 10;
@@ -132,9 +149,22 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
     else if (ENG[lead.englishLevel] >= ENG[req.englishLevel]) score += 5;
     else { score -= 10; reasons.push(`english ${lead.englishLevel}, JD wants ${req.englishLevel}`); }
   }
-  if (req.salaryMax && lead.salaryExpectation) {
-    if (lead.salaryExpectation > req.salaryMax * 1.15) { score -= 15; reasons.push(`expects ${lead.salaryExpectation}, JD max ${req.salaryMax}`); }
+  const expects = lead.salaryExpectation ?? (lead.lastSalary ? Math.round(lead.lastSalary * 1.15) : null);
+  if (req.salaryMax && expects) {
+    if (expects > req.salaryMax * 1.15) { score -= 15; reasons.push(`${lead.salaryExpectation ? "expects" : "last salary suggests"} ${expects}, JD max ${req.salaryMax}`); }
     else score += 5;
+  }
+  if (lead.educationStatus === "pursuing" && req.minEducationRank != null && lead.educationRank != null && lead.educationRank <= req.minEducationRank) {
+    score -= 10; reasons.push("still pursuing the required qualification");
+  }
+  if (lead.educationStatus === "dropped" && req.minEducationRank != null && lead.educationRank != null && lead.educationRank <= req.minEducationRank) {
+    eligible = false; reasons.push("required qualification not completed");
+  }
+  if (req.goodIndustries?.length && lead.prevIndustry) {
+    if (req.goodIndustries.includes(lead.prevIndustry)) { score += 10; reasons.push(`${lead.prevIndustry.replace(/_/g, " ")} experience`); }
+  }
+  if (req.streams?.length && lead.stream) {
+    if (req.streams.includes(lead.stream)) score += 5; else { score -= 5; reasons.push(`${lead.stream.replace(/_/g, " ")} stream, JD prefers ${req.streams.join("/")}`); }
   }
 
   const asked = [req.ageMin != null || req.ageMax != null, req.minEducationRank != null, (req.minExperienceYears ?? 0) > 0, req.nightShift === true,
@@ -156,4 +186,15 @@ export function rankRequisitions<R extends MatchRequisition & { id: string }>(
     .filter((x) => x.result.eligible)
     .sort((a, b) => b.result.rankScore - a.result.rankScore)
     .slice(0, limit);
+}
+
+/** Which previous industries count as relevant for a process name. */
+export function industriesForProcess(process: string | null | undefined): string[] | null {
+  const p = String(process ?? "").toLowerCase();
+  if (!p) return null;
+  if (/collect|recover|dra|npa/.test(p)) return ["collections", "bfsi", "bpo"];
+  if (/sale|telesale|acquisition|business dev/.test(p)) return ["sales", "bpo", "bfsi", "retail"];
+  if (/back ?office|data|mis|kyc|document|verification/.test(p)) return ["back_office", "bpo", "bfsi"];
+  if (/support|service|care|voice|chat|inbound|outbound|bpo|cce|process|onfido|telecall/.test(p)) return ["bpo", "sales", "collections"];
+  return null;
 }

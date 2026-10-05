@@ -14,7 +14,20 @@ export interface PlannerResponse extends Plan {
   historyMonths: number;
 }
 
+// Per-source history moves slowly (one day's calls barely change a 6-month rate), and the grouped scan of the recruiter
+// ledger takes seconds on production, so each scope is cached for 15 minutes.
+const histCache = new Map<string, { at: number; rows: SourceHistory[] }>();
 async function history(where: string, args: unknown[], months: number): Promise<SourceHistory[]> {
+  const key = JSON.stringify([where, args, months]);
+  const hit = histCache.get(key);
+  if (hit && Date.now() - hit.at < 15 * 60_000) return hit.rows;
+  const rows = await historyUncached(where, args, months);
+  if (histCache.size > 300) histCache.clear();
+  histCache.set(key, { at: Date.now(), rows });
+  return rows;
+}
+
+async function historyUncached(where: string, args: unknown[], months: number): Promise<SourceHistory[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(hiring_source), ''), 'Unknown') AS source, COUNT(*) AS attempts, COUNT(DISTINCT mobile10) AS uniqueLeads,
             COUNT(DISTINCT CASE WHEN walkin_flag OR final_selection_flag OR joined_flag THEN mobile10 END) AS walkins,

@@ -18,7 +18,8 @@ export const INTAKE_MAX_ROWS = 5000;
 
 export const FIELDS = [
   "mobile", "altMobile", "name", "firstName", "lastName", "email", "age", "dob", "gender", "education", "experience", "experienceMonths",
-  "city", "state", "pincode", "process", "skills", "languages", "expectedSalary", "currentSalary", "consent", "appliedOn",
+  "city", "state", "pincode", "address", "process", "skills", "languages", "expectedSalary", "currentSalary", "consent", "appliedOn",
+  "educationStatus", "stream", "lastEmployer", "prevRole", "industry",
 ] as const;
 export type Field = (typeof FIELDS)[number];
 
@@ -26,7 +27,9 @@ export const FIELD_LABEL: Record<Field, string> = {
   mobile: "Mobile", altMobile: "Alternate mobile", name: "Full name", firstName: "First name", lastName: "Last name", email: "Email",
   age: "Age", dob: "Date of birth", gender: "Gender", education: "Education", experience: "Experience (years)", experienceMonths: "Experience (months)",
   city: "City / location", state: "State", pincode: "Pincode", process: "Job / role applied", skills: "Skills", languages: "Languages",
-  expectedSalary: "Expected salary", currentSalary: "Current salary", consent: "WhatsApp consent", appliedOn: "Applied on",
+  expectedSalary: "Expected salary", currentSalary: "Current / last salary", consent: "WhatsApp consent", appliedOn: "Applied on",
+  address: "Address", educationStatus: "Education status", stream: "Stream / specialisation", lastEmployer: "Previous company",
+  prevRole: "Previous role / experience details", industry: "Industry / functional area",
 };
 
 /** Normalised header -> words. "Candidate's Mobile No." -> "candidate s mobile no" */
@@ -51,14 +54,20 @@ const ALIASES: Record<Field, string[]> = {
     "experience in years", "total experience years", "overall experience", "relevant experience"],
   experienceMonths: ["experience months", "experience in months", "total experience months", "exp months", "months of experience"],
   city: ["city", "location", "current location", "area", "locality", "current city", "preferred location", "candidate location", "address city", "town", "district", "job location preference"],
-  state: ["state", "current state", "region"],
+  state: ["state", "current state", "region", "home state", "state name"],
   pincode: ["pincode", "pin code", "pin", "zip", "zip code", "postal code", "postcode"],
   process: ["process", "process name", "applied for", "role applied", "position", "job title", "job role", "role", "job", "job name", "designation",
     "applied job", "job applied", "job post", "vacancy", "profile", "department", "interested role", "job category", "category"],
   skills: ["skills", "key skills", "skill", "skill set", "skillset", "it skills", "keywords"],
   languages: ["languages", "language", "languages known", "language known", "spoken languages", "english speaking", "communication", "english level", "english fluency"],
   expectedSalary: ["expected salary", "expected ctc", "salary expectation", "expected pay", "desired salary", "expected monthly salary", "expected package", "salary expected"],
-  currentSalary: ["current salary", "current ctc", "salary", "ctc", "last salary", "present salary", "current monthly salary", "annual salary"],
+  currentSalary: ["current salary", "current ctc", "salary", "ctc", "last salary", "last drawn salary", "last ctc", "present salary", "current monthly salary", "annual salary", "previous salary", "last drawn", "current pay"],
+  address: ["address", "full address", "current address", "permanent address", "residential address", "address line 1", "address 1", "locality address"],
+  educationStatus: ["education status", "qualification status", "course status", "degree status", "studying", "currently studying", "pursuing", "status of education", "education completed"],
+  stream: ["stream", "specialization", "specialisation", "major", "subject", "ug specialization", "education stream", "field of study", "discipline"],
+  lastEmployer: ["previous company", "last company", "current company", "current employer", "previous employer", "last employer", "company name", "organisation", "organization", "employer"],
+  prevRole: ["previous experience", "experience details", "previous role", "last designation", "current designation", "previous designation", "work history", "past experience", "current role", "job profile previous"],
+  industry: ["industry", "functional area", "current industry", "previous industry", "domain", "sector", "experience in", "experience type"],
   consent: ["consent", "whatsapp consent", "opt in", "optin", "agreed to contact", "whatsapp opt in", "contact consent", "permission to contact"],
   appliedOn: ["applied on", "applied date", "date applied", "application date", "applied at", "created at", "created date", "date", "timestamp", "submission date", "lead date"],
 };
@@ -178,6 +187,20 @@ export function parseAgeFromDob(raw: string | null, now = new Date()): number | 
   return age >= 15 && age <= 70 ? age : null;
 }
 
+/** DOB as YYYY-MM-DD (day-first, ISO or Excel serial), or null. */
+export function isoDob(raw: string | null): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  const dmy = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/), ymd = s.match(/^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})/);
+  let y: number, m: number, d: number;
+  if (dmy) [d, m, y] = [Number(dmy[1]), Number(dmy[2]), Number(dmy[3])];
+  else if (ymd) [y, m, d] = [Number(ymd[1]), Number(ymd[2]), Number(ymd[3])];
+  else if (/^\d{5}$/.test(s)) { const dt = new Date(Date.UTC(1899, 11, 30) + Number(s) * 86_400_000); return dt.toISOString().slice(0, 10); }
+  else return null;
+  if (m < 1 || m > 12 || d < 1 || d > 31 || y < 1940 || y > 2015) return null;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 export function parseMoney(raw: string | null): number | null {
   if (!raw) return null;
   const s = raw.toLowerCase().replace(/,/g, "");
@@ -192,6 +215,43 @@ export function parseMoney(raw: string | null): number | null {
   return n >= 3000 && n <= 500000 ? Math.round(n) : null;
 }
 
+/** Education status from a status column or from the qualification text ("B.Com pursuing", "12th appearing"). */
+export function parseEducationStatus(status: string | null, education: string | null): "completed" | "pursuing" | "dropped" | null {
+  const t = `${status ?? ""} ${education ?? ""}`.toLowerCase();
+  if (/drop ?out|discontinu|left (in )?between|incomplete/.test(t)) return "dropped";
+  if (/pursuing|persuing|appearing|ongoing|currently studying|final year|\b(1st|2nd|3rd|first|second|third) year\b|studying|in progress|result awaited|awaited/.test(t)) return "pursuing";
+  if (/complet|passed|pass\b|graduated|done|yes/.test((status ?? "").toLowerCase())) return "completed";
+  return status ? null : education ? "completed" : null;
+}
+
+/** Stream from a stream column or the degree name. */
+export function parseStream(stream: string | null, education: string | null): string | null {
+  const t = `${stream ?? ""} ${education ?? ""}`.toLowerCase();
+  if (/b\.? ?com|m\.? ?com|commerce|account|finance|\bca\b|\bcs\b/.test(t)) return "commerce";
+  if (/bca|mca|b\.? ?tech|m\.? ?tech|b\.? ?e\b|engineer|computer|\bit\b|information technology|diploma/.test(t)) return "it_engineering";
+  if (/bba|mba|pgdm|management|business admin/.test(t)) return "management";
+  if (/b\.? ?sc|m\.? ?sc|science|pcm|pcb|biology|maths|physics|chemistry/.test(t)) return "science";
+  if (/b\.? ?a\b|m\.? ?a\b|arts|humanities|english hons|history|political|sociology|psychology/.test(t)) return "arts";
+  if (/nursing|pharma|medical|bpt|gnm|anm/.test(t)) return "medical";
+  if (/hotel|hospitality|ihm/.test(t)) return "hospitality";
+  return stream ? stream.trim().toLowerCase().slice(0, 30) : null;
+}
+
+/** Industry of previous work from industry / role / company text. */
+export function parseIndustry(...texts: Array<string | null>): string | null {
+  const t = texts.filter(Boolean).join(" ").toLowerCase();
+  if (!t.trim()) return null;
+  if (/collection|recovery|dra\b|debt|npa|field (officer|executive) recovery/.test(t)) return "collections";
+  if (/bpo|kpo|call ?cent(er|re)|telecall|tele ?caller|customer (care|support|service)|cce|voice process|non.?voice|chat process|helpdesk|contact cent/.test(t)) return "bpo";
+  if (/bank|insurance|loan|credit card|nbfc|mutual fund|finance company|bfsi|lending/.test(t)) return "bfsi";
+  if (/sales|business development|bde|telesales|marketing executive|field sales|lead generation/.test(t)) return "sales";
+  if (/retail|store|shop|mall|cashier/.test(t)) return "retail";
+  if (/back ?office|data entry|mis|operations executive|documentation/.test(t)) return "back_office";
+  if (/delivery|logistics|courier|warehouse/.test(t)) return "logistics";
+  if (/fresher|no experience|none/.test(t)) return "none";
+  return "other";
+}
+
 const LANGS = ["english", "hindi", "marathi", "gujarati", "punjabi", "bengali", "tamil", "telugu", "kannada", "malayalam", "odia", "urdu", "assamese"];
 
 export interface IntakeRow {
@@ -199,6 +259,8 @@ export interface IntakeRow {
   age?: number | null; education?: string | null; experienceYears?: number | null; city?: string | null; pincode?: string | null;
   gender?: "male" | "female" | "other" | null; process?: string | null; skills?: string | null; languages?: string[] | null;
   expectedSalary?: number | null; consent?: boolean;
+  dob?: string | null; educationStatus?: "completed" | "pursuing" | "dropped" | null; stream?: string | null; lastSalary?: number | null;
+  lastEmployer?: string | null; prevIndustry?: string | null; state?: string | null; address?: string | null;
 }
 
 export function mapIntakeRows(rows: Array<Record<string, unknown>>, mappingIn?: Mapping | null): { rows: IntakeRow[]; missingColumns: string[]; tooMany: boolean; mapping: Mapping } {
@@ -229,6 +291,10 @@ export function mapIntakeRows(rows: Array<Record<string, unknown>>, mappingIn?: 
       gender: /^(m|male|man)$/.test(g) ? "male" : /^(f|female|woman)$/.test(g) ? "female" : g ? "other" : null,
       process: get("process"), skills: get("skills"), languages: langs.length ? langs : get("languages") ? [] : null,
       expectedSalary: parseMoney(get("expectedSalary")), consent: /^(y|yes|true|1|agreed|haan|opted in)$/.test(c),
+      dob: isoDob(get("dob")), educationStatus: parseEducationStatus(get("educationStatus"), get("education")), stream: parseStream(get("stream"), get("education")),
+      lastSalary: parseMoney(get("currentSalary")), lastEmployer: get("lastEmployer")?.slice(0, 150) ?? null,
+      prevIndustry: (get("industry") || get("prevRole") || get("lastEmployer") || get("experience")) ? parseIndustry(get("industry"), get("prevRole"), get("lastEmployer"), get("experience")) : null,
+      state: get("state")?.slice(0, 60) ?? null, address: get("address")?.slice(0, 300) ?? null,
     };
   });
   return { rows: out, missingColumns: [], tooMany: false, mapping };
