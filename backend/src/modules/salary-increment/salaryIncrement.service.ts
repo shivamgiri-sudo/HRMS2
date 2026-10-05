@@ -7,12 +7,39 @@ import { notifySalaryIncrementLetter } from "./salaryIncrement.notifications.js"
 type IncrementStatus =
   | "submitted"
   | "hr_validated"
-  | "finance_validated"
+  | "finance_validated" // legacy only: the Finance step was removed; old rows in this status can still be approved
   | "approved"
   | "rejected"
   | "implemented"
   | "cancelled"
   | "withdrawn";
+
+export type IncrementAction = "hr_validate" | "approve" | "reject" | "implement" | "cancel" | "withdraw";
+
+/**
+ * Owner rule 2026-10-05: no Finance sign-off; the Payroll Head is the last approval. HR may raise and validate;
+ * only the Payroll Head (or super admin) approves and applies. "finance_validated" survives only as a legacy
+ * status on old requests, which can still be approved, rejected or cancelled.
+ */
+export const INCREMENT_TRANSITIONS: Record<IncrementAction, { from: IncrementStatus[]; to: IncrementStatus; eventType: string; field: string }> = {
+  hr_validate: { from: ["submitted"], to: "hr_validated", eventType: "HR_VALIDATED", field: "hr_validated" },
+  approve:     { from: ["submitted", "hr_validated", "finance_validated"], to: "approved", eventType: "APPROVED", field: "approved" },
+  reject:      { from: ["submitted", "hr_validated", "finance_validated", "approved"], to: "rejected", eventType: "REJECTED", field: "rejected" },
+  implement:   { from: ["approved"], to: "implemented", eventType: "IMPLEMENTED", field: "implemented" },
+  cancel:      { from: ["submitted", "hr_validated", "finance_validated"], to: "cancelled", eventType: "CANCELLED", field: null as unknown as string },
+  withdraw:    { from: ["submitted"], to: "withdrawn", eventType: "WITHDRAWN", field: null as unknown as string },
+};
+
+export const INCREMENT_ROLE_GATES: Record<IncrementAction, string[]> = {
+  hr_validate: ["admin", "hr", "payroll_head", "super_admin"],
+  approve:     ["payroll_head", "super_admin"],
+  implement:   ["payroll_head", "super_admin"],
+  reject:      ["admin", "hr", "payroll_head", "super_admin"],
+  cancel:      ["admin", "hr", "payroll_head", "super_admin"],
+  withdraw:    ["admin", "hr", "payroll_head", "super_admin"],
+};
+
+export const INCREMENT_VIEW_ROLES = ["admin", "hr", "payroll_head", "super_admin"];
 
 async function writeAudit(
   requestId: string,
@@ -152,7 +179,7 @@ export const salaryIncrementService = {
 
   async transition(
     id: string,
-    action: "hr_validate" | "finance_validate" | "approve" | "reject" | "implement" | "cancel" | "withdraw",
+    action: IncrementAction,
     actorUserId: string,
     actorRole: string,
     remarks?: string
@@ -166,15 +193,7 @@ export const salaryIncrementService = {
 
     const oldStatus: IncrementStatus = req.status;
 
-    const TRANSITIONS: Record<string, { from: IncrementStatus[]; to: IncrementStatus; eventType: string; field: string }> = {
-      hr_validate:      { from: ["submitted"],       to: "hr_validated",       eventType: "HR_VALIDATED",      field: "hr_validated" },
-      finance_validate: { from: ["hr_validated"],    to: "finance_validated",  eventType: "FINANCE_VALIDATED", field: "finance_validated" },
-      approve:          { from: ["finance_validated","hr_validated"], to: "approved", eventType: "APPROVED",   field: "approved" },
-      reject:           { from: ["submitted","hr_validated","finance_validated","approved"], to: "rejected", eventType: "REJECTED", field: "rejected" },
-      implement:        { from: ["approved"],        to: "implemented",        eventType: "IMPLEMENTED",       field: "implemented" },
-      cancel:           { from: ["submitted","hr_validated","finance_validated"], to: "cancelled", eventType: "CANCELLED", field: null as unknown as string },
-      withdraw:         { from: ["submitted"],       to: "withdrawn",          eventType: "WITHDRAWN",         field: null as unknown as string },
-    };
+    const TRANSITIONS = INCREMENT_TRANSITIONS;
 
     const t = TRANSITIONS[action];
     if (!t) throw Object.assign(new Error("Unknown action"), { status: 400 });
