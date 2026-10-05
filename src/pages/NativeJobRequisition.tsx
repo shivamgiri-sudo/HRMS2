@@ -78,6 +78,7 @@ interface JobRequisition {
   meta_target_age_max?: number | null;
   meta_target_locations?: string[] | null;
   meta_target_radius_km?: number | null;
+  ad_required?: number | boolean | null;
   meta_screening_config?: MetaScreeningConfig | null;
 }
 
@@ -204,7 +205,7 @@ const emptyForm = {
   // marketing on approval, and the age band is also what lead-screener.service.ts screens incoming
   // Lead Gen leads against — so leaving the band blank means age is not screened at all, not that
   // every age is rejected.
-  meta_campaign_enabled: false,   // if false, all META fields are hidden and marketing is not notified
+  meta_campaign_enabled: true,   // saved as ad_required; if false, META fields are hidden and the marketing brief says NO AD NEEDED
   bmi_assessment_url: '',
   meta_target_age_min: '',
   meta_target_age_max: '',
@@ -426,6 +427,7 @@ export default function NativeJobRequisition() {
         // META campaign targeting. Locations are sent as a real array — the column is JSON, and
         // the backend stringifies it; sending the raw comma string would store a JSON string
         // rather than a JSON array and every reader that expects to iterate it would get characters.
+        ad_required: formData.meta_campaign_enabled,
         bmi_assessment_url: formData.bmi_assessment_url || null,
         meta_target_age_min: formData.meta_target_age_min ? Number(formData.meta_target_age_min) : null,
         meta_target_age_max: formData.meta_target_age_max ? Number(formData.meta_target_age_max) : null,
@@ -682,7 +684,7 @@ export default function NativeJobRequisition() {
       meta_target_age_max: req.meta_target_age_max?.toString() || '',
       meta_target_locations: Array.isArray(req.meta_target_locations) ? req.meta_target_locations.join(', ') : '',
       meta_target_radius_km: req.meta_target_radius_km?.toString() || '',
-      meta_campaign_enabled: !!(req.meta_target_age_min || req.meta_target_age_max || req.bmi_assessment_url || req.meta_screening_config),
+      meta_campaign_enabled: req.ad_required != null ? Number(req.ad_required) !== 0 : !!(req.meta_target_age_min || req.meta_target_age_max || req.bmi_assessment_url || req.meta_screening_config),
       meta_screening_auto_notify: req.meta_screening_config?.auto_notify !== false,
       meta_screening_gender: (req.meta_screening_config?.gender as 'any' | 'male' | 'female') || 'any',
       meta_screening_certifications: req.meta_screening_config?.certifications ?? [],
@@ -1449,7 +1451,7 @@ export default function NativeJobRequisition() {
                 <div className="border-t pt-4">
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="text-xs font-bold uppercase tracking-wide text-gray-400">
-                      META Campaign
+                      Run Ad? (META Campaign)
                     </h3>
                     <label className="flex items-center gap-2 cursor-pointer select-none">
                       <span className="text-xs text-gray-500">{formData.meta_campaign_enabled ? 'Enabled' : 'Disabled'}</span>
@@ -1466,7 +1468,7 @@ export default function NativeJobRequisition() {
                   </div>
                   {!formData.meta_campaign_enabled && (
                     <p className="text-xs text-gray-400 mb-3 italic">
-                      META campaign is OFF — marketing will not be notified, and lead screening is disabled for this requisition.
+                      Ad is OFF — marketing is told "NO AD NEEDED" for this requisition, and lead screening is disabled.
                       Hiring will proceed through the standard ATS pipeline only.
                     </p>
                   )}

@@ -583,8 +583,8 @@ export const jobRequisitionService = {
         target_joining_date, requisition_validity, priority, requisition_type, business_justification,
         preferred_sources, internal_posting, requested_by, requested_by_name,
         bmi_assessment_url, meta_target_age_min, meta_target_age_max, meta_target_locations,
-        meta_target_radius_km, meta_screening_config, approval_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        meta_target_radius_km, meta_screening_config, ad_required, approval_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         id,
         code,
@@ -623,6 +623,7 @@ export const jobRequisitionService = {
         input.meta_target_locations ? JSON.stringify(input.meta_target_locations) : null,
         input.meta_target_radius_km ?? null,
         input.meta_screening_config ? JSON.stringify(input.meta_screening_config) : null,
+        input.ad_required === false ? 0 : 1,
       ]
     );
 
@@ -676,6 +677,8 @@ export const jobRequisitionService = {
       "meta_target_locations", "meta_target_radius_km",
       // META screening config (migration 1829).
       "meta_screening_config",
+      // Run-an-ad decision (migration 2107).
+      "ad_required",
     ];
 
     for (const field of allowedFields) {
@@ -690,7 +693,7 @@ export const jobRequisitionService = {
         } else if (field === "meta_screening_config" && value !== null && typeof value === "object") {
           sets.push(`${field} = ?`);
           params.push(JSON.stringify(value));
-        } else if (field === "rotational_shift" || field === "night_shift_required" || field === "internal_posting") {
+        } else if (field === "rotational_shift" || field === "night_shift_required" || field === "internal_posting" || field === "ad_required") {
           sets.push(`${field} = ?`);
           params.push(value ? 1 : 0);
         } else {
@@ -1543,7 +1546,13 @@ export const jobRequisitionService = {
 <p><a href="${escapeHtml(bmiUrl)}" style="background:#1e40af;color:#fff;padding:8px 16px;text-decoration:none;border-radius:4px;display:inline-block">${escapeHtml(bmiUrl)}</a></p>`
         : `<p style="margin-top:22px;color:#b45309"><strong>No assessment / BMI link was set on this requisition.</strong> Ask the raiser to add one before the ad goes live if the campaign needs it.</p>`;
 
+      const adRequired = Number(req.ad_required ?? 1) !== 0;
+      const adBanner = adRequired
+        ? `<p style="margin:0 0 12px;padding:8px 12px;background:#dcfce7;color:#166534;border-radius:4px"><strong>AD REQUIRED — please run the ad for this requisition.</strong></p>`
+        : `<p style="margin:0 0 12px;padding:8px 12px;background:#fee2e2;color:#991b1b;border-radius:4px"><strong>NO AD NEEDED — the requester does not want an ad run for this requisition.</strong> Do not create a campaign. Details are below for reference only.</p>`;
+
       const html = `<html><body style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.5">
+${adBanner}
 <h2 style="color:#1e40af;margin-bottom:4px">New Recruitment Campaign Brief</h2>
 <p style="margin-top:0;color:#64748b">Requisition ${escapeHtml(req.requisition_code)} has been approved. Details below are ready for a META Lead Gen campaign.</p>
 <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:14px">
@@ -1564,7 +1573,7 @@ ${bmiBlock}
       await emailService.send({
         to: recipients.join(", "),
         ...(ccList.length ? { cc: ccList.join(", ") } : {}),
-        subject: `[Campaign Brief] ${req.designation_name} — ${req.branch_name} — ${req.requisition_code}`,
+        subject: `[Campaign Brief — ${adRequired ? "RUN AD" : "NO AD NEEDED"}] ${req.designation_name} — ${req.branch_name} — ${req.requisition_code}`,
         html,
       });
     } catch (e: unknown) {
