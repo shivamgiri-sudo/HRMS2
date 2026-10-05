@@ -26,6 +26,8 @@ function pushBranchScope(conditions: string[], params: unknown[], scope: Finance
  * bank-ledger.service.ts's own report already uses for payable_account/vendor/employee names.
  */
 
+const dayOf = (v: unknown) => (v instanceof Date ? v.toISOString() : String(v ?? "")).slice(0, 10);
+
 type AccountType = "bank_account" | "vendor" | "expense_sub_head" | "payable_account";
 
 async function resolveAccountNames(refs: { accountType: AccountType; accountId: string }[]): Promise<Map<string, string>> {
@@ -76,6 +78,45 @@ async function resolveAccountNames(refs: { accountType: AccountType; accountId: 
   }
 
   return names;
+}
+
+/**
+ * Payments made to a vendor through Vendor Payment Dispatch, shaped like journal rows so the
+ * vendor ledger can show them as debits. The debit is the GROSS cleared against the vendor's
+ * bills (cash paid + any TDS withheld), the same figure vendorGrnLines() debits.
+ */
+async function vendorDispatchPayments(vendorId: string, from?: string, to?: string, scope?: FinanceBranchScope, before?: string): Promise<RowDataPacket[]> {
+  const conditions = ["vpt.vendor_id = ?"];
+  const params: unknown[] = [vendorId];
+  if (from) { conditions.push("t.payment_date >= ?"); params.push(from); }
+  if (to) { conditions.push("t.payment_date <= ?"); params.push(to); }
+  if (before) { conditions.push("t.payment_date < ?"); params.push(before); }
+  pushBranchScope(conditions, params, scope, "vpt.branch_id");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT CONCAT('vpt:', t.id) AS journal_entry_id, t.payment_date AS entry_date,
+            CONCAT('Payment ', t.payment_mode,
+                   IF(t.transaction_id IS NULL OR t.transaction_id = '', '', CONCAT(' ref ', t.transaction_id)),
+                   IF(COALESCE(t.tds_amount, 0) > 0, CONCAT(' (net ', FORMAT(t.net_amount, 2), ', TDS ', FORMAT(t.tds_amount, 2), ')'), ''),
+                   IF(t.remarks IS NULL OR t.remarks = '', '', CONCAT(' - ', t.remarks))) AS narration,
+            'vendor_payment' AS source_type, t.id AS source_id,
+            vpt.branch_id, vpt.cost_centre_id, vpt.process_id,
+            t.amount AS debit_amount, 0 AS credit_amount, NULL AS line_narration,
+            t.bank_name, t.transaction_id, t.payment_mode, t.net_amount, t.tds_amount, t.remarks,
+            g.grn_number, g.invoice_number
+       FROM vendor_payment_transaction t
+       JOIN vendor_payment_tracking vpt ON vpt.id = t.vendor_payment_id
+       LEFT JOIN grn_request g ON g.id = t.grn_request_id
+      WHERE ${conditions.join(" AND ")}
+        AND NOT EXISTS (
+          SELECT 1 FROM payment_voucher_grn_allocation a
+            JOIN payment_voucher pv ON pv.id = a.payment_voucher_id AND pv.status = 'released'
+            JOIN journal_entry je ON je.source_type = 'payment_voucher' AND je.source_id = pv.id
+                                 AND je.reversed_by_entry_id IS NULL
+           WHERE a.vendor_payment_tracking_id = t.vendor_payment_id)
+      ORDER BY t.payment_date ASC, t.sequence_no ASC`,
+    params,
+  );
+  return rows as RowDataPacket[];
 }
 
 /**
@@ -257,10 +298,26 @@ export const ledgerReportsService = {
       params,
     );
 
-    const { branchNames, costCentreNames, processNames } = await resolveDimensionNames(rows as RowDataPacket[]);
+    // A vendor's payments made from the Vendor Payment Dispatch page are recorded in
+    // vendor_payment_transaction and never reached the journal (release()'s journaling only
+    // covers Payment Vouchers, and 0 vouchers have been released), so the journal alone showed
+    // every bill and none of the payments. They are read here, at report time, as the debit
+    // side. A due whose payments were already journaled by a released voucher is skipped so
+    // nothing is counted twice if that path starts being used.
+    const dispatched = accountType === "vendor"
+      ? await vendorDispatchPayments(accountId, from, to, scope)
+      : [];
+
+    const allRows = [...(rows as RowDataPacket[]), ...dispatched];
+    const { branchNames, costCentreNames, processNames } = await resolveDimensionNames(allRows);
+
+    const ordered = allRows
+      .map((r, i) => ({ r, i }))
+      .sort((x, y) => dayOf(x.r.entry_date).localeCompare(dayOf(y.r.entry_date)) || x.i - y.i)
+      .map((x) => x.r);
 
     let runningBalance = 0;
-    const entries = (rows as RowDataPacket[]).map((r) => {
+    const entries = ordered.map((r) => {
       runningBalance = money(runningBalance + Number(r.debit_amount) - Number(r.credit_amount));
       return {
         journalEntryId: r.journal_entry_id,
@@ -281,6 +338,119 @@ export const ledgerReportsService = {
     });
 
     return { entries, closingBalance: runningBalance };
+  },
+
+  /**
+   * Tally-style vendor ledger ("Ledger Vouchers" view of a Sundry Creditor): opening balance,
+   * one row per voucher with Date / Particulars (To|By counter-ledger) / Vch Type / Vch No /
+   * Debit / Credit, period totals, and a closing balance shown Dr or Cr. Bills (GRNs) are the
+   * credit side; payments are the debit side. Balance sign: Dr positive, Cr negative.
+   */
+  async vendorStatement(vendorId: string, from?: string, to?: string, scope?: FinanceBranchScope) {
+    const [vendorRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, vendor_code, vendor_name FROM vendor_master WHERE id = ? LIMIT 1`, [vendorId]);
+    const vendor = (vendorRows as RowDataPacket[])[0];
+    if (!vendor) return null;
+
+    // Opening balance: everything dated before `from`, journal and dispatch payments alike.
+    let opening = 0;
+    if (from) {
+      const oc = ["jel.account_type = 'vendor'", "jel.account_id = ?", "je.reversed_by_entry_id IS NULL", "je.entry_date < ?"];
+      const op: unknown[] = [vendorId, from];
+      pushBranchScope(oc, op, scope, "je.branch_id");
+      const [o] = await db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(jel.debit_amount),0) d, COALESCE(SUM(jel.credit_amount),0) c
+           FROM journal_entry_line jel JOIN journal_entry je ON je.id = jel.journal_entry_id
+          WHERE ${oc.join(" AND ")}`, op);
+      opening = Number((o as RowDataPacket[])[0].d) - Number((o as RowDataPacket[])[0].c);
+      const before = await vendorDispatchPayments(vendorId, undefined, undefined, scope, from);
+      opening += before.reduce((sum, r) => sum + Number(r.debit_amount), 0);
+      opening = money(opening);
+    }
+
+    const jc = ["jel.account_type = 'vendor'", "jel.account_id = ?", "je.reversed_by_entry_id IS NULL"];
+    const jp: unknown[] = [vendorId];
+    if (from) { jc.push("je.entry_date >= ?"); jp.push(from); }
+    if (to) { jc.push("je.entry_date <= ?"); jp.push(to); }
+    pushBranchScope(jc, jp, scope, "je.branch_id");
+    const [journalRows] = await db.execute<RowDataPacket[]>(
+      `SELECT je.id AS journal_entry_id, je.entry_date, je.narration, je.source_type, je.source_id, je.branch_id,
+              jel.debit_amount, jel.credit_amount, jel.narration AS line_narration,
+              g.grn_number, g.invoice_number, pv.voucher_number
+         FROM journal_entry_line jel
+         JOIN journal_entry je ON je.id = jel.journal_entry_id
+         LEFT JOIN grn_request g ON je.source_type = 'grn' AND g.id = je.source_id
+         LEFT JOIN payment_voucher pv ON je.source_type = 'payment_voucher' AND pv.id = je.source_id
+        WHERE ${jc.join(" AND ")}
+        ORDER BY je.entry_date ASC, je.posted_at ASC`, jp);
+
+    // The other side of each journal entry is the "Particulars" Tally prints after To/By.
+    const counter = new Map<string, string[]>();
+    const entryIds = [...new Set((journalRows as RowDataPacket[]).map((r) => String(r.journal_entry_id)))];
+    for (let i = 0; i < entryIds.length; i += 500) {
+      const chunk = entryIds.slice(i, i + 500);
+      const [others] = await db.execute<RowDataPacket[]>(
+        `SELECT journal_entry_id, account_type, account_id FROM journal_entry_line
+          WHERE journal_entry_id IN (${chunk.map(() => "?").join(",")})
+            AND NOT (account_type = 'vendor' AND account_id = ?)`, [...chunk, vendorId]);
+      const names = await resolveAccountNames((others as RowDataPacket[]).map((o) => ({ accountType: o.account_type as AccountType, accountId: String(o.account_id) })));
+      for (const o of others as RowDataPacket[]) {
+        const name = names.get(`${o.account_type}:${o.account_id}`);
+        if (!name) continue;
+        const list = counter.get(String(o.journal_entry_id)) ?? [];
+        if (!list.includes(name)) list.push(name);
+        counter.set(String(o.journal_entry_id), list);
+      }
+    }
+
+    const dispatched = await vendorDispatchPayments(vendorId, from, to, scope);
+    const raw = [
+      ...(journalRows as RowDataPacket[]).map((r) => {
+        const isGrn = r.source_type === "grn";
+        const isPv = r.source_type === "payment_voucher";
+        const debit = Number(r.debit_amount) > 0;
+        return {
+          day: dayOf(r.entry_date), branchId: r.branch_id,
+          particulars: `${debit ? "To" : "By"} ${(counter.get(String(r.journal_entry_id)) ?? []).slice(0, 2).join(", ") || (isGrn ? "Purchase" : "Journal")}`,
+          vchType: isGrn ? "Purchase" : isPv ? "Payment" : "Journal",
+          vchNo: String(isGrn ? r.grn_number ?? "" : isPv ? r.voucher_number ?? "" : r.source_id ?? ""),
+          reference: String(isGrn ? r.invoice_number ?? "" : ""),
+          narration: String(r.line_narration ?? r.narration ?? ""),
+          debit: Number(r.debit_amount), credit: Number(r.credit_amount),
+        };
+      }),
+      ...dispatched.map((r) => ({
+        day: dayOf(r.entry_date), branchId: r.branch_id,
+        particulars: `To ${r.bank_name || r.payment_mode || "Bank"}`,
+        vchType: "Payment",
+        vchNo: String(r.transaction_id || r.grn_number || ""),
+        reference: String(r.grn_number ? `Against ${r.grn_number}${r.invoice_number ? ` / ${r.invoice_number}` : ""}` : ""),
+        narration: `${r.payment_mode ?? ""}${Number(r.tds_amount) > 0 ? ` (net ${money(Number(r.net_amount))}, TDS ${money(Number(r.tds_amount))})` : ""}${r.remarks ? ` - ${r.remarks}` : ""}`.trim(),
+        debit: Number(r.debit_amount), credit: 0,
+      })),
+    ].map((row, i) => ({ row, i })).sort((a, b) => a.row.day.localeCompare(b.row.day) || a.i - b.i).map((x) => x.row);
+
+    const { branchNames } = await resolveDimensionNames(raw.map((r) => ({ branch_id: r.branchId } as RowDataPacket)));
+    let running = opening;
+    let totalDebit = 0, totalCredit = 0;
+    const rows = raw.map((r) => {
+      running = money(running + r.debit - r.credit);
+      totalDebit += r.debit; totalCredit += r.credit;
+      return {
+        date: r.day, particulars: r.particulars, vchType: r.vchType, vchNo: r.vchNo, reference: r.reference,
+        narration: r.narration, branchName: r.branchId ? (branchNames.get(String(r.branchId)) ?? null) : null,
+        debit: money(r.debit), credit: money(r.credit), balance: Math.abs(running), balanceSide: running < 0 ? "Cr" : "Dr",
+      };
+    });
+    const side = (v: number) => (v < 0 ? "Cr" : "Dr");
+    return {
+      vendor: { id: vendor.id, code: vendor.vendor_code, name: vendor.vendor_name },
+      from: from ?? null, to: to ?? null,
+      opening: { amount: Math.abs(opening), side: side(opening) },
+      rows,
+      totals: { debit: money(totalDebit), credit: money(totalCredit) },
+      closing: { amount: Math.abs(running), side: side(running) },
+    };
   },
 
   async vendorLedger(vendorId: string, from?: string, to?: string, scope?: FinanceBranchScope) {

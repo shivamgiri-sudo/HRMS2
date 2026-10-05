@@ -175,7 +175,7 @@ function AccountLedgerDrawer({
                     <td className="max-w-[220px] truncate py-2 pr-2 text-slate-700" title={e.narration}>{e.narration}</td>
                     <td className="py-2 pr-2">
                       <Badge variant="outline" className="text-[10px]">
-                        {e.sourceType === "grn" ? "GRN" : e.sourceType === "payment_voucher" ? "Payment Voucher" : e.sourceType}
+                        {e.sourceType === "grn" ? "GRN" : e.sourceType === "payment_voucher" ? "Payment Voucher" : e.sourceType === "vendor_payment" ? "Vendor Payment" : e.sourceType}
                       </Badge>
                     </td>
                     <td className="max-w-[120px] truncate py-2 pr-2 text-slate-600" title={e.branchName ?? undefined}>{e.branchName ?? "—"}</td>
@@ -301,6 +301,15 @@ function TrialBalanceTab() {
   );
 }
 
+type VendorStatement = {
+  vendor: { id: string; code: string; name: string };
+  from: string | null; to: string | null;
+  opening: { amount: number; side: string };
+  rows: { date: string; particulars: string; vchType: string; vchNo: string; reference: string; narration: string; branchName: string | null; debit: number; credit: number; balance: number; balanceSide: string }[];
+  totals: { debit: number; credit: number };
+  closing: { amount: number; side: string };
+};
+
 function VendorLedgerTab() {
   const [search, setSearch] = useState("");
   const [vendorId, setVendorId] = useState("");
@@ -317,19 +326,40 @@ function VendorLedgerTab() {
   const vendorOptions: { id: string; vendor_code: string; vendor_name: string }[] = vendorQuery.data ?? [];
 
   const ledgerQuery = useQuery({
-    queryKey: ["ledger-reports-vendor-ledger", vendorId, from, to],
+    queryKey: ["ledger-reports-vendor-statement", vendorId, from, to],
     queryFn: async () => {
       const qs = new URLSearchParams();
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
-      const res = await hrmsApi.get<{ success: boolean; data: { entries: AccountLedgerEntry[]; closingBalance: number } }>(
-        `/api/finance/ledger-reports/vendor-ledger/${vendorId}?${qs.toString()}`,
+      const res = await hrmsApi.get<{ success: boolean; data: VendorStatement }>(
+        `/api/finance/ledger-reports/vendor-statement/${vendorId}?${qs.toString()}`,
       );
       return res.data;
     },
     enabled: !!vendorId,
   });
-  const entries = ledgerQuery.data?.entries ?? [];
+  const st = ledgerQuery.data;
+  const drCr = (b: { amount: number; side: string }) => `${money(b.amount)} ${b.side}`;
+  const fmtDay = (d: string) => (d ? d.split("-").reverse().join("-") : "");
+
+  const downloadCsv = () => {
+    if (!st) return;
+    const esc = (v: unknown) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const lines = [
+      [`Ledger: ${st.vendor.name} (${st.vendor.code})`],
+      [`Period: ${st.from ?? "start"} to ${st.to ?? "today"}`],
+      ["Date", "Particulars", "Vch Type", "Vch No", "Reference", "Narration", "Debit", "Credit", "Balance"],
+      ["", "Opening Balance", "", "", "", "", "", "", drCr(st.opening)],
+      ...st.rows.map((r) => [fmtDay(r.date), r.particulars, r.vchType, r.vchNo, r.reference, r.narration, r.debit || "", r.credit || "", drCr({ amount: r.balance, side: r.balanceSide })]),
+      ["", "Total", "", "", "", "", st.totals.debit, st.totals.credit, ""],
+      ["", "Closing Balance", "", "", "", "", "", "", drCr(st.closing)],
+    ];
+    const blob = new Blob([lines.map((l) => l.map(esc).join(",")).join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `vendor-ledger-${st.vendor.code}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="space-y-4">
@@ -353,39 +383,69 @@ function VendorLedgerTab() {
         <div><Label>To</Label><Input type="date" className="h-8 text-xs" value={to} onChange={(e) => setTo(e.target.value)} /></div>
       </div>
 
+      {st && (
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <div className="text-base font-bold text-gray-800">{st.vendor.name}</div>
+            <div className="text-xs text-gray-500">Ledger {st.vendor.code} · {st.from ? fmtDay(st.from) : "beginning"} to {st.to ? fmtDay(st.to) : "today"}</div>
+          </div>
+          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={downloadCsv}>Download CSV</Button>
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/95 shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-blue-50/60 text-left text-[11px] font-bold uppercase tracking-wide text-blue-800">
               <tr>
                 <th className="px-3 py-2.5">Date</th>
-                <th className="px-3 py-2.5">Narration</th>
-                <th className="px-3 py-2.5">Source</th>
+                <th className="px-3 py-2.5">Particulars</th>
+                <th className="px-3 py-2.5">Vch Type</th>
+                <th className="px-3 py-2.5">Vch No.</th>
                 <th className="px-3 py-2.5 text-right">Debit</th>
                 <th className="px-3 py-2.5 text-right">Credit</th>
-                <th className="px-3 py-2.5 text-right">Running Balance</th>
+                <th className="px-3 py-2.5 text-right">Balance</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-blue-100">
-              {!vendorId && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">Search and select a vendor above</td></tr>}
-              {vendorId && ledgerQuery.isLoading && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">Loading…</td></tr>}
-              {vendorId && !ledgerQuery.isLoading && entries.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">No postings for this vendor</td></tr>}
-              {entries.map((e) => (
-                <tr key={e.journalEntryId} className="hover:bg-blue-50/40">
-                  <td className="px-3 py-2 text-gray-600">{e.entryDate}</td>
-                  <td className="max-w-xs truncate px-3 py-2 text-gray-500" title={e.narration}>{e.narration}</td>
-                  <td className="px-3 py-2"><Badge variant="outline" className="text-[10px]">{e.sourceType === "grn" ? "GRN" : e.sourceType === "payment_voucher" ? "Payment Voucher" : e.sourceType}</Badge></td>
-                  <td className="px-3 py-2 text-right tabular-nums text-rose-600">{e.debitAmount ? money(e.debitAmount) : "—"}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-emerald-600">{e.creditAmount ? money(e.creditAmount) : "—"}</td>
-                  <td className="px-3 py-2 text-right font-bold tabular-nums text-gray-800">{money(e.runningBalance)}</td>
+              {!vendorId && <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">Search and select a vendor above</td></tr>}
+              {vendorId && ledgerQuery.isLoading && <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">Loading…</td></tr>}
+              {vendorId && !ledgerQuery.isLoading && st && st.rows.length === 0 && <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">No vouchers for this vendor in the period</td></tr>}
+              {st && (
+                <tr className="bg-slate-50/70 font-semibold text-gray-700">
+                  <td className="px-3 py-2" />
+                  <td className="px-3 py-2" colSpan={5}>Opening Balance</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{drCr(st.opening)}</td>
+                </tr>
+              )}
+              {st?.rows.map((r, i) => (
+                <tr key={`${r.date}-${r.vchNo}-${i}`} className="hover:bg-blue-50/40 align-top">
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{fmtDay(r.date)}</td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-gray-800">{r.particulars}</div>
+                    {(r.reference || r.narration) && (
+                      <div className="max-w-md truncate text-[11px] text-gray-500" title={`${r.reference} ${r.narration}`}>{[r.reference, r.narration].filter(Boolean).join(" · ")}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2"><Badge variant="outline" className="text-[10px]">{r.vchType}</Badge></td>
+                  <td className="px-3 py-2 text-gray-600">{r.vchNo || "—"}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-rose-600">{r.debit ? money(r.debit) : ""}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-emerald-600">{r.credit ? money(r.credit) : ""}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-gray-700">{drCr({ amount: r.balance, side: r.balanceSide })}</td>
                 </tr>
               ))}
             </tbody>
-            {entries.length > 0 && ledgerQuery.data && (
+            {st && (
               <tfoot>
                 <tr className="border-t-2 border-blue-100 bg-blue-50/40 font-bold text-gray-800">
-                  <td colSpan={5} className="px-3 py-2 text-right">Closing balance</td>
-                  <td className="px-3 py-2 text-right">{money(ledgerQuery.data.closingBalance)}</td>
+                  <td colSpan={4} className="px-3 py-2 text-right">Total</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{money(st.totals.debit)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{money(st.totals.credit)}</td>
+                  <td />
+                </tr>
+                <tr className="bg-blue-50/70 font-bold text-gray-900">
+                  <td colSpan={6} className="px-3 py-2 text-right">Closing Balance</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{drCr(st.closing)}</td>
                 </tr>
               </tfoot>
             )}

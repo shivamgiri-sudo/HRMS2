@@ -60,6 +60,19 @@ ledgerReportsRouter.get(
   }),
 );
 
+/** Tally-style statement: opening balance, voucher rows, totals, closing Dr/Cr. */
+ledgerReportsRouter.get(
+  "/vendor-statement/:vendorId",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const from = req.query.from ? String(req.query.from) : undefined;
+    const to = req.query.to ? String(req.query.to) : undefined;
+    const result = await ledgerReportsService.vendorStatement(String(req.params.vendorId), from, to, await callerBranchScope(req));
+    if (!result) return res.status(404).json({ success: false, message: "Vendor not found" });
+    res.json({ success: true, data: result });
+  }),
+);
+
 ledgerReportsRouter.get(
   "/head-subhead-ledger",
   requireRole(...BANK_ACCOUNT_READ_ROLES),

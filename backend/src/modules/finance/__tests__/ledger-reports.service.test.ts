@@ -50,15 +50,39 @@ describe("ledgerReportsService.trialBalance", () => {
 
 describe("ledgerReportsService.vendorLedger", () => {
   it("computes a running balance in chronological order — positive means the vendor is owed money", async () => {
-    execute.mockResolvedValueOnce([[
-      { entry_date: "2026-09-01", narration: "GRN #1", source_type: "grn", source_id: "grn-1", debit_amount: "0.00", credit_amount: "5000.00", line_narration: null },
-      { entry_date: "2026-09-10", narration: "PV released", source_type: "payment_voucher", source_id: "pv-1", debit_amount: "5000.00", credit_amount: "0.00", line_narration: null },
-    ]]);
+    execute.mockImplementation(async (sql: string) => {
+      if (/FROM vendor_payment_transaction/.test(sql)) return [[]];
+      return [[
+        { entry_date: "2026-09-01", narration: "GRN #1", source_type: "grn", source_id: "grn-1", debit_amount: "0.00", credit_amount: "5000.00", line_narration: null },
+        { entry_date: "2026-09-10", narration: "PV released", source_type: "payment_voucher", source_id: "pv-1", debit_amount: "5000.00", credit_amount: "0.00", line_narration: null },
+      ]];
+    });
 
     const result = await ledgerReportsService.vendorLedger("vendor-acme");
     expect(result.entries[0].runningBalance).toBe(-5000); // owed to vendor
     expect(result.entries[1].runningBalance).toBe(0); // paid in full
     expect(result.closingBalance).toBe(0);
+  });
+
+  it("shows payments made through Vendor Payment Dispatch as debits, merged by date", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      if (/FROM vendor_payment_transaction/.test(sql)) {
+        return [[{ journal_entry_id: "vpt:t1", entry_date: "2026-09-05", narration: "Payment NEFT ref UTR1", source_type: "vendor_payment", source_id: "t1", debit_amount: "3000.00", credit_amount: 0, line_narration: null }]];
+      }
+      return [[
+        { entry_date: "2026-09-01", narration: "GRN #1", source_type: "grn", source_id: "grn-1", debit_amount: "0.00", credit_amount: "5000.00", line_narration: null },
+      ]];
+    });
+    const result = await ledgerReportsService.vendorLedger("vendor-acme");
+    expect(result.entries.map((e) => e.sourceType)).toEqual(["grn", "vendor_payment"]);
+    expect(result.entries[1].debitAmount).toBe(3000);
+    expect(result.closingBalance).toBe(-2000); // still owed 2,000 after the 3,000 payment
+  });
+
+  it("does not look for dispatch payments on non-vendor account ledgers", async () => {
+    execute.mockResolvedValue([[]]);
+    await ledgerReportsService.accountLedger("payable_account", "pa-1");
+    expect(execute.mock.calls.some(([sql]) => /vendor_payment_transaction/.test(sql))).toBe(false);
   });
 
   it("scopes the query to the requested vendor and only 'vendor' account_type lines", async () => {
@@ -88,5 +112,31 @@ describe("ledgerReportsService.headSubHeadLedger", () => {
     expect(result).toEqual([
       { accountId: "sh-1", headSubHead: "Repairs & Maintenance / AC Servicing", totalSpent: 12345.67, grnCount: 3 },
     ]);
+  });
+});
+
+describe("ledgerReportsService.vendorStatement (Tally-style)", () => {
+  it("opens with the balance before `from`, lists vouchers, and closes Dr/Cr", async () => {
+    execute.mockImplementation(async (sql: string, params: unknown[]) => {
+      if (/FROM vendor_master/.test(sql)) return [[{ id: "v1", vendor_code: "V1", vendor_name: "Acme" }]];
+      if (/je\.entry_date < \?/.test(sql)) return [[{ d: "0", c: "1000" }]]; // owed 1,000 at opening
+      if (/FROM vendor_payment_transaction/.test(sql)) {
+        if (/t\.payment_date < \?/.test(sql)) return [[]];
+        return [[{ journal_entry_id: "vpt:t1", entry_date: "2026-05-10", source_type: "vendor_payment", source_id: "t1", debit_amount: "3000.00", credit_amount: 0, bank_name: "HDFC", transaction_id: "UTR1", payment_mode: "NEFT", net_amount: "3000", tds_amount: "0", remarks: null, grn_number: "GRN-1", invoice_number: "INV-1" }]];
+      }
+      if (/FROM journal_entry_line jel/.test(sql)) {
+        return [[{ journal_entry_id: "je1", entry_date: "2026-05-01", source_type: "grn", source_id: "g1", debit_amount: "0", credit_amount: "5000", grn_number: "GRN-1", invoice_number: "INV-1" }]];
+      }
+      return [[]]; // other-side lines, name lookups
+    });
+    const st = await ledgerReportsService.vendorStatement("v1", "2026-04-01", "2026-09-30");
+    expect(st!.opening).toEqual({ amount: 1000, side: "Cr" });
+    expect(st!.rows.map((r) => [r.vchType, r.vchNo, r.debit, r.credit])).toEqual([
+      ["Purchase", "GRN-1", 0, 5000],
+      ["Payment", "UTR1", 3000, 0],
+    ]);
+    expect(st!.rows[1].particulars).toBe("To HDFC");
+    expect(st!.totals).toEqual({ debit: 3000, credit: 5000 });
+    expect(st!.closing).toEqual({ amount: 3000, side: "Cr" }); // 1,000 + 5,000 - 3,000 still owed
   });
 });
