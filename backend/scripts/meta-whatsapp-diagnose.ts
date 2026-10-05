@@ -8,6 +8,7 @@
 import "dotenv/config";
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { isMetaConfigured } from "../src/modules/meta-campaign/meta-api.client.js";
@@ -50,8 +51,38 @@ function scanEnvFiles() {
   }
 }
 
+/** Per-key state in the live env file and in the running pm2 process: never prints a value. */
+function inspectKey() {
+  const keys = ["META_MARKETING_ACCESS_TOKEN", "META_PAGE_IDS", "META_PAGE_ID"];
+  try {
+    const text = fs.readFileSync("/var/www/HRMS2/backend/.env", "utf8").split(/\r?\n/);
+    for (const k of keys) {
+      const lines = text.filter((l) => l.replace(/^\s*(export\s+)?#?\s*/, "").startsWith(k));
+      const states = lines.map((l) => {
+        const commented = /^\s*#/.test(l);
+        const val = l.split("=").slice(1).join("=").trim().replace(/^['"]|['"]$/g, "");
+        return `${commented ? "commented" : "active"}:${val ? "has-value" : "empty"}`;
+      });
+      console.log(`LIVE_ENV_KEY ${k}: ${states.length ? states.join(", ") : "absent"}`);
+    }
+  } catch (e) { console.log("LIVE_ENV_KEY read failed:", (e as Error).message); }
+  try {
+    const list = JSON.parse(execSync("pm2 jlist", { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })) as Array<{ name: string; pm2_env: Record<string, unknown> }>;
+    for (const p of list.filter((x) => /hrms2/.test(x.name))) {
+      console.log(`PM2 ${p.name}: ${keys.map((k) => `${k}=${p.pm2_env[k] ? "set" : "unset"}`).join(" ")}`);
+    }
+  } catch (e) { console.log("PM2 env read failed:", (e as Error).message.slice(0, 120)); }
+  for (const f of ["/var/www/HRMS2/backend/logs/backend-out.log", "/var/www/HRMS2/backend/logs/backend-err.log"]) {
+    try {
+      const lines = execSync(`grep -a "meta-sync\\|\\[meta" ${f} | tail -n 12`, { encoding: "utf8" }).trim().split("\n");
+      for (const l of lines) console.log(`LOG ${path.basename(f)}: ${l.slice(0, 220).replace(/access_token=[^&\s"]+/g, "access_token=***")}`);
+    } catch { console.log(`LOG ${path.basename(f)}: no meta lines`); }
+  }
+}
+
 async function main() {
   scanEnvFiles();
+  inspectKey();
   console.log("ENV", JSON.stringify({
     metaConfigured: isMetaConfigured(),
     META_MARKETING_ACCESS_TOKEN: has("META_MARKETING_ACCESS_TOKEN"),
