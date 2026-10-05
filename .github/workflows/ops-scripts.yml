@@ -81,6 +81,7 @@ on:
           - fix-63694c-package
           - align-offers-to-catalog
           - fix-offer-followups
+          - salary-change-flow-audit
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -277,6 +278,10 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            salary-change-flow-audit)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/salary-change-flow-audit.ts
               ;;
             fix-offer-followups)
               # Dry-runs unless given --apply. Apply inserts/supersedes/corrects package rows for approved offers that match one catalog package.
