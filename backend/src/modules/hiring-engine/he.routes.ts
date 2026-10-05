@@ -28,23 +28,32 @@ import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
 export const heRouter = Router();
+// Warm the Meta recruitment numbers shortly after start so the first visitor does not wait for the full computation.
+setTimeout(() => { void getMetaRecruitment().catch(() => undefined); }, 20_000).unref?.();
 const VIEW_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr", "ceo"];
 const ADMIN_ROLES = ["super_admin", "admin"];
 
 heRouter.get("/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try {
-    const [byStatus] = await db.execute<RowDataPacket[]>("SELECT status, COUNT(*) AS n FROM he_lead GROUP BY status");
-    const [byAction] = await db.execute<RowDataPacket[]>("SELECT next_action, COUNT(*) AS n FROM he_lead_insight GROUP BY next_action");
-    const [bySource] = await db.execute<RowDataPacket[]>("SELECT primary_source, COUNT(*) AS n FROM he_lead GROUP BY primary_source");
-    const [handoff] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT lead_id) AS n FROM he_lead_event e WHERE event_type = 'needs_human_followup'
-          AND NOT EXISTS (SELECT 1 FROM he_lead_event d WHERE d.lead_id = e.lead_id AND d.event_type = 'human_followup_done' AND d.id > e.id)`);
+    const t0 = Date.now();
+    // Independent counts: run them side by side instead of one after another.
+    const [[byStatus], [byAction], [bySource], [handoff]] = await Promise.all([
+      db.execute<RowDataPacket[]>("SELECT status, COUNT(*) AS n FROM he_lead GROUP BY status"),
+      db.execute<RowDataPacket[]>("SELECT next_action, COUNT(*) AS n FROM he_lead_insight GROUP BY next_action"),
+      db.execute<RowDataPacket[]>("SELECT primary_source, COUNT(*) AS n FROM he_lead GROUP BY primary_source"),
+      db.execute<RowDataPacket[]>(
+        `SELECT COUNT(DISTINCT lead_id) AS n FROM he_lead_event e WHERE event_type = 'needs_human_followup'
+            AND NOT EXISTS (SELECT 1 FROM he_lead_event d WHERE d.lead_id = e.lead_id AND d.event_type = 'human_followup_done' AND d.id > e.id)`),
+    ]);
+    res.setHeader("Server-Timing", `db;dur=${Date.now() - t0}`);
     res.json({ success: true, data: { byStatus, byAction, bySource, humanFollowupOpen: Number(handoff[0]?.n ?? 0) } });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] summary failed");
     res.status(500).json({ success: false, message: "Could not load summary" });
   }
 });
+
+const leadCountCache = new Map<string, { n: number; at: number }>();
 
 heRouter.get("/leads", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
   try {
@@ -60,15 +69,28 @@ heRouter.get("/leads", requireAuth, requireRole(...VIEW_ROLES), async (req, res)
       const like = `%${req.query.q.trim()}%`; args.push(like, like);
     }
     const w = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const t0 = Date.now();
+    // Page first (index on updated_at), insight fetched only for those 25 rows, count cached for a minute per filter:
+    // the total moves slowly and counting 38k+ rows on every page turn is what made the list slow.
+    const needsInsight = typeof req.query.action === "string" && Boolean(req.query.action);
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT l.id, l.mobile10, l.full_name, l.status, l.primary_source, l.last_contact_at, l.created_at,
               i.engagement_score, i.reliability_score, i.best_channel, i.best_hour_ist, i.next_action, i.next_action_reason
          FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id ${w}
         ORDER BY l.updated_at DESC LIMIT ? OFFSET ?`, [...args, size, (page - 1) * size]);
-    // The insight join is only needed when filtering by next action; counting he_lead alone uses its indexes.
-    const needsInsight = typeof req.query.action === "string" && Boolean(req.query.action);
-    const [cnt] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM he_lead l ${needsInsight ? "LEFT JOIN he_lead_insight i ON i.lead_id = l.id" : ""} ${w}`, args);
-    res.json({ success: true, data: rows, total: Number(cnt[0].n), page, size });
+    const t1 = Date.now();
+    const key = JSON.stringify([w, args]);
+    const hit = leadCountCache.get(key);
+    let total: number;
+    if (hit && Date.now() - hit.at < 60_000) total = hit.n;
+    else {
+      const [cnt] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM he_lead l ${needsInsight ? "LEFT JOIN he_lead_insight i ON i.lead_id = l.id" : ""} ${w}`, args);
+      total = Number(cnt[0].n);
+      if (leadCountCache.size > 200) leadCountCache.clear();
+      leadCountCache.set(key, { n: total, at: Date.now() });
+    }
+    res.setHeader("Server-Timing", `rows;dur=${t1 - t0}, count;dur=${Date.now() - t1}`);
+    res.json({ success: true, data: rows, total, page, size });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] leads failed");
     res.status(500).json({ success: false, message: "Could not load leads" });

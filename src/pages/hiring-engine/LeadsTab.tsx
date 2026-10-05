@@ -78,7 +78,13 @@ export default function LeadsTab() {
   const [fullRecord, setFullRecord] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(null);
+    setError(null);
+    // First page without filters: show the last result instantly, then refresh it (stale-while-revalidate).
+    const plain = page === 1 && !status && !action && !search;
+    if (plain) {
+      try { const c = JSON.parse(sessionStorage.getItem("he-leads-p1") ?? "null") as { s: Summary; l: LeadRow[]; t: number } | null; if (c) { setSummary(c.s); setRows(c.l); setTotal(c.t); setLoading(false); } else setLoading(true); }
+      catch { setLoading(true); }
+    } else setLoading(true);
     try {
       const p = new URLSearchParams({ page: String(page), size: String(PAGE) });
       if (status) p.set("status", status);
@@ -89,6 +95,7 @@ export default function LeadsTab() {
         hrmsApi.get<{ data: LeadRow[]; total: number }>(`/api/he/leads?${p.toString()}`),
       ]);
       setSummary(s.data); setRows(l.data ?? []); setTotal(Number(l.total ?? 0));
+      if (plain) { try { sessionStorage.setItem("he-leads-p1", JSON.stringify({ s: s.data, l: l.data ?? [], t: Number(l.total ?? 0) })); } catch { /* storage unavailable */ } }
     } catch (e: unknown) {
       setError((e as { message?: string })?.message || "Unable to load the lead pool");
     } finally { setLoading(false); }
