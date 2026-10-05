@@ -18,6 +18,9 @@
   "modules/finance/salary-voucher-tally-push.service.ts": [
     "salary_voucher_tally_push_log"
   ],
+  "modules/finance/tally-export-lock.service.ts": [
+    "tally_export_lock"
+  ],
   "modules/hiring-engine/he-bulk-call.service.ts": [
     "he_call_batch",
     "he_call_job"
