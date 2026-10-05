@@ -17,7 +17,7 @@
 //     then date_of_leaving). A missing bound is open.
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
-import { EMPLOYMENT_END_DATE_SELECT } from "../modules/payroll/employment-end-date.js";
+import { EMPLOYMENT_END_DATE_SELECT, EMPLOYMENT_END_DATE_SQL } from "../modules/payroll/employment-end-date.js";
 
 export type Window = { from: string | null; to: string | null };
 
@@ -113,3 +113,28 @@ export async function partitionByEmployment<T>(
 /** Message used by routes that refuse a write outside the window. */
 export const OUTSIDE_EMPLOYMENT_MESSAGE =
   "This date is outside the employee's employment period (salary start date to exit date); attendance cannot be recorded for it.";
+
+/**
+ * SQL predicate: the attendance row `adrRef` (an alias, or the table name when the query has no alias)
+ * falls inside its employee's employment window - the same rule as employmentWindows() above.
+ * Used by every payroll / salary-days / F&F attendance read, so a row written outside the window
+ * (before the salary start date, after the exit date, or in a rejoiner's gap) is never counted for pay.
+ * Self-contained: binds no parameters, correlates on `${adrRef}.employee_id` / `${adrRef}.record_date`.
+ */
+export function attendanceInEmploymentWindowSql(adrRef: string): string {
+  const d = `${adrRef}.record_date`;
+  const end = EMPLOYMENT_END_DATE_SQL;
+  return `EXISTS (
+    SELECT 1 FROM employees e
+     WHERE e.id = ${adrRef}.employee_id
+       AND (
+         (NOT EXISTS (SELECT 1 FROM employment_stint st0 WHERE st0.employee_id = e.id)
+           AND ${d} >= COALESCE(e.salary_start_date, e.date_of_joining, ${d})
+           AND ${d} <= COALESCE(${end}, ${d}))
+         OR EXISTS (SELECT 1 FROM employment_stint st
+                     WHERE st.employee_id = e.id
+                       AND ${d} >= st.start_date
+                       AND ${d} <= COALESCE(st.end_date, ${end}, ${d}))
+       )
+  )`;
+}

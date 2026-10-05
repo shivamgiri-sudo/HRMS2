@@ -4,6 +4,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { resolveDashboardScope } from "../../shared/dashboardScope.js";
+import { attendanceInEmploymentWindowSql } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
@@ -366,6 +367,7 @@ payrollMoreRouter.get(
                       ELSE 0 END) AS live_paid_base
            FROM attendance_daily_record
            WHERE record_date BETWEEN ? AND ?
+             AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}
            GROUP BY employee_id
          ) adr ON adr.employee_id = spl.employee_id
         WHERE spl.run_id = ?
@@ -441,6 +443,7 @@ payrollMoreRouter.post(
                         ELSE 0 END) AS live_paid_base
              FROM attendance_daily_record
              WHERE record_date BETWEEN ? AND ?
+               AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}
              GROUP BY employee_id
            ) adr ON adr.employee_id = spl.employee_id
           WHERE spl.run_id = ?

@@ -1,3 +1,4 @@
+import { attendanceInEmploymentWindowSql } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2/promise";
 import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
@@ -199,7 +200,9 @@ export async function computeRunningSalary(
     `SELECT attendance_status, lwp_value, record_date, attendance_source, source_system
        FROM attendance_daily_record
       WHERE employee_id = ?
-        AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
+        AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+        -- Only days inside the employment window (salary start date .. exit date) count for pay.
+        AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}`,
     [employeeId, monthStart, tillDate],
   );
 

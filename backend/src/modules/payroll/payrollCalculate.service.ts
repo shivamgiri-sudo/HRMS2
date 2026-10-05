@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import { attendanceInEmploymentWindowSql } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../lib/logger.js";
 import { missingTdsConfigKeys } from "./statutory-regime.js";
@@ -1239,6 +1240,7 @@ export async function calculatePayrollRunScoped(
          FROM attendance_daily_record
         WHERE employee_id IN (${empIdPh()})
           AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+          AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}
         GROUP BY employee_id`,
       [...empIds, loopMonthStart, loopMonthEnd],
     );
@@ -1261,6 +1263,8 @@ export async function calculatePayrollRunScoped(
        FROM attendance_daily_record adr
        WHERE adr.employee_id IN (${empIdPh()})
          AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+         -- Only days inside the employment window (salary start date .. exit date) count for pay.
+         AND ${attendanceInEmploymentWindowSql("adr")}
        GROUP BY adr.employee_id`,
       [...empIds, loopMonthStart, loopMonthEnd],
     );
@@ -1285,6 +1289,8 @@ export async function calculatePayrollRunScoped(
        FROM attendance_daily_record adr
        WHERE adr.employee_id IN (${empIdPh()})
          AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+         -- Only days inside the employment window (salary start date .. exit date) count for pay.
+         AND ${attendanceInEmploymentWindowSql("adr")}
        GROUP BY adr.employee_id`,
       [...empIds, loopMonthStart, loopMonthEnd],
     );

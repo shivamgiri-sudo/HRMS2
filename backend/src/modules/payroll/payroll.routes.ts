@@ -54,6 +54,7 @@ import { buildBankReadinessReport } from "./bank-payment-readiness.service.js";
 import { payrollAttendanceControlService } from "./payroll-attendance-control.service.js";
 import { cosecSyncService } from "../wfm/cosec-sync.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { attendanceInEmploymentWindowSql } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import { employeeScopeFor, guardEmployee, canSeeEmployee, scopeFor, narrowBranch, filterVisibleEmployeeIds, requireRunInScope, visibleBranchIdsForUser, guardOwnedRow, controlTowerScope, guardGapKeys, isOrgWideCaller, OUT_OF_SCOPE_BODY } from "./payroll-branch-scope.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -1150,7 +1151,8 @@ router.get(
        COALESCE(SUM(lwp_value), 0)                                                      AS lwp_days,
        COUNT(CASE WHEN attendance_status NOT IN ('week_off','holiday') THEN 1 END)      AS working_days
      FROM attendance_daily_record
-    WHERE employee_id = ? AND record_date BETWEEN ? AND ?`,
+    WHERE employee_id = ? AND record_date BETWEEN ? AND ?
+      AND ${attendanceInEmploymentWindowSql("attendance_daily_record")}`,
       [line.employee_id, monthStart, monthEnd],
     );
     const summary = (rows as any[])[0] ?? {};
