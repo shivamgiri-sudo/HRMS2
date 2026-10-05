@@ -71,6 +71,7 @@ on:
           - salary-assignment-dedupe-identical
           - rejoin-stale-exit-audit
           - attendance-register-exited-verify
+          - lookup-two-codes-verify
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -214,6 +215,14 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            lookup-two-codes-verify)
+              # Read-only: SELECTs on HRMS employees and db_bill masjclrentry (via billQuery) for two codes. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::lookup-two-codes-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/lookup-two-codes-verify.ts
               ;;
             attendance-register-exited-verify)
               # Read-only: SELECTs plus the register executor. Lists inactive employees who exited in the month and
