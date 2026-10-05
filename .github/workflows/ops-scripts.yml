@@ -235,7 +235,7 @@ jobs:
               # Dry-runs unless given --apply. Apply backs up then removes unprotected attendance rows outside
               # salary start .. exit date (locked / override / regularized rows are never touched). Counts only.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
-              npx tsx scripts/attendance-outside-employment-cleanup.ts $FLAG
+              npx tsx scripts/attendance-outside-employment-cleanup.ts 2026-09-01 2026-09-30 $FLAG
               ;;
             statutory-identifier-encrypt-backfill)
               # Inverted default: this one writes unless told not to.

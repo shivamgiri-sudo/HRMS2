@@ -16,19 +16,21 @@ import { db } from "../src/db/mysql.js";
 import { attendanceInEmploymentWindowSql } from "../src/shared/employmentWindow.js";
 
 const APPLY = process.argv.includes("--apply");
+const [FROM, TO] = process.argv.slice(2).filter((a) => /^\d{4}-\d{2}-\d{2}$/.test(a));
+if (!FROM || !TO) { console.error("usage: attendance-outside-employment-cleanup.ts YYYY-MM-DD YYYY-MM-DD [--apply]"); process.exit(2); }
 const BACKUP = "attendance_daily_record_outside_employment_backup";
-const OUTSIDE = `NOT ${attendanceInEmploymentWindowSql("adr")}`;
+const OUTSIDE = `adr.record_date BETWEEN ? AND ? AND NOT ${attendanceInEmploymentWindowSql("adr")}`;
 const PROTECTED = `(adr.is_locked = 1 OR adr.override_by IS NOT NULL OR adr.regularization_id IS NOT NULL)`;
 
 (async () => {
-  console.log(`mode: ${APPLY ? "APPLY" : "dry-run (nothing written)"}`);
+  console.log(`mode: ${APPLY ? "APPLY" : "dry-run (nothing written)"}  dates ${FROM}..${TO}`);
   const [byMonth] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(adr.record_date, '%Y-%m') m, SUM(NOT ${PROTECTED}) removable, SUM(${PROTECTED}) protected_rows,
             COUNT(DISTINCT adr.employee_id) employees
-       FROM attendance_daily_record adr WHERE ${OUTSIDE} GROUP BY m ORDER BY m`);
+       FROM attendance_daily_record adr WHERE ${OUTSIDE} GROUP BY m ORDER BY m`, [FROM, TO]);
   for (const r of byMonth as any[]) console.log(`  ${r.m}  removable=${r.removable}  protected (left for HR)=${r.protected_rows}  employees=${r.employees}`);
   const [byStatus] = await db.execute<RowDataPacket[]>(
-    `SELECT adr.attendance_status s, COUNT(*) n FROM attendance_daily_record adr WHERE ${OUTSIDE} AND NOT ${PROTECTED} GROUP BY s ORDER BY n DESC`);
+    `SELECT adr.attendance_status s, COUNT(*) n FROM attendance_daily_record adr WHERE ${OUTSIDE} AND NOT ${PROTECTED} GROUP BY s ORDER BY n DESC`, [FROM, TO]);
   console.log("removable by status:", (byStatus as any[]).map((r) => `${r.s}=${r.n}`).join(", "));
   // Which side of the window: before the salary start / joining date, or after it (after exit or a rejoin gap).
   const [bySide] = await db.execute<RowDataPacket[]>(
@@ -37,7 +39,7 @@ const PROTECTED = `(adr.is_locked = 1 OR adr.override_by IS NOT NULL OR adr.regu
             adr.attendance_status s, COUNT(*) n
        FROM attendance_daily_record adr JOIN employees e ON e.id = adr.employee_id
       WHERE ${OUTSIDE} AND NOT ${PROTECTED}
-      GROUP BY side, s ORDER BY side, n DESC`);
+      GROUP BY side, s ORDER BY side, n DESC`, [FROM, TO]);
   for (const r of bySide as any[]) console.log(`  ${r.side}: ${r.s}=${r.n}`);
 
   if (!APPLY) { process.exit(0); }
@@ -47,7 +49,7 @@ const PROTECTED = `(adr.is_locked = 1 OR adr.override_by IS NOT NULL OR adr.regu
   let removed = 0;
   for (;;) {
     const [ids] = await db.execute<RowDataPacket[]>(
-      `SELECT adr.id FROM attendance_daily_record adr WHERE ${OUTSIDE} AND NOT ${PROTECTED} LIMIT 500`);
+      `SELECT adr.id FROM attendance_daily_record adr WHERE ${OUTSIDE} AND NOT ${PROTECTED} LIMIT 500`, [FROM, TO]);
     const list = (ids as any[]).map((r) => String(r.id));
     if (!list.length) break;
     const ph = list.map(() => "?").join(",");
