@@ -95,6 +95,7 @@ on:
           - payslip-diagnose
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
+          - sep-attendance-vs-dbbill
           - create-missing-esa-for-run-lines
           - employee-components-audit
           - fix-63694c-package
@@ -372,6 +373,10 @@ jobs:
               # Dry-runs unless given --apply. Apply inserts the esa row the engine needs; no existing line is changed.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/create-missing-esa-for-run-lines.ts $FLAG
+              ;;
+            sep-attendance-vs-dbbill)
+              # Read-only in both modes: SELECTs against HRMS and db_bill only.
+              npx tsx scripts/sep-attendance-vs-dbbill.ts
               ;;
             salary-package-sources-audit)
               # Read-only in both modes: SELECTs only. Fixed list of the 10 employees whose package was written on 2026-10-04.
