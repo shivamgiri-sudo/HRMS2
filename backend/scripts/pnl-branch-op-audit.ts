@@ -32,8 +32,12 @@ const FIELDS = ["recognizedRevenue", "earnedRevenue", "agentSalary", "dsc", "bmc
       out[period] = { error: e instanceof Error ? e.message : String(e) };
     }
   }
-  console.log("PNL_AUDIT_JSON_BEGIN");
-  console.log(JSON.stringify(out));
-  console.log("PNL_AUDIT_JSON_END");
+  // One console line per period / process: a single huge line gets truncated by the runner's pipe.
+  for (const [period, v] of Object.entries(out) as [string, any][]) {
+    const { processes, ...rest } = v;
+    console.log("PNL_BRANCH " + JSON.stringify({ period, ...rest, processes: undefined }));
+    for (const pr of processes ?? []) console.log("PNL_PROC " + JSON.stringify({ period, ...(pr as object) }));
+  }
+  await new Promise((resolve) => process.stdout.write("PNL_AUDIT_DONE\n", resolve));
   process.exit(0);
 })();
