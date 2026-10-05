@@ -645,6 +645,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       employerEsic: Number(record.esic_employer ?? 0),
       wDays: Number(record.working_days ?? 30),
       earnedDays: payslipDays({ ...(record as object), ...(detail ?? {}) } as never).paidDays || Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
+      calendarDays: payslipDays({ ...(record as object), ...(detail ?? {}) } as never).daysInMonth || undefined,
       weekOffDays, paidHolidays,
       basic, hra, conv, pa, ma, sa, oa: otherEarnings, arrear, bonus, incentive,
       pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,

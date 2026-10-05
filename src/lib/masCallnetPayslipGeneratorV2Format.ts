@@ -36,7 +36,10 @@ export interface MasCallnetPayslipV2FormatData {
   chequeNo?: string;
   paymentMode?: string;
   wDays: number;
+  /** Salary paid days — week-offs and paid holidays included. */
   earnedDays: number;
+  /** Calendar days of the payroll month (31 for August). */
+  calendarDays?: number;
   weekOffDays?: number;
   paidHolidays?: number;
   lwpDays?: number;
@@ -152,13 +155,13 @@ export async function generateMasCallnetPayslipV2Format(data: MasCallnetPayslipV
     doc.text("Scan to verify", qrX + qrSize / 2, headerTop - 2 + qrSize + 3, { align: "center" });
   } catch { /* skip */ }
 
-  // Pr.Days / W.Off / P.H stat block — mirrors the reference slip's corner box,
+  // Calendar Days / Salary Paid Days / W.Off / P.H stat block — mirrors the reference slip's corner box,
   // shifted left of the QR code to make room for it.
-  const statW = 32;
+  const statW = 40;
   const statX = qrX - 2 - statW;
   doc.setDrawColor(...MCN_NAVY);
   doc.setLineWidth(0.2);
-  doc.rect(statX, headerTop - 2, statW, 16);
+  doc.rect(statX, headerTop - 2, statW, 20);
   doc.setFontSize(7);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(...MCN_NAVY);
@@ -166,11 +169,12 @@ export async function generateMasCallnetPayslipV2Format(data: MasCallnetPayslipV
     doc.text(label, statX + 2, y);
     doc.text(value, statX + statW - 2, y, { align: "right" });
   };
-  statRow("Pr.Days:", data.earnedDays.toFixed(2), headerTop + 2.5);
-  statRow("W. Off:", (data.weekOffDays ?? 0).toFixed(2), headerTop + 7);
-  statRow("P.H:", (data.paidHolidays ?? 0).toFixed(2), headerTop + 11.5);
+  statRow("Calendar Days:", (data.calendarDays ?? data.wDays).toFixed(2), headerTop + 2.5);
+  statRow("Salary Paid Days:", data.earnedDays.toFixed(2), headerTop + 7);
+  statRow("W. Off:", (data.weekOffDays ?? 0).toFixed(2), headerTop + 11.5);
+  statRow("P.H:", (data.paidHolidays ?? 0).toFixed(2), headerTop + 16);
 
-  let currentY = headerTop + 22;
+  let currentY = headerTop + 24;
   doc.setDrawColor(...MCN_NAVY);
   doc.setLineWidth(0.3);
   doc.line(MARGIN_X, currentY, pageWidth - MARGIN_X, currentY);
