@@ -109,10 +109,20 @@ async function main() {
     const dist = await q(
       `SELECT attendance_status s, lwp_value l, COUNT(*) n FROM attendance_daily_record WHERE record_date >= '2026-09-01' GROUP BY s, l ORDER BY n DESC LIMIT 12`);
     console.log("  HRMS convention check (status, lwp_value, count, Sept on):", JSON.stringify(dist));
-    const have = new Set(
-      (await q(`SELECT DATE_FORMAT(record_date,'%Y-%m-%d') d FROM attendance_daily_record WHERE employee_id = ?`, [empId])).map((r) => String(r.d)));
-    const todo = rows.filter((r) => !have.has(r.date));
-    console.log(`  already in HRMS for Tina: ${have.size}; to insert: ${todo.length}`);
+    const existing = await q(
+      `SELECT DATE_FORMAT(record_date,'%Y-%m-%d') d, attendance_status s, lwp_value l, status_change_reason r FROM attendance_daily_record WHERE employee_id = ? ORDER BY record_date`, [empId]);
+    const have = new Set(existing.map((r) => String(r.d)));
+    const billByDate = new Map(rows.map((r) => [r.date, r.st]));
+    console.log(`  already in HRMS for Tina: ${existing.length} (never overwritten here):`);
+    for (const e of existing) {
+      const b = billByDate.get(String(e.d));
+      const verdict = !b ? "no db_bill row for this date" : b[0] === e.s ? "matches db_bill" : `DIFFERS from db_bill (${b[0]})`;
+      console.log(`   ${e.d} ${e.s} lwp=${e.l} reason=${e.r ?? "-"} -> ${verdict}`);
+    }
+    const preDoj = rows.filter((r) => r.date < doj);
+    if (preDoj.length) console.log(`  skipping ${preDoj.length} db_bill day(s) before DOJ ${doj}: ${preDoj.map((r) => `${r.date} ${r.st[0]}`).join(", ")}`);
+    const todo = rows.filter((r) => !have.has(r.date) && r.date >= doj);
+    console.log(`  to insert: ${todo.length}`);
     for (const r of todo) console.log(`   ${r.date} ${r.st[0]} lwp=${r.st[1]}`);
     if (APPLY && todo.length) {
       const conn = await db.getConnection();
