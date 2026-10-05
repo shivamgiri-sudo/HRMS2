@@ -64,6 +64,20 @@ const run = async (tag: string, sql: string, p: unknown[] = []) => {
     SELECT DISTINCT s.cost_centre_code cc, ccm.id ccm_id, ccm.company_name, ccm.active_status, ccm.revenue_flag
       FROM billing_provision_snapshot s LEFT JOIN cost_centre_master ccm ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = s.cost_centre_code COLLATE utf8mb4_unicode_ci
      WHERE s.period_code IN (${IN}) AND (ccm.id IS NULL OR ccm.active_status <> 1)`, PERIODS);
+
+  // People cost per cost centre via the EMPLOYEE's cost centre (salary_prep_line.cost_centre_id is mostly NULL before Aug).
+  await run("HD_SAL2", `
+    SELECT r.run_month p, ccm.cost_centre_code cc, COALESCE(pmm.process_name, '') emp_process, COUNT(*) n,
+           SUM(COALESCE(spl.gross_salary,0)) gross, SUM(COALESCE(spl.pf_employer,0)) pf_er, SUM(COALESCE(spl.esic_employer,0)) esic_er,
+           SUM(COALESCE(spl.gratuity,0)) gratuity, SUM(COALESCE(spl.incentive_total,0)) incentive,
+           SUM(COALESCE(spl.other_deductions,0)+COALESCE(spl.loan_emi,0)+COALESCE(spl.advance_recovery,0)) other_ded, SUM(COALESCE(spl.lwp_deduction,0)) lwp
+      FROM salary_prep_line spl JOIN salary_prep_run r ON r.id = spl.run_id JOIN employees e ON e.id = spl.employee_id
+      LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
+      LEFT JOIN process_master pmm ON pmm.id = e.process_id
+     WHERE r.run_month IN (${IN}) GROUP BY r.run_month, ccm.cost_centre_code, pmm.process_name ORDER BY r.run_month, ccm.cost_centre_code`, PERIODS);
+  await run("HD_PM", `SELECT p.process_name, p.active_status, p.branch_id, bm.branch_name, bm.active_status branch_active, cm.client_name
+      FROM process_master p LEFT JOIN branch_master bm ON bm.id = p.branch_id LEFT JOIN client_master cm ON cm.id = p.client_id
+     WHERE p.process_name REGEXP 'finnable|raritiq|ebc|aspeya|awl|adani|bla bli|solve|weryze|dalmia|viega|vnt|vst|reginald|btm|scpt|gs1|onroads|rotoris|avore|puresta|satya'`);
   await new Promise((resolve) => process.stdout.write("HD_DONE\n", resolve));
   process.exit(0);
 })();
