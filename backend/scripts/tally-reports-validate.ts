@@ -103,6 +103,25 @@ async function salaryVoucher() {
     : [{ n: 0 }];
   check("Salary Payable = raw net of the run minus the employees left off", near(salaryPayable, Number(net.n) - Number(excl.n ?? 0), 1));
 
+  // Employees the voucher cannot place. Reported with their money so the gap is visible, not hidden.
+  const left = [...gen.unassigned, ...gen.unpaid];
+  if (left.length) {
+    const info = await q<any>(
+      `SELECT l.employee_code, ROUND(l.net_salary,2) net, e.branch_id IS NULL no_branch, bm.branch_name
+         FROM salary_prep_line l JOIN employees e ON e.id = l.employee_id LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        WHERE l.run_id = ? AND l.employee_code IN (${left.map(() => "?").join(",")})`, [runs[0].id, ...left]);
+    const byPrefix = new Map<string, { n: number; net: number; noBranch: number }>();
+    for (const r of info) {
+      const k = String(r.employee_code).replace(/[0-9].*$/, "") || "(none)";
+      const cur = byPrefix.get(k) ?? { n: 0, net: 0, noBranch: 0 };
+      cur.n++; cur.net += Number(r.net); cur.noBranch += r.no_branch ? 1 : 0; byPrefix.set(k, cur);
+    }
+    console.log(`   left off the voucher: ${info.length} employees, net ${info.reduce((s, r) => s + Number(r.net), 0).toFixed(2)} — by code prefix:`);
+    console.table([...byPrefix.entries()].map(([prefix, v]) => ({ prefix, employees: v.n, net: Math.round(v.net), without_branch: v.noBranch })));
+    const rules = await q<any>(`SELECT * FROM finance_payroll_entity_rule WHERE active_status = 1`).catch(() => []);
+    console.log(`   entity rules in force: ${JSON.stringify(rules.map((r: any) => ({ prefix: r.code_prefix ?? r.employee_code_prefix, company: r.company_code })))}`);
+  }
+
   const { header, rows } = voucherTable(vs);
   const amountIdx = header.indexOf("Amount"), dcIdx = header.indexOf("DebitCredit");
   const d = rows.filter((r) => r[dcIdx] === "D").reduce((s, r) => s + Number(r[amountIdx]), 0);
@@ -153,7 +172,13 @@ async function gst() {
     const [r] = await q<any>(
       `SELECT COUNT(*) n, SUM(ABS(invoice_value - (taxable_value + igst_amount + cgst_amount + sgst_amount + COALESCE(other_charges,0) + COALESCE(round_off_amount,0))) > 1.01) off,
               SUM(validation_status = 'exception') exc FROM gst_export_row WHERE batch_id = ?`, [b.id]);
-    if (Number(r.off) > 0) { bad++; console.log(`   ${b.export_type} ${b.period_month}: ${r.off}/${r.n} rows where invoice value != taxable + tax`); }
+    // A row that does not add up is expected to be flagged as an exception (and held back from the
+    // export); only an unflagged one is a defect.
+    const [unflagged] = await q<any>(
+      `SELECT COUNT(*) n FROM gst_export_row WHERE batch_id = ? AND validation_status <> 'exception'
+          AND ABS(invoice_value - (taxable_value + igst_amount + cgst_amount + sgst_amount + COALESCE(other_charges,0) + COALESCE(round_off_amount,0))) > 1.01`, [b.id]);
+    if (Number(r.off) > 0) console.log(`   ${b.export_type} ${b.period_month}: ${r.off}/${r.n} rows do not add up, ${Number(r.off) - Number(unflagged.n)} of them already flagged as exceptions`);
+    if (Number(unflagged.n) > 0) bad++;
     if (Number(r.exc) !== Number(b.exception_rows)) { bad++; console.log(`   ${b.export_type} ${b.period_month}: exception count differs (${r.exc} vs ${b.exception_rows})`); }
   }
   check("every live GST batch: invoice value = taxable + taxes (+ other charges, round-off) and exception counts agree", bad === 0);
