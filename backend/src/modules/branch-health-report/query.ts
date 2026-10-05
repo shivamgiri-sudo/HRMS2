@@ -81,6 +81,30 @@ export async function fetchBudgetSummary(
   };
 }
 
+/** State of this month's budget header, for the "budget not created / not approved yet" escalation. */
+export interface BudgetHeaderState {
+  /** No non-cancelled header exists for the month. */
+  missing: boolean;
+  /** Status of the best header (draft, submitted, ..., finance_head_approved); null when missing. */
+  status: string | null;
+}
+
+export async function fetchBudgetHeaderState(
+  branchId: string,
+  today: string,
+): Promise<BudgetHeaderState> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT status FROM finance_budget_header
+      WHERE branch_id = ? AND period_code = ?
+      ORDER BY FIELD(status,'finance_head_approved','branch_head_approved','submitted','revision_required','draft') DESC,
+               created_at DESC
+      LIMIT 1`,
+    [branchId, today.slice(0, 7)],
+  );
+  const status = (rows[0] as any)?.status ?? null;
+  return { missing: status == null, status };
+}
+
 // ─── 2. GRN Stats (HRMS-raised only) ──────────────────────────────────────────
 
 /**
@@ -1595,6 +1619,7 @@ export async function fetchPendingActions(
 export interface BranchHealthRawData {
   branchId: string | null;
   budget: BudgetSummary;
+  budgetHeader: BudgetHeaderState;
   grnStats: GrnStats;
   recentGrns: GrnRow[];
   ats: AtsStats;
@@ -1638,6 +1663,7 @@ export async function fetchAllBranchHealthData(
         available: 0,
         utilizationPct: 0,
       },
+      budgetHeader: { missing: true, status: null },
       grnStats: {
         raised: 0,
         approved: 0,
@@ -1756,6 +1782,7 @@ export async function fetchAllBranchHealthData(
 
   const [
     budget,
+    budgetHeader,
     grnStats,
     recentGrns,
     ats,
@@ -1774,6 +1801,7 @@ export async function fetchAllBranchHealthData(
     pnlGrnTieOut,
   ] = await Promise.all([
     fetchBudgetSummary(branchId, today),
+    fetchBudgetHeaderState(branchId, today),
     fetchGrnStats(branchId, today),
     fetchRecentGrns(branchId),
     fetchAtsStats(branchName, today),
@@ -1795,6 +1823,7 @@ export async function fetchAllBranchHealthData(
   return {
     branchId,
     budget,
+    budgetHeader,
     grnStats,
     recentGrns,
     ats,

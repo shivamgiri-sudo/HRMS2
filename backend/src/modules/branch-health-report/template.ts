@@ -207,6 +207,7 @@ export function renderEmail(
     reportDate,
     raw,
     criticalPoints,
+    escalations,
     positiveAchievements,
     overallStatus,
   } = report;
@@ -1222,7 +1223,23 @@ export function renderEmail(
     `<p style="${FONT}font-size:10px;font-weight:700;color:${C.muted};margin:0 0 3px 0;letter-spacing:1px;">POSITIVE ACHIEVEMENTS</p><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.border};">${positiveHtml}</table>`,
   );
 
+  // ── Escalation banner: first thing in the body, red, impossible to miss ──
+  const escalationBanner = escalations.length
+    ? `<table width="100%" cellpadding="0" cellspacing="0" style="border:2px solid ${C.danger};background:#fef2f2;margin-bottom:14px;">
+    <tr><td style="padding:10px 14px;background:${C.danger};${FONT}font-size:14px;font-weight:700;color:#ffffff;letter-spacing:0.5px;">🚨 ${escalations.length} ESCALATION${escalations.length > 1 ? "S" : ""} — OVERDUE OR NOT IMPROVING. ACT TODAY.</td></tr>
+    ${escalations
+      .map(
+        (e, i) => `<tr><td style="padding:8px 14px;border-top:1px solid #fecaca;${FONT}">
+      <span style="font-size:13px;font-weight:700;color:${C.danger};">${i + 1}. ${esc(e.label)}</span>
+      <span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:${C.danger};color:#fff;font-size:10px;font-weight:700;">${esc(e.owner)}</span><br>
+      <span style="font-size:12px;color:#991b1b;">${esc(e.detail)}</span></td></tr>`,
+      )
+      .join("")}
+  </table>`
+    : "";
+
   const rows = [
+    ...(escalationBanner ? [`<tr><td>${escalationBanner}</td></tr>`] : []),
     sectionHeader(
       `1. Budget vs Consumption — ${raw.budget.periodCode ?? reportDate.slice(0, 7)}`,
     ),
@@ -1309,5 +1326,6 @@ export function subjectLine(report: BranchHealthReport): string {
     year: "numeric",
     timeZone: "UTC",
   });
-  return `[${statusTag}] Branch Health Report — ${report.branch} — ${label}`;
+  const escTag = report.escalations.length ? ` — ${report.escalations.length} ESCALATION${report.escalations.length > 1 ? "S" : ""}` : "";
+  return `[${statusTag}] Branch Health Report — ${report.branch} — ${label}${escTag}`;
 }
