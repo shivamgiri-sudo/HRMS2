@@ -50,6 +50,9 @@
   "modules/hiring-engine/he-profile.service.ts": [
     "he_lead_profile"
   ],
+  "modules/hiring-engine/he-reroute.service.ts": [
+    "he_match"
+  ],
   "modules/hiring-engine/he-showup.service.ts": [
     "he_model_param"
   ],
