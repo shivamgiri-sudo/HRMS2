@@ -12,7 +12,7 @@ import type { RowDataPacket } from "mysql2";
 import { db, closePool } from "../src/db/mysql.js";
 import { billQuery, closeBillPool } from "../src/db/billDb.js";
 
-const code = process.argv.slice(2).find((a) => /^[A-Za-z0-9]+$/.test(a) && !/^\d{4}-\d{2}$/.test(a));
+const codes = process.argv.slice(2).filter((a) => /^[A-Za-z0-9]+$/.test(a) && !/^\d{4}-\d{2}$/.test(a)); const code = process.argv.slice(2).find((a) => /^[A-Za-z0-9]+$/.test(a) && !/^\d{4}-\d{2}$/.test(a));
 const month = process.argv.slice(2).find((a) => /^\d{4}-\d{2}$/.test(a)) ?? "2026-09";
 const q = async (sql: string, p: unknown[]) => {
   if (!/^\s*select/i.test(sql)) throw new Error("read-only");
