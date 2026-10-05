@@ -19,7 +19,7 @@ import { getCandidate360 } from "./he-candidate360.service.js";
 import { refreshProfilesChunk } from "./he-profile.service.js";
 import { planHiring } from "./he-planner.service.js";
 import { ingestCandidates } from "./he-intake.service.js";
-import { getControlRoom, learnShowUp } from "./he-showup.service.js";
+import { getControlRoom, learnMatchWeights, learnShowUp } from "./he-showup.service.js";
 import { INTAKE_SOURCES, type IntakeSource } from "./he-intake.js";
 import { listOpenClashes, resolveClash } from "./he-identity.service.js";
 import { refreshExEmployees } from "./he-ex-employee.service.js";
@@ -459,6 +459,6 @@ heRouter.get("/control-room", requireAuth, requireRole(...VIEW_ROLES), async (_r
 });
 
 heRouter.post("/model/learn", requireAuth, requireRole(...ADMIN_ROLES), async (_req, res) => {
-  try { res.json({ success: true, data: await learnShowUp() }); }
+  try { res.json({ success: true, data: { showUp: await learnShowUp(), matching: await learnMatchWeights() } }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] learning failed"); res.status(500).json({ message: "Could not learn from outcomes" }); }
 });

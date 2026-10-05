@@ -18,7 +18,7 @@ import { recomputeInsight } from "./he-insight.service.js";
 import { reserveSlot, suggestMatches } from "./he-drive.service.js";
 import { sendTemplateToLead, sendsPaused, type SendResult } from "./he-send.service.js";
 import { emailConfigured, sendInviteEmail, INVITE_EMAIL_KEY } from "./he-email.service.js";
-import { cadenceGapMin, nextCadenceStep } from "./he-cadence.js";
+import { bestHourWait, cadenceGapMin, nextCadenceStep } from "./he-cadence.js";
 import { istHour } from "./he-guardrails.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
@@ -46,13 +46,16 @@ function tally(c: Counts, r: SendResult): void {
 
 async function voiceCalls(dryRun: boolean, c: Counts, max: number): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id FROM he_match m
+    `SELECT m.id, m.slot_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m
       WHERE m.state = 'invited' AND m.slot_at > NOW()
         AND EXISTS (SELECT 1 FROM he_message o WHERE o.lead_id = m.lead_id AND o.direction = 'out' AND o.template_key LIKE 'he_walkin_invite%'
                       AND o.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
         AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > DATE_SUB(NOW(), INTERVAL 2 DAY))
       ORDER BY m.slot_at LIMIT ?`, [cadenceGapMin(), max]);
   for (const r of rows) {
+    if (bestHourWait({ now: new Date(), bestHourIst: r.best_hour == null ? null : Number(r.best_hour), slotAt: r.slot_at ? new Date(String(r.slot_at).replace(" ", "T") + "+05:30") : null })) {
+      c.blocked.waiting_best_hour = (c.blocked.waiting_best_hour ?? 0) + 1; continue;
+    }
     const res = await placeVoiceCall(r.id as string, { dryRun });
     if (res.status === "placed") c.sent++;
     else if (res.status === "dry_run") c.dryRun++;
@@ -126,7 +129,7 @@ async function driveInvites(dryRun: boolean, c: Counts, max: number): Promise<vo
 async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number): Promise<void> {
   const gap = cadenceGapMin();
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id, m.lead_id, e.created_at AS email_at FROM he_match m
+    `SELECT m.id, m.lead_id, m.slot_at, e.created_at AS email_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m
        JOIN he_message e ON e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = ? AND e.direction = 'out' AND e.delivery_status <> 'failed'
       WHERE m.state = 'invited' AND m.slot_at > NOW() AND e.created_at <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
         AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%' AND w.created_at >= e.created_at)
@@ -135,7 +138,8 @@ async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number): Promi
       ORDER BY m.slot_at LIMIT ?`, [INVITE_EMAIL_KEY, gap, max]);
   for (const r of rows) {
     if (dryRun) { c.dryRun++; continue; }
-    const step = nextCadenceStep({ now: new Date(), gapMin: gap, canEmail: true, waConsent: true, emailSentAt: new Date(String(r.email_at).replace(" ", "T") + "+05:30"), waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: false });
+    const step = nextCadenceStep({ now: new Date(), gapMin: gap, canEmail: true, waConsent: true, emailSentAt: new Date(String(r.email_at).replace(" ", "T") + "+05:30"), waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: false, bestHourIst: r.best_hour == null ? null : Number(r.best_hour), slotAt: r.slot_at ? new Date(String(r.slot_at).replace(" ", "T") + "+05:30") : null });
+    if (step.reason === "waiting_best_hour") { c.blocked.waiting_best_hour = (c.blocked.waiting_best_hour ?? 0) + 1; continue; }
     if (step.step !== "whatsapp") continue;
     tally(c, await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_walkin_invite", matchId: r.id as string, minGapMinutes: gap }));
   }

@@ -8,6 +8,8 @@ import { applyEligibilityGate, type LeadFactsRow } from "./he-eligibility.servic
 import { refreshHistoryChunk } from "./he-master.service.js";
 import { loadProfiles } from "./he-profile.service.js";
 import { parseJdText } from "./he-jd-parse.js";
+import { learnedBonus } from "./he-learn.js";
+import { loadMatchParams } from "./he-showup.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { eduRank } from "../meta-campaign/lead-screener.service.js";
@@ -154,7 +156,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   if (mreq.ageMax != null) { pre.push("(l.age IS NULL OR l.age <= ?)"); preArgs.push(mreq.ageMax); }
   if (mreq.nightShift === true) pre.push("(l.night_shift_ok IS NULL OR l.night_shift_ok = 1)");
   const selectCandidates = async () => (await db.execute<RowDataPacket[]>(
-    `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
+    `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.primary_source, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
             l.history_refreshed_at, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng,
             EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
        FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id
@@ -176,9 +178,18 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   const gate = await applyEligibilityGate(leads as unknown as LeadFactsRow[], { id: req.id, processName: req.process_name ?? null });
   const allowed = leads.filter((l) => gate.verdicts.get(l.id)?.eligible);
   const profiles = await loadProfiles(allowed.map((l) => l.id as string));
+  const learned = await loadMatchParams();
   const scored = allowed
     .map((l) => ({ id: l.id as string, priority: gate.verdicts.get(l.id)!.priority, consented: Number(l.has_consent) === 1, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng), ...profiles.get(l.id as string) }, mreq), eng: Number(l.eng) }))
     .filter((x) => x.res.eligible)
+    .map((x) => {
+      // Learned from past walk-ins of this process: profiles that tend to get selected here move up, others down.
+      const l = allowed.find((a) => a.id === x.id)!;
+      const lb = learnedBonus(learned, req.process_name, { edu: l.education_rank == null ? null : Number(l.education_rank), expYears: l.experience_years == null ? null : Number(l.experience_years), source: l.primary_source ? String(l.primary_source) : null });
+      if (!lb.bonus) return x;
+      const score = Math.max(1, Math.min(100, x.res.score + lb.bonus));
+      return { ...x, res: { ...x.res, score, rankScore: Math.round(score * (0.6 + 0.4 * x.res.confidence) * 10) / 10, reasons: [...x.res.reasons, ...lb.reasons] } };
+    })
     // Reachable people first (only consented leads can be messaged), then eligibility priority (ex-employees always last), then fit.
     // rankScore = fit weighted by how much of the JD we actually know, so a phone-only record does not outrank a proven fit.
     .sort((a, b) => (Number(b.consented) * 1000 - b.priority * 10 + b.res.rankScore + b.eng * 0.2) - (Number(a.consented) * 1000 - a.priority * 10 + a.res.rankScore + a.eng * 0.2))

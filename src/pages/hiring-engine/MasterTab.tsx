@@ -64,6 +64,8 @@ export default function MasterTab() {
       }
       setProgress("Updating former employees...");
       await hrmsApi.post("/api/he/master/ex-employees/refresh", {}, 120000);
+      setProgress("Learning from past outcomes...");
+      await hrmsApi.post("/api/he/model/learn", {}, 120000);
       setProgress(null); await load();
     } catch (e: unknown) { setProgress(null); setError((e as { message?: string })?.message || "Refresh stopped part-way; run it again, finished parts are kept"); }
   };

@@ -30,3 +30,14 @@ describe("cadence: email -> whatsapp -> bot call, 60 min apart", () => {
     expect(nextCadenceStep(f({ emailSentAt: t0, waSentAt: at(60), voiceAt: at(120), now: at(300) })).reason).toBe("sequence_complete");
   });
 });
+
+describe("best hour", () => {
+  // t0 = 05:00Z = 10:30 IST
+  it("waits for a later best hour when the slot allows, otherwise goes now", () => {
+    const slotFar = new Date(t0.getTime() + 48 * 3600_000);
+    expect(nextCadenceStep(f({ emailSentAt: at(-60), bestHourIst: 17, slotAt: slotFar })).reason).toBe("waiting_best_hour");
+    expect(nextCadenceStep(f({ emailSentAt: at(-60), bestHourIst: 17, slotAt: new Date(t0.getTime() + 6 * 3600_000) })).step).toBe("whatsapp");
+    expect(nextCadenceStep(f({ emailSentAt: at(-60), bestHourIst: 11, slotAt: slotFar })).step).toBe("whatsapp");
+    expect(nextCadenceStep(f({ emailSentAt: at(-60), bestHourIst: null })).step).toBe("whatsapp");
+  });
+});

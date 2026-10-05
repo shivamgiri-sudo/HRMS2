@@ -18,11 +18,26 @@ export interface CadenceFacts {
   /** Candidate wrote back (or a call result arrived) after the first touch. */
   repliedAfterFirstTouch: boolean;
   quietHours: boolean;
+  /** Hour (IST, 0-23) this person has responded at most often; null when unknown. */
+  bestHourIst?: number | null;
+  /** Their interview slot; best-hour waiting never pushes a touch closer than 3 hours to it. */
+  slotAt?: Date | null;
 }
 
 export type CadenceDecision = { step: CadenceStep | null; reason: string; waitUntil?: Date };
 
 const plus = (d: Date, min: number) => new Date(d.getTime() + min * 60_000);
+const istHourOf = (d: Date) => new Date(d.getTime() + 5.5 * 3600_000).getUTCHours();
+
+/** Hold a follow-up until the person's best hour today, if that hour is still ahead and leaves 3h before the slot. */
+export function bestHourWait(f: Pick<CadenceFacts, "now" | "bestHourIst" | "slotAt">): Date | null {
+  if (f.bestHourIst == null) return null;
+  const h = istHourOf(f.now);
+  if (h >= f.bestHourIst - 1) return null; // already at (or within an hour of) the best time
+  const at = new Date(f.now.getTime() + (f.bestHourIst - h) * 3600_000 - (new Date(f.now.getTime() + 5.5 * 3600_000).getUTCMinutes()) * 60_000);
+  if (f.slotAt && at.getTime() > f.slotAt.getTime() - 3 * 3600_000) return null;
+  return at;
+}
 
 export function nextCadenceStep(f: CadenceFacts): CadenceDecision {
   if (f.repliedAfterFirstTouch) return { step: null, reason: "replied" };
@@ -36,6 +51,7 @@ export function nextCadenceStep(f: CadenceFacts): CadenceDecision {
       const at = plus(f.emailSentAt, f.gapMin);
       if (f.now < at) return { step: null, reason: "waiting_gap_after_email", waitUntil: at };
     }
+    if (f.emailSentAt) { const w = bestHourWait(f); if (w) return { step: null, reason: "waiting_best_hour", waitUntil: w }; }
     return { step: "whatsapp", reason: f.emailSentAt ? "gap_after_email_elapsed" : "first_touch_whatsapp" };
   }
 
@@ -43,6 +59,8 @@ export function nextCadenceStep(f: CadenceFacts): CadenceDecision {
     if (!f.waConsent) return { step: null, reason: "no_whatsapp_consent" };
     const at = plus(f.waSentAt, f.gapMin);
     if (f.now < at) return { step: null, reason: "waiting_gap_after_whatsapp", waitUntil: at };
+    const w = bestHourWait(f);
+    if (w) return { step: null, reason: "waiting_best_hour", waitUntil: w };
     return { step: "voice", reason: "gap_after_whatsapp_elapsed" };
   }
   return { step: null, reason: "sequence_complete" };

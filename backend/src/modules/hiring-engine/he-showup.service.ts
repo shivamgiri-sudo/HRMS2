@@ -6,6 +6,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { invitesToClose, learnMultiplier, learnRate, pShow, type ShowParams } from "./he-showup.js";
+import { learnLifts } from "./he-learn.js";
 
 export async function loadShowParams(): Promise<ShowParams> {
   const [rows] = await db.execute<RowDataPacket[]>("SELECT param_key, value FROM he_model_param WHERE param_key LIKE 'show.%'");
@@ -91,4 +92,27 @@ export async function getControlRoom(): Promise<{ drives: ControlRoomDrive[]; le
     });
   }
   return { drives: out, learnedParams: Object.keys(params).length };
+}
+
+/** Learn per-process selection lifts from the last 12 months of walk-ins (recruiter ledger + lead profile). */
+export async function learnMatchWeights(): Promise<{ walkins: number; params: number }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT a.process_name AS process, l.education_rank AS edu, l.experience_years AS exp, a.hiring_source AS source,
+            MAX(a.final_selection_flag OR a.joined_flag) AS selected
+       FROM ats_recruiter_hiring_activity a JOIN he_lead l ON l.mobile10 = a.mobile10
+      WHERE a.activity_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH) AND (a.walkin_flag OR a.final_selection_flag OR a.joined_flag)
+      GROUP BY a.mobile10, a.process_name, l.education_rank, l.experience_years, a.hiring_source`);
+  const lifts = learnLifts(rows.map((r) => ({ process: String(r.process ?? ""), edu: r.edu == null ? null : Number(r.edu), expYears: r.exp == null ? null : Number(r.exp), source: r.source ? String(r.source) : null, selected: Number(r.selected) === 1 })));
+  await db.execute("DELETE FROM he_model_param WHERE param_key LIKE 'match.%'");
+  const entries = Object.entries(lifts);
+  for (let i = 0; i < entries.length; i += 300) {
+    const slice = entries.slice(i, i + 300);
+    await db.execute(`INSERT INTO he_model_param (param_key, value, sample) VALUES ${slice.map(() => "(?,?,?)").join(",")}`, slice.flatMap(([k, v]) => [k.slice(0, 80), v.bonus, v.sample]) as never[]);
+  }
+  return { walkins: rows.length, params: entries.length };
+}
+
+export async function loadMatchParams(): Promise<Record<string, number>> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT param_key, value FROM he_model_param WHERE param_key LIKE 'match.%'");
+  return Object.fromEntries(rows.map((r) => [String(r.param_key), Number(r.value)]));
 }
