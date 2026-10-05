@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { db } from "../../db/mysql.js";
+import { SYNTHETIC_RUN_CREATORS } from "../payroll/payroll.service.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { resolveFinanceBranchScopeSet } from "./finance-access-scope.js";
 import { salaryVoucherService, type Voucher } from "./salary-voucher.service.js";
@@ -47,6 +49,25 @@ export function parseSerial(raw: unknown): number | undefined {
 }
 
 salaryVoucherRouter.use(requireAuth);
+
+/**
+ * Run picker for the Salary Voucher page. /api/payroll/runs is gated to the payroll read roles
+ * and branch-scopes the list, so accounts_head got an empty picker; the voucher itself is
+ * already role-gated and branch-scoped by scopeVouchers, so the picker only needs the run list.
+ */
+salaryVoucherRouter.get(
+  "/runs",
+  requireRole(...VOUCHER_ROLES),
+  h(async (_req, res) => {
+    const [rows] = await db.execute(
+      `SELECT id, run_month, status, total_employees FROM salary_prep_run
+        WHERE (created_by IS NULL OR created_by NOT IN (${SYNTHETIC_RUN_CREATORS.map(() => "?").join(", ")}))
+        ORDER BY run_month DESC LIMIT 24`,
+      [...SYNTHETIC_RUN_CREATORS],
+    );
+    res.json({ success: true, data: rows });
+  }),
+);
 
 /** Filters vouchers to the caller's branch entitlement. */
 export async function scopeVouchers(req: AuthenticatedRequest, vouchers: Voucher[]): Promise<Voucher[]> {

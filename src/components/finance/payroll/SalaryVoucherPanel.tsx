@@ -81,8 +81,8 @@ export function SalaryVoucherPanel() {
   const runsQuery = useQuery({
     queryKey: ["payroll-runs-for-voucher"],
     queryFn: async () => {
-      const rows = unwrap<Run[]>(await hrmsApi.get<any>("/api/payroll/runs?limit=24"));
-      return Array.isArray(rows) ? rows : [];
+      const rows = unwrap<Run[]>(await hrmsApi.get<any>("/api/finance/payroll/runs"));
+      return Array.isArray(rows) ? rows.filter((r) => Boolean(r?.id)) : [];
     },
   });
 
