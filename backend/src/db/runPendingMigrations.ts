@@ -1295,6 +1295,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2107_job_requisition_ad_required.sql", // Registered 2026-10-05. job_requisition.ad_required TINYINT(1) NOT NULL DEFAULT 1: persisted "run an ad?" decision read by the marketing brief subject. PREPARE-guarded, safe to re-run.
   "migrations/2108_hiring_engine_master_history.sql", // Registered 2026-10-05. Recruitment master WITHOUT new attempt storage: indexed virtual mobile10 on ats_recruiter_hiring_activity, rollup/effort columns on he_lead, he_attempt_v union view. Guarded, additive, ALGORITHM=INPLACE.
   "migrations/2109_hiring_engine_identity_profile_exemployee.sql", // Registered 2026-10-05. he_lead_identity (number+email unique), he_identity_clash, he_lead_profile, he_ex_employee side tables; requisition_id/drive_id on he_message/he_call; he_attempt_v carries requisition. Additive, guarded.
+  "migrations/2110_hiring_engine_model_params.sql", // Registered 2026-10-05. he_model_param: learned show-up rates/multipliers from real drive outcomes. CREATE TABLE IF NOT EXISTS only.
 ];
 
 export type MigrationHealth = {

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { MapPin, RefreshCcw, Radio } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState } from "@/components/analytics/analytics-kit";
+import ControlRoom from "./ControlRoom";
 
 interface Cand { matchId: string; leadId: string; name: string | null; mobile10: string; slotAt: string | null; state: string; liveKm: number | null; etaMin: number | null; tracked: boolean }
 interface BoardDrive { driveId: string; branchName: string; role: string; slotCapacity: number; expected: number; confirmed: number; live: number; arrived: number; candidates: Cand[] }
@@ -38,6 +39,7 @@ export default function BoardTab() {
 
   return (
     <div className="space-y-5">
+      <ControlRoom />
       <div className="flex items-center justify-between text-sm text-slate-600">
         <span>{at ? `Updated ${at.toLocaleTimeString()}` : "Loading…"} · refreshes every 30 seconds</span>
         <button type="button" onClick={() => void load()} aria-label="Refresh board" className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">

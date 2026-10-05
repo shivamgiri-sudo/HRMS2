@@ -9,6 +9,7 @@ import { runHrArrivalAlerts } from "./he-alert.service.js";
 import { listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { refreshProfilesChunk } from "./he-profile.service.js";
 import { refreshExEmployees } from "./he-ex-employee.service.js";
+import { learnShowUp } from "./he-showup.service.js";
 
 const INTERVAL_MS = 5 * 60 * 1000;
 let _timer: NodeJS.Timeout | null = null;
@@ -43,6 +44,7 @@ export async function runNightlyMasterRefresh(force = false): Promise<void> {
   try {
     await refreshExEmployees();
     for (const p of await listPrefixes()) { await refreshHistoryChunk({ prefix: p }); await refreshProfilesChunk(p); }
+    await learnShowUp();
     logger.info({ ms: Date.now() - started }, "[he-engine] nightly master refresh finished");
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-engine] nightly master refresh failed");

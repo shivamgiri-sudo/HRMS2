@@ -19,6 +19,7 @@ import { getCandidate360 } from "./he-candidate360.service.js";
 import { refreshProfilesChunk } from "./he-profile.service.js";
 import { planHiring } from "./he-planner.service.js";
 import { ingestCandidates } from "./he-intake.service.js";
+import { getControlRoom, learnShowUp } from "./he-showup.service.js";
 import { INTAKE_SOURCES, type IntakeSource } from "./he-intake.js";
 import { listOpenClashes, resolveClash } from "./he-identity.service.js";
 import { refreshExEmployees } from "./he-ex-employee.service.js";
@@ -449,4 +450,15 @@ heRouter.post("/candidates/import", requireAuth, requireRole(...WRITE_ROLES), as
     logger.error({ err: e.message }, "[he] candidate import failed");
     res.status(500).json({ message: "Could not import candidates" });
   }
+});
+
+// Control room: upcoming drives with expected shows (learned show-up model) and the next action for each.
+heRouter.get("/control-room", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await getControlRoom() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] control room failed"); res.status(500).json({ message: "Could not load the control room" }); }
+});
+
+heRouter.post("/model/learn", requireAuth, requireRole(...ADMIN_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await learnShowUp() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] learning failed"); res.status(500).json({ message: "Could not learn from outcomes" }); }
 });
