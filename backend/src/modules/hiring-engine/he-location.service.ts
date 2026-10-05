@@ -15,6 +15,10 @@ export interface LocationContext {
   matchId: string; leadId: string; firstName: string; branchName: string; address: string | null;
   branchLat: number | null; branchLng: number | null; slotAt: string | null; state: string;
   open: boolean; sharing: boolean;
+  /** WhatsApp updates allowed (consent on file, not revoked). */
+  waConsent: boolean;
+  /** Opt-in is offered while the invitation is live: until 3h after the slot. */
+  optInOpen: boolean;
 }
 
 /** Link is usable from 6h before the slot until 3h after, while the candidate is still expected. */
@@ -23,7 +27,8 @@ export async function getContextByToken(token: string): Promise<LocationContext 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.state, m.slot_at, l.full_name, jr.branch_name, bm.address, bm.latitude, bm.longitude,
             (m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL
-              AND NOW() BETWEEN DATE_SUB(m.slot_at, INTERVAL 6 HOUR) AND DATE_ADD(m.slot_at, INTERVAL 3 HOUR)) AS is_open
+              AND NOW() BETWEEN DATE_SUB(m.slot_at, INTERVAL 6 HOUR) AND DATE_ADD(m.slot_at, INTERVAL 3 HOUR)) AS is_open,
+            (m.state IN ('suggested','invited','confirmed') AND (m.slot_at IS NULL OR NOW() < DATE_ADD(m.slot_at, INTERVAL 3 HOUR))) AS optin_open, l.status AS lead_status
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN job_requisition jr ON jr.id = m.requisition_id
        LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE m.token = ? LIMIT 1`, [token]);
@@ -35,6 +40,8 @@ export async function getContextByToken(token: string): Promise<LocationContext 
     branchLat: r.latitude == null ? null : Number(r.latitude), branchLng: r.longitude == null ? null : Number(r.longitude),
     slotAt: r.slot_at ? String(r.slot_at) : null, state: r.state as string, open: Number(r.is_open) === 1,
     sharing: await hasConsent(r.lead_id as string, "location"),
+    waConsent: await hasConsent(r.lead_id as string, "whatsapp_contact"),
+    optInOpen: Number(r.optin_open) === 1 && r.lead_status !== "opted_out",
   };
 }
 
@@ -72,4 +79,17 @@ export async function recordPing(token: string, lat: unknown, lng: unknown, accu
   await db.execute("INSERT INTO he_location_ping (match_id, lat, lng, accuracy_m, distance_km, eta_min) VALUES (?,?,?,?,?,?)", [c.matchId, lat, lng, acc, distanceKm, eta]);
   if (arrived) await addEvent(c.leadId, "arrived_geofence", { channel: "web", detail: `${distanceKm} km from branch` });
   return { ok: true, distanceKm, etaMin: eta, arrived };
+}
+
+export const WA_OPTIN_TEXT_VERSION = "link_optin_v1";
+
+/** Candidate tapped "Get updates on WhatsApp" on their own invitation page. Records explicit, versioned consent. */
+export async function optInWhatsApp(token: string): Promise<"granted" | "already" | "closed" | "invalid"> {
+  const c = await getContextByToken(token);
+  if (!c) return "invalid";
+  if (c.waConsent) return "already";
+  if (!c.optInOpen) return "closed";
+  await grantConsent(c.leadId, "whatsapp_contact", WA_OPTIN_TEXT_VERSION, "web_link");
+  await addEvent(c.leadId, "whatsapp_consent_granted", { channel: "web", detail: "invitation page" });
+  return "granted";
 }

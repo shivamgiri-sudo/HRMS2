@@ -1,13 +1,14 @@
 /**
  * Candidate-facing "I'm on my way" page (public, opened from the WhatsApp link, no login).
  * The candidate must tap Share before anything is sent; location is posted only while this page is open, can be
- * stopped at any time, and stops by itself on arrival. Talks to /api/he-public/loc/:token only.
+ * stopped at any time, and stops by itself on arrival. The same page offers an explicit, optional WhatsApp opt-in (linked
+ * from the invite email), so no separate page exists for it. Talks to /api/he-public/loc/:token only.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { CheckCircle2, MapPin, ShieldCheck, XCircle } from "lucide-react";
+import { CheckCircle2, MapPin, MessageCircle, ShieldCheck, XCircle } from "lucide-react";
 
-interface Ctx { firstName: string; branchName: string; address: string | null; slotAt: string | null; open: boolean; sharing: boolean }
+interface Ctx { firstName: string; branchName: string; address: string | null; slotAt: string | null; open: boolean; sharing: boolean; waConsent?: boolean; optInOpen?: boolean }
 type Phase = "loading" | "invalid" | "closed" | "ready" | "sharing" | "arrived" | "stopped" | "denied";
 
 const api = (token: string, path = "") => `/api/he-public/loc/${encodeURIComponent(token)}${path}`;
@@ -20,6 +21,7 @@ export default function LocationSharePage() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [eta, setEta] = useState<{ km: number | null; min: number | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [optIn, setOptIn] = useState<"idle" | "busy" | "done" | "failed">("idle");
   const watchId = useRef<number | null>(null);
   const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPos = useRef<{ lat: number; lng: number; accuracy: number } | null>(null);
@@ -84,6 +86,22 @@ export default function LocationSharePage() {
     heartbeat.current = setInterval(() => { if (lastPos.current) void ping(lastPos.current); }, 30_000);
   };
 
+  const optInWhatsApp = async () => {
+    setOptIn("busy");
+    try { const r = await post(api(token, "/optin")); setOptIn(r.ok ? "done" : "failed"); } catch { setOptIn("failed"); }
+  };
+  const showOptIn = Boolean(ctx?.optInOpen && !ctx?.waConsent);
+  const OptInBlock = () => !showOptIn ? null : optIn === "done" ? (
+    <div className="mt-5 flex gap-3 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800" role="status"><CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden /><p>Done. We will send your reminder and directions on WhatsApp. Reply STOP there any time to stop.</p></div>
+  ) : (
+    <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+      <p className="flex items-center gap-2 font-semibold text-slate-900"><MessageCircle className="h-5 w-5 text-emerald-600" aria-hidden /> Get interview updates on WhatsApp?</p>
+      <p className="mt-1 text-sm text-slate-700">Reminders, directions and a quick way to change your time. Optional, and you can reply STOP any time.</p>
+      <button type="button" disabled={optIn === "busy"} onClick={() => void optInWhatsApp()} className="mt-3 w-full cursor-pointer rounded-xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white transition-colors duration-200 hover:bg-emerald-700 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">{optIn === "busy" ? "Saving…" : "Yes, send me updates on WhatsApp"}</button>
+      {optIn === "failed" && <p role="alert" className="mt-2 text-sm text-rose-600">That did not work. Please try again.</p>}
+    </div>
+  );
+
   const stop = async () => { stopWatch(); await post(api(token, "/stop")).catch(() => undefined); setPhase("stopped"); };
 
   const Card = ({ children }: { children: React.ReactNode }) => (
@@ -95,7 +113,7 @@ export default function LocationSharePage() {
 
   if (phase === "loading") return <Card><p className="text-center text-slate-500">Loading…</p></Card>;
   if (phase === "invalid") return <Card><div className="text-center"><XCircle className="mx-auto h-10 w-10 text-rose-500" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">This link is not valid</h1><p className="mt-1 text-slate-600">Please use the latest message we sent you.</p></div></Card>;
-  if (phase === "closed") return <Card><div className="text-center"><MapPin className="mx-auto h-10 w-10 text-slate-400" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">Location sharing is not active right now</h1><p className="mt-1 text-slate-600">It opens a few hours before your walk-in time. You can still just come to the branch on time.</p></div></Card>;
+  if (phase === "closed") return <Card><div className="text-center"><MapPin className="mx-auto h-10 w-10 text-slate-400" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">{showOptIn ? `Hi ${ctx?.firstName}, your walk-in is booked` : "Location sharing is not active right now"}</h1><p className="mt-1 text-slate-600">{showOptIn ? <>{ctx?.branchName}{ctx?.slotAt ? <>, {ctx.slotAt.slice(0, 10)} at {ctx.slotAt.slice(11, 16)}</> : null}. Live location sharing opens a few hours before your time.</> : "It opens a few hours before your walk-in time. You can still just come to the branch on time."}</p></div><OptInBlock /></Card>;
   if (phase === "arrived") return <Card><div className="text-center"><CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">You have reached {ctx?.branchName}</h1><p className="mt-1 text-slate-600">Sharing has stopped. Please register at the reception. Good luck!</p></div></Card>;
   if (phase === "stopped") return <Card><div className="text-center"><ShieldCheck className="mx-auto h-10 w-10 text-slate-500" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">Sharing stopped</h1><p className="mt-1 text-slate-600">We are no longer using your location. See you at the branch.</p></div></Card>;
   if (phase === "denied") return <Card><div className="text-center"><XCircle className="mx-auto h-10 w-10 text-amber-500" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">Location permission is off</h1><p className="mt-1 text-slate-600">No problem. You can still come to {ctx?.branchName} at your time. If you change your mind, allow location for this page and reload.</p></div></Card>;
@@ -117,6 +135,7 @@ export default function LocationSharePage() {
           <button type="button" onClick={() => setPhase("stopped")} className={`${btn} bg-white text-slate-600 hover:bg-slate-50`}>No thanks</button>
         </div>
       )}
+      <OptInBlock />
     </Card>
   );
 }

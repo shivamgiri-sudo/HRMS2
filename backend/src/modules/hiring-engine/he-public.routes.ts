@@ -6,7 +6,7 @@
 import rateLimit from "express-rate-limit";
 import { Router } from "express";
 import { logger } from "../../logger.js";
-import { getContextByToken, recordPing, startSharing, stopSharing } from "./he-location.service.js";
+import { getContextByToken, optInWhatsApp, recordPing, startSharing, stopSharing } from "./he-location.service.js";
 
 export const hePublicRouter = Router();
 
@@ -16,7 +16,7 @@ hePublicRouter.get("/loc/:token", async (req, res) => {
   try {
     const c = await getContextByToken(String(req.params.token));
     if (!c) return res.status(404).json({ success: false, message: "This link is not valid." });
-    res.json({ success: true, data: { firstName: c.firstName, branchName: c.branchName, address: c.address, slotAt: c.slotAt, open: c.open, sharing: c.sharing, state: c.state } });
+    res.json({ success: true, data: { firstName: c.firstName, branchName: c.branchName, address: c.address, slotAt: c.slotAt, open: c.open, sharing: c.sharing, state: c.state, waConsent: c.waConsent, optInOpen: c.optInOpen } });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-public] context failed");
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
@@ -52,6 +52,17 @@ hePublicRouter.post("/loc/:token/stop", async (req, res) => {
     res.status(ok ? 200 : 404).json({ success: ok });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-public] stop failed");
+    res.status(500).json({ success: false });
+  }
+});
+
+hePublicRouter.post("/loc/:token/optin", async (req, res) => {
+  try {
+    const r = await optInWhatsApp(String(req.params.token));
+    const status = r === "invalid" ? 404 : r === "closed" ? 403 : 200;
+    res.status(status).json({ success: status === 200, result: r });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he-public] opt-in failed");
     res.status(500).json({ success: false });
   }
 });

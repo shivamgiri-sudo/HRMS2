@@ -19,7 +19,7 @@ const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "
 
 export const emailConfigured = (): boolean => emailService.isConfigured();
 
-export function buildInviteEmail(c: { name: string; role: string; company: string; branch: string; address: string; date: string; time: string; maps: string | null; docs: string; reference: string; contact: string }): { subject: string; html: string } {
+export function buildInviteEmail(c: { name: string; role: string; company: string; branch: string; address: string; date: string; time: string; maps: string | null; docs: string; reference: string; contact: string; optInUrl?: string | null }): { subject: string; html: string } {
   const subject = `Interview on ${c.date}, ${c.time} - ${c.role} at ${c.company}`;
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#0f172a;max-width:560px">
 <p>Hi ${esc(c.name)},</p>
@@ -30,6 +30,7 @@ export function buildInviteEmail(c: { name: string; role: string; company: strin
 <tr><td style="padding:4px 12px 4px 0;color:#475569">Carry</td><td>${esc(c.docs)}</td></tr>
 <tr><td style="padding:4px 12px 4px 0;color:#475569">Reference</td><td>${esc(c.reference)}</td></tr></table>
 ${c.maps ? `<p><a href="${esc(c.maps)}">Open the location in Google Maps</a></p>` : ""}
+${c.optInUrl ? `<p style="margin:16px 0"><a href="${esc(c.optInUrl)}" style="background:#16a34a;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:bold">Get interview updates on WhatsApp</a></p><p style="font-size:12px;color:#64748b">Optional. Tap only if you want reminders and directions on WhatsApp. Reply STOP there any time to stop.</p>` : ""}
 <p>To confirm or change the time, reply to this email or to our WhatsApp message${c.contact ? `, or contact ${esc(c.contact)}` : ""}.</p>
 <p>Regards,<br/>${esc(c.company)} Hiring Team</p></div>`;
   return { subject, html };
@@ -37,7 +38,7 @@ ${c.maps ? `<p><a href="${esc(c.maps)}">Open the location in Google Maps</a></p>
 
 export async function sendInviteEmail(matchId: string, o: { dryRun?: boolean } = {}): Promise<SendResult> {
   const [mr] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id, m.lead_id, m.requisition_id, m.slot_at, d.id AS drive_id, d.drive_date, d.status AS drive_status,
+    `SELECT m.id, m.lead_id, m.requisition_id, m.slot_at, m.token, d.id AS drive_id, d.drive_date, d.status AS drive_status,
             l.full_name, l.email, l.status AS lead_status, l.mobile10,
             jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, bm.address, bm.latitude, bm.longitude
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id LEFT JOIN he_drive d ON d.id = m.drive_id
@@ -64,6 +65,7 @@ export async function sendInviteEmail(matchId: string, o: { dryRun?: boolean } =
     name: String(m.full_name ?? "").trim().split(/\s+/)[0] || "Candidate", role: String(m.designation_name ?? "the role"), company: env("HE_COMPANY_NAME", "MAS Callnet"),
     branch: String(m.branch_name ?? ""), address: String(m.address ?? ""), date: m.drive_date ? dateLabel(String(m.drive_date)) : slot.slice(0, 10), time: timeLabel(slot), maps,
     docs: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"), reference: `HE-${String(m.id).replace(/-/g, "").slice(0, 6).toUpperCase()}`, contact: [cname, phone].filter(Boolean).join(" "),
+    optInUrl: env("HE_PUBLIC_BASE_URL", "") && m.token ? `${env("HE_PUBLIC_BASE_URL", "").replace(/\/$/, "")}/w/${m.token}` : null,
   });
   if (o.dryRun) return { status: "dry_run", body: mail.subject, lang: "en", params: [] };
 
