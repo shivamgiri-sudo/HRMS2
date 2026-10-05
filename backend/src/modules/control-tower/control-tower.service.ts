@@ -404,7 +404,7 @@ export const controlTowerService = {
     const [teamRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id, e.employee_code, e.first_name, e.last_name,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name,
-              e.email, e.official_email, e.mobile, e.phone,
+              e.email, e.official_email, e.mobile, e.mobile AS phone,
               e.designation_id, d.designation_name,
               e.department_id, dept.dept_name,
               e.branch_id, b.branch_name,

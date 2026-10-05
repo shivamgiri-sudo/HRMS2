@@ -241,7 +241,9 @@ export class PerformanceFeedbackService {
       params.push(...filters.scope.params);
     }
 
-    query += " ORDER BY created_at DESC";
+    // performance_feedback_request has no created_at; requested_at is its creation time. Ordering by
+    // created_at failed every call with ER_BAD_FIELD_ERROR (500 on /performance-feedback/assignments).
+    query += " ORDER BY requested_at DESC";
 
     const [rows] = await db.execute<RowDataPacket[]>(query, params);
     return rows as PerformanceFeedbackRequest[];
