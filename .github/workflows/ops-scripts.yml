@@ -112,6 +112,7 @@ on:
           - dbbill-grn-by-cc
           - hrms-nonpeople-detail
           - hrms-nonpeople-sources
+          - nonpeople-timing
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -284,6 +285,10 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            nonpeople-timing)
+              # Read-only in both modes: SELECTs on HRMS and db_bill, aggregates only.
+              npx tsx scripts/nonpeople-timing.ts
               ;;
             hrms-nonpeople-sources)
               # Read-only in both modes: aggregate SELECTs only.
