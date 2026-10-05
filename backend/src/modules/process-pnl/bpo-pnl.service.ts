@@ -1054,14 +1054,22 @@ async function getPeopleCosts(
       dscHeadcount: 0,
       unclassifiedPeopleCost: 0,
     };
-    const classified = current.agentSalary + current.dscPeople;
-    const residual = Math.max(0, toNumber(row.directPeopleCost) - classified);
-    if (classified <= 0 && row.directPeopleCost > 0) {
-      current.agentSalary = row.directPeopleCost;
-      current.agentHeadcount = Math.max(1, row.activeHc);
-    } else if (residual > 0.5) {
-      current.dscPeople += residual;
-      current.unclassifiedPeopleCost += residual;
+    // directPeopleCost is the cost-centre-attributed payroll of the process engine. When real payroll
+    // lines exist (people.length > 0) every person is already bucketed above (agent / DSC to their
+    // process, BMC into the branch pool), so topping a process up to directPeopleCost counted the
+    // BMC-class people a second time (live May 2026: BACK OFFICE DSC 16.64L vs 12.38L payroll,
+    // Onfido +2.16L, MGT / BO-AHMH / BSS-OTHERS likewise; about +6.8L a month in total).
+    // The top-up is only a fallback for a period with no payroll at all.
+    if (people.length === 0) {
+      const classified = current.agentSalary + current.dscPeople;
+      const residual = Math.max(0, toNumber(row.directPeopleCost) - classified);
+      if (classified <= 0 && row.directPeopleCost > 0) {
+        current.agentSalary = row.directPeopleCost;
+        current.agentHeadcount = Math.max(1, row.activeHc);
+      } else if (residual > 0.5) {
+        current.dscPeople += residual;
+        current.unclassifiedPeopleCost += residual;
+      }
     }
     processMap.set(row.processId, current);
   }
@@ -1495,7 +1503,13 @@ async function computeBranchRows(scope: PnlQueryFilters) {
   // Billed revenue first: its process ids widen the base row set (see PnlQueryFilters.includeProcessIds)
   // so revenue attached to an inactive process is not silently dropped. Reused below, not re-read.
   const invoicedActuals = await getInvoicedRevenueActuals(scope.period ?? "");
-  const includeProcessIds = isOpenPeriod(scope.period ?? "") ? [] : Array.from(invoicedActuals.byProcess.keys());
+  // Also keep processes whose employees were paid in the month: their payroll is bucketed by the
+  // employee's own process, and a process that is inactive was dropped, taking its payroll with it
+  // (May 2026: about 13L across Finnable, Captureatrip, corporate functions, EBC Bridge, Adani, Aspeya).
+  const payrollProcessIds = isOpenPeriod(scope.period ?? "") ? [] : Array.from((await getActualPeopleCost(scope.period ?? "")).byProcess.keys());
+  const includeProcessIds = isOpenPeriod(scope.period ?? "")
+    ? []
+    : Array.from(new Set([...invoicedActuals.byProcess.keys(), ...payrollProcessIds]));
   const baseRows = await processPnlService.listProcesses(includeProcessIds.length ? { ...scope, includeProcessIds } : scope);
   const processIds = baseRows.map((row) => row.processId);
   const policies = await getAllocationPolicies(scope.period);
