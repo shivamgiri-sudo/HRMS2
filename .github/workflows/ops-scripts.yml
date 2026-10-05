@@ -74,6 +74,7 @@ on:
           - attendance-register-exited-verify
           - recode-63388c-dryrun
           - recode-63388c-person-check
+          - recode-63388c-name-search
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -218,6 +219,14 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            recode-63388c-name-search)
+              # Read-only: name / DOB+mobile-last4 search across db_bill and HRMS for the two 63388C people. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::recode-63388c-name-search is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/recode-63388c-name-search.ts
               ;;
             recode-63388c-person-check)
               # Read-only: compares the HRMS and db_bill 63388C records (name/DOB/last-4 only) and post-exit activity. No apply mode.
