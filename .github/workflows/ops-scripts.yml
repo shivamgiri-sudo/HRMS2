@@ -85,6 +85,7 @@ on:
           - recode-63388c-phase5
           - code-lookup-verify
           - dbbill-find-verify
+          - hrms-find-verify
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -229,6 +230,14 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            hrms-find-verify)
+              # Read-only: find an employee in HRMS by name variants or code fragment and show whether db_bill has the code. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::hrms-find-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/hrms-find-verify.ts
               ;;
             dbbill-find-verify)
               # Read-only: find an employee in db_bill by name or code fragment and show whether HRMS has that code. No apply mode.
