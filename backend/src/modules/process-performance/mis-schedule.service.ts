@@ -6,6 +6,15 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { emailService } from "../communication/email.service.js";
 import { buildDashboardExcel, isKnownDashboard } from "./dashboard-export.service.js";
+import { buildMisExcel } from "./mis-export.service.js";
+
+/** A schedule on a company's whole MIS (the MIS page's Download MIS Report) is keyed "mis:<companyKey>";
+ * anything else is a single dashboard's raw-data export. */
+const MIS_KEY_PREFIX = "mis:";
+function isKnownScheduleKey(key: string): boolean {
+  if (key.startsWith(MIS_KEY_PREFIX)) return /^mis:[a-z_]{2,40}$/.test(key);
+  return isKnownDashboard(key);
+}
 
 /**
  * Scheduled MIS email: a schedule names a process dashboard, who it goes to (To / CC), a
@@ -68,7 +77,7 @@ export function parseRecipients(raw: unknown, label: string, required: boolean):
 export function parseScheduleInput(body: unknown): Parsed<ScheduleInput> {
   const b = (body ?? {}) as Record<string, unknown>;
   const dashboardKey = String(b.dashboardKey ?? "").slice(0, 60);
-  if (!isKnownDashboard(dashboardKey)) return { ok: false, error: `Unknown dashboard "${dashboardKey}".` };
+  if (!isKnownScheduleKey(dashboardKey)) return { ok: false, error: `Unknown dashboard "${dashboardKey}".` };
 
   const to = parseRecipients(b.to, "To", true);
   if (!to.ok) return to;
@@ -337,10 +346,13 @@ export async function sendSchedule(row: ScheduleRow, trigger: "scheduled" | "man
 
   try {
     if (!emailService.isConfigured()) throw new Error("SMTP is not configured on this server.");
-    const { raw } = await buildDashboardExcel({
-      dashboard: row.dashboard_key, reportTitle: row.report_title, slides: [], lob: row.lob ?? undefined,
-      from: period.from, to: period.to,
-    }, tmpPath);
+    const misCompany = row.dashboard_key.startsWith(MIS_KEY_PREFIX) ? row.dashboard_key.slice(MIS_KEY_PREFIX.length) : null;
+    const { raw } = misCompany
+      ? await buildMisExcel(misCompany, row.report_title, period.from, period.to, tmpPath)
+      : await buildDashboardExcel({
+        dashboard: row.dashboard_key, reportTitle: row.report_title, slides: [], lob: row.lob ?? undefined,
+        from: period.from, to: period.to,
+      }, tmpPath);
     attachmentRows = raw.reduce((s, r) => s + (r.rowsExported ?? 0), 0);
     const attachment = fs.readFileSync(tmpPath);
     const sent = await emailService.send({
@@ -350,7 +362,7 @@ export async function sendSchedule(row: ScheduleRow, trigger: "scheduled" | "man
       html: bodyToHtml(row.body_text, row.id),
       text: `${row.body_text}\n\n(Schedule ${row.id})`,
       attachments: [{
-        filename: `${row.dashboard_key}_${period.from}_to_${period.to}.xlsx`,
+        filename: `${row.dashboard_key.replace(/[^a-z0-9_]+/gi, "_")}_${period.from}_to_${period.to}.xlsx`,
         content: attachment,
         contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       }],

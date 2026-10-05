@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getGncSaleDashboard, getGncAgentDetail, getGncCampaignDetail } from "./gnc-sale-dashboard.service.js";
-import { getGncAbandonCartDashboard } from "./gnc-abandon-cart-dashboard.service.js";
+import { getGncAbandonCartDashboard, getGncAbandonCartAgentWise } from "./gnc-abandon-cart-dashboard.service.js";
 import {
   resolveGncTargets, listGncTargets, setGncTarget, deleteGncTarget, getGncTargetDetail, actorEmails, decorateSaleWithTargets, decorateAbandonCartWithTargets, GNC_TARGET_LOBS,
 } from "./gnc-targets.service.js";
@@ -57,6 +57,13 @@ router.get("/gnc-abandon-cart-dashboard", requireRole(...VIEWER_ROLES), h(async 
   const data = await getGncAbandonCartDashboard(from, to);
   const targets = await resolveGncTargets(data.from, data.to);
   res.json({ success: true, data: decorateAbandonCartWithTargets(data, targets) });
+}));
+
+router.get("/gnc-abandon-cart-dashboard/agent-wise", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const from = String(req.query.from ?? "");
+  const to = String(req.query.to ?? "");
+  const data = await getGncAbandonCartAgentWise(from, to);
+  res.json({ success: true, data });
 }));
 
 /**

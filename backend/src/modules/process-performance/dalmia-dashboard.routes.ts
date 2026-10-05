@@ -1,7 +1,7 @@
 import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getDalmiaDashboard } from "./dalmia-dashboard.service.js";
+import { getDalmiaDashboard, getDalmiaAgentWise } from "./dalmia-dashboard.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -21,6 +21,11 @@ router.get("/dalmia-dashboard", requireRole(...VIEWER_ROLES), h(async (req, res)
     req.query.from ? String(req.query.from) : undefined,
     req.query.to ? String(req.query.to) : undefined,
   );
+  res.json({ success: true, data });
+}));
+
+router.get("/dalmia-dashboard/agent-wise", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getDalmiaAgentWise(String(req.query.from ?? ""), String(req.query.to ?? ""));
   res.json({ success: true, data });
 }));
 

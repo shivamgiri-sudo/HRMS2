@@ -7,6 +7,7 @@ import { getEmailLob } from "./clovia-lob-email.service.js";
 import { getChatLob } from "./clovia-lob-chat.service.js";
 import { getOutboundLob } from "./clovia-lob-outbound.service.js";
 import { getInboundExtras } from "./clovia-lob-inbound.service.js";
+import { getProductivityChannel } from "./clovia-channels-dashboard.service.js";
 
 /**
  * Clovia "Customer Support Performance Dashboard" (Overview slide) feed.
@@ -15,7 +16,7 @@ import { getInboundExtras } from "./clovia-lob-inbound.service.js";
  * the number the Inbound / Email / Chat / Outbound slides show for the same
  * dates:
  *   Inbound   live dialer (shared inbound insights) -- offered, answered, SL, AHT, unique callers
- *   Outbound  cl_outbound       Email  cl_email_raw       Chat  cl_chat
+ *   Outbound  live dialer (dialer_db.cdr_ob_250)     Email  cl_email_raw       Chat  cl_chat
  *   CSAT/DSAT IVR survey (cl_feedback)       Quality  cl_quality (plain mean of audit scores)
  * There is no revenue / sale / AOV / target source for Clovia, so none is returned.
  * The previous period (same length, immediately before `from`) is computed with
@@ -35,10 +36,52 @@ function shift(iso: string, days: number): string {
 const utcMs = (iso: string) => { const [y, mo, d] = iso.split("-").map(Number); return Date.UTC(y, mo - 1, d); };
 const dayCount = (a: string, b: string) => Math.round((utcMs(b) - utcMs(a)) / 86400000) + 1;
 
+/** Avg Login Hr / Avg Talk Time / Avg Break Time, from the live agent-productivity feed
+ * (dialer_db.vicidial_agent_log_250, see clovia-channels-dashboard.service.ts's own doc --
+ * the live replacement for the old manual cl_apr Excel upload). "Break" is Bio + Lunch +
+ * Short only, matching the old cl_apr sheet's own column set, where those three map to its
+ * "Total Break" column and Qualit/Traini/OutCal/Team Briefing AUX were tracked as separate,
+ * non-break AUX categories -- not a guess, the old sheet's own column layout settles it.
+ * Averaged per agent-day (presentDays = distinct agent+date+campaign rows), the same
+ * denominator the channel's own avgUtilizationPct already uses. */
+async function productivitySummary(from: string, to: string) {
+  const pc = await getProductivityChannel(from, to);
+  const presentDays = pc.presentDays;
+  const totalTalkSec = pc.byAgent.reduce((s, r) => s + r.talkSec, 0);
+  const totalBreakSec = pc.byAgent.reduce((s, r) => s + r.bioSec + r.lunchSec + r.shortBreakSec, 0);
+
+  // Per-agent (matched onto the "Top Performing Agents" table, keyed by MAS id -- confirmed
+  // live 2026-10-01 that vicidial_agent_log_250's own `user` column already IS the MAS
+  // employee code, no translation needed, e.g. 'MAS62397'). Each agent's own presentDays
+  // (their distinct worked dates) is the denominator, not the channel-wide one, so a part-
+  // period joiner's average isn't diluted by days they weren't present at all.
+  const perAgent = new Map<string, { loginSec: number; talkSec: number; breakSec: number; days: Set<string> }>();
+  for (const r of pc.byAgent) {
+    const e = perAgent.get(r.agent) ?? { loginSec: 0, talkSec: 0, breakSec: 0, days: new Set<string>() };
+    e.loginSec += r.loginSec; e.talkSec += r.talkSec; e.breakSec += r.bioSec + r.lunchSec + r.shortBreakSec;
+    e.days.add(r.date);
+    perAgent.set(r.agent, e);
+  }
+  const byAgent = new Map<string, { avgLoginSec: number; avgTalkSec: number; avgBreakSec: number; presentDays: number }>();
+  for (const [agent, e] of perAgent) {
+    const d = e.days.size || 1;
+    byAgent.set(agent, { avgLoginSec: Math.round(e.loginSec / d), avgTalkSec: Math.round(e.talkSec / d), avgBreakSec: Math.round(e.breakSec / d), presentDays: e.days.size });
+  }
+
+  return {
+    agentCount: pc.agentCount, presentDays,
+    avgLoginSec: presentDays > 0 ? Math.round(pc.totalLoginSeconds / presentDays) : 0,
+    avgTalkSec: presentDays > 0 ? Math.round(totalTalkSec / presentDays) : 0,
+    avgBreakSec: presentDays > 0 ? Math.round(totalBreakSec / presentDays) : 0,
+    byAgent,
+  };
+}
+
 async function snapshot(from: string, to: string, withAgents: boolean) {
-  const [ib, em, ch, ob, ex, qAll] = await Promise.all([
+  const [ib, em, ch, ob, ex, qAll, productivity] = await Promise.all([
     getInboundInsights("clovia", { startDate: from, endDate: to }).catch(() => null),
     getEmailLob(from, to), getChatLob(from, to), getOutboundLob(from, to), getInboundExtras(from, to), loadQuality(from, to, null),
+    productivitySummary(from, to).catch(() => ({ agentCount: 0, presentDays: 0, avgLoginSec: 0, avgTalkSec: 0, avgBreakSec: 0, byAgent: new Map() as Map<string, { avgLoginSec: number; avgTalkSec: number; avgBreakSec: number; presentDays: number }> })),
   ]);
   const h = ib?.headline;
   const inbound = h ? {
@@ -87,7 +130,15 @@ async function snapshot(from: string, to: string, withAgents: boolean) {
     agents = [...mix.entries()].filter(([id]) => id.startsWith("MAS")).map(([id, v]) => {
       const qs = qAll.filter((r) => r.empId === id);
       const lobs = (v.inbound > 0 ? 1 : 0) + (v.email > 0 ? 1 : 0) + (v.chat > 0 ? 1 : 0) + (v.outbound > 0 ? 1 : 0);
-      return { empId: id, agent: agentName(dir, id), ...v, total: v.inbound + v.email + v.chat + v.outbound, lobs, quality: qs.length ? round1(sum(qs.map((r) => r.score)) / qs.length) : null, audits: qs.length };
+      // Agent Productivity (APR), per agent -- live from dialer_db.vicidial_agent_log_250 (see
+      // productivitySummary's own doc). null, not 0, when the agent has no login-log rows at all
+      // in range, so the table can show "--" instead of a misleading "0:00".
+      const apr = productivity.byAgent.get(id) ?? null;
+      return {
+        empId: id, agent: agentName(dir, id), ...v, total: v.inbound + v.email + v.chat + v.outbound, lobs,
+        quality: qs.length ? round1(sum(qs.map((r) => r.score)) / qs.length) : null, audits: qs.length,
+        avgLoginSec: apr?.avgLoginSec ?? null, avgTalkSec: apr?.avgTalkSec ?? null, avgBreakSec: apr?.avgBreakSec ?? null, aprDays: apr?.presentDays ?? 0,
+      };
     }).sort((a, z) => Number(z.total) - Number(a.total));
     headcount = { ...headcount, distinct: agents.length, multiLob: agents.filter((a) => Number(a.lobs) >= 2).length };
   }
@@ -112,6 +163,9 @@ async function snapshot(from: string, to: string, withAgents: boolean) {
       daily: dailyOf(ex, "in_csat_daily_t", ["responses", "satisfied", "notSatisfied", "csatPct"]),
     },
     quality, agents, headcount,
+    // byAgent (a Map) is merged into each agents[] row above and dropped here -- it isn't
+    // JSON-serializable and the per-agent table, not this summary, is now where it's shown.
+    productivity: { agentCount: productivity.agentCount, presentDays: productivity.presentDays, avgLoginSec: productivity.avgLoginSec, avgTalkSec: productivity.avgTalkSec, avgBreakSec: productivity.avgBreakSec },
     latest: { email: em.latestDate, chat: ch.latestDate, outbound: ob.latestDate, csat: ex.latestDate },
     empty: { email: em.empty, chat: ch.empty, outbound: ob.empty, csat: ex.empty },
   };
@@ -135,6 +189,7 @@ export async function getCloviaOverviewDashboard(fromIn: string, toIn: string) {
   const hasCh = !!prev && Number(prev.chat.metrics.chats ?? 0) > 0;
   const hasCs = !!prev && prev.csat.responses > 0;
   const hasQa = !!prev && prev.quality.audits > 0;
+  const hasPr = !!prev && prev.productivity.presentDays > 0;
   const om = cur.outbound.metrics;
   const deltas = {
     offered: delta(ib?.offered ?? 0, pib?.offered, hasIb),
@@ -147,6 +202,9 @@ export async function getCloviaOverviewDashboard(fromIn: string, toIn: string) {
     quality: ppDelta(cur.quality.avg, prev?.quality.avg, hasQa),
     csat: ppDelta(cur.csat.csatPct, prev?.csat.csatPct, hasCs),
     dsat: ppDelta(cur.csat.dsatPct, prev?.csat.dsatPct, hasCs),
+    avgLoginSec: delta(cur.productivity.avgLoginSec, prev?.productivity.avgLoginSec, hasPr),
+    avgTalkSec: delta(cur.productivity.avgTalkSec, prev?.productivity.avgTalkSec, hasPr),
+    avgBreakSec: delta(cur.productivity.avgBreakSec, prev?.productivity.avgBreakSec, hasPr),
   };
 
   const insights: Array<{ tone: "good" | "warn" | "info"; text: string }> = [];

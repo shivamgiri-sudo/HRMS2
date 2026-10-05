@@ -69,7 +69,19 @@ const MONTH_ABBR: Record<string, string> = {
  * against upload_template_master's own sample_row: {"Date":"1-Sep-26",...}). The
  * first three patterns never matched that format, so every row's report_date
  * silently landed NULL -- confirmed live: all 465 already-uploaded rows have
- * report_date NULL despite Date being populated in the source file. */
+ * report_date NULL despite Date being populated in the source file.
+ *
+ * Also accepts a FULL month name, e.g. "1-September-26" -- confirmed live
+ * (2026-09-28) against the "Payments from Sales Report" Google Sheet, a
+ * second real Owner Sale source that uses this exact format: the 3-letter
+ * pattern's [A-Za-z]{3} required the string to end right after those 3
+ * letters, so "1-September-26" failed to match at all (not even a partial
+ * "Sep" match) and every one of its rows would have landed report_date NULL
+ * too, repeating the exact same bug this comment already documents above.
+ * Every month's first 3 letters equal its abbreviation (Jan/January,
+ * Sep/September, ...), so widening the letter-count and keying MONTH_ABBR
+ * off the first 3 letters (lowercased) handles both spellings with the one
+ * map, no separate full-name table needed. */
 function parseDate(raw: string): string | null {
   if (!raw) return null;
   if (/^\d+(\.\d+)?$/.test(raw)) {
@@ -80,9 +92,9 @@ function parseDate(raw: string): string | null {
   if (m) return m[0];
   m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(raw);
   if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
-  m = /^(\d{1,2})-([A-Za-z]{3})-(\d{2}|\d{4})$/.exec(raw);
+  m = /^(\d{1,2})-([A-Za-z]{3,9})-(\d{2}|\d{4})$/.exec(raw);
   if (m) {
-    const mon = MONTH_ABBR[m[2].toLowerCase()];
+    const mon = MONTH_ABBR[m[2].slice(0, 3).toLowerCase()];
     if (mon) {
       const year = m[3].length === 2 ? `20${m[3]}` : m[3];
       return `${year}-${mon}-${m[1].padStart(2, "0")}`;

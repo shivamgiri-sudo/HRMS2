@@ -200,13 +200,42 @@ async function loadSaleDaily(from: string, to: string, tlName?: string, agentNam
   return new Map(rows.map((r) => [String(r.d), { revenue: num(r.rev), count: num(r.n) }]));
 }
 interface CdrDay { connected: number; notConnected: number; uniqueConnected: number; present: number; talkSec: number }
+/** Org-wide / per-TL calls (agentName unset) read db_masmis.pre_cdr_daily_summary (migration 449,
+ * confirmed applied and backfilled live 2026-10-01 -- see the migration file's own doc) instead
+ * of raw Pre_cdr: flat cost at any date range regardless of how large Pre_cdr itself grows, since
+ * the summary table holds one row per day x TL (currently 81 rows total) rather than Pre_cdr's
+ * 227k+. Both import paths (pre-cdr-bulk.service.ts, upload_housing_premium_cdr.py) already keep
+ * this table in sync on every insert, so it is never stale behind a real import.
+ * agentName IS still a raw-Pre_cdr read -- the summary table has no per-agent granularity (by
+ * design, see migration 449's own "Scope" note), so an agent-scoped call can't be served by it. */
 async function loadCdrDaily(from: string, to: string, tlName?: string, agentName?: string): Promise<{ daily: Map<string, CdrDay>; rowCount: number }> {
+  if (agentName) {
+    const [rows] = await readRows(
+      `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS day, SUM(status='Answered') AS conn, SUM(status='No Answered') AS noconn,
+              SUM(status='Answered' AND unique_count='1') AS uconn, SUM(call_count='1') AS present, SUM(talk_duration+0) AS talk
+         FROM (SELECT report_date_iso AS d, status, unique_count, call_count, talk_duration, tl_name, member FROM db_masmis.Pre_cdr) x
+        WHERE d BETWEEN ? AND ? ${tlName ? "AND tl_name = ?" : ""} AND member = ? GROUP BY d`,
+      [from, to, ...(tlName ? [tlName] : []), agentName],
+    );
+    const daily = new Map<string, CdrDay>();
+    for (const r of rows) {
+      daily.set(String(r.day), {
+        connected: num(r.conn), notConnected: num(r.noconn), uniqueConnected: num(r.uconn),
+        present: num(r.present), talkSec: num(r.talk),
+      });
+    }
+    const [[cnt]] = await readRows(`SELECT COUNT(*) AS n FROM db_masmis.Pre_cdr`);
+    return { daily, rowCount: num(cnt?.n) };
+  }
+
   const [rows] = await readRows(
-    `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS day, SUM(status='Answered') AS conn, SUM(status='No Answered') AS noconn,
-            SUM(status='Answered' AND unique_count='1') AS uconn, SUM(call_count='1') AS present, SUM(talk_duration+0) AS talk
-       FROM (SELECT report_date_iso AS d, status, unique_count, call_count, talk_duration, tl_name, member FROM db_masmis.Pre_cdr) x
-      WHERE d BETWEEN ? AND ? ${tlName ? "AND tl_name = ?" : ""} ${agentName ? "AND member = ?" : ""} GROUP BY d`,
-    [from, to, ...(tlName ? [tlName] : []), ...(agentName ? [agentName] : [])],
+    `SELECT DATE_FORMAT(report_date_iso, '%Y-%m-%d') AS day,
+            SUM(connected) AS conn, SUM(not_connected) AS noconn, SUM(unique_connected) AS uconn,
+            SUM(present_count) AS present, SUM(talk_seconds) AS talk
+       FROM db_masmis.pre_cdr_daily_summary
+      WHERE report_date_iso BETWEEN ? AND ? ${tlName ? "AND tl_name = ?" : ""}
+      GROUP BY report_date_iso`,
+    [from, to, ...(tlName ? [tlName] : [])],
   );
   const daily = new Map<string, CdrDay>();
   for (const r of rows) {
@@ -215,7 +244,7 @@ async function loadCdrDaily(from: string, to: string, tlName?: string, agentName
       present: num(r.present), talkSec: num(r.talk),
     });
   }
-  const [[cnt]] = await readRows(`SELECT COUNT(*) AS n FROM db_masmis.Pre_cdr`);
+  const [[cnt]] = await readRows(`SELECT SUM(row_count) AS n FROM db_masmis.pre_cdr_daily_summary`);
   return { daily, rowCount: num(cnt?.n) };
 }
 
@@ -239,21 +268,17 @@ async function loadSaleDailyByTl(from: string, to: string): Promise<Map<string, 
   return byTl;
 }
 
-/** All TLs' CDR daily figures in ONE grouped query instead of one query per TL -- cuts the
- * Overview tab's Pre_cdr scans from 1 (org-wide) + N (one per TL) down to just 2 total,
- * regardless of roster size. Reads raw Pre_cdr directly (report_date_iso, migration 448,
- * is still indexed) -- NOT the pre_cdr_daily_summary rollup (migration 449): that table
- * needs its own migration run before anything can read it, so this stays on the raw table
- * until that migration is confirmed applied. Swap back to a summary-table read once it is,
- * for genuinely flat cost regardless of table size. */
+/** All TLs' CDR daily figures in ONE query instead of one query per TL -- reads
+ * db_masmis.pre_cdr_daily_summary (migration 449, confirmed applied 2026-10-01), already
+ * grouped by day x TL at one row each, so no GROUP BY is even needed here anymore: flat cost
+ * regardless of range or how large raw Pre_cdr itself grows. See loadCdrDaily's own doc for
+ * the full rationale and the import-side sync that keeps this table current. */
 async function loadCdrDailyByTl(from: string, to: string): Promise<Map<string, Map<string, CdrDay>>> {
   const [rows] = await readRows(
     `SELECT tl_name, DATE_FORMAT(report_date_iso, '%Y-%m-%d') AS day,
-            SUM(status='Answered') AS conn, SUM(status='No Answered') AS noconn,
-            SUM(status='Answered' AND unique_count='1') AS uconn, SUM(call_count='1') AS present, SUM(talk_duration+0) AS talk
-       FROM db_masmis.Pre_cdr
-      WHERE report_date_iso BETWEEN ? AND ?
-      GROUP BY tl_name, day`,
+            connected AS conn, not_connected AS noconn, unique_connected AS uconn, present_count AS present, talk_seconds AS talk
+       FROM db_masmis.pre_cdr_daily_summary
+      WHERE report_date_iso BETWEEN ? AND ?`,
     [from, to],
   );
   const byTl = new Map<string, Map<string, CdrDay>>();
@@ -313,29 +338,28 @@ function rollUpOverview(
   return out;
 }
 
-export async function getHousingPremiumOverview(fromInput: string, toInput: string, agentInput?: string): Promise<HousingPremiumOverviewData> {
+export async function getHousingPremiumOverview(fromInput: string, toInput: string, agentInput?: string, fullCdr = false): Promise<HousingPremiumOverviewData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const columns = buildOverviewColumns(from, to);
   const roster = await loadRoster(to);
-  // CDR (Pre_cdr, real per-call records -- currently 210k+ rows) is fetched over a narrower
-  // window than Sale: at most the most recent 5 days of whatever range was requested, never
-  // wider. Confirmed live 2026-09-29: with the whole table still inside a single month, a
-  // full month-wide CDR query still takes 15-20s+ even with the indexed report_date_iso
-  // column (migration 448) and the org-wide/per-TL query collapse below, because MySQL
-  // legitimately prefers a full scan when the requested range matches most of the table --
-  // an index can't fix that, only reading less can. Sale's own `from`/`columns` are NOT
-  // narrowed: the full month of Sale figures still renders correctly, only the CDR-derived
-  // columns (Connected, Not Connected, Present Count, etc.) go blank for dates older than 5
-  // days -- the same tradeoff already applied to Housing Owner's own CDR fetch. The "View
-  // details" drill-down drawer (HousingPremiumDrilldownDrawer.tsx) does its OWN independent
-  // fetch of the true full range, so this cap never reaches an Excel export -- only the
-  // on-screen Dashboard/Overview tabs see the narrower window.
-  const cdrFrom = from < addDays(to, -4) ? addDays(to, -4) : from;
+  // Org-wide and per-TL CDR figures now read db_masmis.pre_cdr_daily_summary (migration 449,
+  // confirmed applied and backfilled live 2026-10-01 -- see loadCdrDaily/loadCdrDailyByTl's own
+  // doc), which is flat-cost at any date range, so those two no longer need a narrowed window at
+  // all: `from` (the full requested range) is used directly below, not a clamped `cdrFrom`.
+  //
+  // Agent-scoped CDR (the `agent` branch just below) still reads raw Pre_cdr directly, because
+  // the summary table has no per-agent granularity by design (migration 449's own "Scope" note)
+  // -- so that one lone path keeps the original 5-day clamp (fullCdr still lets a caller that
+  // needs agent-scoped correctness over speed, e.g. a future agent-scoped export, skip it).
+  // Confirmed live 2026-09-29: a full month-wide raw-Pre_cdr scan took 15-20s+ even indexed
+  // (migration 448), because MySQL legitimately full-scans when the range matches most of the
+  // table -- exactly the cost the summary table now avoids for the org-wide/per-TL case.
+  const agentCdrFrom = fullCdr ? from : (from < addDays(to, -4) ? addDays(to, -4) : from);
   const agent = agentInput && agentInput.trim() && agentInput.trim().toLowerCase() !== "overall" ? agentInput.trim() : null;
   if (agent) {
     // Agent scope: the same day/week/MTD columns for one agent, with that agent's own roster target (same convention getHousingPremiumDayWise uses). No per-TL blocks -- they would not describe one agent.
     const agentTarget = roster.find((r) => r.name.toLowerCase() === agent.toLowerCase())?.target ?? 0;
-    const [sd, cd] = await Promise.all([loadSaleDaily(from, to, undefined, agent), loadCdrDaily(cdrFrom, to, undefined, agent)]);
+    const [sd, cd] = await Promise.all([loadSaleDaily(from, to, undefined, agent), loadCdrDaily(agentCdrFrom, to, undefined, agent)]);
     const [[saleCntA]] = await readRows(`SELECT COUNT(*) AS n FROM db_masmis.pre_sale`);
     return { from, to, columns, overall: rollUpOverview(columns, sd, cd.daily, agentTarget), byTl: [], cdrRowCount: cd.rowCount, saleRowCount: num(saleCntA?.n), cdrAvailable: cd.rowCount > 0 };
   }
@@ -344,8 +368,8 @@ export async function getHousingPremiumOverview(fromInput: string, toInput: stri
   for (const r of roster.filter((r) => r.status === "Active")) targetByTl.set(r.tlName, (targetByTl.get(r.tlName) ?? 0) + r.target);
 
   const [saleDaily, cdr, saleByTl, cdrByTl] = await Promise.all([
-    loadSaleDaily(from, to), loadCdrDaily(cdrFrom, to),
-    loadSaleDailyByTl(from, to), loadCdrDailyByTl(cdrFrom, to),
+    loadSaleDaily(from, to), loadCdrDaily(from, to),
+    loadSaleDailyByTl(from, to), loadCdrDailyByTl(from, to),
   ]);
   const overall = rollUpOverview(columns, saleDaily, cdr.daily, activeTarget);
 

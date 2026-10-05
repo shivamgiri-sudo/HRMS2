@@ -85,6 +85,7 @@ const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
   "OWNER_AGENT_DETAILS_MASMIS", "OWNER_CDR_MASMIS", "OWNER_SALE_MASMIS",
   "PRE_AGENT_DETAILS_MASMIS", "PRE_CDR_MASMIS", "PRE_SALE_MASMIS",
   "SATYA_ALLOCATION_MASMIS", "SATYA_CDR_MASMIS",
+  "ALT_RX_DUMP_MASMIS",
   "DALMIA_DD_RAW", "DALMIA_OUTBOUND_RAW", "DALMIA_APR", "DALMIA_AFTER_HOUR",
 ];
 
@@ -645,6 +646,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_birlanu_apr_batch",
   "import_satya_allocation_batch",
   "import_satya_cdr_batch",
+  "import_alt_rx_dump_batch",
   "import_lp_feedback_apr_batch",
   "import_lp_feedback_cdr_batch",
   "import_lp_onboarding_apr_batch",
@@ -1582,6 +1584,12 @@ async function dispatchImport(
   if (rpc_name === "import_satya_cdr_batch") {
     const { importSatyaCdrBatch } = await import("../bulk-upload/satya-cdr-bulk.service.js");
     const data = await importSatyaCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_alt_rx_dump_batch") {
+    const { importAltRxDumpBatch } = await import("../bulk-upload/alt-rx-dump-bulk.service.js");
+    const data = await importAltRxDumpBatch(id, userId);
     return { success: true, data };
   }
 
