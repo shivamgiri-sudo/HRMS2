@@ -11,6 +11,9 @@ import { createDrive, setDriveStatus, suggestMatches } from "./he-drive.service.
 import { runEngineTick } from "./he-engine.service.js";
 import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
+import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches, previewBulkCalls, runBulkCallJobs, startBulkBatch } from "./he-bulk-call.service.js";
+import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
+import { listPrepareCampaigns, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
 export const heRouter = Router();
@@ -229,4 +232,77 @@ heRouter.post("/matches/:id/call", requireAuth, requireRole(...WRITE_ROLES), asy
 heRouter.get("/board", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: await getBoard(), windowMinutes: 30 }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] board failed"); res.status(500).json({ success: false, message: "Could not load the board" }); }
+});
+
+// ── Manual bulk voice calls (phone,name,role,interview_date,interview_time,branch_address,reference_id) ───────────
+const bulkRows = (b: unknown): Array<Record<string, unknown>> | null =>
+  Array.isArray((b as { rows?: unknown })?.rows) && (b as { rows: unknown[] }).rows.every((r) => r && typeof r === "object" && !Array.isArray(r)) ? (b as { rows: Array<Record<string, unknown>> }).rows : null;
+
+heRouter.get("/bulk-calls/template", requireAuth, requireRole(...VIEW_ROLES), (_req, res) => {
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="voice_call_upload_template.csv"');
+  res.send(sampleCsv());
+});
+
+/** Active Meta campaigns with how many qualified, future-dated candidates each has (Ahmedabad ones flagged). */
+heRouter.get("/bulk-calls/campaigns", requireAuth, requireRole(...WRITE_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await listPrepareCampaigns() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk campaigns failed"); res.status(500).json({ success: false, message: "Could not load campaigns" }); }
+});
+
+/** Build the calling sheet from campaigns. Returns rows only - validation, preview and queueing are the normal flow. */
+heRouter.post("/bulk-calls/prepare", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  const b = (req.body ?? {}) as { campaignIds?: unknown; includeConfirmed?: unknown; requireInviteSent?: unknown };
+  if (!Array.isArray(b.campaignIds) || b.campaignIds.length === 0) return res.status(400).json({ success: false, message: "Select at least one campaign" });
+  try {
+    res.json({ success: true, data: await prepareRowsFromCampaigns({ campaignIds: b.campaignIds.map(String), includeConfirmed: b.includeConfirmed === true, requireInviteSent: b.requireInviteSent !== false }) });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk prepare failed"); res.status(500).json({ success: false, message: "Could not prepare the list" }); }
+});
+
+heRouter.post("/bulk-calls/preview", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  const rows = bulkRows(req.body);
+  if (!rows) return res.status(400).json({ success: false, message: "rows (an array of objects) is required" });
+  if (rows.length === 0) return res.status(400).json({ success: false, message: "The file has no data rows" });
+  if (rows.length > BULK_CALL_MAX_ROWS) return res.status(400).json({ success: false, message: `At most ${BULK_CALL_MAX_ROWS} rows per upload` });
+  try { res.json({ success: true, data: await previewBulkCalls(rows) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk preview failed"); res.status(500).json({ success: false, message: "Could not validate the file" }); }
+});
+
+heRouter.post("/bulk-calls", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  const rows = bulkRows(req.body);
+  if (!rows) return res.status(400).json({ success: false, message: "rows (an array of objects) is required" });
+  try {
+    const b = req.body as { label?: unknown; attest?: unknown };
+    const r = await createBulkCallBatch(rows, { label: typeof b.label === "string" ? b.label : undefined, userId: (req as AuthenticatedRequest).authUser?.id ?? null, attested: b.attest === true });
+    res.json({ success: true, data: r });
+  } catch (err) {
+    const status = (err as { statusCode?: number }).statusCode ?? 500;
+    if (status === 500) logger.error({ err: (err as Error).message }, "[he] bulk create failed");
+    res.status(status).json({ success: false, message: status === 500 ? "Could not queue the calls" : (err as Error).message });
+  }
+});
+
+heRouter.get("/bulk-calls", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await listBulkBatches() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk list failed"); res.status(500).json({ success: false }); }
+});
+
+heRouter.get("/bulk-calls/:id", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try { res.json({ success: true, data: await getBulkBatchJobs(String(req.params.id)) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk jobs failed"); res.status(500).json({ success: false }); }
+});
+
+/** Activate the batch and dispatch the first due calls now (dry run unless dryRun:false). The scheduler continues if enabled. */
+heRouter.post("/bulk-calls/:id/start", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const dryRun = (req.body ?? {}).dryRun !== false;
+    const id = String(req.params.id);
+    if (!dryRun && !(await startBulkBatch(id))) return res.status(404).json({ success: false, message: "Batch not found or already finished" });
+    res.json({ success: true, data: await runBulkCallJobs({ batchId: id, dryRun, max: 25 }) });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk start failed"); res.status(500).json({ success: false, message: "Could not start the calls" }); }
+});
+
+heRouter.post("/bulk-calls/:id/cancel", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try { res.json({ success: true, data: await cancelBulkBatch(String(req.params.id)) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk cancel failed"); res.status(500).json({ success: false }); }
 });

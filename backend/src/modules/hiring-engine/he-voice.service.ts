@@ -58,49 +58,61 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   const prompt = buildVoiceSystemPrompt(ctx);
   if (dryRun) return { status: "dry_run", promptPreview: prompt.slice(0, 400) };
 
+  const started = await startVapiCall({ ctx, mobile10: String(m.mobile10), metadata: { matchId, leadId: m.lead_id, attempt: Number(att[0].n) + 1, source: "hiring-engine" } });
+  if (!started.ok) {
+    if (started.reason !== "voice_not_configured") await addEvent(m.lead_id as string, "call_failed_to_place", { channel: "voice", detail: started.error.slice(0, 300) });
+    return started.reason === "voice_not_configured" ? { status: "blocked", reason: "voice_not_configured" } : { status: "failed", error: started.error };
+  }
+  await addEvent(m.lead_id as string, "call_placed", { channel: "voice", detail: started.callId, meta: { attempt: Number(att[0].n) + 1, matchId } });
+  return { status: "placed", callId: started.callId };
+}
+
+export type VapiStart = { ok: true; callId: string } | { ok: false; reason: "voice_not_configured" | "provider_error"; error: string };
+
+/**
+ * One outbound Vapi confirmation call. Shared by engine-driven calls (metadata carries matchId) and manual bulk
+ * uploads (metadata carries jobId), so both get the same BRD prompt, structured-result schema and slot tool.
+ */
+export async function startVapiCall(a: { ctx: VoiceCtx; mobile10: string; metadata: Record<string, unknown> }): Promise<VapiStart> {
   const apiKey = env("VAPI_API_KEY");
   const phoneNumberId = env("VAPI_PHONE_NUMBER_ID");
   const token = env("HE_WEBHOOK_TOKEN");
   const base = env("BACKEND_PUBLIC_URL");
-  if (!apiKey || !phoneNumberId || !token || !base) return { status: "blocked", reason: "voice_not_configured" };
+  if (!apiKey || !phoneNumberId || !token || !base) return { ok: false, reason: "voice_not_configured", error: "voice_not_configured" };
 
   const serverUrl = `${base}/api/he-hook/voice-vapi?token=${encodeURIComponent(token)}`;
-  const attempt = Number(att[0].n) + 1;
   try {
     const { data } = await axios.post(
       "https://api.vapi.ai/call/phone",
       {
         phoneNumberId,
-        customer: { number: toE164(String(m.mobile10)), name: ctx.candidateName },
+        customer: { number: toE164(a.mobile10), name: a.ctx.candidateName },
         assistant: {
-          name: `Interview confirmation ${ctx.referenceId}`,
+          name: `Interview confirmation ${a.ctx.referenceId}`,
           model: {
-            provider: "openai", model: "gpt-4o-mini", messages: [{ role: "system", content: prompt }],
+            provider: "openai", model: "gpt-4o-mini", messages: [{ role: "system", content: buildVoiceSystemPrompt(a.ctx) }],
             tools: [
               { type: "function", async: false, function: { name: "get_next_slot", description: "Reserve and return the next free walk-in slot at this branch. Use only after the candidate declines the original slot.", parameters: { type: "object", properties: {} } }, server: { url: serverUrl } },
               { type: "function", async: true, function: { name: "report_result", description: "Report what you learned on this call. Call exactly once before ending.", parameters: VOICE_RESULT_SCHEMA }, server: { url: serverUrl } },
             ],
           },
           voice: { provider: "11labs", voiceId: env("VAPI_VOICE_ID", "sarah") },
-          firstMessage: VOICE_FIRST_MESSAGE(ctx.candidateName),
+          firstMessage: VOICE_FIRST_MESSAGE(a.ctx.candidateName),
           maxDurationSeconds: 180,
           transcriber: { provider: "deepgram", language: "hi" },
           analysisPlan: { structuredDataPlan: { enabled: true, schema: VOICE_RESULT_SCHEMA } },
           serverMessages: ["end-of-call-report"],
         },
-        metadata: { matchId, leadId: m.lead_id, attempt, source: "hiring-engine" },
+        metadata: a.metadata,
         serverUrl,
       },
       { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, timeout: 30000 },
     );
-    const callId = String(data?.id ?? "");
-    await addEvent(m.lead_id as string, "call_placed", { channel: "voice", detail: callId, meta: { attempt, matchId } });
-    return { status: "placed", callId };
+    return { ok: true, callId: String(data?.id ?? "") };
   } catch (err) {
     const msg = axios.isAxiosError(err) ? (err.response?.data?.message ?? err.message) : (err as Error).message;
-    logger.warn({ matchId, error: msg }, "[he-voice] call placement failed");
-    await addEvent(m.lead_id as string, "call_failed_to_place", { channel: "voice", detail: String(msg).slice(0, 300) });
-    return { status: "failed", error: String(msg) };
+    logger.warn({ error: msg }, "[he-voice] call placement failed");
+    return { ok: false, reason: "provider_error", error: String(msg) };
   }
 }
 

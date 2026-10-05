@@ -28,7 +28,7 @@ FOLLOW THESE STEPS IN ORDER:
 3. ASSESSMENT LINK. "Us email mein ek link tha jahan aapko apni details fill karni thi. Kya aapne wo kar liya hai?" If not done, gently remind them to complete it before the interview, then continue. Record assessmentDone (yes / no / reminded).
 4. CONFIRM THE WALK-IN. "Toh ${c.candidateName} ji, humne aapka walk-in interview ${c.driveDate} ko, ${c.slotTime} baje rakha hai. Address hai - ${c.branchAddress}. Kya aap us din, us time par wahaan aa sakte hain?"
    - YES: "Wonderful! Toh hum aapko ${c.driveDate} ko ${c.slotTime} baje, ${c.branchAddress} par expect karenge. Milte hain interview mein!" Record originalSlotAnswer="yes".
-   - NO: record originalSlotAnswer="no" and ask briefly why (record declineReason). Call the get_next_slot tool - NEVER invent a date or time. Offer exactly that slot, repeat the address, and ask again. If they accept, record offeredSlotAnswer="yes". If they refuse this slot too, record offeredSlotAnswer="no", do NOT offer any more slots, say "Main aapke liye humari HR team se kisi ko call karwati hoon.", and end.
+   - NO: record originalSlotAnswer="no" and ask briefly why (record declineReason). Call the get_next_slot tool - NEVER invent a date or time. Offer exactly that slot, repeat the address, and ask again. If they accept, record offeredSlotAnswer="yes". If they refuse this slot too, record offeredSlotAnswer="no", do NOT offer any more slots, say "Main aapke liye humari HR team se kisi ko call karwati hoon.", and end. If get_next_slot returns an error or no slot, do not invent one: say "Abhi koi aur slot available nahi dikh raha, main humari HR team se kisi ko aapko call karwati hoon.", record offeredSlotAnswer="no", and end.
 5. CLOSE. "Bahut bahut dhanyavad aapka time dene ke liye. Agar koi bhi sawaal ho, humein email ya WhatsApp par zaroor batayein. Have a great day!"
 
 RULES: Never state or promise salary, incentives or perks - if asked say "Salary interview mein discuss hoti hai, company ke norms ke hisaab se." If they ask for a person, say the HR team will call (contact: ${c.contactName}, ${c.contactPhone}). Before ending EVERY call, call report_result exactly once with everything you learned.`;
@@ -58,7 +58,7 @@ const pick = <T extends string>(v: unknown, allowed: readonly T[]): T | undefine
 
 /** Vapi end-of-call-report -> our record. `answered` is decided by the platform's own signals, not the transcript. */
 export interface VapiEndOfCall {
-  call?: { id?: string; startedAt?: string; metadata?: { matchId?: string; leadId?: string; attempt?: number } };
+  call?: { id?: string; startedAt?: string; metadata?: { matchId?: string; leadId?: string; jobId?: string; attempt?: number } };
   endedReason?: string;
   durationSeconds?: number;
   transcript?: string;
@@ -71,7 +71,7 @@ export interface VapiEndOfCall {
 const FAILED = /busy|invalid|disconnect|number-not|not-exist|unreachable|failed-to-connect|sip|provider-error|rejected|blocked|carrier/i;
 const UNANSWERED = /no-answer|voicemail|customer-did-not-answer|did-not-answer|timed-out|silence-timed-out|customer-busy/i;
 
-export function mapVapiEndOfCall(r: VapiEndOfCall, toolResult?: Record<string, unknown>): { providerCallId: string | null; result: VoiceResult; transcript: string | null; summary: string | null; recordingUrl: string | null; startedAt: string | null; leadId?: string; matchId?: string; attempt: number } {
+export function mapVapiEndOfCall(r: VapiEndOfCall, toolResult?: Record<string, unknown>): { providerCallId: string | null; result: VoiceResult; transcript: string | null; summary: string | null; recordingUrl: string | null; startedAt: string | null; leadId?: string; matchId?: string; jobId?: string; attempt: number } {
   const reason = r.endedReason ?? "";
   const data = { ...(r.analysis?.structuredData ?? {}), ...(toolResult ?? {}) };
   const duration = typeof r.durationSeconds === "number" ? Math.round(r.durationSeconds) : undefined;
@@ -96,7 +96,7 @@ export function mapVapiEndOfCall(r: VapiEndOfCall, toolResult?: Record<string, u
     transcript: r.transcript ?? r.artifact?.transcript ?? null, summary: r.summary ?? r.analysis?.summary ?? null,
     recordingUrl: r.recordingUrl ?? r.artifact?.recordingUrl ?? null,
     startedAt: r.call?.startedAt ? r.call.startedAt.slice(0, 19).replace("T", " ") : null,
-    leadId: r.call?.metadata?.leadId, matchId: r.call?.metadata?.matchId, attempt: Number(r.call?.metadata?.attempt) || 1,
+    leadId: r.call?.metadata?.leadId, matchId: r.call?.metadata?.matchId, jobId: r.call?.metadata?.jobId, attempt: Number(r.call?.metadata?.attempt) || 1,
   };
 }
 

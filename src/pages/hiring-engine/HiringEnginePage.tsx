@@ -1,5 +1,5 @@
 /**
- * Hiring Engine hub: tabs for the unified lead pool, drives, the live walk-in board and the template registry.
+ * Hiring Engine hub: tabs for the walk-in board, drives, the unified lead pool, manual bulk voice calls and the template registry.
  * The selected tab is kept in the URL hash so a branch HR can bookmark "#board".
  */
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -10,11 +10,13 @@ const LeadsTab = lazy(() => import("./LeadsTab"));
 const DrivesTab = lazy(() => import("./DrivesTab"));
 const BoardTab = lazy(() => import("./BoardTab"));
 const TemplatesTab = lazy(() => import("./TemplatesTab"));
+const BulkCallsTab = lazy(() => import("./BulkCallsTab"));
 
 const TABS = [
   { id: "board", label: "Walk-in board" },
   { id: "drives", label: "Drives" },
   { id: "leads", label: "Lead pool" },
+  { id: "calls", label: "Bulk calls" },
   { id: "templates", label: "Templates" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -44,6 +46,7 @@ export default function HiringEnginePage() {
           {tab === "board" && <BoardTab />}
           {tab === "drives" && <DrivesTab />}
           {tab === "leads" && <LeadsTab />}
+          {tab === "calls" && <BulkCallsTab />}
           {tab === "templates" && <TemplatesTab />}
         </Suspense>
       </div>

@@ -15,6 +15,10 @@
     "client_invoice_payment_log",
     "client_invoice_payment_status"
   ],
+  "modules/hiring-engine/he-bulk-call.service.ts": [
+    "he_call_batch",
+    "he_call_job"
+  ],
   "modules/hiring-engine/he-drive.service.ts": [
     "he_drive",
     "he_match"

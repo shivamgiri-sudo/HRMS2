@@ -13,6 +13,7 @@ import { recordDeliveryStatus, recordEmailEvent, recordInboundReply, recordVoice
 import type { EmailEvent } from "./he-signals.js";
 import { mapVapiEndOfCall, type VapiEndOfCall } from "./he-voice.js";
 import { loadToolResult, toolNextSlot, toolReportResult } from "./he-voice.service.js";
+import { completeBulkJob } from "./he-bulk-call.service.js";
 
 export const heWebhookRouter = Router();
 
@@ -95,7 +96,9 @@ heWebhookRouter.post("/voice-vapi", async (req, res) => {
       const leadId = msg.call?.metadata?.leadId;
       const results: Array<{ toolCallId: string; result: unknown }> = [];
       for (const t of msg.toolCallList ?? []) {
-        if (t.function?.name === "get_next_slot" && matchId) results.push({ toolCallId: t.id, result: await toolNextSlot(matchId) });
+        // Manual bulk-upload calls have no drive, so there is no slot calendar to offer from: tell the bot plainly so it hands off.
+        if (t.function?.name === "get_next_slot" && !matchId) results.push({ toolCallId: t.id, result: { error: "no alternative slot is available for this call" } });
+        else if (t.function?.name === "get_next_slot" && matchId) results.push({ toolCallId: t.id, result: await toolNextSlot(matchId) });
         else if (t.function?.name === "report_result" && leadId && msg.call?.id) {
           const args = typeof t.function.arguments === "string" ? JSON.parse(t.function.arguments) : (t.function.arguments as Record<string, unknown>) ?? {};
           await toolReportResult(leadId, msg.call.id, args);
@@ -115,6 +118,8 @@ heWebhookRouter.post("/voice-vapi", async (req, res) => {
       }
       if (!leadId) return res.status(200).json({ success: true, ignored: "lead not found" });
       const out = await recordVoiceResult({ leadId, providerCallId: merged.providerCallId, attemptNo: merged.attempt, startedAt: merged.startedAt, result: merged.result, transcript: merged.transcript, summary: merged.summary, recordingUrl: merged.recordingUrl });
+      // Manual bulk upload: close the row (or put it back for the one allowed retry).
+      if (merged.jobId && out && out.outcome !== "duplicate") await completeBulkJob(merged.jobId, out.outcome);
       return res.status(200).json({ success: true, ...out });
     }
     return res.status(200).json({ success: true });

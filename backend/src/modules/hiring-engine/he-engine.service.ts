@@ -7,6 +7,7 @@
  *   4 arrival sync       - candidates who registered at the branch on the drive day are marked arrived
  *   5 no-shows           - slot passed with no arrival -> no_show + one recovery message
  *   6 voice calls        - invited, 30+ min since the WhatsApp invite, no reply -> BRD confirmation call (1 retry after 2h)
+ *   7 bulk calls         - jobs of ACTIVE manual bulk-upload batches (same rules: 09-20 IST, 1 retry after 2h)
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -16,6 +17,7 @@ import { recomputeInsight } from "./he-insight.service.js";
 import { reserveSlot, suggestMatches } from "./he-drive.service.js";
 import { sendTemplateToLead, sendsPaused, type SendResult } from "./he-send.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
+import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
 
 export interface TickSummary {
   dryRun: boolean;
@@ -27,6 +29,7 @@ export interface TickSummary {
   noShows: number;
   recovery: Counts;
   calls: Counts;
+  bulkCalls: RunSummary | null;
 }
 interface Counts { sent: number; blocked: Record<string, number>; failed: number; dryRun: number }
 const counts = (): Counts => ({ sent: 0, blocked: {}, failed: 0, dryRun: 0 });
@@ -158,7 +161,7 @@ async function noShows(dryRun: boolean, c: Counts): Promise<number> {
 
 export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number } = {}): Promise<TickSummary> {
   const dryRun = o.dryRun !== false; // safe default: only an explicit false sends
-  const s: TickSummary = { dryRun, paused: sendsPaused(), replacementSlots: counts(), invites: counts(), reminders: counts(), arrivals: 0, noShows: 0, recovery: counts(), calls: counts() };
+  const s: TickSummary = { dryRun, paused: sendsPaused(), replacementSlots: counts(), invites: counts(), reminders: counts(), arrivals: 0, noShows: 0, recovery: counts(), calls: counts(), bulkCalls: null };
   const guard = async (name: string, fn: () => Promise<void>) => { try { await fn(); } catch (err) { logger.error({ err: (err as Error).message, step: name }, "[he-engine] step failed"); } };
   // Arrival + no-show bookkeeping is state hygiene, not outreach, so it runs even while sends are paused.
   await guard("arrival", async () => { s.arrivals = await arrivalSync(dryRun); });
@@ -168,6 +171,7 @@ export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number }
     await guard("invites", () => driveInvites(dryRun, s.invites, o.maxInvites ?? 100));
     await guard("reminders", () => reminders(dryRun, s.reminders));
     await guard("voice", () => voiceCalls(dryRun, s.calls, 20));
+    await guard("bulk-calls", async () => { s.bulkCalls = await runBulkCallJobs({ dryRun, max: 20 }); });
   }
   return s;
 }
