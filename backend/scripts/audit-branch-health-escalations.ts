@@ -71,5 +71,25 @@ for (const { b, report } of reports) {
   console.log(`   check increments pending ${ic.n} (report ${pr?.pendingIncrements ?? "n/a"})`);
   if (pr?.pendingIncrements != null && Number(ic.n) !== pr.pendingIncrements) mismatches++;
 }
+// Breakdown of the open ("stuck") GRNs the report counts, to show exactly what is in the number.
+console.log("\n== Stuck GRN breakdown (same filter the report uses: bill_source_id IS NULL, created_by not migration sentinel)");
+for (const { b, report } of reports) {
+  const id = String(b.id);
+  const rows = (await db.execute<RowDataPacket[]>(
+    `SELECT status,
+            (legacy_raised_by_name IS NOT NULL AND legacy_raised_by_name <> '') AS has_legacy_name,
+            (grn_type) AS grn_type,
+            DATE_FORMAT(created_at,'%Y-%m') AS created_month,
+            COUNT(*) AS n, MIN(DATEDIFF(CURDATE(), DATE(created_at))) AS newest_days, MAX(DATEDIFF(CURDATE(), DATE(created_at))) AS oldest_days
+       FROM grn_request
+      WHERE branch_id = ? AND bill_source_id IS NULL AND COALESCE(created_by,'') NOT LIKE '00000000-%'
+        AND status IN ('submitted','branch_head_approved','accounts_head_approved','returned_to_branch_head','returned_to_raiser')
+      GROUP BY 1,2,3,4 ORDER BY 4,1`, [id]))[0] as any[];
+  const total = rows.reduce((a, r) => a + Number(r.n), 0);
+  console.log(`-- ${report.branch}: ${total} (report says ${report.raw.grnStats.pending})`);
+  for (const r of rows) console.log(`   ${r.created_month} ${r.status} type=${r.grn_type} legacyName=${r.has_legacy_name} n=${r.n} age ${r.newest_days}-${r.oldest_days}d`);
+  const sent = (await db.execute<RowDataPacket[]>(`SELECT COUNT(*) n FROM grn_request WHERE branch_id = ? AND status IN ('submitted','branch_head_approved','accounts_head_approved','returned_to_branch_head','returned_to_raiser') AND (bill_source_id IS NOT NULL OR COALESCE(created_by,'') LIKE '00000000-%')`, [id]))[0][0] as any;
+  console.log(`   (excluded as migrated, same statuses: ${sent.n})`);
+}
 console.log(`\nMISMATCHES: ${mismatches}`);
 process.exit(mismatches ? 2 : 0);
