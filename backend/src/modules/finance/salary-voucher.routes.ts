@@ -100,7 +100,7 @@ async function claimVouchers(req: AuthenticatedRequest, runId: string, companyCo
   return { period: first.period, vouchers, reexported: 0, skipped: locked.length, claimedKeys: claimed };
 }
 
-const lockStatus = (error: unknown) => (error instanceof TallyLockError ? (error.code === "ALL_LOCKED" ? 409 : 409) : 400);
+const lockStatus = (error: unknown) => (error instanceof TallyLockError ? 409 : (error as { statusCode?: number })?.statusCode ?? 400);
 
 /**
  * Run picker for the Salary Voucher page. /api/payroll/runs is gated to the payroll read roles
@@ -299,10 +299,11 @@ salaryVoucherRouter.post(
       const result = await salaryVoucherTallyPush.push(req.params.runId, claim.vouchers, String(req.authUser?.id ?? ""), { ignorePosted: req.body?.reexport === true });
       const keyOf = new Map(claim.vouchers.map((v) => [v.voucher_no, voucherKey(v)]));
       const posted = result.results.filter((r) => r.outcome === "posted").map((r) => keyOf.get(r.voucher_no)!).filter(Boolean);
-      const notPosted = result.results.filter((r) => r.outcome !== "posted").map((r) => keyOf.get(r.voucher_no)!).filter(Boolean);
       await tallyExportLock.markPosted("salary_voucher", req.params.runId, posted);
-      // Vouchers Tally did not take are unlocked again so they can be sent once the cause is fixed.
-      await tallyExportLock.release("salary_voucher", req.params.runId, notPosted.filter((k) => claim.claimedKeys.includes(k)), String(req.authUser?.id ?? ""), String(req.authUser?.role ?? ""), "Not accepted by Tally; unlocked for retry").catch(() => undefined);
+      // Everything this call locked that Tally did not take — rejected, skipped, or never reached
+      // because the gateway went away — is unlocked again so it can be sent once the cause is fixed.
+      const notPosted = claim.claimedKeys.filter((k) => !posted.includes(k));
+      await tallyExportLock.release("salary_voucher", req.params.runId, notPosted, String(req.authUser?.id ?? ""), String(req.authUser?.role ?? ""), "Not accepted by Tally; unlocked for retry").catch(() => undefined);
       await logSensitiveAction({
         actor_user_id: String(req.authUser?.id ?? ""),
         actor_role: String(req.authUser?.role ?? ""),

@@ -65,9 +65,9 @@ export const tallyExportLock = {
    * caller to send back. Not a lock check — only "may this person override, and did they say why".
    */
   assertReexport(reason: unknown, roles: string[] | undefined, primaryRole?: string): string {
-    if (!canReexport(roles, primaryRole)) throw new Error("Only a finance head or super admin can re-export vouchers that are already locked.");
+    if (!canReexport(roles, primaryRole)) throw Object.assign(new Error("Only a finance head or super admin can re-export vouchers that are already locked."), { statusCode: 403 });
     const text = String(reason ?? "").trim();
-    if (text.length < MIN_REASON) throw new Error(`Give a reason of at least ${MIN_REASON} characters for exporting already-exported vouchers again.`);
+    if (text.length < MIN_REASON) throw Object.assign(new Error(`Give a reason of at least ${MIN_REASON} characters for exporting already-exported vouchers again.`), { statusCode: 400 });
     return text;
   },
 
