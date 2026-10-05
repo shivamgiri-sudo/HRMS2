@@ -5367,7 +5367,7 @@ export default function ProcessOperationsPage() {
                 {hasSalesDashboard && (
                   <button type="button" onClick={() => setView("sales")}
                     style={{ cursor: "pointer", borderRadius: 8, padding: "6px 11px", fontSize: 11, fontWeight: 900, border: 0, transition: "background .15s,color .15s", background: view === "sales" ? "#e89b19" : "transparent", color: view === "sales" ? "#fff" : "#d0e8f5", boxShadow: view === "sales" ? "0 3px 8px rgba(0,0,0,.20)" : "none" }}>
-                    Sales Dashboard
+                    {PROCESS_SALES_MAP[currentProcess?.processCode ?? ""]?.type === "sbi_card" ? "Collections Dashboard" : "Sales Dashboard"}
                   </button>
                 )}
                 <button type="button" onClick={() => setView("live")}
