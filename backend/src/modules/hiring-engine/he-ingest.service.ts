@@ -4,6 +4,7 @@
  * Meta inbox pages stay correct, then the lead insight is recomputed.
  */
 import { refreshLeadHistoryById } from "./he-master.service.js";
+import { answerCandidateQuestion } from "./he-bot.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -94,6 +95,10 @@ export async function recordInboundReply(p: { mobile: string; text: string; prov
   await applyPlan(lead.id, lead.status, plan, { matchId: match?.id ?? null, channel, detail: p.text, metaLeadId: lead.meta_lead_id, replyText: p.text });
   await recomputeInsight(lead.id);
   await refreshLeadHistoryById(lead.id);
+  // Questions ("office kahan hai?", "kya laana hai?") get an instant answer from the invitation; the rest go to a human.
+  if (intent === "unknown" && channel === "whatsapp") {
+    try { await answerCandidateQuestion(lead.id, p.text); } catch (err) { logger.warn({ err: (err as Error).message }, "[he-ingest] bot answer failed"); }
+  }
   return { leadId: lead.id, intent };
 }
 
