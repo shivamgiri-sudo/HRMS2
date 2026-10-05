@@ -82,6 +82,7 @@ on:
           - vendor-ledger-gap-audit
           - heal-zero-day-lines
           - recruiter-list-diagnose
+          - budget-driver-diagnose
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
           - create-missing-esa-for-run-lines
@@ -376,6 +377,10 @@ jobs:
               # Dry-runs unless given --apply. Apply removes not-yet-joined zero-net lines and recalculates the rest, scoped.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/heal-zero-day-lines.ts $FLAG
+              ;;
+            budget-driver-diagnose)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/budget-driver-diagnose.ts
               ;;
             recruiter-list-diagnose)
               # Read-only in both modes: SELECTs only.
