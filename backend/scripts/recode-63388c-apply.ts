@@ -102,7 +102,7 @@ async function main() {
   // from the transformed record, keeping only columns that exist in employees, and say which were skipped.
   const rec = employeeSyncHandler.transform(bill as never) as unknown as Record<string, unknown>;
   const cols = new Set((await q(`SELECT COLUMN_NAME c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employees'`)).map((r) => String(r.c)));
-  const keys = Object.keys(rec).filter((k) => cols.has(k) && rec[k] !== undefined);
+  const keys = Object.keys(rec).filter((k) => cols.has(k) && rec[k] !== undefined && !["id", "created_at", "updated_at"].includes(k));
   console.log("STEP 2 skipped (no such column):", Object.keys(rec).filter((k) => !cols.has(k)).join(", ") || "none");
   const extra = ["created_at", "updated_at"].filter((c) => cols.has(c));
   await db.execute(
