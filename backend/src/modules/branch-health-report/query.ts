@@ -82,11 +82,15 @@ export async function fetchBudgetSummary(
   };
 }
 
-/** State of this month's budget header, for the "budget not created / not approved yet" escalation. */
+/**
+ * State of this month's budget header. 'active' is the only status a GRN can draw against (branch-budget
+ * headroom gate) and the end of the approval chain: draft -> submitted -> branch_head_approved -> active.
+ * 'closed' is a superseded budget, so it never counts as the current one.
+ */
 export interface BudgetHeaderState {
-  /** No non-cancelled header exists for the month. */
+  /** No header at all exists for the month. */
   missing: boolean;
-  /** Status of the best header (draft, submitted, ..., finance_head_approved); null when missing. */
+  /** Most advanced status among the month's headers (active beats everything); null when missing. */
   status: string | null;
 }
 
@@ -97,7 +101,10 @@ export async function fetchBudgetHeaderState(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT status FROM finance_budget_header
       WHERE branch_id = ? AND period_code = ?
-      ORDER BY FIELD(status,'finance_head_approved','branch_head_approved','submitted','revision_required','draft') DESC,
+      ORDER BY CASE status
+                 WHEN 'active' THEN 0 WHEN 'finance_head_approved' THEN 1 WHEN 'accounts_head_approved' THEN 1
+                 WHEN 'branch_head_approved' THEN 2 WHEN 'submitted' THEN 3 WHEN 'revision_required' THEN 4
+                 WHEN 'draft' THEN 5 WHEN 'rejected' THEN 6 WHEN 'closed' THEN 7 ELSE 8 END,
                created_at DESC
       LIMIT 1`,
     [branchId, today.slice(0, 7)],

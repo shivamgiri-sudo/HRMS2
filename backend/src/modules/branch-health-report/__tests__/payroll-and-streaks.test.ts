@@ -9,7 +9,7 @@ import { cycleMonthOf } from "../payroll-readiness.js";
 const calm = (payroll: Record<string, unknown>): any => ({
   branchId: "b1",
   budget: { totalBudget: 100, consumed: 10, reserved: 0 },
-  budgetHeader: { missing: false, status: "finance_head_approved" },
+  budgetHeader: { missing: false, status: "active" },
   grnStats: { pending: 0, oldestPendingDays: 0, unbudgeted: { count: 0, amountExGst: 0 } },
   shrinkage: { shrinkagePct: 2 },
   prevShrinkage: { shrinkagePct: 2 },

@@ -6,6 +6,7 @@
  */
 import type { BranchHealthReport } from "./metrics.js";
 import { CHRONIC_DAYS } from "./history.js";
+import type { PeerSummary } from "./rollup.js";
 
 const C = {
   primary: "#1e3a5f",
@@ -201,7 +202,7 @@ function dataTable(
 
 export function renderEmail(
   report: BranchHealthReport,
-  opts: { generatedAt: string; dashboardUrl?: string },
+  opts: { generatedAt: string; dashboardUrl?: string; peers?: PeerSummary },
 ): string {
   const {
     branch,
@@ -1237,13 +1238,16 @@ export function renderEmail(
     ? `<table width="100%" cellpadding="0" cellspacing="0" style="border:2px solid ${C.danger};background:#fef2f2;margin-bottom:14px;">
     <tr><td style="padding:10px 14px;background:${C.danger};${FONT}font-size:14px;font-weight:700;color:#ffffff;letter-spacing:0.5px;">🚨 ${sorted.length} ESCALATION${sorted.length > 1 ? "S" : ""} — OVERDUE OR NOT IMPROVING. ACT TODAY.</td></tr>
     ${chronic.length ? `<tr><td style="padding:6px 14px;background:#7f1d1d;${FONT}font-size:11px;font-weight:700;color:#ffffff;">${chronic.length} item${chronic.length > 1 ? "s have" : " has"} been red ${CHRONIC_DAYS}+ days — this email is also copied to the HR Head and Operations Head.</td></tr>` : ""}
+    ${opts.peers && opts.peers.total > 1 ? `<tr><td style="padding:6px 14px;background:#fee2e2;${FONT}font-size:11px;color:#7f1d1d;"><strong>Standing:</strong> ${opts.peers.rank === 1 ? "worst" : `#${opts.peers.rank} worst`} of ${opts.peers.total} branches by escalations (${opts.peers.escalations} here; branch median ${opts.peers.median}; ${opts.peers.branchesWithNone} branch${opts.peers.branchesWithNone === 1 ? " has" : "es have"} none).</td></tr>` : ""}
     ${sorted
       .map(
         (e, i) => `<tr><td style="padding:8px 14px;border-top:1px solid #fecaca;${FONT}">
       <span style="font-size:13px;font-weight:700;color:${C.danger};">${i + 1}. ${esc(e.label)}</span>
       ${streakTag(e)}
       <span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:${C.danger};color:#fff;font-size:10px;font-weight:700;">${esc(e.owner)}</span><br>
-      <span style="font-size:12px;color:#991b1b;">${esc(e.detail)}</span></td></tr>`,
+      <span style="font-size:12px;color:#991b1b;">${esc(e.detail)}</span>
+      ${opts.peers && opts.peers.total > 1 && e.key in opts.peers.sameKeyElsewhere ? `<br><span style="font-size:11px;color:#7f1d1d;">${opts.peers.sameKeyElsewhere[e.key] === 0 ? "Red only in this branch." : `Also red in ${opts.peers.sameKeyElsewhere[e.key]} of ${opts.peers.total - 1} other branches.`}</span>` : ""}
+      ${e.source ? `<br><span style="font-size:10px;color:${C.muted};">Source: ${esc(e.source)}</span>` : ""}</td></tr>`,
       )
       .join("")}
   </table>`

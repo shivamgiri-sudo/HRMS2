@@ -36,6 +36,8 @@ export interface Escalation {
   since?: string;
   label: string;
   detail: string;
+  /** Where the number comes from, so anyone can re-check it. */
+  source?: string;
   /** Who should act, shown as a tag. */
   owner: string;
 }
@@ -45,6 +47,30 @@ export interface Escalation {
 const DELIVERY_SOON_DAYS = 7;
 const OFFER_JOIN_WARN_PCT = 70;
 const ATTRITION_WARN_PCT = 5;
+
+/** Where each escalation's figure is read from, shown under it in the email. */
+const ESCALATION_SOURCES: Record<string, string> = {
+  budget_missing: "Branch budget workspace: no header for this branch and month (finance_budget_header)",
+  budget_not_submitted: "Branch budget workspace: best header for the month is draft / revision required / rejected / closed",
+  budget_unapproved: "Branch budget workspace: header is submitted or branch-head approved, not yet active",
+  spend_pace: "Section 1: (consumed + reserved) ÷ approved budget, against days elapsed in the month",
+  shrinkage_high: "Section 5: absent ÷ scheduled today and yesterday (roster-based)",
+  grn_stuck: "Section 2: GRNs awaiting approval, oldest by raised date",
+  grn_month_end: "Section 2: GRNs awaiting approval on the last 3 days of the month",
+  approvals_aged: "Section 7 backlog: pending leave by applied date, regularization by created date",
+  reg_escalated: "Section 7: attendance_regularization status = escalated",
+  hiring_past_delivery: "Job Requisitions: approved, still short of headcount, target joining date before today or not set",
+  offer_join_low: "Section 7: approved offers with joining date in the last 30 days vs candidates now in HRMS",
+  exits_open: "Section 6 'Exits past LWD, still active': last working day before today, employee still active",
+  absent_streak: "Section 10 'Absent 3+ days' (attrition analytics, same as the AON & Attrition page)",
+  loss_making: "Section 9: running revenue vs salary + GRN cost, month to date",
+  heads_over: "Section 1: budget heads where consumed + reserved is above the head's budget",
+  unbudgeted_spend: "Section 2: GRNs raised without a budget line, ex-GST",
+  payroll_attendance_open: "Payroll Readiness page: cut-off from Payroll Calendar; pending regularization (pending/escalated, days in the month) and pending leave overlapping the month",
+  payroll_incentive_missing: "Payroll Readiness page: incentive batches for this branch and month; deadline from Payroll Calendar",
+  payroll_incentive_unapproved: "Payroll Readiness page: incentive batch status = pending approval; deadline from Payroll Calendar",
+  payroll_increments_pending: "Salary Change Center → Increment requests: submitted / HR-validated; run date from Payroll Calendar",
+};
 
 /** Deadlines after which a still-open item is an escalation. */
 const E = {
@@ -94,21 +120,24 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
   const out: Escalation[] = [];
   const { name: month, day, daysInMonth } = monthDay(reportDate);
   const monthPct = (day / daysInMonth) * 100;
-  const add = (key: string, label: string, detail: string, owner: string) => out.push({ key, label, detail, owner });
+  const add = (key: string, label: string, detail: string, owner: string) =>
+    out.push({ key, label, detail, owner, source: ESCALATION_SOURCES[key] });
 
-  // Budget lifecycle: created by day 2, approved by day 5.
+  // Budget lifecycle. Only an 'active' header lets GRNs draw on the budget; the chain is
+  // draft -> submitted -> branch_head_approved -> active. Created by day 2, active by day 5.
   if (raw.branchId) {
+    const st = raw.budgetHeader.status;
+    const stage = st?.replace(/_/g, " ");
     if (raw.budgetHeader.missing && day >= E.budgetCreateByDay) {
       add("budget_missing", `${month} budget NOT CREATED — day ${day} of the month`,
-        `It should exist by day ${E.budgetCreateByDay}. Without it every GRN this month is unbudgeted and nothing can be tracked against a limit`, "Branch Head");
-    } else if (raw.budgetHeader.status === "draft" && day >= E.budgetCreateByDay) {
-      add("budget_draft", `${month} budget still in DRAFT — day ${day}`, "Created but never submitted for approval", "Branch Head");
-    } else if (
-      raw.budgetHeader.status && raw.budgetHeader.status !== "finance_head_approved" &&
-      raw.budgetHeader.status !== "draft" && day >= E.budgetApproveByDay
-    ) {
-      add("budget_unapproved", `${month} budget NOT APPROVED — day ${day}, status: ${raw.budgetHeader.status.replace(/_/g, " ")}`,
-        `Should be fully approved by day ${E.budgetApproveByDay}`, "Finance Head");
+        `No budget exists for this branch and month. It should have been created by day ${E.budgetCreateByDay}; GRNs can only draw on an active budget`, "Branch Head");
+    } else if (st && st !== "active" && ["draft", "revision_required", "rejected", "closed"].includes(st) && day >= E.budgetCreateByDay) {
+      add("budget_not_submitted", `${month} budget has no active version — latest is ${stage}, day ${day}`,
+        st === "closed" ? "The earlier budget was closed and no replacement is active" : "It has not been submitted for approval; GRNs can only draw on an active budget", "Branch Head");
+    } else if (st && ["submitted", "branch_head_approved", "finance_head_approved", "accounts_head_approved"].includes(st) && day >= E.budgetApproveByDay) {
+      const wait = st === "submitted" ? "Branch Head" : "Finance Head";
+      add("budget_unapproved", `${month} budget NOT ACTIVE — day ${day}, waiting for ${wait} (${stage})`,
+        `It should be active by day ${E.budgetApproveByDay}; GRNs can only draw on an active budget`, wait);
     }
   }
 
@@ -126,40 +155,40 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
   const prev = raw.prevShrinkage;
   if (prev && sh.shrinkagePct >= T.shrinkage.warnPct && prev.shrinkagePct >= T.shrinkage.warnPct) {
     add("shrinkage_high", `Shrinkage above ${T.shrinkage.warnPct}% for 2 days running (${prev.shrinkagePct}% yesterday, ${sh.shrinkagePct}% today)`,
-      "This is not a one-day blip — the cause has not been fixed", "Ops Manager");
+      "Not a one-day blip: shrinkage was above the threshold yesterday as well", "Ops Manager");
   }
 
   // Aged approvals.
   const g = raw.grnStats;
   if (g.pending > 0 && g.oldestPendingDays >= E.grnStaleDays) {
     add("grn_stuck", `${g.pending} GRN${g.pending > 1 ? "s" : ""} stuck in approval — oldest ${g.oldestPendingDays} days`,
-      "Vendors are waiting and the spend is not charged to any budget until approved", "Approvers");
+      "Not reserved against the budget until approved", "Approvers");
   }
   if (day >= daysInMonth - 2 && g.pending > 0) {
-    add("grn_month_end", `Month closes in ${daysInMonth - day} day${daysInMonth - day === 1 ? "" : "s"} with ${g.pending} GRN${g.pending > 1 ? "s" : ""} unapproved`,
-      "Unapproved GRNs fall out of this month's P&L and budget", "Approvers");
+    add("grn_month_end", `${daysInMonth - day === 0 ? "Last day of the month" : `Month ends in ${daysInMonth - day} day${daysInMonth - day === 1 ? "" : "s"}`} with ${g.pending} GRN${g.pending > 1 ? "s" : ""} unapproved`,
+      "GRNs still awaiting approval when the month ends", "Approvers");
   }
   if (raw.leaveAging.oldestDays >= E.approvalStaleDays || raw.regularization.oldestDays >= E.approvalStaleDays) {
     add("approvals_aged", `Leave / regularization requests waiting ${Math.max(raw.leaveAging.oldestDays, raw.regularization.oldestDays)}+ days`,
-      `${raw.leaveAging.over7Days} leave and ${raw.regularization.over7Days} regularization requests are over 7 days old; payroll will be wrong if they stay open`, "Managers");
+      `${raw.leaveAging.over7Days} leave and ${raw.regularization.over7Days} regularization requests are over 7 days old`, "Managers");
   }
   if (raw.regularization.escalated > 0) {
-    add("reg_escalated", `${raw.regularization.escalated} regularization request${raw.regularization.escalated > 1 ? "s" : ""} already escalated and still open`, "Manager did not act before escalation", "Managers");
+    add("reg_escalated", `${raw.regularization.escalated} regularization request${raw.regularization.escalated > 1 ? "s" : ""} already escalated and still open`, "Escalated and still undecided", "Managers");
   }
 
   // Hiring delivery already missed.
   if (raw.openHiring.pastDeliveryRequisitions > 0 && raw.openHiring.pastDeliveryOpenPositions > 0) {
     add("hiring_past_delivery", `${raw.openHiring.pastDeliveryRequisitions} batch${raw.openHiring.pastDeliveryRequisitions > 1 ? "es" : ""} PAST delivery date, ${raw.openHiring.pastDeliveryOpenPositions} positions still unfilled`,
-      "Client delivery date has gone; seats are empty", "Recruitment");
+      "Target joining date has passed (or was never set) and positions are still open", "Recruitment");
   }
   if (raw.offers.conversionPct != null && raw.offers.offered >= 5 && raw.offers.conversionPct < E.offerJoinCriticalPct) {
     add("offer_join_low", `Offer-to-join only ${raw.offers.conversionPct}% (${raw.offers.joined}/${raw.offers.offered}) in 30 days`,
-      "More than half of the offers are being wasted", "Recruitment");
+      "Fewer than half of the candidates due to join in the last 30 days actually joined", "Recruitment");
   }
 
   // Exits / absconding left open.
   if (raw.headcount.exitsNotClosed >= E.exitsOpen) {
-    add("exits_open", `${raw.headcount.exitsNotClosed} exits not closed in the system`, "Clearance / F&F cannot start until the exit is closed", "HR");
+    add("exits_open", `${raw.headcount.exitsNotClosed} exits not closed in the system`, "Last working day has passed but the employee is still active in HRMS", "HR");
   }
   const at = raw.attrition;
   if (at && at.absentStreak >= 5) {
@@ -192,20 +221,20 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
     const cutoff = cal.attendanceCutoff;
     if (passed(cutoff) && ((pr.pendingRegularization ?? 0) > 0 || (pr.pendingLeave ?? 0) > 0)) {
       add("payroll_attendance_open", `${cycleName} attendance NOT CLOSED — cut-off was ${cutoff} (${daysLate(cutoff!)} day${daysLate(cutoff!) === 1 ? "" : "s"} ago)`,
-        `${pr.pendingRegularization ?? 0} regularization and ${pr.pendingLeave ?? 0} leave request${(pr.pendingLeave ?? 0) === 1 ? "" : "s"} for ${cycleName} still undecided; payroll will be paid on incomplete attendance`, "Managers / Branch HR");
+        `${pr.pendingRegularization ?? 0} regularization and ${pr.pendingLeave ?? 0} leave request${(pr.pendingLeave ?? 0) === 1 ? "" : "s"} for ${cycleName} still undecided; they are not reflected in attendance until decided`, "Managers / Branch HR");
     }
     const incDeadline = cal.incentiveDeadline;
     if (passed(incDeadline) && pr.incentivesExpected && pr.incentiveState === "none") {
       add("payroll_incentive_missing", `${cycleName} incentives NOT UPLOADED — deadline was ${incDeadline}`,
-        "This branch uploaded incentives in earlier months; staff will be paid without them unless uploaded and approved", "Branch Head / MIS");
+        "This branch had incentive batches in the two months before; no batch exists yet for this month, and incentives are not paid until a batch is uploaded and approved", "Branch Head / MIS");
     } else if (passed(incDeadline) && pr.incentiveState === "pending_approval") {
       add("payroll_incentive_unapproved", `${cycleName} incentives uploaded but NOT APPROVED — deadline was ${incDeadline}`,
-        "Uploaded batch is waiting for approval; unapproved incentives are not paid", "Finance / Payroll Head");
+        "The batch is uploaded but not approved; incentives are not paid until it is", "Finance / Payroll Head");
     }
     const runDate = cal.payrollRunDate;
     if ((pr.pendingIncrements ?? 0) > 0 && runDate && reportDate >= shiftDays(runDate, -3)) {
       add("payroll_increments_pending", `${pr.pendingIncrements} salary increment${(pr.pendingIncrements ?? 0) > 1 ? "s" : ""} not approved — payroll runs ${runDate}`,
-        `Oldest request is ${pr.oldestIncrementDays ?? 0} days old; an increment approved after the run misses ${cycleName} pay`, "Payroll Head");
+        `Oldest request is ${pr.oldestIncrementDays ?? 0} days old; approve before the payroll run date`, "Payroll Head");
     }
   }
   return out;

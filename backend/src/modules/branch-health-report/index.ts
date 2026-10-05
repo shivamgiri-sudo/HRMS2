@@ -11,6 +11,7 @@ import { fetchAllBranchHealthData } from "./query.js";
 import { buildBranchHealthReport, type BranchHealthReport } from "./metrics.js";
 import { renderEmail, subjectLine } from "./template.js";
 import { resolveRecipients, resolveEscalationRecipients } from "./recipients.js";
+import { summarisePeers } from "./rollup.js";
 import { attachStreaks, recordSnapshot, CHRONIC_DAYS } from "./history.js";
 import { ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
 
@@ -46,20 +47,23 @@ export async function buildBranchHealthReports(
 
   // One branch at a time: each branch already fans out ~20 queries, and the pool is shared with
   // every worker, so building all branches at once overflows its connection queue.
-  const built: BranchHealthBuilt[] = [];
+  const reports: BranchHealthReport[] = [];
   for (const branch of branches) {
     const raw = await fetchAllBranchHealthData(branch, reportDate);
     const report = buildBranchHealthReport(branch, reportDate, raw);
     await attachStreaks(report);
-    const html = renderEmail(report, { generatedAt, dashboardUrl });
-    built.push({
-      branch,
-      reportDate,
-      subject: subjectLine(report),
-      html,
-      report,
-    });
+    reports.push(report);
   }
+
+  // Render only after every branch is known, so each email can say where it stands.
+  const peers = summarisePeers(reports);
+  const built: BranchHealthBuilt[] = reports.map((report) => ({
+    branch: report.branch,
+    reportDate,
+    subject: subjectLine(report),
+    html: renderEmail(report, { generatedAt, dashboardUrl, peers: peers.get(report.branch) }),
+    report,
+  }));
 
   return built;
 }

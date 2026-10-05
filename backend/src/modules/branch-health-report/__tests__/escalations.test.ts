@@ -9,7 +9,7 @@ import { buildBranchHealthReport } from "../metrics.js";
 const calm = (over: Record<string, unknown> = {}): any => ({
   branchId: "b1",
   budget: { periodCode: "2026-10", totalBudget: 100, consumed: 10, reserved: 0, available: 90, utilizationPct: 10 },
-  budgetHeader: { missing: false, status: "finance_head_approved" },
+  budgetHeader: { missing: false, status: "active" },
   grnStats: { pending: 0, oldestPendingDays: 0, pendingOver3Days: 0, unbudgeted: { count: 0, amountExGst: 0, rows: [] } },
   shrinkage: { shrinkagePct: 2, scheduled: 10, present: 9, absent: 0 },
   prevShrinkage: { shrinkagePct: 2 },
@@ -36,7 +36,23 @@ describe("buildEscalations", () => {
   it("flags an unapproved budget after day 5", () => {
     const raw = calm({ budgetHeader: { missing: false, status: "submitted" } });
     expect(buildEscalations(raw, "2026-10-04")).toEqual([]);
-    expect(buildEscalations(raw, "2026-10-06")[0].label).toMatch(/NOT APPROVED/);
+    expect(buildEscalations(raw, "2026-10-06")[0].label).toMatch(/NOT ACTIVE.*Branch Head/);
+  });
+  it("never flags an ACTIVE budget, however late in the month", () => {
+    const raw = calm({ budgetHeader: { missing: false, status: "active" } });
+    expect(buildEscalations(raw, "2026-10-28")).toEqual([]);
+  });
+  it("branch-head-approved budget waits on the Finance Head", () => {
+    const raw = calm({ budgetHeader: { missing: false, status: "branch_head_approved" } });
+    expect(buildEscalations(raw, "2026-10-06")[0].owner).toBe("Finance Head");
+  });
+  it("a draft or closed-only budget is flagged from day 2", () => {
+    expect(buildEscalations(calm({ budgetHeader: { missing: false, status: "draft" } }), "2026-10-02")[0].key).toBe("budget_not_submitted");
+    expect(buildEscalations(calm({ budgetHeader: { missing: false, status: "closed" } }), "2026-10-02")[0].key).toBe("budget_not_submitted");
+  });
+  it("every escalation carries a source line", () => {
+    const raw = calm({ budgetHeader: { missing: true, status: null } });
+    expect(buildEscalations(raw, "2026-10-05").every((e) => !!e.source)).toBe(true);
   });
   it("flags shrinkage that stays high two days running", () => {
     const raw = calm({ shrinkage: { shrinkagePct: 14 }, prevShrinkage: { shrinkagePct: 12 } });
