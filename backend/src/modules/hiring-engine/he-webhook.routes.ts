@@ -39,15 +39,16 @@ heWebhookRouter.get("/whatsapp", (req, res) => {
 heWebhookRouter.post("/whatsapp", async (req, res) => {
   if (!authorised(req, res)) return;
   const { inbound, statuses } = parseWhatsAppWebhook(req.body);
-  // Ack fast; provider retries on non-2xx, and every handler below is idempotent.
-  res.status(200).json({ success: true, inbound: inbound.length, statuses: statuses.length });
-  for (const s of statuses) {
-    try { await recordDeliveryStatus(s.id, s.status, s.error); }
-    catch (err) { logger.error({ err: (err as Error).message, id: s.id }, "[he-hook] status failed"); }
-  }
-  for (const m of inbound) {
-    try { await recordInboundReply({ mobile: m.from, text: m.text, providerMessageId: m.id }); }
-    catch (err) { logger.error({ err: (err as Error).message, id: m.id }, "[he-hook] inbound failed"); }
+  // Process BEFORE acknowledging: if the process dies after a 200 the provider never retries and the candidate's reply
+  // is lost. Every handler is idempotent (UNIQUE provider_message_id), so on any failure we answer 500 and the provider
+  // safely redelivers the whole batch.
+  try {
+    for (const s of statuses) await recordDeliveryStatus(s.id, s.status, s.error);
+    for (const m of inbound) await recordInboundReply({ mobile: m.from, text: m.text, providerMessageId: m.id });
+    return res.status(200).json({ success: true, inbound: inbound.length, statuses: statuses.length });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he-hook] whatsapp batch failed - asking the provider to retry");
+    return res.status(500).json({ success: false });
   }
 });
 

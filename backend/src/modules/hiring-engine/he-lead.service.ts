@@ -119,6 +119,20 @@ export async function revokeConsent(leadId: string, type: "whatsapp_contact" | "
   await db.execute("UPDATE he_consent SET revoked_at = NOW() WHERE lead_id = ? AND consent_type = ? AND revoked_at IS NULL", [leadId, type]);
 }
 
+/**
+ * SQL twin of lead-screener's eduRank() ladder (1 <10th ... 6 postgraduate), so backfilled leads carry the same
+ * rank the screener would compute. Specific patterns first ("post graduate" contains "graduate"). NULL when unknown:
+ * an unknown value never disqualifies a lead in the matcher.
+ */
+export const eduRankSql = (col: string) => `(CASE
+  WHEN LOWER(${col}) REGEXP 'post.?graduate|master|mba|m[.]com|m[.]sc|m[.]a|m[.]tech' THEN 6
+  WHEN LOWER(${col}) REGEXP 'graduate|bachelor|b[.]com|b[.]sc|b[.]tech|b[.]a|^be$' THEN 5
+  WHEN LOWER(${col}) REGEXP 'diploma|iti' THEN 4
+  WHEN LOWER(${col}) REGEXP '12th|hsc|higher secondary|intermediate' THEN 3
+  WHEN LOWER(${col}) REGEXP 'below 10th|under 10th|^8th' THEN 1
+  WHEN LOWER(${col}) REGEXP '10th|sslc|matric' THEN 2
+  ELSE NULL END)`;
+
 const M10 = (col: string) => `RIGHT(REGEXP_REPLACE(${col}, '[^0-9]', ''), 10)`;
 
 /**
@@ -134,21 +148,35 @@ export async function backfillLeadPool(opts: { dryRun?: boolean; grantMetaFormCo
   const out = { atsCandidates: Number(a.n), metaLeads: Number(m.n), consentGranted: 0 };
   if (opts.dryRun) return out;
 
+  // Profile fields are carried over so the matcher has real inputs instead of all-unknown: education rank, age from
+  // date of birth, night-shift preference and years of experience (free text -> number; "fresher" -> 0).
   await db.execute(
-    `INSERT INTO he_lead (mobile10, full_name, email, primary_source, sources_json, ats_candidate_id)
-     SELECT mob, name, email, 'ats_past', JSON_ARRAY('ats_past'), cid FROM (
-       SELECT ${M10("mobile")} AS mob, MAX(full_name) AS name, MAX(email) AS email, MAX(id) AS cid
+    `INSERT INTO he_lead (mobile10, full_name, email, age, education_rank, experience_years, night_shift_ok, primary_source, sources_json, ats_candidate_id)
+     SELECT mob, name, email, age, edu, exp_y, night, 'ats_past', JSON_ARRAY('ats_past'), cid FROM (
+       SELECT ${M10("mobile")} AS mob, MAX(full_name) AS name, MAX(email) AS email, MAX(id) AS cid,
+              MAX(CASE WHEN date_of_birth BETWEEN '1950-01-01' AND DATE_SUB(CURDATE(), INTERVAL 14 YEAR) THEN TIMESTAMPDIFF(YEAR, date_of_birth, CURDATE()) END) AS age,
+              MAX(${eduRankSql("education")}) AS edu,
+              MAX(CASE WHEN LOWER(experience) LIKE '%fresher%' THEN 0
+                       WHEN experience REGEXP '[0-9]' THEN LEAST(50, CAST(REGEXP_SUBSTR(experience, '[0-9]+([.][0-9]+)?') AS DECIMAL(4,1))) END) AS exp_y,
+              MAX(CASE WHEN LOWER(night_shift_ok) IN ('yes','y','true','1') THEN 1 WHEN LOWER(night_shift_ok) IN ('no','n','false','0') THEN 0 END) AS night
          FROM ats_candidate WHERE ${atsWhere} GROUP BY ${M10("mobile")}) t
      ON DUPLICATE KEY UPDATE ats_candidate_id = COALESCE(he_lead.ats_candidate_id, VALUES(ats_candidate_id)),
-                             full_name = COALESCE(he_lead.full_name, VALUES(full_name))`);
+                             full_name = COALESCE(he_lead.full_name, VALUES(full_name)),
+                             age = COALESCE(he_lead.age, VALUES(age)),
+                             education_rank = COALESCE(he_lead.education_rank, VALUES(education_rank)),
+                             experience_years = COALESCE(he_lead.experience_years, VALUES(experience_years)),
+                             night_shift_ok = COALESCE(he_lead.night_shift_ok, VALUES(night_shift_ok))`);
   await db.execute(
-    `INSERT INTO he_lead (mobile10, full_name, email, age, pincode, primary_source, sources_json, meta_lead_id)
-     SELECT mob, name, email, age, NULL, 'meta', JSON_ARRAY('meta'), lid FROM (
-       SELECT ${M10("parsed_phone")} AS mob, MAX(parsed_name) AS name, MAX(parsed_email) AS email, MAX(parsed_age) AS age, MAX(id) AS lid
+    `INSERT INTO he_lead (mobile10, full_name, email, age, education_rank, experience_years, primary_source, sources_json, meta_lead_id)
+     SELECT mob, name, email, age, edu, exp_y, 'meta', JSON_ARRAY('meta'), lid FROM (
+       SELECT ${M10("parsed_phone")} AS mob, MAX(parsed_name) AS name, MAX(parsed_email) AS email, MAX(parsed_age) AS age, MAX(id) AS lid,
+              MAX(${eduRankSql("parsed_education")}) AS edu, MAX(parsed_experience_yr) AS exp_y
          FROM meta_lead_raw WHERE ${metaWhere} GROUP BY ${M10("parsed_phone")}) t
      ON DUPLICATE KEY UPDATE meta_lead_id = COALESCE(he_lead.meta_lead_id, VALUES(meta_lead_id)),
                              age = COALESCE(he_lead.age, VALUES(age)),
-                             email = COALESCE(he_lead.email, VALUES(email))`);
+                             email = COALESCE(he_lead.email, VALUES(email)),
+                             education_rank = COALESCE(he_lead.education_rank, VALUES(education_rank)),
+                             experience_years = COALESCE(he_lead.experience_years, VALUES(experience_years))`);
   if (opts.grantMetaFormConsent) {
     const [r] = await db.execute<ResultSetHeader>(
       `INSERT INTO he_consent (lead_id, consent_type, text_version, source)

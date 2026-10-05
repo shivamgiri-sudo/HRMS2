@@ -21,6 +21,8 @@ export default function LocationSharePage() {
   const [eta, setEta] = useState<{ km: number | null; min: number | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const watchId = useRef<number | null>(null);
+  const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastPos = useRef<{ lat: number; lng: number; accuracy: number } | null>(null);
   const lastSent = useRef(0);
 
   useEffect(() => {
@@ -33,6 +35,7 @@ export default function LocationSharePage() {
 
   const stopWatch = useCallback(() => {
     if (watchId.current != null) { navigator.geolocation.clearWatch(watchId.current); watchId.current = null; }
+    if (heartbeat.current != null) { clearInterval(heartbeat.current); heartbeat.current = null; }
   }, []);
 
   useEffect(() => {
@@ -47,12 +50,12 @@ export default function LocationSharePage() {
     return () => { alive = false; stopWatch(); };
   }, [token, stopWatch]);
 
-  const ping = useCallback(async (pos: GeolocationPosition) => {
+  const ping = useCallback(async (pos: { lat: number; lng: number; accuracy: number }) => {
     const now = Date.now();
     if (now - lastSent.current < MIN_GAP_MS) return;
     lastSent.current = now;
     try {
-      const r = await post(api(token, "/ping"), { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
+      const r = await post(api(token, "/ping"), { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy });
       if (r.status === 429) return;
       if (!r.ok) { stopWatch(); setPhase("closed"); return; }
       const j = (await r.json()) as { data: { distanceKm: number | null; etaMin: number | null; arrived: boolean } };
@@ -67,10 +70,18 @@ export default function LocationSharePage() {
     const r = await post(api(token, "/start"));
     if (!r.ok) { setPhase("closed"); return; }
     watchId.current = navigator.geolocation.watchPosition(
-      (p) => { setPhase((cur) => (cur === "arrived" ? cur : "sharing")); void ping(p); },
+      (p) => {
+        lastPos.current = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy };
+        setPhase((cur) => (cur === "arrived" ? cur : "sharing"));
+        void ping(lastPos.current);
+      },
       (e) => { stopWatch(); void post(api(token, "/stop")); setPhase(e.code === e.PERMISSION_DENIED ? "denied" : "ready"); if (e.code !== e.PERMISSION_DENIED) setError("We could not get your location. Please try again."); },
       { enableHighAccuracy: true, maximumAge: 15_000, timeout: 30_000 },
     );
+    // watchPosition only fires when the position CHANGES, so someone waiting at home would go silent and the branch
+    // board would drop them after 10 minutes. The heartbeat re-sends the last known position (still correct for a
+    // stationary phone) instead of calling getCurrentPosition, which browsers answer unreliably while a watch is active.
+    heartbeat.current = setInterval(() => { if (lastPos.current) void ping(lastPos.current); }, 30_000);
   };
 
   const stop = async () => { stopWatch(); await post(api(token, "/stop")).catch(() => undefined); setPhase("stopped"); };

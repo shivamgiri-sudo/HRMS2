@@ -39,18 +39,23 @@ export default function DrivesTab() {
     try { const r = await hrmsApi.get<{ data: Req[] }>("/api/he/requisitions/open"); setReqs(r.data ?? []); } catch { setReqs([]); }
   };
 
-  const act = async (key: string, fn: () => Promise<unknown>, ok: string) => {
+  // `ok` may be a function of the result so a caller can show what the server computed (e.g. the drive plan).
+  const act = async <T,>(key: string, fn: () => Promise<T>, ok: string | ((r: T) => string)) => {
     setBusy(key); setMsg(null);
-    try { await fn(); setMsg({ ok: true, text: ok }); await load(); }
+    try { const r = await fn(); setMsg({ ok: true, text: typeof ok === "function" ? ok(r) : ok }); await load(); }
     catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "That did not work" }); }
     finally { setBusy(null); }
   };
 
-  const create = () => act("create", async () => {
-    const r = await hrmsApi.post<{ data: { invites: number; targetShows: number; capacity: number } }>("/api/he/drives", form);
-    setOpen(false);
-    setMsg({ ok: true, text: `Drive created: aim for ${r.data.targetShows} walk-ins, which means about ${r.data.invites} invites (capacity ${r.data.capacity}). Click "Find leads", then Activate.` });
-  }, "Drive created");
+  const create = () => act(
+    "create",
+    async () => {
+      const r = await hrmsApi.post<{ data: { invites: number; targetShows: number; capacity: number } }>("/api/he/drives", form);
+      setOpen(false);
+      return r;
+    },
+    (r) => `Drive created: aim for ${r.data.targetShows} walk-ins, which means about ${r.data.invites} invites (capacity ${r.data.capacity}). Click "Find leads", then Activate.`,
+  );
 
   return (
     <div className="space-y-4">

@@ -20,7 +20,8 @@
     "he_match"
   ],
   "modules/hiring-engine/he-ingest.service.ts": [
-    "he_call"
+    "he_call",
+    "he_message"
   ],
   "modules/hiring-engine/he-insight.service.ts": [
     "he_lead_insight"

@@ -86,7 +86,12 @@ async function driveInvites(dryRun: boolean, c: Counts, max: number): Promise<vo
     const driveId = d.id as string;
     if (!dryRun) await suggestMatches(driveId);
     const [ms] = await db.execute<RowDataPacket[]>(
-      "SELECT id, lead_id FROM he_match WHERE drive_id = ? AND state = 'suggested' ORDER BY score DESC LIMIT ?", [driveId, budget]);
+      // Only leads that can actually be messaged: unconsented suggestions would be blocked at send time but still eat the
+      // invite budget. They stay 'suggested' (visible in the drive) until consent exists, e.g. after a telecaller call.
+      `SELECT m.id, m.lead_id FROM he_match m
+        WHERE m.drive_id = ? AND m.state = 'suggested'
+          AND EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
+        ORDER BY m.score DESC LIMIT ?`, [driveId, budget]);
     for (const m of ms) {
       if (budget <= 0) return;
       if (dryRun) { c.dryRun++; budget--; continue; }

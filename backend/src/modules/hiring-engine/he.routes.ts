@@ -24,7 +24,7 @@ heRouter.get("/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, r
     const [bySource] = await db.execute<RowDataPacket[]>("SELECT primary_source, COUNT(*) AS n FROM he_lead GROUP BY primary_source");
     const [handoff] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(DISTINCT lead_id) AS n FROM he_lead_event e WHERE event_type = 'needs_human_followup'
-          AND NOT EXISTS (SELECT 1 FROM he_lead_event d WHERE d.lead_id = e.lead_id AND d.event_type = 'human_followup_done' AND d.created_at > e.created_at)`);
+          AND NOT EXISTS (SELECT 1 FROM he_lead_event d WHERE d.lead_id = e.lead_id AND d.event_type = 'human_followup_done' AND d.id > e.id)`);
     res.json({ success: true, data: { byStatus, byAction, bySource, humanFollowupOpen: Number(handoff[0]?.n ?? 0) } });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] summary failed");
@@ -103,7 +103,7 @@ heRouter.get("/requisitions/open", requireAuth, requireRole(...VIEW_ROLES), asyn
               (requested_headcount - fulfilled_headcount) AS open_positions, priority
          FROM job_requisition
         WHERE approval_status = 'approved' AND active_status = 1 AND fulfilled_headcount < requested_headcount
-        ORDER BY FIELD(priority,'urgent','high','medium','low'), open_positions DESC LIMIT 300`);
+        ORDER BY FIELD(priority,'urgent','high','normal','low'), open_positions DESC LIMIT 300`);
     res.json({ success: true, data: rows });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] open requisitions failed");

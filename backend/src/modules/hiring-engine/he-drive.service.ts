@@ -101,13 +101,22 @@ export async function suggestMatches(driveId: string, limit?: number): Promise<n
   const { invites } = inviteTarget({ openPositions: Math.max(1, req.requested_headcount - req.fulfilled_headcount), showRatePct: drive.show_rate_pct, capacity: driveCapacity(cfg) });
   const want = limit ?? invites;
 
+  // Hard requirements go into the SQL pre-filter (unknown values still pass, same rule as the scorer), so the 5,000 rows
+  // scored are all potentially eligible instead of an arbitrary slice of a pool that can be 100k+ strong.
+  const pre: string[] = [];
+  const preArgs: unknown[] = [];
+  if (mreq.minEducationRank != null) { pre.push("(l.education_rank IS NULL OR l.education_rank >= ?)"); preArgs.push(mreq.minEducationRank); }
+  if (mreq.ageMin != null) { pre.push("(l.age IS NULL OR l.age >= ?)"); preArgs.push(mreq.ageMin); }
+  if (mreq.ageMax != null) { pre.push("(l.age IS NULL OR l.age <= ?)"); preArgs.push(mreq.ageMax); }
+  if (mreq.nightShift === true) pre.push("(l.night_shift_ok IS NULL OR l.night_shift_ok = 1)");
   const [leads] = await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng
        FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
         AND NOT EXISTS (SELECT 1 FROM he_match m WHERE m.lead_id = l.id AND m.state IN ('invited','confirmed') AND m.slot_at >= NOW())
         AND NOT EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NOT NULL)
-      ORDER BY eng DESC LIMIT 5000`);
+        ${pre.map((c) => `AND ${c}`).join("\n        ")}
+      ORDER BY eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`, preArgs);
   const scored = leads
     .map((l) => ({ id: l.id as string, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng) }, mreq), eng: Number(l.eng) }))
     .filter((x) => x.res.eligible)

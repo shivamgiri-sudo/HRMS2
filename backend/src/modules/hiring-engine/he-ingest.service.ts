@@ -3,7 +3,7 @@
  * stored raw, mined into signals, applied to lead/match state, mirrored to meta_lead_raw so the existing
  * Meta inbox pages stay correct, then the lead insight is recomputed.
  */
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { normalizeMobile10 } from "./he-phone.js";
@@ -14,6 +14,8 @@ import {
 import { planFromCallOutcome, planFromReply, type LeadStatus, type TransitionPlan } from "./he-state.js";
 import { addEvent, findLeadByMobile, persistSignals, revokeConsent, setLeadStatus, upsertLead } from "./he-lead.service.js";
 import { recomputeInsight } from "./he-insight.service.js";
+
+const isDuplicateKey = (e: unknown) => (e as { code?: string; errno?: number })?.code === "ER_DUP_ENTRY" || (e as { errno?: number })?.errno === 1062;
 
 async function activeMatch(leadId: string): Promise<{ id: string; slotOffers: number } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -71,9 +73,15 @@ export async function recordInboundReply(p: { mobile: string; text: string; prov
   const { intent, signals } = signalsFromReply(p.text, channel);
   const [msg] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
   const messageId = msg[0].id as string;
-  await db.execute(
-    "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent) VALUES (?,?,?,?,?,?,?,?)",
-    [messageId, lead.id, mobile10, "in", channel, p.text.slice(0, 2000), p.providerMessageId ?? null, intent]);
+  try {
+    await db.execute(
+      "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent) VALUES (?,?,?,?,?,?,?,?)",
+      [messageId, lead.id, mobile10, "in", channel, p.text.slice(0, 2000), p.providerMessageId ?? null, intent]);
+  } catch (err) {
+    // A concurrent retry of the same provider message won the insert (UNIQUE provider_message_id+direction): not an error.
+    if (isDuplicateKey(err)) return { leadId: lead.id, intent: "duplicate" };
+    throw err;
+  }
   // Mark the most recent outbound message as replied (drives reply-rate analysis).
   const [lastOut] = await db.execute<RowDataPacket[]>(
     "SELECT id FROM he_message WHERE lead_id = ? AND direction = 'out' AND channel = ? ORDER BY created_at DESC LIMIT 1", [lead.id, channel]);
@@ -91,11 +99,14 @@ export type DeliveryStatus = "sent" | "delivered" | "read" | "failed";
 export async function recordDeliveryStatus(providerMessageId: string, status: DeliveryStatus, error?: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>("SELECT id, lead_id, channel, delivery_status FROM he_message WHERE provider_message_id = ? AND direction = 'out' LIMIT 1", [providerMessageId]);
   if (!rows[0]) return false;
-  const order = ["queued", "sent", "delivered", "read"];
-  const cur = rows[0].delivery_status as string | null;
-  // Statuses arrive out of order; never downgrade delivered/read to sent. 'failed' always recorded.
-  if (status !== "failed" && cur && order.indexOf(cur) >= order.indexOf(status)) return true;
-  await db.execute("UPDATE he_message SET delivery_status = ?, error_message = ? WHERE id = ?", [status, error ? error.slice(0, 500) : null, rows[0].id]);
+  // Receipts arrive out of order and can be processed concurrently, so the "never downgrade" rule is ONE atomic
+  // conditional UPDATE, not a read-then-write. 'failed' is always recorded.
+  const rank = "FIELD(delivery_status, 'queued', 'sent', 'delivered', 'read')";
+  const [upd] = await db.execute<ResultSetHeader>(
+    `UPDATE he_message SET delivery_status = ?, error_message = ?
+      WHERE id = ? AND (? = 'failed' OR delivery_status IS NULL OR ${rank} < FIELD(?, 'queued', 'sent', 'delivered', 'read'))`,
+    [status, error ? error.slice(0, 500) : null, rows[0].id, status, status]);
+  if (upd.affectedRows === 0) return true; // an equal-or-later status was already recorded
   await db.execute("INSERT INTO he_message_event (message_id, lead_id, channel, event_type, detail) VALUES (?,?,?,?,?)", [rows[0].id, rows[0].lead_id, rows[0].channel, status, error ? error.slice(0, 300) : null]);
   if (rows[0].lead_id) await recomputeInsight(rows[0].lead_id as string);
   return true;
@@ -149,7 +160,7 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
     const [cur] = await db.execute<RowDataPacket[]>("SELECT slot_at FROM he_match WHERE id = ? LIMIT 1", [match.id]);
     offeredSlotAt = cur[0]?.slot_at ? String(cur[0].slot_at) : null;
   }
-  await db.execute(
+  try { await db.execute(
     `INSERT INTO he_call (lead_id, match_id, provider_call_id, attempt_no, started_at, duration_s, identity_confirmed, language_used, email_received,
                           assessment_done, original_slot_answer, offered_slot_at, offered_slot_answer, outcome, decline_reason, sentiment, handoff_reason,
                           transcript, summary, recording_url)
@@ -159,6 +170,10 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
       outcomeText.slice(0, 60), r.declineReason ?? null, r.sentiment ?? null,
       outcome === "WALKIN_DECLINED_NEEDS_FOLLOWUP" ? "declined original and offered slot" : null,
       p.transcript ?? null, p.summary?.slice(0, 1000) ?? null, p.recordingUrl ?? null]);
+  } catch (err) {
+    if (isDuplicateKey(err)) return { leadId: l.id, outcome: "duplicate" };
+    throw err;
+  }
   await persistSignals(l.id, signalsFromVoice(r), p.providerCallId ?? null);
   const plan = planFromCallOutcome(l.status, outcome);
   await applyPlan(l.id, l.status, plan, { matchId: match?.id ?? null, channel: "voice", detail: outcomeText, metaLeadId: l.meta_lead_id, replyText: null });

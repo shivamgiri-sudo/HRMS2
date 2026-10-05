@@ -1287,6 +1287,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2102_hiring_engine_page_access.sql", // Registered 2026-10-05. INSERT IGNORE grants for page ATS_HIRING_ENGINE (/ats/hiring-engine) to super_admin, admin, hr, hr_admin, recruitment_hr, ceo.
   "migrations/2103_hiring_engine_template_seed.sql", // Registered 2026-10-05. Seeds he_template with the 22 follow-up templates (11 x Hinglish/English) in DRAFT; nothing sends until approval_state=approved. INSERT IGNORE.
   "migrations/2104_hiring_engine_hr_alert.sql", // Registered 2026-10-05. he_hr_alert: one row per drive per 30-minute window so the branch arrival alert is sent once. CREATE TABLE IF NOT EXISTS.
+  "migrations/2105_hiring_engine_idempotency_keys.sql", // Registered 2026-10-05. UNIQUE (provider_message_id, direction) on he_message and UNIQUE provider_call_id on he_call: webhook/call idempotency becomes a DB guarantee (a burst of the same webhook stored 29 copies before). PREPARE-guarded, safe to re-run.
 ];
 
 export type MigrationHealth = {
