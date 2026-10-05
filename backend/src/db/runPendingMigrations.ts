@@ -1298,6 +1298,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2109_hiring_engine_identity_profile_exemployee.sql", // Registered 2026-10-05. he_lead_identity (number+email unique), he_identity_clash, he_lead_profile, he_ex_employee side tables; requisition_id/drive_id on he_message/he_call; he_attempt_v carries requisition. Additive, guarded.
   "migrations/2110_hiring_engine_model_params.sql", // Registered 2026-10-05. he_model_param (learned show-up rates, match lifts) + aadhaar_hash/pan_hash identity kinds. Guarded, additive.
   "migrations/2111_hiring_engine_lead_list_index.sql", // Registered 2026-10-05. he_lead(updated_at) index: the lead pool list sorted all 38k leads per page (8 s live). Guarded, INPLACE.
+  "migrations/2112_hiring_engine_import_mapping.sql", // Registered 2026-10-05. he_import_mapping: remembered upload column mappings per header layout (WorkIndia/Naukri/Apna/...). CREATE TABLE IF NOT EXISTS only.
 ];
 
 export type MigrationHealth = {

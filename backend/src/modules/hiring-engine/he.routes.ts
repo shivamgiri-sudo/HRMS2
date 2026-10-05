@@ -18,7 +18,7 @@ import { applyCallResults, markExportedForCalling, previewCallResults } from "./
 import { getCandidate360 } from "./he-candidate360.service.js";
 import { refreshProfilesChunk } from "./he-profile.service.js";
 import { planHiring } from "./he-planner.service.js";
-import { ingestCandidates } from "./he-intake.service.js";
+import { ingestCandidates, previewCandidates } from "./he-intake.service.js";
 import { getControlRoom, learnMatchWeights, learnShowUp } from "./he-showup.service.js";
 import { INTAKE_SOURCES, type IntakeSource } from "./he-intake.js";
 import { listOpenClashes, resolveClash } from "./he-identity.service.js";
@@ -442,8 +442,8 @@ heRouter.post("/identity/clashes/:id/resolve", requireAuth, requireRole(...WRITE
   } catch (err) { logger.error({ err: (err as Error).message }, "[he] resolve clash failed"); res.status(500).json({ message: "Could not resolve the clash" }); }
 });
 
-heRouter.post("/master/ex-employees/refresh", requireAuth, requireRole(...ADMIN_ROLES), async (_req, res) => {
-  try { res.json({ success: true, data: await refreshExEmployees() }); }
+heRouter.post("/master/ex-employees/refresh", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  try { const after = (req.body as { after?: unknown })?.after; res.json({ success: true, data: await refreshExEmployees({ after: typeof after === "string" ? after : null }) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] ex-employee refresh failed"); res.status(500).json({ message: "Could not refresh former employees" }); }
 });
 
@@ -460,6 +460,19 @@ heRouter.get("/planner", requireAuth, requireRole(...VIEW_ROLES), async (req, re
   }
 });
 
+// Upload preview: which column is which (auto-detected or remembered), how many rows are valid / new / already known.
+heRouter.post("/candidates/preview", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const rows = (req.body as { rows?: unknown })?.rows;
+    if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ message: "rows must be a non-empty array" });
+    if (rows.length > 5000) return res.status(400).json({ message: "Too many rows in one upload (max 5000)" });
+    res.json({ success: true, data: await previewCandidates(rows as Array<Record<string, unknown>>) });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] candidate preview failed");
+    res.status(500).json({ message: "Could not read the file" });
+  }
+});
+
 // Candidate upload from any pool (portal export, vendor list, walk-in sheet...). Rows are parsed in the browser.
 heRouter.post("/candidates/import", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
   try {
@@ -467,7 +480,8 @@ heRouter.post("/candidates/import", requireAuth, requireRole(...WRITE_ROLES), as
     const source = String(b.source ?? "other") as IntakeSource;
     if (!INTAKE_SOURCES.includes(source)) return res.status(400).json({ message: `source must be one of ${INTAKE_SOURCES.join(", ")}` });
     if (!Array.isArray(b.rows)) return res.status(400).json({ message: "rows must be an array" });
-    res.json({ success: true, data: await ingestCandidates(b.rows as Array<Record<string, unknown>>, source, { dryRun: b.dryRun === true }) });
+    const bb = req.body as { mapping?: unknown; saveMapping?: unknown };
+    res.json({ success: true, data: await ingestCandidates(b.rows as Array<Record<string, unknown>>, source, { dryRun: b.dryRun === true, mapping: bb.mapping, saveMapping: bb.saveMapping !== false, userId: (req as AuthenticatedRequest).authUser?.id ?? null }) });
   } catch (err) {
     const e = err as Error & { statusCode?: number };
     if (e.statusCode === 400) return res.status(400).json({ message: e.message });

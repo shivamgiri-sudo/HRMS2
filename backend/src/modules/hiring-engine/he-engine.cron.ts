@@ -8,7 +8,7 @@ import { runEngineTick } from "./he-engine.service.js";
 import { runHrArrivalAlerts } from "./he-alert.service.js";
 import { listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { refreshProfilesChunk } from "./he-profile.service.js";
-import { refreshExEmployees } from "./he-ex-employee.service.js";
+import { refreshAllExEmployees } from "./he-ex-employee.service.js";
 import { learnMatchWeights, learnShowUp } from "./he-showup.service.js";
 
 const INTERVAL_MS = 5 * 60 * 1000;
@@ -42,7 +42,7 @@ export async function runNightlyMasterRefresh(force = false): Promise<void> {
   _lastMasterDay = day;
   const started = Date.now();
   try {
-    await refreshExEmployees();
+    await refreshAllExEmployees();
     for (const p of await listPrefixes()) { await refreshHistoryChunk({ prefix: p }); await refreshProfilesChunk(p); }
     await learnShowUp();
     await learnMatchWeights();

@@ -43,6 +43,10 @@
   "modules/hiring-engine/he-insight.service.ts": [
     "he_lead_insight"
   ],
+  "modules/hiring-engine/he-intake.service.ts": [
+    "he_import_mapping",
+    "he_lead_profile"
+  ],
   "modules/hiring-engine/he-lead.service.ts": [
     "he_consent",
     "he_lead"

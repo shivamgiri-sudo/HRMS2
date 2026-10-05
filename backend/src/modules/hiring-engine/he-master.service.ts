@@ -31,9 +31,10 @@ export async function listPrefixes(): Promise<string[]> {
   return rows.map((r) => String(r.p));
 }
 
-function nextPrefix(p: string): string {
-  const n = Number(p) + 1;
-  return String(n).padStart(2, "0");
+/** Exclusive upper bound for a mobile-prefix range. "~" sorts after every digit, so "99" -> "99~" (not "100", which sorts
+ *  BEFORE "99..." as text and silently matched nothing - the 99xx leads were skipped on the first live refresh). */
+export function prefixUpper(p: string): string {
+  return p + "~";
 }
 
 const ymd = (v: unknown): string | null => (v ? new Date(v as string).toISOString().slice(0, 10) : null);
@@ -42,7 +43,7 @@ const ymd = (v: unknown): string | null => (v ? new Date(v as string).toISOStrin
 export async function refreshHistoryChunk(opts: { prefix?: string; mobile10?: string; employees?: Set<string> }): Promise<HistoryRefreshResult> {
   const prefix = opts.prefix ?? (opts.mobile10 ? opts.mobile10.slice(0, 2) : "00");
   const lo = opts.mobile10 ?? prefix;
-  const hiExclusive = opts.mobile10 ? opts.mobile10 + "~" : nextPrefix(prefix);
+  const hiExclusive = prefixUpper(opts.mobile10 ?? prefix);
   const employees = opts.employees ?? (await activeEmployeeMobiles());
 
   const [rows] = await db.execute<RowDataPacket[]>(

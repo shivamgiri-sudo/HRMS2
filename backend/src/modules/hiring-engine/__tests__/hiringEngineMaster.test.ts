@@ -38,3 +38,15 @@ describe("master rules", () => {
     expect(effortTier(base).tier).toBe("standard");
   });
 });
+
+import { prefixUpper } from "../he-master.service.js";
+describe("prefix ranges", () => {
+  it("covers every number starting with the prefix, including 99", () => {
+    for (const p of ["60", "89", "99"]) {
+      const lo = p, hi = prefixUpper(p);
+      expect(`${p}12345678` >= lo && `${p}12345678` < hi).toBe(true);
+      expect(`${p}99999999` < hi).toBe(true);
+    }
+    expect("9812345678" < prefixUpper("97")).toBe(false);
+  });
+});

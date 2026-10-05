@@ -63,8 +63,12 @@ export default function MasterTab() {
         setProgress(`Refreshing history ${i + 1} of ${prefixes.length}`);
         await hrmsApi.post("/api/he/master/refresh", { prefix: prefixes[i] }, 120000);
       }
-      setProgress("Updating former employees...");
-      await hrmsApi.post("/api/he/master/ex-employees/refresh", {}, 120000);
+      let after: string | null = null, batch = 0;
+      do {
+        setProgress(`Updating former employees (batch ${++batch})...`);
+        const r: { data: { next: string | null } } = await hrmsApi.post("/api/he/master/ex-employees/refresh", { after }, 120000);
+        after = r.data?.next ?? null;
+      } while (after);
       setProgress("Learning from past outcomes...");
       await hrmsApi.post("/api/he/model/learn", {}, 120000);
       setProgress(null); await load();
