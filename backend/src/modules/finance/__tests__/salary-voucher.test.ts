@@ -371,3 +371,38 @@ describe("two branch rows sharing a name", () => {
     expect(out.unassigned).toContain("MAS90002");
   });
 });
+
+describe("management trainees (codes with no MAS prefix)", () => {
+  const rules = [
+    { company_code: "MAS", employee_code_prefix: "MAS", employment_type: null, branch_id: null, priority: 100 },
+    { company_code: "IDC", employee_code_prefix: "IDC", employment_type: null, branch_id: null, priority: 100 },
+    { company_code: "MAS", employee_code_prefix: null, employment_type: "MGMT. TRAINEE", branch_id: null, priority: 50 },
+  ];
+  const row = (code: string, type: string) => ({
+    employee_code: code, designation_name: "TRAINEE", employment_type: type, branch_id: "br-a", branch_name: "AHMEDABAD-JALDARSHAN",
+    net_salary: 10000, gross_salary: 12000, pf_employee: 1000, pf_employer: 1000, esic_employee: 0, esic_employer: 0,
+    professional_tax: 0, tds: 0, loan_emi: 0, other_deductions: 0,
+  });
+
+  it("are placed in MAS by their employment type and appear on the voucher", async () => {
+    execute.mockResolvedValue([[]]); // no cohort rules
+    const out = await svc.salaryVoucherService.buildVouchersFromLines("2026-08", [row("MAS1", "ONROLL"), row("54563C", "MGMT. TRAINEE")] as any, rules as any, {});
+    expect(out.unassigned).toEqual([]);
+    expect(out.vouchers).toHaveLength(1);
+    const payable = out.vouchers[0].lines.find((l) => l.ledger_name === "Salary Payable A/C")!;
+    expect(payable.amount).toBe(20000); // both people
+    expect(out.vouchers[0].totals.balanced).toBe(true);
+  });
+
+  it("a code with no prefix and another employment type is still left off, not guessed", async () => {
+    const out = await svc.salaryVoucherService.buildVouchersFromLines("2026-08", [row("12345C", "ONROLL")] as any, rules as any, {});
+    expect(out.unassigned).toEqual(["12345C"]);
+    expect(out.vouchers).toHaveLength(0);
+  });
+
+  it("a MAS or IDC prefix still decides the entity before the employment type does", async () => {
+    execute.mockResolvedValue([[]]);
+    const out = await svc.salaryVoucherService.buildVouchersFromLines("2026-08", [row("IDC9", "MGMT. TRAINEE")] as any, rules as any, {});
+    expect(out.vouchers[0].company_code).toBe("IDC");
+  });
+});

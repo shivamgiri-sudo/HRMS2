@@ -544,7 +544,11 @@ async function collectRows(
     row.cgst = -Math.abs(row.cgst);
     row.sgst = -Math.abs(row.sgst);
     row.invoiceValue = -Math.abs(row.invoiceValue);
-    row.errors = validateRow({ ...row, taxableValue: Math.abs(row.taxableValue), igst: Math.abs(row.igst), cgst: Math.abs(row.cgst), sgst: Math.abs(row.sgst), invoiceValue: Math.abs(row.invoiceValue) });
+    // The round-off was left with its invoice-side sign, so a credit note carried e.g. -140 - 26 - 1
+    // against a total of -165. It flips with everything else.
+    row.roundOff = -row.roundOff;
+    row.otherCharges = -Math.abs(row.otherCharges);
+    row.errors = validateRow({ ...row, taxableValue: Math.abs(row.taxableValue), igst: Math.abs(row.igst), cgst: Math.abs(row.cgst), sgst: Math.abs(row.sgst), invoiceValue: Math.abs(row.invoiceValue), roundOff: -row.roundOff, otherCharges: Math.abs(row.otherCharges) });
     staged.push(row);
   }
 

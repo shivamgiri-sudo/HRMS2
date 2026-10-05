@@ -276,11 +276,17 @@ async function buildVouchersFromLines(
   entityRules: RowDataPacket[],
   options: { companyCode?: string; serialFrom?: number; skipBuckets?: Set<string> },
 ): Promise<{ period: string; vouchers: Voucher[]; unassigned: string[]; unpaid: string[] }> {
-  const entityOf = (code: string): string | null => {
+  // Rules are in priority order. A code-prefix rule matches on the employee code; a rule with no
+  // prefix but an employment type matches on that (management trainees carry codes like 54563C).
+  const entityOf = (code: string, employmentType?: string | null): string | null => {
     for (const rule of entityRules) {
       const prefix = String(rule.employee_code_prefix ?? "");
-      if (!prefix) continue;
-      if (String(code ?? "").toUpperCase().startsWith(prefix.toUpperCase())) {
+      if (prefix) {
+        if (String(code ?? "").toUpperCase().startsWith(prefix.toUpperCase())) return String(rule.company_code);
+        continue;
+      }
+      const type = String(rule.employment_type ?? "").trim();
+      if (type && !rule.branch_id && String(employmentType ?? "").trim().toUpperCase() === type.toUpperCase()) {
         return String(rule.company_code);
       }
     }
@@ -293,7 +299,7 @@ async function buildVouchersFromLines(
   const unpaid: string[] = [];
 
   for (const raw of lines) {
-    const company = entityOf(raw.employee_code);
+    const company = entityOf(raw.employee_code, raw.employment_type);
     if (!company || (options.companyCode && company !== options.companyCode)) {
       if (!company) unassigned.push(raw.employee_code);
       continue;
