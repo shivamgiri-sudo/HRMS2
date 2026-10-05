@@ -705,6 +705,14 @@ const CHECKLIST_CLOSED_STATUSES = [
   "waived", "not_applicable",
 ];
 
+/**
+ * Owner directive 2026-09-18 (COMPLETION_EXCLUDED_DOCUMENT_CODES in employeeJoiningDocuments.service.ts): the two EPF
+ * forms are reviewed by the employee on a separate track and do not count toward joining-document completion.
+ * This block must follow the same rule — live 2026-10-05 it listed 206 joiners, 75 of them only because these two
+ * forms sat at 'employee_review_pending'. Kept as a local copy: that service pulls in the mailer and storage layers.
+ */
+const DOCS_COMPLETION_EXCLUDED_CODES = ["EPF_DECLARATION", "EPF_NOMINATION_FORM2"];
+
 export async function getDocsPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
@@ -714,9 +722,10 @@ export async function getDocsPendingBlock(): Promise<CountBlock> {
        JOIN employee_joining_document_checklist c ON c.employee_id = e.id
       WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND c.mandatory = 1
+        AND UPPER(COALESCE(c.document_code, '')) NOT IN (${DOCS_COMPLETION_EXCLUDED_CODES.map(() => "?").join(",")})
         AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
       GROUP BY e.branch_id`,
-    [NEW_JOINER_WINDOW_DAYS, ...CHECKLIST_CLOSED_STATUSES],
+    [NEW_JOINER_WINDOW_DAYS, ...DOCS_COMPLETION_EXCLUDED_CODES, ...CHECKLIST_CLOSED_STATUSES],
   );
   return rollupCounts(
     branches,
@@ -738,11 +747,12 @@ export async function getDocsPendingDetail(
        JOIN employee_joining_document_checklist c ON c.employee_id = e.id
       WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND c.mandatory = 1
+        AND UPPER(COALESCE(c.document_code, '')) NOT IN (${DOCS_COMPLETION_EXCLUDED_CODES.map(() => "?").join(",")})
         AND LOWER(COALESCE(c.status, '')) NOT IN (${CHECKLIST_CLOSED_STATUSES.map(() => "?").join(",")})
       GROUP BY e.id, e.employee_code, e.full_name, e.created_at
       ORDER BY e.created_at ASC
       LIMIT 200`,
-    [branchId, NEW_JOINER_WINDOW_DAYS, ...CHECKLIST_CLOSED_STATUSES],
+    [branchId, NEW_JOINER_WINDOW_DAYS, ...DOCS_COMPLETION_EXCLUDED_CODES, ...CHECKLIST_CLOSED_STATUSES],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
