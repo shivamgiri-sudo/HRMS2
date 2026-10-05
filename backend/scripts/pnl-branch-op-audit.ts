@@ -25,7 +25,7 @@ const FIELDS = ["recognizedRevenue", "earnedRevenue", "agentSalary", "dsc", "bmc
         const b = (branches[row.branchName ?? "(none)"] ??= { processes: 0 });
         b.processes += 1;
         for (const f of FIELDS) b[f] = r2((b[f] ?? 0) + Number(row[f] ?? 0));
-        processes.push({ branch: row.branchName, process: row.processName, ...Object.fromEntries(FIELDS.map((f) => [f, r2(row[f])])) });
+        processes.push({ branch: row.branchName, cc: row.costCentreCode ?? null, process: row.processName, ...Object.fromEntries(FIELDS.map((f) => [f, r2(row[f])])) });
       }
       out[period] = { period: s.period, rowCount: s.rows.length, kpis: s.kpis, branches, processes, warnings: s.warnings ?? null };
     } catch (e) {

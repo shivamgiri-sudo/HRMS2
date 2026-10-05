@@ -102,6 +102,7 @@ on:
           - mis-schedule-run-now
           - pnl-branch-op-audit
           - dbbill-pnl-discover
+          - dbbill-pnl-by-cc
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -274,6 +275,10 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            dbbill-pnl-by-cc)
+              # Read-only in both modes: billQuery allows SELECT only.
+              npx tsx scripts/dbbill-pnl-by-cc.ts
               ;;
             dbbill-pnl-discover)
               # Read-only in both modes: billQuery allows SELECT/SHOW/DESCRIBE only.
