@@ -56,14 +56,26 @@ describe("getYtdComponentsByType legacy fallback", () => {
     expect(ytd.deduction.PF_EMPLOYEE).toBe(3600);
 
     const [, params] = execute.mock.calls[2];
-    expect(params).toEqual(["emp-1", "2026-04", "2026-06"]); // FY start April, inclusive of the payslip month
+    expect(params).toEqual(["", "emp-1", "2026-04", "2026-06", ""]); // FY start April, inclusive of the payslip month
     expect(String(execute.mock.calls[2][0])).toContain("PARTITION BY spr.run_month"); // one canonical line per month
+  });
+
+  it("always counts the viewed line even when its run is not finalized (new joiner / pre-finalisation slip)", async () => {
+    execute.mockResolvedValue([[], []]);
+    await payslipService.getYtdComponentsByType("emp-1", "2026-08", "line-aug");
+    for (const idx of [0, 1, 2]) {
+      const [sql, params] = execute.mock.calls[idx];
+      expect(String(sql)).toContain("OR spl.id = ?");
+      expect(params).toContain("line-aug");
+    }
+    // its own line outranks any run-status ordering within the month
+    expect(String(execute.mock.calls[0][0])).toContain("ORDER BY (spl.id = ?) DESC, FIELD(spr.status");
   });
 
   it("empty everywhere stays empty (the PDF then prints zeros, not a crash)", async () => {
     execute.mockResolvedValue([[], []]);
     expect(await payslipService.getYtdComponentsByType("emp-1", "2026-01")).toEqual({});
-    expect(execute.mock.calls[0][1]).toEqual(["emp-1", "2025-04", "2026-01"]); // Jan belongs to the FY that began the previous April
+    expect(execute.mock.calls[0][1]).toEqual(["", "emp-1", "2025-04", "2026-01", ""]); // Jan belongs to the FY that began the previous April
   });
 });
 

@@ -467,7 +467,7 @@ export const payslipService = {
     );
 
     if (rec.run_month) {
-      const ytdByType = await this.getYtdComponentsByType(employeeId, rec.run_month);
+      const ytdByType = await this.getYtdComponentsByType(employeeId, rec.run_month, String(rec.prep_line_id ?? ""));
       // `ytd` stays a flat code -> amount map for existing readers. It cannot say
       // which side of the payslip a code belongs to, so "everything not in a named
       // slot" summed earnings into Other Deduction and deductions into Other
@@ -496,6 +496,13 @@ export const payslipService = {
   async getYtdComponentsByType(
     employeeId: string,
     uptoRunMonth: string,
+    /**
+     * The salary_prep_line the slip being viewed belongs to. Its own month always counts, even while
+     * its run is still draft/calculated/under review: YTD otherwise only reads finalized runs, so a
+     * slip viewed before finalisation — or a new joiner whose only month is the current one — came
+     * out with every YTD cell blank ("-") no matter how often the figures were corrected.
+     */
+    includeLineId: string = "",
   ): Promise<Record<string, Record<string, number>>> {
     const [yr, mo] = uptoRunMonth.split("-").map(Number);
     const fyStart = mo >= 4 ? yr : yr - 1;
@@ -507,7 +514,7 @@ export const payslipService = {
            SELECT splc.component_code, splc.component_type, splc.amount,
                   ROW_NUMBER() OVER (
                     PARTITION BY spr.run_month, splc.component_code, splc.component_type
-                    ORDER BY FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
+                    ORDER BY (spl.id = ?) DESC, FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
                              spr.created_at DESC
                   ) AS rn
              FROM salary_prep_line spl
@@ -515,12 +522,12 @@ export const payslipService = {
              JOIN salary_prep_line_component splc ON splc.line_id = spl.id
             WHERE spl.employee_id = ?
               AND spr.run_month BETWEEN ? AND ?
-              AND spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed')
+              AND (spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed') OR spl.id = ?)
               AND spl.status NOT IN ('excluded', 'blocked')
          ) canonical
         WHERE canonical.rn = 1
         GROUP BY component_code, component_type`,
-      [employeeId, fyFirstMonth, uptoRunMonth],
+      [includeLineId, employeeId, fyFirstMonth, uptoRunMonth, includeLineId],
     );
     const ytd: Record<string, Record<string, number>> = {};
     for (const row of rows as Array<{
@@ -543,9 +550,9 @@ export const payslipService = {
          JOIN salary_prep_line_component splc ON splc.line_id = spl.id
         WHERE spl.employee_id = ?
           AND spr.run_month BETWEEN ? AND ?
-          AND spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed')
+          AND (spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed') OR spl.id = ?)
           AND spl.status NOT IN ('excluded', 'blocked')`,
-      [employeeId, fyFirstMonth, uptoRunMonth],
+      [employeeId, fyFirstMonth, uptoRunMonth, includeLineId],
     );
     const covered = new Set((coveredRows as Array<{ run_month: string }>).map((r) => String(r.run_month)));
     const [lineRows] = await db.execute<RowDataPacket[]>(
@@ -557,18 +564,18 @@ export const payslipService = {
                   spl.lwp_deduction, spl.advance_recovery, spl.loan_emi, spl.other_deductions,
                   ROW_NUMBER() OVER (
                     PARTITION BY spr.run_month
-                    ORDER BY FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
+                    ORDER BY (spl.id = ?) DESC, FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
                              spr.created_at DESC
                   ) AS rn
              FROM salary_prep_line spl
              JOIN salary_prep_run spr ON spr.id = spl.run_id
             WHERE spl.employee_id = ?
               AND spr.run_month BETWEEN ? AND ?
-              AND spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed')
+              AND (spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed') OR spl.id = ?)
               AND spl.status NOT IN ('excluded', 'blocked')
          ) canonical
         WHERE canonical.rn = 1`,
-      [employeeId, fyFirstMonth, uptoRunMonth],
+      [includeLineId, employeeId, fyFirstMonth, uptoRunMonth, includeLineId],
     );
     const modernMonths = new Set<string>(covered);
     for (const line of lineRows as LegacyYtdLine[]) {
