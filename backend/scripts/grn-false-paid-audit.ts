@@ -18,12 +18,16 @@ async function main() {
             (SELECT t.payment_status FROM vendor_payment_tracking t WHERE t.grn_request_id = g.id LIMIT 1) AS trk_status,
             (SELECT t.id FROM vendor_payment_tracking t WHERE t.grn_request_id = g.id LIMIT 1) AS trk_id,
             (SELECT ROUND(t.balance_amount,2) FROM vendor_payment_tracking t WHERE t.grn_request_id = g.id LIMIT 1) AS trk_balance,
-            EXISTS (SELECT 1 FROM journal_entry je WHERE je.source_type='grn' AND je.source_id = g.id AND je.reversed_by_entry_id IS NULL) AS journaled,
-            EXISTS (SELECT 1 FROM sensitive_action_log s WHERE s.action_type = 'LEGACY_MIGRATION_RECLASSIFY' AND s.entity_id = g.id) AS reclassified
+            EXISTS (SELECT 1 FROM journal_entry je WHERE je.source_type='grn' AND je.source_id = g.id AND je.reversed_by_entry_id IS NULL) AS journaled
        FROM grn_request g
       WHERE g.grn_type = 'vendor' AND g.status = 'paid' AND g.bill_source_id IS NOT NULL`);
   const rows = grns as any[];
   console.log(`vendor GRNs with status paid that came from db_bill: ${rows.length}`);
+  // One pass over the audit log instead of a lookup per GRN (the per-row lookup never finished).
+  const [recl] = await db.execute<RowDataPacket[]>(`SELECT entity_id FROM sensitive_action_log WHERE action_type = 'LEGACY_MIGRATION_RECLASSIFY'`);
+  const reclassified = new Set((recl as any[]).map((r) => String(r.entity_id)));
+  for (const r of rows) r.reclassified = reclassified.has(String(r.id));
+  console.log(`audit-log rows for the F-02/F-03 reclassification: ${reclassified.size}`);
 
   // Does db_bill hold a payment for each?
   const paid = new Set<number>();
