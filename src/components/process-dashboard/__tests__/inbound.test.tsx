@@ -80,7 +80,7 @@ describe("generic page wiring", () => {
     expect(src).toContain("Live inbound"); expect(src).toContain('import("@/components/process-performance/InboundInsightsDashboard")'); expect(src).toContain("projectKey={tab.projectKey}");
   });
   it("V2 category_template tiles render ProcessDashboard, which owns the tab", () => {
-    expect(read("src/pages/ProcessPerformanceV2Page.tsx")).toMatch(/kind === "category_template" \? \(\s*<ProcessDashboard/);
+    expect(read("src/components/process-performance/v2Dashboards.tsx")).toMatch(/kind === "category_template" \? \(\s*<ProcessDashboard/);
   });
   it("setup shows the inbound panel only for support_inbound", () => {
     expect(read("src/components/process-dashboard/DashboardSetup.tsx")).toContain('form.category === "support_inbound" && <InboundSourcePanel');
