@@ -46,8 +46,8 @@ import {
   sendConfirmationAck,
   sendShortlistMessage,
   sendMediaMessage,
-  sendCustomMessage,
 } from './wassenger.provider.js';
+import { anyReplyProviderConfigured, sendLeadReply } from './lead-reply.js';
 import type { WassengerWebhookPayload } from './wassenger.provider.js';
 import {
   saveMessage,
@@ -852,8 +852,8 @@ metaCampaignRouter.post(
     if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const gate = await canMessageLead(req.params.id!);
     if (!gate.allowed) return res.status(409).json({ success: false, message: gate.reason });
-    if (!isWassengerConfigured()) {
-      return res.status(503).json({ success: false, message: 'Wassenger is not configured' });
+    if (!anyReplyProviderConfigured()) {
+      return res.status(503).json({ success: false, message: 'No WhatsApp provider is configured (Pinbot or Wassenger)' });
     }
 
     // Load the lead to get phone + name
@@ -863,12 +863,13 @@ metaCampaignRouter.post(
       return res.status(422).json({ success: false, message: 'Lead has no phone number' });
     }
 
-    // Same phone normalisation and error handling as every other outbound send.
-    const sent = await sendCustomMessage(lead.parsedPhone, text);
+    // Pinbot first (the live WhatsApp channel), Wassenger as fallback — see lead-reply.ts.
+    const sent = await sendLeadReply(lead.parsedPhone, text);
     if (!sent.success) {
-      return res.status(502).json({ success: false, message: `Wassenger send failed: ${sent.error ?? 'unknown error'}` });
+      return res.status(502).json({ success: false, message: `WhatsApp send failed: ${sent.error ?? 'unknown error'}` });
     }
-    const wassengerMsgId = sent.messageId ?? null;
+    // Only a Wassenger id goes in wassenger_message_id: delivery reconciliation polls Wassenger by it.
+    const wassengerMsgId = sent.provider === 'wassenger' ? (sent.messageId ?? null) : null;
 
     // Persist as outbound message from HR
     const msgId = await saveMessage({

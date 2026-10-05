@@ -30,6 +30,31 @@ const INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours (webhook real-time sync is of
 const NOTIFY_FLOOR = new Date("2026-09-21T00:00:00+05:30");
 const NOTIFY_LOOKBACK_MS = 48 * 60 * 60 * 1000;
 
+/*
+ * A form Meta answers with "(#100) Tried accessing nonexisting field (leads)" is not a lead form
+ * this token can read (deleted, or the id is not a Lead Gen form). Retrying it every cycle only
+ * repeated the same error in the log forever, so it is parked for a day and logged once.
+ */
+const FORM_PARK_MS = 24 * 60 * 60 * 1000;
+const parkedForms = new Map<string, number>();
+
+export function isFormParked(formId: string, now = Date.now()): boolean {
+  const until = parkedForms.get(formId);
+  if (until === undefined) return false;
+  if (until <= now) { parkedForms.delete(formId); return false; }
+  return true;
+}
+
+/** Returns true when the error parked the form (first time only), so the caller logs it once. */
+export function parkFormOnPermanentError(formId: string, message: string, now = Date.now()): boolean {
+  if (!/\(#100\)/.test(message)) return false;
+  if (isFormParked(formId, now)) return false;
+  parkedForms.set(formId, now + FORM_PARK_MS);
+  return true;
+}
+
+export function _resetParkedFormsForTest(): void { parkedForms.clear(); }
+
 function notifyWindowStart(now = new Date()): Date {
   return new Date(Math.max(NOTIFY_FLOOR.getTime(), now.getTime() - NOTIFY_LOOKBACK_MS));
 }
@@ -91,7 +116,9 @@ async function runMetaLeadSync(): Promise<void> {
 
     let totalImported = 0;
     let formErrors = 0;
+    let parkedSkipped = 0;
     for (const form of formsToPull) {
+      if (isFormParked(form.id)) { parkedSkipped++; continue; }
       try {
         const result = await metaCampaignService.backfillFormLeads(form.id);
         totalImported += result.imported;
@@ -100,11 +127,16 @@ async function runMetaLeadSync(): Promise<void> {
         }
       } catch (err: any) {
         formErrors++;
-        console.error(`[meta-sync] Form ${form.id} ("${form.name}") error:`, err?.message ?? err);
+        const message = String(err?.message ?? err);
+        if (parkFormOnPermanentError(form.id, message)) {
+          console.error(`[meta-sync] Form ${form.id} ("${form.name}") is not readable as a lead form; skipping it for 24h: ${message}`);
+        } else {
+          console.error(`[meta-sync] Form ${form.id} ("${form.name}") error:`, message);
+        }
       }
     }
     console.log(
-      `[meta-sync] Lead sync complete: ${totalImported} imported across ${formsToPull.length} forms (${unlinkedIds.length} unlinked), ${formErrors} form errors`
+      `[meta-sync] Lead sync complete: ${totalImported} imported across ${formsToPull.length} forms (${unlinkedIds.length} unlinked), ${formErrors} form errors, ${parkedSkipped} parked form(s) skipped`
     );
 
     // 2. Sync campaign metrics (impressions, reach, clicks, spend)

@@ -337,10 +337,9 @@ export function MetaWhatsAppInbox() {
       await fetchThread(selectedId);
       await fetchInbox();
     } catch (err: unknown) {
-      const msg = err && typeof err === "object" && "response" in err
-        ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
-        : undefined;
-      setSendError(msg ?? "Failed to send. Try again.");
+      // hrmsApi throws an Error carrying the server's message (e.g. "outside the 24-hour window"),
+      // not an axios-style err.response — reading only .response hid every real reason.
+      setSendError(err instanceof Error && err.message ? err.message : "Failed to send. Try again.");
     } finally { setSending(false); }
   }
 
@@ -370,7 +369,10 @@ export function MetaWhatsAppInbox() {
       await fetchThread(selectedId);
       await fetchInbox();
     } catch (err: unknown) {
-      setSendError(err instanceof Error ? err.message : "File send failed. Try again.");
+      const message = err instanceof Error ? err.message : "";
+      setSendError(err instanceof TypeError && /fetch/i.test(message)
+        ? "Could not reach the HRMS server. Check your connection and try again."
+        : message || "File send failed. Try again.");
     } finally { setSendingFile(false); }
   }
 
