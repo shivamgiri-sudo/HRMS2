@@ -115,6 +115,7 @@ on:
           - nonpeople-timing
           - grn-month-basis-audit
           - trace-grn
+          - grn-amount-audit
           - backfill-vendor-recognition-period
           - backfill-grn-recognition-period
           - fix-process-branches
@@ -321,6 +322,10 @@ jobs:
               # Dry-runs unless given --apply. Apply adds db_bill GRNs missing from grn_request / vendor_payment_tracking for FY 2026-27 (idempotent).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/migrate-grn-from-dbbill.ts --fy=2026-27 $FLAG
+              ;;
+            grn-amount-audit)
+              # Read-only in both modes: aggregate SELECTs (HRMS and db_bill).
+              npx tsx scripts/grn-amount-audit.ts
               ;;
             trace-grn)
               # Read-only in both modes. employee_codes input reused as '<FinanceMonth> <min amount>'.
