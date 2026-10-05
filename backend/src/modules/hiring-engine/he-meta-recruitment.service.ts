@@ -21,7 +21,21 @@ const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
 const chunks = <T,>(xs: T[], n = 1000): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 const SELECTED_STAGES = new Set(["selected", "offered", "joined", "converted"]);
 
-export async function getMetaRecruitment(): Promise<{ campaigns: CampaignRecruitment[]; total: RecruitmentCounts }> {
+type MetaRecruitment = { campaigns: CampaignRecruitment[]; total: RecruitmentCounts };
+let _cache: { at: number; data: MetaRecruitment } | null = null;
+let _inflight: Promise<MetaRecruitment> | null = null;
+const CACHE_MS = 5 * 60_000;
+
+/** Cached for 5 minutes (stale-while-revalidate): the strip sits on every tab and the numbers move slowly. */
+export async function getMetaRecruitment(): Promise<MetaRecruitment> {
+  const fresh = _cache && Date.now() - _cache.at < CACHE_MS;
+  if (_cache && !fresh && !_inflight) _inflight = computeMetaRecruitment().then((d) => { _cache = { at: Date.now(), data: d }; return d; }).finally(() => { _inflight = null; });
+  if (_cache) return _cache.data;
+  if (!_inflight) _inflight = computeMetaRecruitment().then((d) => { _cache = { at: Date.now(), data: d }; return d; }).finally(() => { _inflight = null; });
+  return _inflight;
+}
+
+async function computeMetaRecruitment(): Promise<MetaRecruitment> {
   const [camps] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.campaign_name, c.campaign_status, jr.requisition_code, jr.branch_name
        FROM meta_campaign c LEFT JOIN job_requisition jr ON jr.id = c.requisition_id ORDER BY c.campaign_name`);
@@ -43,7 +57,18 @@ export async function getMetaRecruitment(): Promise<{ campaigns: CampaignRecruit
     }
   };
   for (const c of chunks(linkedIds)) await load(`c.id IN (${ph(c.length)})`, c);
-  for (const c of chunks(phones)) await load(`RIGHT(REGEXP_REPLACE(c.mobile, '[^0-9]', ''), 10) IN (${ph(c.length)})`, c);
+  // Phones are stored in many formats ("+91 98111 00002", "98111-00004"), so normalise once in a single pass over
+  // ats_candidate instead of once per chunk (the old per-chunk REGEXP scans took ~20 s in production).
+  if (phones.length) {
+    const want = new Set(phones);
+    const [all] = await db.execute<RowDataPacket[]>(
+      "SELECT c.id, RIGHT(REGEXP_REPLACE(c.mobile, '[^0-9]', ''), 10) AS m, (c.walk_in_date IS NOT NULL) AS walked, c.current_stage FROM ats_candidate c WHERE c.mobile IS NOT NULL AND c.mobile <> ''");
+    for (const r of all) {
+      if (!r.m || !want.has(String(r.m)) || cand.has(r.id as string)) continue;
+      cand.set(r.id as string, { m: String(r.m), walked: Number(r.walked) === 1, stage: String(r.current_stage ?? "").toLowerCase() });
+      byPhone.set(String(r.m), [...(byPhone.get(String(r.m)) ?? []), r.id as string]);
+    }
+  }
   const allIds = Array.from(cand.keys());
 
   const selectedByReq = new Set<string>(), tokenned = new Set<string>(), onboarding = new Set<string>(), joined = new Set<string>();

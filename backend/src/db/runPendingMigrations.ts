@@ -1297,6 +1297,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2108_hiring_engine_master_history.sql", // Registered 2026-10-05. Recruitment master WITHOUT new attempt storage: indexed virtual mobile10 on ats_recruiter_hiring_activity, rollup/effort columns on he_lead, he_attempt_v union view. Guarded, additive, ALGORITHM=INPLACE.
   "migrations/2109_hiring_engine_identity_profile_exemployee.sql", // Registered 2026-10-05. he_lead_identity (number+email unique), he_identity_clash, he_lead_profile, he_ex_employee side tables; requisition_id/drive_id on he_message/he_call; he_attempt_v carries requisition. Additive, guarded.
   "migrations/2110_hiring_engine_model_params.sql", // Registered 2026-10-05. he_model_param (learned show-up rates, match lifts) + aadhaar_hash/pan_hash identity kinds. Guarded, additive.
+  "migrations/2111_hiring_engine_lead_list_index.sql", // Registered 2026-10-05. he_lead(updated_at) index: the lead pool list sorted all 38k leads per page (8 s live). Guarded, INPLACE.
 ];
 
 export type MigrationHealth = {

@@ -65,7 +65,9 @@ heRouter.get("/leads", requireAuth, requireRole(...VIEW_ROLES), async (req, res)
               i.engagement_score, i.reliability_score, i.best_channel, i.best_hour_ist, i.next_action, i.next_action_reason
          FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id ${w}
         ORDER BY l.updated_at DESC LIMIT ? OFFSET ?`, [...args, size, (page - 1) * size]);
-    const [cnt] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id ${w}`, args);
+    // The insight join is only needed when filtering by next action; counting he_lead alone uses its indexes.
+    const needsInsight = typeof req.query.action === "string" && Boolean(req.query.action);
+    const [cnt] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM he_lead l ${needsInsight ? "LEFT JOIN he_lead_insight i ON i.lead_id = l.id" : ""} ${w}`, args);
     res.json({ success: true, data: rows, total: Number(cnt[0].n), page, size });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] leads failed");
