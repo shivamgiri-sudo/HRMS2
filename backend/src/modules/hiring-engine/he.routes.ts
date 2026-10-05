@@ -23,7 +23,7 @@ import { getControlRoom, learnMatchWeights, learnShowUp } from "./he-showup.serv
 import { INTAKE_SOURCES, type IntakeSource } from "./he-intake.js";
 import { listOpenClashes, resolveClash } from "./he-identity.service.js";
 import { refreshExEmployees } from "./he-ex-employee.service.js";
-import { getMasterSummary, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
+import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
@@ -461,4 +461,9 @@ heRouter.get("/control-room", requireAuth, requireRole(...VIEW_ROLES), async (_r
 heRouter.post("/model/learn", requireAuth, requireRole(...ADMIN_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: { showUp: await learnShowUp(), matching: await learnMatchWeights() } }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] learning failed"); res.status(500).json({ message: "Could not learn from outcomes" }); }
+});
+
+heRouter.get("/master/recruiters", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try { res.json({ success: true, data: await getRecruiterProductivity(Number((req.query as { days?: string }).days ?? 7) || 7) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] recruiter productivity failed"); res.status(500).json({ message: "Could not load recruiter productivity" }); }
 });

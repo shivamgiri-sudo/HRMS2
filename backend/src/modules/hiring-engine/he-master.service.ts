@@ -153,3 +153,28 @@ export async function getMasterSummary(): Promise<{
   const [clashRows] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_identity_clash WHERE status = 'open'");
   return { byTier, byReason, byConversion, bySource, exEmployees: { total: Number(exRows[0]?.total ?? 0), clean: Number(exRows[0]?.clean ?? 0) }, openClashes: Number(clashRows[0]?.n ?? 0), refreshedAt: meta?.at ? new Date(meta.at).toISOString() : null, stale: Number(meta?.stale ?? 0) };
 }
+
+export interface RecruiterRow { recruiter: string; attempts: number; uniqueLeads: number; walkins: number; selected: number; joined: number; walkinRate: number; selectRate: number; flag: string | null }
+
+/** Recruiter productivity from the attempt ledger, with a coaching flag when conversion is far below the team. */
+export async function getRecruiterProductivity(days: number): Promise<{ days: number; team: Omit<RecruiterRow, "recruiter" | "flag">; recruiters: RecruiterRow[] }> {
+  const d = Math.min(90, Math.max(1, Math.floor(days)));
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT recruiter_name_snapshot AS recruiter, COUNT(*) AS attempts, COUNT(DISTINCT mobile10) AS uniqueLeads,
+            COUNT(DISTINCT CASE WHEN walkin_flag OR final_selection_flag OR joined_flag THEN mobile10 END) AS walkins,
+            COUNT(DISTINCT CASE WHEN final_selection_flag OR joined_flag THEN mobile10 END) AS selected,
+            COUNT(DISTINCT CASE WHEN joined_flag THEN mobile10 END) AS joined
+       FROM ats_recruiter_hiring_activity WHERE activity_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+      GROUP BY recruiter_name_snapshot ORDER BY walkins DESC, attempts DESC LIMIT 200`, [d]);
+  const sum = (k: string) => rows.reduce((a, r) => a + Number(r[k]), 0);
+  const tu = sum("uniqueLeads"), tw = sum("walkins"), ts = sum("selected");
+  const team = { attempts: sum("attempts"), uniqueLeads: tu, walkins: tw, selected: ts, joined: sum("joined"), walkinRate: tu ? tw / tu : 0, selectRate: tw ? ts / tw : 0 };
+  const recruiters = rows.map((r) => {
+    const u = Number(r.uniqueLeads), w = Number(r.walkins), s = Number(r.selected);
+    const walkinRate = u ? w / u : 0, selectRate = w ? s / w : 0;
+    const flag = u >= 30 && team.walkinRate > 0 && walkinRate < team.walkinRate / 2 ? "Few walk-ins from calls: review script and lead quality"
+      : w >= 15 && team.selectRate > 0 && selectRate < team.selectRate / 2 ? "Walk-ins rarely selected: check screening before line-up" : null;
+    return { recruiter: String(r.recruiter), attempts: Number(r.attempts), uniqueLeads: u, walkins: w, selected: s, joined: Number(r.joined), walkinRate, selectRate, flag };
+  });
+  return { days: d, team, recruiters };
+}

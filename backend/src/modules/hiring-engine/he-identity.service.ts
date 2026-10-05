@@ -8,10 +8,15 @@ import { db } from "../../db/mysql.js";
 import { normaliseEmail } from "../../shared/email-domains.js";
 import { normalizeMobile10 } from "./he-phone.js";
 
+export type IdentityKind = "mobile" | "email" | "aadhaar_hash" | "pan_hash";
+
 export interface IdentityInput {
   mobile?: string | null;
   altMobiles?: Array<string | null | undefined>;
   email?: string | null;
+  /** SHA-256 hashes already stored on the ATS candidate (never raw numbers). */
+  aadhaarHash?: string | null;
+  panHash?: string | null;
   source?: string | null;
 }
 
@@ -20,7 +25,7 @@ export interface IdentityResult {
   clashes: number;
 }
 
-async function recordOne(leadId: string, kind: "mobile" | "email", value: string, isPrimary: boolean, source: string | null): Promise<"new" | "same" | "clash"> {
+async function recordOne(leadId: string, kind: IdentityKind, value: string, isPrimary: boolean, source: string | null): Promise<"new" | "same" | "clash"> {
   const [rows] = await db.execute<RowDataPacket[]>("SELECT lead_id FROM he_lead_identity WHERE kind = ? AND value = ? LIMIT 1", [kind, value]);
   const owner = rows[0]?.lead_id as string | undefined;
   if (!owner) {
@@ -34,7 +39,7 @@ async function recordOne(leadId: string, kind: "mobile" | "email", value: string
   return recordClash(kind, value, leadId, owner);
 }
 
-async function recordClash(kind: "mobile" | "email", value: string, a: string, b: string): Promise<"clash"> {
+async function recordClash(kind: IdentityKind, value: string, a: string, b: string): Promise<"clash"> {
   const [lo, hi] = a < b ? [a, b] : [b, a];
   await db.execute("INSERT IGNORE INTO he_identity_clash (kind, value, lead_id_a, lead_id_b) VALUES (?,?,?,?)", [kind, value, lo, hi]);
   return "clash";
@@ -51,6 +56,10 @@ export async function recordIdentities(leadId: string, input: IdentityInput): Pr
   }
   const email = normaliseEmail(input.email ?? "");
   if (email) tally(await recordOne(leadId, "email", email, true, input.source ?? null));
+  for (const [kind, v] of [["aadhaar_hash", input.aadhaarHash], ["pan_hash", input.panHash]] as const) {
+    const h = String(v ?? "").trim().toLowerCase();
+    if (/^[0-9a-f]{64}$/.test(h)) tally(await recordOne(leadId, kind, h, false, input.source ?? null));
+  }
   return out;
 }
 

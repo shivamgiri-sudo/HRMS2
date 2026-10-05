@@ -9,6 +9,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState, num } from "@/components/analytics/analytics-kit";
 import Candidate360Drawer from "./Candidate360Drawer";
 import CandidateImport from "./CandidateImport";
+import RecruiterBoard from "./RecruiterBoard";
 
 interface Summary {
   byTier: Array<{ tier: string; n: number }>;
@@ -131,16 +132,18 @@ export default function MasterTab() {
         </section>
       </div>
 
+      <RecruiterBoard />
+
       <CandidateImport onDone={() => void load()} />
 
       <section className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><ShieldAlert className="h-4 w-4 text-amber-600" aria-hidden /> Possible same person ({clashes.length})</h2>
-        <p className="mb-2 text-xs text-slate-600">The same email or second number appeared on two different mobile numbers. Nothing is merged automatically.</p>
+        <p className="mb-2 text-xs text-slate-600">The same email, Aadhaar or PAN appeared on two different mobile numbers. Nothing is merged automatically.</p>
         {clashes.length === 0 ? <p className="text-sm text-slate-500">No clashes to review.</p> : (
           <ul className="space-y-2">
             {clashes.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-100 bg-white p-2 text-sm">
-                <span className="font-mono text-xs">{c.value}</span>
+                <span className="font-mono text-xs">{c.kind === "aadhaar_hash" ? "Same Aadhaar" : c.kind === "pan_hash" ? "Same PAN" : c.value}</span>
                 <span>{c.name_a ?? "unnamed"} ({c.mobile_a}) / {c.name_b ?? "unnamed"} ({c.mobile_b})</span>
                 <span className="ml-auto flex gap-1">
                   {[["different", "Different people"], ["same_person", "Same person"], ["ignored", "Ignore"]].map(([s, l]) => <button key={s} type="button" onClick={() => void resolve(c.id, s)} className="cursor-pointer rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">{l}</button>)}
