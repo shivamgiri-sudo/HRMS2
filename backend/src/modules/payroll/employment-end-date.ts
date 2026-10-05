@@ -4,14 +4,18 @@
  * Owner ruling 2026-08-16 (decision 1): Last Working Day is the business source of truth, and
  * `employees.date_of_leaving` must stop being the payroll eligibility field.
  *
- * PRECEDENCE
- *   1. A qualifying Exit/Resignation LWD —
+ * PRECEDENCE (owner decision 2026-10-06: the employee-master Exit Date wins; this reverses the
+ * 2026-08-16 order, which put the resignation LWD first)
+ *   1. employees.date_of_exit — the employee-master Exit Date.
+ *   2. When the Exit Date is blank: a qualifying Exit/Resignation LWD —
  *      COALESCE(last_working_day_confirmed, last_working_day_proposed), and ONLY for a
  *      resignation in accepted / notice_serving / exited. A submitted, rejected or revoked
  *      request is explicitly not an end of employment: someone who withdrew their resignation
- *      must keep being paid.
- *   2. employees.date_of_exit — the persisted employee-master value and the historical fallback.
+ *      must keep being paid. This covers the weeks between an accepted resignation and HR
+ *      filling the Exit Date, when the employee is still marked active.
  *   3. employees.date_of_leaving — legacy, honoured only where actually populated.
+ * Measured on production 2026-10-05: where both the Exit Date and the LWD are set they agree on
+ * every row (3,145 of 3,145), so the order only decides the rows with a blank Exit Date.
  *
  * WHY THIS EXISTS
  * Payroll selected on `date_of_leaving`, which is NULL on all 58,840 employee rows — no write
@@ -44,13 +48,13 @@
  */
 export const EMPLOYMENT_END_DATE_SQL = `
   COALESCE(
+    e.date_of_exit,
     (SELECT COALESCE(x.last_working_day_confirmed, x.last_working_day_proposed)
        FROM exit_request x
       WHERE x.employee_id = e.id
         AND LOWER(x.status) IN ('accepted','notice_serving','exited')
       ORDER BY COALESCE(x.last_working_day_confirmed, x.last_working_day_proposed) DESC
       LIMIT 1),
-    e.date_of_exit,
     e.date_of_leaving
   )`;
 

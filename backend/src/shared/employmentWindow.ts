@@ -13,7 +13,7 @@
 //     stint ends at the currently resolved end date (a new resignation), else open-ended. The gap
 //     between stints is NOT employed.
 //   - Otherwise: [COALESCE(salary_start_date, date_of_joining), resolved end date], where the end date
-//     is payroll's EMPLOYMENT_END_DATE_SQL (accepted / notice-serving / exited LWD, then date_of_exit,
+//     is payroll's EMPLOYMENT_END_DATE_SQL (date_of_exit, else the accepted / notice-serving / exited LWD,
 //     then date_of_leaving). A missing bound is open.
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
