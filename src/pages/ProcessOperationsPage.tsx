@@ -22,6 +22,7 @@ import { BusinessDatapoints } from "@/components/process-operations/BusinessData
 import { MetricDayGrid } from "@/components/process-operations/MetricDayGrid";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { MasmisUploaderGrid } from "@/components/process-operations/MasmisUploader";
+import { V2DashboardView, v2DashboardsForProcess, V2_COMPANY_LABELS } from "@/components/process-performance/v2Dashboards";
 
 /**
  * Real inline upload, keyed by processCode (not mapping.type, since Housing
@@ -120,7 +121,7 @@ function ConfigDrivenSalesView({ processId, processName }: { processId: string; 
   );
 }
 
-function ProcessSalesDashboardView({ processId, processCode, processName }: { processId: string; processCode: string; processName: string }) {
+function LegacyProcessSalesDashboardView({ processId, processCode, processName }: { processId: string; processCode: string; processName: string }) {
   const [month, setMonth] = useState(currentMonthStr());
   // Match on the process name too, so the dashboard is found even if the process code is stored differently.
   const mapping = PROCESS_SALES_MAP[processCode] ?? (/\bbla\b.*\bbli\b|bla[\s_/-]*bli[\s_/-]*blu/i.test(processName) ? PROCESS_SALES_MAP.BLA_BLI_BLU : undefined);
@@ -171,6 +172,54 @@ function ProcessSalesDashboardView({ processId, processCode, processName }: { pr
           <MasmisUploaderGrid templates={PROCESS_MASMIS_UPLOADS[processCode]} />
         </div>
       )}
+    </div>
+  );
+}
+
+
+/** Process Performance V2 page-codes that gate a dashboard (Process Details = by explicit grant only). Mirrors ProcessPerformanceV2Page. */
+const V2_DASHBOARD_PAGE_CODE: Record<string, string> = { housing_owner_targets: "PP_HOUSING_OWNER_PROCESS_DETAILS", housing_premium_targets: "PP_HOUSING_PREMIUM_PROCESS_DETAILS" };
+
+/**
+ * Sales dashboard view. Every Process Performance V2 dashboard that belongs to this process is shown here as its own tab,
+ * drawn by the same V2DashboardView the V2 page uses, so an edit or a new dashboard in v2Dashboards.tsx appears in both pages.
+ * The older hand-built view (and the uploaders under it) stays as the last tab.
+ */
+function ProcessSalesDashboardView(props: { processId: string; processCode: string; processName: string }) {
+  const workforce = useWorkforceAccess();
+  const v2Tabs = useMemo(
+    () => v2DashboardsForProcess(props.processCode, props.processName, V2_COMPANY_LABELS)
+      .filter(({ dashboard }) => {
+        const code = V2_DASHBOARD_PAGE_CODE[dashboard.kind];
+        return !code || (workforce.isResolved && workforce.canViewPage(code));
+      })
+      .map((t) => ({ ...t, id: `${t.company}:${t.dashboard.key}` })),
+    [props.processCode, props.processName, workforce],
+  );
+  const LEGACY = "__classic";
+  const [picked, setPicked] = useState<string | null>(null);
+  if (!v2Tabs.length) return <LegacyProcessSalesDashboardView {...props} />;
+  const multiCompany = new Set(v2Tabs.map((t) => t.company)).size > 1;
+  const activeId = picked && (picked === LEGACY || v2Tabs.some((t) => t.id === picked)) ? picked : v2Tabs[0].id;
+  const active = v2Tabs.find((t) => t.id === activeId);
+  return (
+    <div className="space-y-4">
+      <div role="tablist" aria-label="Process dashboards" className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">
+        {v2Tabs.map((t) => (
+          <button key={t.id} type="button" role="tab" aria-selected={activeId === t.id} onClick={() => setPicked(t.id)}
+            className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${activeId === t.id ? "bg-slate-900 text-amber-300" : "text-slate-500 hover:text-slate-800"}`}>
+            {multiCompany ? `${t.companyLabel} · ${t.dashboard.label}` : t.dashboard.label}
+          </button>
+        ))}
+        <button type="button" role="tab" aria-selected={activeId === LEGACY} onClick={() => setPicked(LEGACY)}
+          className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${activeId === LEGACY ? "bg-slate-900 text-amber-300" : "text-slate-500 hover:text-slate-800"}`}>
+          Classic view &amp; uploads
+        </button>
+      </div>
+      {active
+        ? <V2DashboardView key={active.id} company={active.company} dashboard={active.dashboard}
+            onOpenDashboard={(key) => { const t = v2Tabs.find((x) => x.company === active.company && x.dashboard.key === key); if (t) setPicked(t.id); }} />
+        : <LegacyProcessSalesDashboardView {...props} />}
     </div>
   );
 }
@@ -5201,7 +5250,8 @@ export default function ProcessOperationsPage() {
   // Must be after currentProcess is declared (TDZ guard)
   const { data: pdConfigs } = useQuery({ queryKey: ["process-dashboard", "configs"], queryFn: fetchProcessDashboardConfigs, staleTime: 60_000, retry: false });
   const hasConfigDashboard = !!(currentProcess && pdConfigs?.some((c) => c.processId === currentProcess.processId && c.enabled && c.configured));
-  const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]) || hasConfigDashboard;
+  const hasV2Dashboards = !!currentProcess && v2DashboardsForProcess(currentProcess.processCode ?? "", currentProcess.processName ?? "", V2_COMPANY_LABELS).length > 0;
+  const hasSalesDashboard = !!(currentProcess && PROCESS_SALES_MAP[currentProcess.processCode ?? ""]) || hasConfigDashboard || hasV2Dashboards;
 
   const { data: feedData } = useQuery({
     queryKey: ["process-operations", "feeds"],
