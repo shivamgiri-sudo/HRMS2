@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getIstDateString } from '../../utils/dateUtils.js';
 import { letterSalaryRowsOrBlank } from "./appointmentLetterData.service.js";
+import { stripSalaryOverrides, resolveApprovedIncrementVars } from "./letterSalaryGuard.js";
 import { istDate, assertUsableName } from "./letterFormat.js";
 import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
 
@@ -105,7 +106,10 @@ export const lettersService = {
       epf_no:            emp.epf_number ?? "",
       esi_no:            emp.esic_number ?? "",
       ...salaryRows,
-      ...data.override_vars,
+      // Typed overrides may not replace any approved salary figure; an increment letter's figures come
+      // from the approved, implemented increment and win over anything typed (see letterSalaryGuard.ts).
+      ...stripSalaryOverrides(template.letter_type, data.override_vars),
+      ...(template.letter_type === "increment" ? await resolveApprovedIncrementVars(data.employee_id) : {}),
     };
 
     // generated_text stores a JSON blob so the renderer can re-hydrate later

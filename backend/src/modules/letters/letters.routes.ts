@@ -10,6 +10,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { letterSalaryRowsOrBlank } from "./appointmentLetterData.service.js";
+import { stripSalaryOverrides, resolveApprovedIncrementVars } from "./letterSalaryGuard.js";
 import { istDate, assertUsableName } from "./letterFormat.js";
 import { buildEmployeeScopeCondition, canViewEmployee, resolveUserBusinessScope } from "../../shared/enterpriseScope.js";
 
@@ -206,6 +207,21 @@ router.post("/preview-html", requireRole("admin", "hr", "super_admin"), h(async 
   // failing the request — see letterSalaryRowsOrBlank() for why blank not zero.
   const { rows: salaryRows } = await letterSalaryRowsOrBlank(employee_id);
 
+  // Fetch template letter_type
+  const [tplRows] = await db.execute<RowDataPacket[]>(
+    "SELECT letter_type FROM letter_template WHERE template_code = ? AND active_status = 1 LIMIT 1",
+    [template_code]
+  );
+  const tpl = (tplRows as RowDataPacket[])[0] as any;
+  if (!tpl) return res.status(404).json({ error: `Template not found: ${template_code}` });
+
+  // An increment letter's figures come from the approved, implemented increment, never from typed values.
+  let incrementVars: Record<string, string> = {};
+  if (tpl.letter_type === "increment") {
+    try { incrementVars = await resolveApprovedIncrementVars(employee_id); }
+    catch (e) { return res.status(409).json({ error: e instanceof Error ? e.message : "No approved increment" }); }
+  }
+
   const data: Record<string, string> = {
     full_name:         assertUsableName(emp.full_name),
     employee_code:     emp.employee_code ?? "",
@@ -221,16 +237,11 @@ router.post("/preview-html", requireRole("admin", "hr", "super_admin"), h(async 
     epf_no:            emp.epf_number ?? "",
     esi_no:            emp.esic_number ?? "",
     ...salaryRows,
-    ...(override_vars ?? {}),
+    // Typed overrides may not replace any approved salary figure (see letterSalaryGuard.ts).
+    ...stripSalaryOverrides(tpl.letter_type, override_vars),
+    ...incrementVars,
   };
 
-  // Fetch template letter_type
-  const [tplRows] = await db.execute<RowDataPacket[]>(
-    "SELECT letter_type FROM letter_template WHERE template_code = ? AND active_status = 1 LIMIT 1",
-    [template_code]
-  );
-  const tpl = (tplRows as RowDataPacket[])[0] as any;
-  if (!tpl) return res.status(404).json({ error: `Template not found: ${template_code}` });
 
   const html = renderLetterHtml(tpl.letter_type as string, data, logoUrl(req));
   res.setHeader("Content-Type", "text/html; charset=utf-8");
