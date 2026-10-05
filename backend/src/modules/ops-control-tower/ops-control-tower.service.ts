@@ -524,6 +524,7 @@ function esignSql(scoped: boolean): string {
   const doneClause = `LOWER(COALESCE(b.joining_document_status, '')) IN (${JOINING_DOC_DONE_STATUS_VALUES.map(() => "?").join(",")})`;
   return `SELECT e.branch_id, e.id AS employee_id, e.employee_code, e.full_name, e.created_at,
                  CASE WHEN COALESCE(b.joining_document_completion_pct, 0) >= 100 OR ${doneClause}
+                           OR EXISTS (SELECT 1 FROM employee_joining_esign_kit ek WHERE ek.employee_id = e.id AND ek.status = 'signed')
                       THEN e.created_at ELSE NULL END AS done_at
             FROM ats_onboarding_bridge b
             JOIN employees e ON e.id = b.employee_id
@@ -609,23 +610,46 @@ export async function getAppointmentLetterDetail(
 // data (2026-09-25): only 'initiated' and 'skipped' rows exist so far, no 'success'/'failed' yet.
 const PENNY_DROP_DONE = ["success", "skipped"];
 
+/**
+ * Penny drop done, from every place the verification is actually recorded. bank_penny_drop_log is only
+ * written by the post-joining bank-detail flow (7 rows ever on production); the onboarding journey verifies the
+ * account earlier, on the candidate, and records it in ats_onboarding_bridge.penny_drop_status and
+ * candidate_bank_verification (live 2026-10-05: 174 of 208 recent joiners 'verified' on the bridge, 175 with any
+ * verified evidence, yet all 208 showed as pending). Checking the log alone listed people who had verified
+ * (e.g. Suhail Khan, MAS63672) under pending. Mock-provider rows are test data and do not count.
+ */
+const PENNY_DROP_EVIDENCE_SQL = `(
+          (latest.penny_drop_status IS NOT NULL AND latest.penny_drop_status IN (${PENNY_DROP_DONE.map((v) => `'${v}'`).join(",")}))
+          OR EXISTS (SELECT 1 FROM ats_onboarding_bridge pb
+                      WHERE pb.employee_id = e.id
+                        AND (LOWER(COALESCE(pb.penny_drop_status, '')) = 'verified' OR pb.penny_drop_verified_at IS NOT NULL))
+          OR EXISTS (SELECT 1 FROM employee_bank_detail pd WHERE pd.employee_id = e.id AND pd.verified = 1)
+          OR EXISTS (SELECT 1 FROM ats_onboarding_bridge pb2
+                       JOIN candidate_bank_verification pv ON pv.candidate_id = pb2.candidate_id
+                      WHERE pb2.employee_id = e.id
+                        AND LOWER(COALESCE(pv.verification_status, '')) = 'verified'
+                        AND LOWER(COALESCE(pv.verification_method, '')) <> 'mock')
+        )`;
+
+const PENNY_DROP_LATEST_JOIN = `LEFT JOIN (
+         SELECT bpdl1.employee_id, bpdl1.penny_drop_status
+           FROM bank_penny_drop_log bpdl1
+          WHERE bpdl1.initiated_at = (
+                  SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
+                )
+       ) latest ON latest.employee_id = e.id`;
+
 export async function getPennyDropMissingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
     "penny-drop-missing",
     `SELECT e.branch_id, COUNT(*) AS n
        FROM employees e
-       LEFT JOIN (
-         SELECT bpdl1.employee_id, bpdl1.penny_drop_status
-           FROM bank_penny_drop_log bpdl1
-          WHERE bpdl1.initiated_at = (
-                  SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
-                )
-       ) latest ON latest.employee_id = e.id
+       ${PENNY_DROP_LATEST_JOIN}
       WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
-        AND (latest.penny_drop_status IS NULL OR latest.penny_drop_status NOT IN (${PENNY_DROP_DONE.map(() => "?").join(",")}))
+        AND NOT ${PENNY_DROP_EVIDENCE_SQL}
       GROUP BY e.branch_id`,
-    [NEW_JOINER_WINDOW_DAYS, ...PENNY_DROP_DONE],
+    [NEW_JOINER_WINDOW_DAYS],
   );
   return rollupCounts(
     branches,
@@ -638,21 +662,18 @@ export async function getPennyDropMissingDetail(
 ): Promise<OnboardingDetailRow[]> {
   const rows = await query<RowDataPacket>(
     "penny-drop-missing-detail",
-    `SELECT e.id AS employee_id, e.employee_code, e.full_name, COALESCE(latest.penny_drop_status, 'not_started') AS status,
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name,
+            COALESCE(latest.penny_drop_status,
+                     (SELECT NULLIF(pb3.penny_drop_status, '') FROM ats_onboarding_bridge pb3 WHERE pb3.employee_id = e.id LIMIT 1),
+                     'not_started') AS status,
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM employees e
-       LEFT JOIN (
-         SELECT bpdl1.employee_id, bpdl1.penny_drop_status
-           FROM bank_penny_drop_log bpdl1
-          WHERE bpdl1.initiated_at = (
-                  SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
-                )
-       ) latest ON latest.employee_id = e.id
+       ${PENNY_DROP_LATEST_JOIN}
       WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
-        AND (latest.penny_drop_status IS NULL OR latest.penny_drop_status NOT IN (${PENNY_DROP_DONE.map(() => "?").join(",")}))
+        AND NOT ${PENNY_DROP_EVIDENCE_SQL}
       ORDER BY e.created_at ASC
       LIMIT 200`,
-    [branchId, NEW_JOINER_WINDOW_DAYS, ...PENNY_DROP_DONE],
+    [branchId, NEW_JOINER_WINDOW_DAYS],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
@@ -724,7 +745,12 @@ export async function getDocsPendingDetail(
 // ── 10. Account details missing ─────────────────────────────────────────────────────────────
 // employee_bank_detail has no status column — the row's mere existence is the signal. Pending =
 // no bank-detail row for the employee at all (NOT the `verified` flag, which is a separate,
-// later step — this block only answers "has HRMS captured account details yet").
+// later step — this block only answers "has HRMS captured account details yet"). Account details the
+// candidate already entered during onboarding (candidate_onboarding_bank_detail, a real account hash) count as
+// captured: they reach employee_bank_detail later, and 20 of the 35 listed on 2026-10-05 already had them.
+const CANDIDATE_BANK_CAPTURED_SQL = `EXISTS (SELECT 1 FROM ats_onboarding_bridge cb
+                      JOIN candidate_onboarding_bank_detail cob ON cob.candidate_id = cb.candidate_id
+                     WHERE cb.employee_id = e.id AND cob.account_no_hash IS NOT NULL AND cob.account_no_hash <> '')`;
 export async function getAccountDetailsMissingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
@@ -732,7 +758,7 @@ export async function getAccountDetailsMissingBlock(): Promise<CountBlock> {
     `SELECT e.branch_id, COUNT(*) AS n
        FROM employees e
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US} AND ebd.id IS NULL
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US} AND ebd.id IS NULL AND NOT ${CANDIDATE_BANK_CAPTURED_SQL}
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS],
   );
@@ -751,7 +777,7 @@ export async function getAccountDetailsMissingDetail(
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM employees e
        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US} AND ebd.id IS NULL
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US} AND ebd.id IS NULL AND NOT ${CANDIDATE_BANK_CAPTURED_SQL}
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [branchId, NEW_JOINER_WINDOW_DAYS],
