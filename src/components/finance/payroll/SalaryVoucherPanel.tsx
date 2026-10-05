@@ -93,36 +93,20 @@ export function SalaryVoucherPanel() {
   const runs = runsQuery.data ?? [];
   const period = runs.find((r) => r.id === runId)?.run_month ?? "";
 
-  /*
-   * IDC's payroll is not in mas_hrms — it lives in db_bill (see DB-BILL-FINDINGS). So IDC is
-   * served by a SEPARATE, explicitly-gated endpoint that reads db_bill for the run's month.
-   * That endpoint is inert (a clean error) unless the server has BILL_DB configured, so
-   * selecting IDC in an environment without it simply reports it is unavailable — it never
-   * silently reaches for an upstream database.
-   *
-   * Both full paths are written as literals below so the route-contract check can see them; a
-   * path hidden behind a variable would defeat it.
-   */
-  const isBillSourced = companyCode === "IDC";
-
+  // Salary vouchers come from mas_hrms only. IDC's payroll lives in db_bill and is deliberately
+  // not offered here: its endpoint has no Tally CSV export.
   const search = [
     companyCode ? `companyCode=${encodeURIComponent(companyCode)}` : "",
-    isBillSourced ? `entityPrefix=${encodeURIComponent(companyCode)}` : "",
     serialFrom.trim() ? `serialFrom=${encodeURIComponent(serialFrom.trim())}` : "",
   ].filter(Boolean).join("&");
   const query = search ? `?${search}` : "";
 
-  const previewUrl = isBillSourced
-    ? `/api/finance/payroll/runs/bill/${period}/vouchers${query}`
-    : `/api/finance/payroll/runs/${runId}/vouchers${query}`;
-  const exportUrl = isBillSourced
-    ? `/api/finance/payroll/runs/bill/${period}/vouchers${query}`
-    : `/api/finance/payroll/runs/${runId}/vouchers/export${query}`;
+  const previewUrl = `/api/finance/payroll/runs/${runId}/vouchers${query}`;
+  const exportUrl = `/api/finance/payroll/runs/${runId}/vouchers/export${query}`;
 
   const voucherQuery = useQuery({
     queryKey: ["salary-vouchers", runId, companyCode, serialFrom],
-    // The bill path needs a period, which comes from the selected run's month.
-    enabled: Boolean(runId) && (!isBillSourced || Boolean(period)),
+    enabled: Boolean(runId),
     queryFn: async () => unwrap<Payload>(await hrmsApi.get<any>(previewUrl)),
   });
   const data = voucherQuery.data;
@@ -150,7 +134,7 @@ export function SalaryVoucherPanel() {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
                     a.href = url;
-                    a.download = `salary-voucher-${period || runId}.${isBillSourced ? "json" : "csv"}`;
+                    a.download = `salary-voucher-${period || runId}.csv`;
                     a.click();
                     URL.revokeObjectURL(url);
                   } catch (error) {
@@ -185,7 +169,6 @@ export function SalaryVoucherPanel() {
             <GrnSelect className="mt-1 w-[180px]" value={companyCode} onChange={(e) => setCompanyCode(e.target.value)}>
               <option value="">All companies</option>
               <option value="MAS">MAS</option>
-              <option value="IDC">IDC</option>
               <option value="PIK">PIK</option>
             </GrnSelect>
           </label>
