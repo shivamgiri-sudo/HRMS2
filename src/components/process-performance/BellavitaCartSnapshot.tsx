@@ -7,7 +7,8 @@ import {
   ShoppingCart, PhoneCall, IndianRupee, Percent, Users, ShieldCheck, Info, MousePointerClick, Inbox,
 } from "lucide-react";
 import { Spinner, KpiCard, SectionCard, DashboardExportMenu, formatINR, type ExportSlide } from "./DashboardKit";
-import { TOOLTIP_PROPS, fmtDate, fmtN, fmtShortDay } from "./lpCallShared";
+import { TOOLTIP_PROPS, fmtDate, fmtN, fmtShortDay, secToHms } from "./lpCallShared";
+import type { AgentRow } from "./BellavitaCartAgents";
 
 /**
  * Bellavita Abandoned Cart snapshot: the Overview / Sale / Revenue metrics for
@@ -113,6 +114,11 @@ export function BellavitaCartSnapshot({
   const [data, setData] = useState<SnapshotData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  /** Full per-agent roster for this tab's own "Download All Views" export --
+   * the Agent Performance tab (BellavitaCartAgents) is a separate component
+   * with its own separate export button, so without this fetch here too,
+   * the Snapshot tab's export never included an agent-wise sheet. */
+  const [agentData, setAgentData] = useState<{ columns: CartColumn[]; agents: AgentRow[] } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -128,6 +134,15 @@ export function BellavitaCartSnapshot({
   }, [apiPath, from, to]);
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+    hrmsApi
+      .get<{ success: boolean; data: { columns: CartColumn[]; agents: AgentRow[] } }>(`${apiPath}/agents?from=${from}&to=${to}`)
+      .then((res) => { if (!cancelled) setAgentData({ columns: res.data.columns, agents: res.data.agents }); })
+      .catch(() => { if (!cancelled) setAgentData(null); });
+    return () => { cancelled = true; };
+  }, [apiPath, from, to]);
+
   const exportSlides = useMemo<ExportSlide[]>(() => {
     if (!data) return [];
     return [{
@@ -137,8 +152,30 @@ export function BellavitaCartSnapshot({
         columns: [s.title, ...data.columns.map((c) => c.label)],
         rows: s.rows.map((r) => [r.label, ...data.columns.map((c) => format(data.values[c.key]?.[r.key] as number | null, r.fmt))]),
       })),
-    }];
-  }, [data]);
+    },
+    ...(agentData && agentData.agents.length > 0 ? [{
+      title: "Agent-wise Performance",
+      tables: [{
+        title: "Agent-wise Abandon Cart",
+        columns: [
+          "Emp Id", "Agent", "DOJ", "Tenure", "Bucket", "Status", "TL", "Sale Made", "COD", "Paid", "RTO", "COD %", "Paid %",
+          "RTO Amount", "Revenue", "RTO %", "Sales/day", "Answered", "Avg Login", "Avg Net Login", "Avg Break", "Avg Talk", "Avg Dispo",
+          "ACHT", "Occup %", "Attendance", "Man Days", "Allocation", "Connected %", "Conv %",
+        ],
+        rows: agentData.agents.map((a) => [
+          a.empId, a.name, a.doj ? fmtDate(a.doj) : "—", a.tenureDays ?? "—", a.bucket ?? "—", a.status, a.tl || "—",
+          a.saleMade, a.cod, a.paid, a.rto, `${a.codPct}%`, `${a.paidPct}%`, formatINR(a.rtoAmount), formatINR(a.revenue), `${a.rtoPct}%`, a.avgSalePerDay,
+          a.calls, secToHms(a.avgLoginSec), secToHms(a.avgNetLoginSec), secToHms(a.avgBreakSec), secToHms(a.avgTalkSec), secToHms(a.avgDispoSec),
+          a.acht, `${a.occupancyPct}%`, a.attendanceDays, a.manDays, a.allocation, `${a.connectedPct}%`, `${a.convPct}%`,
+        ]),
+      }, {
+        title: "Revenue by period",
+        columns: ["Agent", ...agentData.columns.map((c) => c.label)],
+        rows: agentData.agents.map((a) => [a.name, ...agentData.columns.map((c) => formatINR(a.byPeriod[c.key]?.revenue ?? 0))]),
+      }],
+    }] : []),
+    ];
+  }, [data, agentData]);
 
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;

@@ -4,6 +4,7 @@ import { ProcessDashboard } from "@/components/process-dashboard/ProcessDashboar
 import { fetchConfigs as fetchProcessDashboardConfigs } from "@/components/process-dashboard/api";
 import type { ProcessConfigSummary } from "@/components/process-dashboard/types";
 import { Link } from "react-router-dom";
+import { AltRxMisPanel } from "@/components/process-performance/AltRxMisPanel";
 import { V2DashboardView, DASHBOARDS_BY_COMPANY, COMPANIES, todayStr, firstOfMonthStr, type CompanyKey, type DashboardKind } from "@/components/process-performance/v2Dashboards";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
@@ -40,6 +41,8 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
   clovia: { icon: Shirt, tone: "red" },
   birlanu: { icon: FileText, tone: "indigo" },
   satya_retail: { icon: Tag, tone: "yellow" },
+  alt_rx: { icon: Tag, tone: "emerald" },
+  alt_rx: { icon: Tag, tone: "emerald" },
   lp_feedback: { icon: MessageSquare, tone: "blue" },
   lp_onboarding: { icon: Users, tone: "pink" },
   puresta: { icon: Sparkles, tone: "slate" },
@@ -163,6 +166,14 @@ const BIRLANU_UPLOADERS = [
 
 /** Satya Retail's 2 uploaders, writing into brand-new db_masmis tables
  * (satya_allocation/satya_cdr, sql/1770). Same status as above. */
+const ALT_RX_UPLOADERS = [
+  { code: "ALT_RX_DUMP_MASMIS", label: "Dump", description: "Upload the ALT RX ticket Dump. Each upload replaces the previous Dump.", icon: Upload },
+];
+
+const ALT_RX_UPLOADERS = [
+  { code: "ALT_RX_DUMP_MASMIS", label: "Dump", description: "Upload the ALT RX ticket Dump. Each upload replaces the previous Dump.", icon: Upload },
+];
+
 const SATYA_RETAIL_UPLOADERS = [
   { code: "SATYA_ALLOCATION_MASMIS", label: "Allocation", description: "Upload Satya Retail beat/shop allocation data", icon: Target },
   { code: "SATYA_CDR_MASMIS",        label: "CDR",         description: "Upload Satya Retail call detail records",      icon: PhoneOutgoing },
@@ -235,6 +246,8 @@ const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   sbi_card: SBI_CARD_UPLOADERS,
   birlanu: BIRLANU_UPLOADERS,
   satya_retail: SATYA_RETAIL_UPLOADERS,
+  alt_rx: ALT_RX_UPLOADERS,
+  alt_rx: ALT_RX_UPLOADERS,
   lp_feedback: LP_FEEDBACK_UPLOADERS,
   lp_onboarding: LP_ONBOARDING_UPLOADERS,
   du_thailand: DU_THAILAND_UPLOADERS,
@@ -389,9 +402,16 @@ function MisPanel({ companyKey, companyLabel }: { companyKey: CompanyKey; compan
           </button>
           <button
             type="button"
+            onClick={() => setScheduleOpen(true)}
+            className="ml-auto flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-50"
+          >
+            <CalendarClock className="h-3.5 w-3.5" /> Schedule email
+          </button>
+          <button
+            type="button"
             onClick={() => void download()}
             disabled={busy}
-            className="ml-auto flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:cursor-wait disabled:opacity-70"
+            className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:cursor-wait disabled:opacity-70"
           >
             <Download className="h-3.5 w-3.5" /> {busy ? "Preparing MIS…" : "Download MIS Report"}
           </button>
@@ -600,6 +620,7 @@ export default function ProcessPerformanceV2Page() {
         {/* Level 3: Uploader hub + workspace — every company with a real uploader
             array (all except Dalmia/DU Bangladesh/Viega/Exicom, Inbound-only so
             far) shares this one design instead of a duplicated block each. */}
+
         {company && UPLOADERS_BY_COMPANY[company] && section === "uploader" && !selectedUploader && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
@@ -642,7 +663,14 @@ export default function ProcessPerformanceV2Page() {
         {/* Level 3: MIS — every company (the "puresta" placeholder has no
             dashboards to bundle, so the server 404s with a plain message
             the panel shows inline rather than a dead grid here). */}
-        {company && section === "mis" && (
+        {company === "alt_rx" && section === "mis" && (
+          <div className="space-y-4">
+            <Breadcrumb parts={[companyLabel, "MIS"]} onBack={backToCompany} />
+            <AltRxMisPanel />
+          </div>
+        )}
+
+        {company && company !== "alt_rx" && section === "mis" && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "MIS"]} onBack={backToCompany} />
             <MisPanel companyKey={company} companyLabel={companyLabel} />

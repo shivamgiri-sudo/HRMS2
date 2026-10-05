@@ -27,6 +27,13 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "0.0.0.0",
     port: 8080,
+    watch: {
+      // uploader/*/chrome_profile/** is a real Chrome user-data dir used by the
+      // browser-automation uploader scripts, not source code. Its Cookies file
+      // (SQLite) gets OS-locked while Chrome is running, and watching it crashes
+      // the whole dev server with an uncaught EBUSY FSWatcher error.
+      ignored: ["**/chrome_profile/**"],
+    },
     proxy: {
       // Explicit 127.0.0.1, not 'localhost' — on Windows + Node 20+, Node's
       // autoSelectFamily (Happy Eyeballs) races 127.0.0.1 vs ::1 when resolving

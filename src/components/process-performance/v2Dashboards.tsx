@@ -23,6 +23,7 @@ import { LpOnboardingDashboard } from "@/components/process-performance/LpOnboar
 import { SatyaRetailDashboard } from "@/components/process-performance/SatyaRetailDashboard";
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
 import { DuDigitalDashboard } from "@/components/process-performance/DuDigitalDashboard";
+import { AltRxDashboard } from "@/components/process-performance/AltRxDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
 import { UploaderHub, type UploaderHubItem } from "@/components/process-performance/UploaderHub";
@@ -34,7 +35,7 @@ import { UploaderWorkspace } from "@/components/process-performance/UploaderWork
  * company is passed straight through as projectKey with no separate
  * mapping table, same as bellavita/gnc/clovia/neemans already are.
  */
-export type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "sbi_card" | "du_thailand" | "du_korea";
+export type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "alt_rx" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "sbi_card" | "du_thailand" | "du_korea";
 
 /**
  * Named dashboard entries per company. "inbound" entries render the exact
@@ -56,6 +57,7 @@ export const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "clovia", label: "Clovia" },
   { key: "birlanu", label: "Birlanu" },
   { key: "satya_retail", label: "Satya Retail" },
+  { key: "alt_rx", label: "ALT RX" },
   { key: "lp_feedback", label: "LP Feedback" },
   { key: "lp_onboarding", label: "LP Onboarding" },
   { key: "puresta", label: "Puresta" },
@@ -88,6 +90,9 @@ export const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, V2Dashboard[]>> =
   ],
   lp_onboarding: [
     { key: "call_performance", label: "Onboarding Call Performance", description: "Login/calls/connectivity, lead-source, week-wise & agent-wise — live from uploaded APR/CDR data", kind: "lp_onboarding" },
+  ],
+  alt_rx: [
+    { key: "alt_rx_dashboard", label: "ALT RX Dashboard", description: "Upload the ticket Dump to see Inflow, Closure, TAT and FRT by agent, comment type and brand, by day, week and MTD", kind: "alt_rx" },
   ],
   satya_retail: [
     { key: "satya_dashboard", label: "Satya Retail Dashboard", description: "Morning/Absentee allocation, calls, connect, orders & conversion, outcomes, agent-wise and daily tracker — live from uploaded allocation/CDR data", kind: "satya_retail_dashboard" },
@@ -193,7 +198,7 @@ function InboundDashboardTab({ projectKey }: { projectKey: string }) {
   );
 }
 
-export type V2Dashboard = { key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" | "du_digital_thailand" | "du_digital_korea" | "category_template" };
+export type V2Dashboard = { key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "alt_rx" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "sbi_card_dashboard" | "du_digital_thailand" | "du_digital_korea" | "category_template" };
 export type DashboardKind = V2Dashboard["kind"];
 
 /**
@@ -255,6 +260,8 @@ export function V2DashboardView({ company, dashboard, onOpenDashboard }: {
               <LpFeedbackDashboard />
             ) : dashboard.kind === "lp_onboarding" ? (
               <LpOnboardingDashboard />
+            ) : dashboard.kind === "alt_rx" ? (
+              <AltRxDashboard />
             ) : dashboard.kind === "satya_retail_dashboard" ? (
               <SatyaRetailDashboard />
             ) : dashboard.kind === "clovia_dashboard" ? (
