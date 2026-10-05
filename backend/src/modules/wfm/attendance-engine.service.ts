@@ -379,6 +379,24 @@ export const attendanceEngineService = {
     return rows[0] as AttendanceRuleConfig;
   },
 
+  /**
+   * A personal source set for one employee on the Attendance Rules page. Beats every
+   * apr_eligibility_config row and any scoped dialler rule. Null when none is set, and also when
+   * the table does not exist yet (migration 2083 pending): a lookup failure must never change an
+   * employee's source, so it reads as "no override".
+   */
+  async getEmployeeLogicOverride(employeeId: string): Promise<{ logic: AttendanceLogic; reason: string } | null> {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT attendance_logic, reason FROM employee_attendance_logic_override
+          WHERE employee_id = ? AND active_status = 1 LIMIT 1`, [employeeId]);
+      const r = (rows as any[])[0];
+      return r ? { logic: String(r.attendance_logic) as AttendanceLogic, reason: String(r.reason ?? '') } : null;
+    } catch {
+      return null;
+    }
+  },
+
   // G1: DB-backed attendance-logic resolution (replaces hardcoded isOperationsExecutive).
   // Falls back to regex if apr_eligibility_config table is empty.
   //
@@ -440,8 +458,11 @@ export const attendanceEngineService = {
     departmentId: string | null,
     processId: string | null,
     deptNameLower: string,
-    desigNameLower: string
+    desigNameLower: string,
+    employeeId?: string | null
   ): Promise<boolean> {
+    const override = employeeId ? await this.getEmployeeLogicOverride(employeeId) : null;
+    if (override) return override.logic !== 'cosec';
     const logic = await this.resolveAttendanceLogic(
       designationId, departmentId, processId, deptNameLower, desigNameLower);
     return logic !== 'cosec';
@@ -991,18 +1012,24 @@ export const attendanceEngineService = {
     // Resolve rule
     let rule = await this.resolveRule(designationId, processId, branchId, date);
 
+    // A personal override (Attendance Rules page) wins over every rule below it.
+    const personalOverride = await this.getEmployeeLogicOverride(employeeId);
+
     // G1: DB-backed attendance-logic resolution (replaces hardcoded regex)
-    const attendanceLogic = await this.resolveAttendanceLogic(
-      designationId, departmentId, processId,
-      emp.dept_name, emp.designation_name
-    );
+    const attendanceLogic: AttendanceLogic = personalOverride
+      ? personalOverride.logic
+      : await this.resolveAttendanceLogic(
+          designationId, departmentId, processId,
+          emp.dept_name, emp.designation_name
+        );
     const configuredAprEmployee = attendanceLogic !== 'cosec';
 
     // Always fetch biometric minutes upfront — needed for G12 week-off cross-validation
     // and for mismatch detection even when employee is APR-eligible.
     const biometricEvidence = await this.getBiometricEvidence(employeeId, date);
     const biometricMinutes = biometricEvidence.minutes;
-    const hasScopedDiallerRule = rule.attendance_source === 'dialler'
+    // A scoped dialler threshold rule forces APR, but never over a personal override.
+    const hasScopedDiallerRule = !personalOverride && rule.attendance_source === 'dialler'
       && Boolean(rule.designation_id || rule.process_id || rule.branch_id);
     let isAprEmployee = configuredAprEmployee || hasScopedDiallerRule;
     let forcedAprMinutes: number | null = null;
@@ -1011,7 +1038,7 @@ export const attendanceEngineService = {
     // Production-safe fallback: if master data is incomplete but the employee belongs to
     // operations and biometric has no evidence for the day, let strong APR/dialler evidence
     // drive the attendance source for that date instead of forcing a missing_punch payroll gap.
-    if (!isAprEmployee && biometricMinutes === 0 && isOperationsDepartmentName(emp.dept_name)) {
+    if (!personalOverride && !isAprEmployee && biometricMinutes === 0 && isOperationsDepartmentName(emp.dept_name)) {
       const aprMinutes = await this.getAprNetMinutes(emp.employee_code, date, shiftWindow);
       const diallerMinutes = aprMinutes > 0
         ? aprMinutes
@@ -1222,11 +1249,12 @@ export const attendanceEngineService = {
       // dialler minutes is present, not a half day. It can only raise a day's status, never
       // lower one, so a process moved onto this logic cannot cost anyone pay.
       //
-      // Only applies when APR actually has a record (rawMinutes > 0): when APR is silent
-      // the day is absent; there is nothing to validate or lift.
+      // Owner ruling 2026-10-05: when APR has NO record for the day (rawMinutes 0) the day is
+      // built from COSEC instead of being left absent. Before this the rescue only applied when
+      // APR had some minutes, so an APR+COSEC employee with a silent feed and a full day on the
+      // card reader was absent. Plain 'apr' is unchanged: a silent feed is still the answer there.
       if (attendanceLogic === 'apr_validated_by_cosec'
           && classifyAsApr
-          && rawMinutes > 0
           && biometricMinutes > 0
           && statusRank(biometricStatusRaw) > statusRank(aprStatusRaw)) {
         classifyAsApr = false;
@@ -1798,7 +1826,7 @@ export const attendanceEngineService = {
     process_id: string; process_name: string; attendance_logic: AttendanceLogic;
     is_mixed: boolean; has_own_rule: boolean;
     breakdown: Record<AttendanceLogic, number>;
-    rule_count: number; employee_count: number; last_changed_at: string | null;
+    rule_count: number; override_count: number; employee_count: number; last_changed_at: string | null;
   }>> {
     const [procRows] = await db.execute<RowDataPacket[]>(
       `SELECT id, process_name FROM process_master WHERE active_status = 1 ORDER BY process_name`);
@@ -1813,6 +1841,7 @@ export const attendanceEngineService = {
         WHERE e.employment_status = 'active' AND e.process_id IS NOT NULL
         GROUP BY e.process_id, e.designation_id, e.department_id, dept_name, designation_name`);
     const rows = await this.loadAprEligibilityRows();
+    const overrides = await this.listEmployeeLogicOverrides();
 
     const byProcess = new Map<string, Record<AttendanceLogic, number>>();
     for (const g of groupRows as any[]) {
@@ -1824,6 +1853,23 @@ export const attendanceEngineService = {
         ?? { apr: 0, cosec: 0, apr_validated_by_cosec: 0 };
       tally[res.logic] += Number(g.n);
       byProcess.set(String(g.process_id), tally);
+    }
+
+    // A personal override moves that one employee from the logic the rules give them to their own.
+    const overrideCount = new Map<string, number>();
+    for (const o of overrides) {
+      if (!o.process_id || !o.employee_active) continue;
+      const tally = byProcess.get(o.process_id);
+      if (!tally) continue;
+      const ruleLogic = resolveAttendanceLogicFromRows(
+        rows,
+        { designationId: o.designation_id, departmentId: o.department_id, processId: o.process_id },
+        { departmentName: o.dept_name, designationName: o.designation_name }).logic;
+      if (ruleLogic !== o.attendance_logic && tally[ruleLogic] > 0) {
+        tally[ruleLogic] -= 1;
+        tally[o.attendance_logic] += 1;
+      }
+      overrideCount.set(o.process_id, (overrideCount.get(o.process_id) ?? 0) + 1);
     }
 
     return (procRows as any[]).map((p) => {
@@ -1847,10 +1893,75 @@ export const attendanceEngineService = {
         has_own_rule: own.length > 0,
         breakdown,
         rule_count: own.length,
+        override_count: overrideCount.get(id) ?? 0,
         employee_count: employeeCount,
         last_changed_at: own.map((r) => r.updated_at).filter(Boolean).sort().pop() ?? null,
       };
     });
+  },
+
+  /** Every active personal override with the employee facts needed to place it. */
+  async listEmployeeLogicOverrides(): Promise<Array<{
+    employee_id: string; employee_code: string; name: string; process_id: string | null; process_name: string | null;
+    designation_id: string | null; department_id: string | null; dept_name: string; designation_name: string;
+    attendance_logic: AttendanceLogic; reason: string; set_at: string | null; set_by_name: string | null;
+    employee_active: boolean;
+  }>> {
+    try {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT o.employee_id, o.attendance_logic, o.reason,
+                DATE_FORMAT(COALESCE(o.updated_at, o.created_at), '%Y-%m-%d %H:%i:%s') AS set_at,
+                e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS name,
+                e.process_id, p.process_name, e.designation_id, e.department_id,
+                LOWER(COALESCE(dept.dept_name,'')) AS dept_name,
+                LOWER(COALESCE(desig.designation_name,'')) AS designation_name,
+                (e.employment_status = 'active') AS employee_active,
+                (SELECT TRIM(CONCAT(se.first_name, ' ', COALESCE(se.last_name, '')))
+                   FROM employees se WHERE se.user_id = o.set_by LIMIT 1) AS set_by_name
+           FROM employee_attendance_logic_override o
+           JOIN employees e ON e.id = o.employee_id
+           LEFT JOIN process_master p ON p.id = e.process_id
+           LEFT JOIN department_master dept ON dept.id = e.department_id
+           LEFT JOIN designation_master desig ON desig.id = e.designation_id
+          WHERE o.active_status = 1
+          ORDER BY COALESCE(o.updated_at, o.created_at) DESC`);
+      return (rows as any[]).map((r) => ({
+        employee_id: String(r.employee_id), employee_code: String(r.employee_code), name: String(r.name).trim(),
+        process_id: r.process_id ?? null, process_name: r.process_name ?? null,
+        designation_id: r.designation_id ?? null, department_id: r.department_id ?? null,
+        dept_name: String(r.dept_name ?? ''), designation_name: String(r.designation_name ?? ''),
+        attendance_logic: String(r.attendance_logic) as AttendanceLogic, reason: String(r.reason ?? ''),
+        set_at: r.set_at ?? null, set_by_name: r.set_by_name ?? null, employee_active: Number(r.employee_active) === 1,
+      }));
+    } catch {
+      return [];
+    }
+  },
+
+  /** Sets (or replaces) one employee's personal source. The reason is mandatory. */
+  async setEmployeeLogicOverride(
+    employeeId: string, logic: AttendanceLogic, reason: string, actorUserId: string | null,
+  ): Promise<void> {
+    const text = reason.trim();
+    if (text.length < 3) throw Object.assign(new Error('A reason is required'), { statusCode: 400 });
+    const [emp] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employees WHERE id = ? LIMIT 1`, [employeeId]);
+    if (!(emp as any[]).length) throw Object.assign(new Error('Employee not found'), { statusCode: 404 });
+    await db.execute(
+      `INSERT INTO employee_attendance_logic_override
+         (employee_id, attendance_logic, reason, set_by, active_status)
+       VALUES (?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE attendance_logic = VALUES(attendance_logic), reason = VALUES(reason),
+                               set_by = VALUES(set_by), active_status = 1, updated_at = NOW()`,
+      [employeeId, logic, text.slice(0, 500), actorUserId]);
+  },
+
+  /** Removes the personal source; the employee goes back to their process / designation rules. */
+  async clearEmployeeLogicOverride(employeeId: string): Promise<boolean> {
+    const [res] = await db.execute<ResultSetHeader>(
+      `UPDATE employee_attendance_logic_override SET active_status = 0, updated_at = NOW()
+        WHERE employee_id = ? AND active_status = 1`, [employeeId]);
+    return (res.affectedRows ?? 0) > 0;
   },
 
   /**
@@ -1861,7 +1972,10 @@ export const attendanceEngineService = {
     employee: { id: string; employee_code: string; name: string; process: string | null;
       department: string | null; designation: string | null; branch: string | null };
     logic: AttendanceLogic;
-    decided_by: 'rule' | 'no_matching_rule' | 'legacy_name_match';
+    /** What the process / designation rules alone would give, shown when a personal override differs. */
+    rules_logic: AttendanceLogic;
+    override: { logic: AttendanceLogic; reason: string } | null;
+    decided_by: 'employee_override' | 'rule' | 'no_matching_rule' | 'legacy_name_match';
     matched_rule: { id: string; rule_name: string | null; scope: string } | null;
     forced_apr_by_dialler_rule: boolean;
     uses_apr: boolean;
@@ -1896,19 +2010,26 @@ export const attendanceEngineService = {
     if (res.row?.department_id) scopeParts.push('department');
     if (res.row?.designation_id) scopeParts.push('designation');
 
+    const override = await this.getEmployeeLogicOverride(employeeId);
+    const ruleLogic: AttendanceLogic = forced && res.logic === 'cosec' ? 'apr' : res.logic;
+    const finalLogic: AttendanceLogic = override ? override.logic : ruleLogic;
+
     return {
       employee: {
         id: String(e.id), employee_code: String(e.employee_code), name: String(e.full_name).trim(),
         process: e.process_name ?? null, department: e.dept_name ?? null,
         designation: e.designation_name ?? null, branch: e.branch_name ?? null,
       },
-      logic: forced && res.logic === 'cosec' ? 'apr' : res.logic,
-      decided_by: res.via === 'row' ? 'rule' : res.via === 'regex_fallback' ? 'legacy_name_match' : 'no_matching_rule',
+      logic: finalLogic,
+      rules_logic: ruleLogic,
+      override,
+      decided_by: override ? 'employee_override'
+        : res.via === 'row' ? 'rule' : res.via === 'regex_fallback' ? 'legacy_name_match' : 'no_matching_rule',
       matched_rule: res.row
         ? { id: res.row.id, rule_name: res.row.rule_name, scope: scopeParts.length ? scopeParts.join(' + ') : 'everyone' }
         : null,
-      forced_apr_by_dialler_rule: forced,
-      uses_apr: (forced ? 'apr' : res.logic) !== 'cosec',
+      forced_apr_by_dialler_rule: forced && !override,
+      uses_apr: finalLogic !== 'cosec',
       threshold_rule: {
         rule_name: rule.rule_name, scope_type: rule.scope_type,
         full_day_minutes: rule.full_day_minutes, half_day_minutes: rule.half_day_minutes,

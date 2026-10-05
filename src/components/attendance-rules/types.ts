@@ -34,6 +34,7 @@ export interface ProcessLogicRow {
   has_own_rule: boolean;
   breakdown: Record<AttendanceLogic, number>;
   rule_count: number;
+  override_count: number;
   employee_count: number;
   last_changed_at: string | null;
 }
@@ -47,11 +48,24 @@ export interface EmployeeLogicExplanation {
   employee: { id: string; employee_code: string; name: string; process: string | null;
     department: string | null; designation: string | null; branch: string | null };
   logic: AttendanceLogic;
-  decided_by: 'rule' | 'no_matching_rule' | 'legacy_name_match';
+  rules_logic: AttendanceLogic;
+  override: { logic: AttendanceLogic; reason: string } | null;
+  decided_by: 'employee_override' | 'rule' | 'no_matching_rule' | 'legacy_name_match';
   matched_rule: { id: string; rule_name: string | null; scope: string } | null;
   forced_apr_by_dialler_rule: boolean;
   uses_apr: boolean;
   threshold_rule: { rule_name: string; scope_type: string; full_day_minutes: number; half_day_minutes: number; grace_minutes: number };
+}
+
+export interface EmployeeOverrideRow {
+  employee_id: string;
+  employee_code: string;
+  name: string;
+  process_name: string | null;
+  attendance_logic: AttendanceLogic;
+  reason: string;
+  set_at: string | null;
+  set_by_name: string | null;
 }
 
 export const LOGIC_ORDER: AttendanceLogic[] = ['apr', 'cosec', 'apr_validated_by_cosec'];
@@ -72,7 +86,7 @@ export const LOGIC_META: Record<AttendanceLogic, { short: string; title: string;
   apr_validated_by_cosec: {
     short: 'APR + COSEC',
     title: 'APR validated by COSEC',
-    help: 'APR leads. When it falls short of a full day the biometric reading is compared and the better of the two is used. It can raise a day, never lower it.',
+    help: 'APR leads. When APR falls short of a full day, or has no record at all, the biometric reading is used if it credits more. COSEC can raise a day, never lower it.',
     badge: 'border-violet-200 bg-violet-50 text-violet-800',
   },
 };

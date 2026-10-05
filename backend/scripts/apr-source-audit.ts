@@ -26,6 +26,12 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
     id: String(r.id), rule_name: r.rule_name, designation_id: r.designation_id, department_id: r.department_id,
     process_id: r.process_id, attendance_logic: String(r.attendance_logic ?? "apr") as AttendanceLogic, active_status: 1,
   }));
+  try {
+    const ov = await q(`SELECT COUNT(*) n FROM employee_attendance_logic_override WHERE active_status = 1`);
+    console.log(`employee_attendance_logic_override: table present, ${ov[0].n} active override(s)`);
+  } catch (e: any) {
+    console.log(`employee_attendance_logic_override: NOT PRESENT (${e?.code ?? e?.message})`);
+  }
   console.log(`apr_eligibility_config: ${cfg.length} rows, ${active.length} active`);
   console.table(cfg.map((r) => ({
     rule: r.rule_name, process: r.process_id ? String(r.process_id).slice(0, 8) : "(company-wide)",

@@ -61,4 +61,38 @@ describe("attendance logic resolution", () => {
     expect(body).toContain("id ASC");
     expect(body).not.toContain("attendance_logic <> 'cosec'");
   });
+
+  describe("personal override and APR+COSEC fallback (engine source pins)", () => {
+    const ENGINE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../attendance-engine.service.ts"), "utf8");
+    const MIGRATION = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../../sql/migrations/2083_employee_attendance_logic_override.sql"), "utf8");
+
+    it("an employee override is consulted first and beats a scoped dialler rule and the ops fallback", () => {
+      expect(ENGINE).toContain("const personalOverride = await this.getEmployeeLogicOverride(employeeId)");
+      expect(ENGINE).toMatch(/personalOverride\s*\? personalOverride\.logic\s*: await this\.resolveAttendanceLogic\(/);
+      expect(ENGINE).toContain("const hasScopedDiallerRule = !personalOverride &&");
+      expect(ENGINE).toContain("if (!personalOverride && !isAprEmployee && biometricMinutes === 0 && isOperationsDepartmentName");
+    });
+
+    it("a missing override table reads as no override, never as a changed source", () => {
+      const i = ENGINE.indexOf("async getEmployeeLogicOverride(");
+      const body = ENGINE.slice(i, i + 900);
+      expect(body).toContain("catch");
+      expect(body).toContain("return null");
+    });
+
+    it("isAprEligible honours the override when given an employee id", () => {
+      expect(ENGINE).toMatch(/employeeId\?: string \| null\s*\): Promise<boolean> \{\s*const override = employeeId/);
+    });
+
+    it("APR+COSEC builds the day from COSEC when APR has no record; plain APR still does not", () => {
+      expect(ENGINE).toMatch(/attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& biometricMinutes > 0/);
+      // the rescue is keyed to the apr_validated_by_cosec logic only
+      expect(ENGINE).not.toMatch(/attendanceLogic === 'apr'\s*&& classifyAsApr\s*&& biometricMinutes > 0/);
+    });
+
+    it("the override table is one additive CREATE TABLE IF NOT EXISTS", () => {
+      expect(MIGRATION).toContain("CREATE TABLE IF NOT EXISTS employee_attendance_logic_override");
+      expect(MIGRATION).not.toMatch(/\b(DROP|DELETE|ALTER)\b/i);
+    });
+  });
 });

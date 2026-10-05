@@ -981,7 +981,8 @@
     "migrations/2079_employee_rejoin_v3.sql",
     "migrations/2080_rejoin_notifications_reminders.sql",
     "migrations/2081_rejoin_stint_payroll_flag.sql",
-    "migrations/2082_increment_package_split_flag.sql"
+    "migrations/2082_increment_package_split_flag.sql",
+    "migrations/2083_employee_attendance_logic_override.sql"
   ],
   "approvedDeletions": [
     {
@@ -1250,7 +1251,9 @@
     "migrations/2078_restore_upload_batch_row_columns.sql",
     "migrations/2079_employee_rejoin_v3.sql",
     "migrations/2080_rejoin_notifications_reminders.sql",
-    "migrations/2081_rejoin_stint_payroll_flag.sql"
+    "migrations/2081_rejoin_stint_payroll_flag.sql",
+    "migrations/2082_increment_package_split_flag.sql",
+    "migrations/2083_employee_attendance_logic_override.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

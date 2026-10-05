@@ -585,6 +585,29 @@ router.get('/attendance-logic/employee/:employeeId', requireRole('admin', 'hr', 
   return res.json({ success: true, data });
 }));
 
+// GET /attendance-logic/overrides - every employee with a personal source.
+router.get('/attendance-logic/overrides', requireRole('admin', 'hr', 'wfm'), h(async (_req, res) => {
+  const data = await attendanceEngineService.listEmployeeLogicOverrides();
+  return res.json({ success: true, data });
+}));
+
+// PUT /attendance-logic/employee/:employeeId - set one employee's personal source (admin only).
+router.put('/attendance-logic/employee/:employeeId', requireRole('admin'), h(async (req, res) => {
+  const body = z.object({
+    attendance_logic: z.enum(['apr', 'cosec', 'apr_validated_by_cosec']),
+    reason: z.string().trim().min(3).max(500),
+  }).parse(req.body);
+  await attendanceEngineService.setEmployeeLogicOverride(
+    req.params.employeeId, body.attendance_logic, body.reason, req.authUser?.id ?? null);
+  return res.json({ success: true });
+}));
+
+// DELETE /attendance-logic/employee/:employeeId - back to the rules (admin only).
+router.delete('/attendance-logic/employee/:employeeId', requireRole('admin'), h(async (req, res) => {
+  const removed = await attendanceEngineService.clearEmployeeLogicOverride(req.params.employeeId);
+  return res.json({ success: true, removed });
+}));
+
 // PUT /attendance-logic/:processId - set the logic for one process (admin only).
 //
 // This is the write that actually changes which feed builds a process's attendance, so it
@@ -756,6 +779,7 @@ router.get('/attendance-source/:employeeId', h(async (req: AuthenticatedRequest,
     emp.process_id ?? null,
     String(emp.department_name ?? '').toLowerCase(),
     String(emp.designation_name ?? '').toLowerCase(),
+    emp.id,
   );
 
   return res.json({

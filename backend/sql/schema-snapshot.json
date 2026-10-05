@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1229,
-  "columnCount": 17881,
+  "tableCount": 1230,
+  "columnCount": 17888,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -6716,6 +6716,15 @@
       "deactivated_by",
       "deactivated_at",
       "deactivation_reason"
+    ],
+    "employee_attendance_logic_override": [
+      "employee_id",
+      "attendance_logic",
+      "reason",
+      "set_by",
+      "active_status",
+      "created_at",
+      "updated_at"
     ],
     "employee_badge_earned": [
       "earned_id",
@@ -15890,6 +15899,10 @@
       "created_at",
       "updated_at"
     ],
+    "rejoin_request_escalation": [
+      "request_id",
+      "escalated_at"
+    ],
     "report_audit_event": [
       "id",
       "report_request_id",
@@ -20337,10 +20350,6 @@
       "approved_at",
       "created_at",
       "updated_at"
-    ],
-    "rejoin_request_escalation": [
-      "request_id",
-      "escalated_at"
     ]
   }
 }

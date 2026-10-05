@@ -646,19 +646,33 @@ async function resolveAttendanceSource(
   const departmentName = String(employee?.department_name ?? "");
   const designationName = String(employee?.designation_name ?? "");
   try {
+    if (employee?.id) {
+      try {
+        const [ov] = await db.query<RowDataPacket[]>(
+          `SELECT attendance_logic FROM employee_attendance_logic_override
+            WHERE employee_id = ? AND active_status = 1 LIMIT 1`, [employee.id]);
+        const o = (ov as RowDataPacket[])[0];
+        if (o) return o.attendance_logic === "cosec" ? "biometric" : "dialler";
+      } catch { /* override table not migrated yet: no override */ }
+    }
+    // Same ordering as the engine: most specific row wins, and at equal specificity a non-COSEC
+    // row beats a COSEC one. A matching COSEC row means biometric, not "eligible".
     const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT id FROM apr_eligibility_config
+      `SELECT attendance_logic FROM apr_eligibility_config
         WHERE active_status = 1
           AND (designation_id = ? OR designation_id IS NULL)
           AND (department_id  = ? OR department_id  IS NULL)
           AND (process_id     = ? OR process_id     IS NULL)
         ORDER BY (CASE WHEN process_id     IS NOT NULL THEN 4 ELSE 0 END +
                   CASE WHEN department_id  IS NOT NULL THEN 2 ELSE 0 END +
-                  CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC
+                  CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC,
+                 (attendance_logic = 'cosec') ASC, id ASC
         LIMIT 1`,
       [employee?.designation_id ?? null, employee?.department_id ?? null, employee?.process_id ?? null],
     );
-    if ((rows as RowDataPacket[]).length) return "dialler";
+    if ((rows as RowDataPacket[]).length) {
+      return (rows as RowDataPacket[])[0]!.attendance_logic === "cosec" ? "biometric" : "dialler";
+    }
     // An empty table means nothing is configured yet, so fall back to the rule
     // the engine falls back to rather than declaring everyone biometric.
     const [[{ total }]] = await db.query<RowDataPacket[]>(

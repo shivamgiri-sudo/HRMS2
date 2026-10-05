@@ -121,7 +121,7 @@ export default function NativeAttendanceRulesMaster() {
               designations={designations} processes={processes} branches={branches} reload={reloadRules} />
           </TabsContent>
           <TabsContent value="employee">
-            <EmployeeCheck />
+            <EmployeeCheck canEdit={canEdit} onChanged={() => void loadLogic()} />
           </TabsContent>
         </Tabs>
       </div>

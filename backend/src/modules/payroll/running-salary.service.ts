@@ -457,11 +457,9 @@ export async function computeRunningSalary(
   try {
     const { attendanceEngineService } = await import("../wfm/attendance-engine.service.js");
     aprEligible = await attendanceEngineService.isAprEligible(
-      emp.designation_id ?? null,
-      emp.department_id ?? null,
-      emp.process_id ?? null,
+      emp.designation_id ?? null, emp.department_id ?? null, emp.process_id ?? null,
       String(emp.dept_name ?? "").toLowerCase(),
-      String(emp.designation_name ?? "").toLowerCase(),
+      String(emp.designation_name ?? "").toLowerCase(), employeeId,
     );
   } catch {
     // Provenance is a label on the number, not the number. If eligibility cannot

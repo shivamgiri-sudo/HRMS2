@@ -161,6 +161,11 @@ export function SourceTab({ rows, loading, canEdit, savingProcessId, onChange }:
                             )
                           )}
                           {saving && <Loader2 className="h-4 w-4 animate-spin text-slate-400" aria-label="Saving" />}
+                          {row.override_count > 0 && (
+                            <span className="text-xs text-slate-500">
+                              {row.override_count} personal {row.override_count === 1 ? 'override' : 'overrides'}
+                            </span>
+                          )}
                           {row.is_mixed && (
                             <span className="text-xs text-amber-700">
                               Mixed: {LOGIC_ORDER.filter((k) => row.breakdown[k] > 0)

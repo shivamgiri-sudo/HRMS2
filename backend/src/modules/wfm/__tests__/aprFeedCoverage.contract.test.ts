@@ -50,11 +50,12 @@ describe("APR-only judgement is scoped to the covered population", () => {
   // change in either direction has to be made deliberately.
   it("has no biometric fallback for an APR employee whose feed is silent", () => {
     expect(ENGINE).not.toContain("if (rawMinutes === 0 && biometricMinutes > 0");
-    // Biometric may still LIFT an APR reading under apr_validated_by_cosec, but only when APR
-    // itself has a record — a silent feed is never rescued by a punch.
+    // Plain 'apr' never falls back. Under apr_validated_by_cosec biometric builds the day when APR
+    // is short OR silent (owner ruling 2026-10-05), so the guard no longer requires rawMinutes > 0.
     expect(ENGINE).toMatch(
-      /attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& rawMinutes > 0\s*&& biometricMinutes > 0/,
+      /attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& biometricMinutes > 0\s*&& statusRank/,
     );
+    expect(ENGINE).not.toMatch(/attendanceLogic === 'apr_validated_by_cosec'\s*&& classifyAsApr\s*&& rawMinutes > 0/);
   });
 
   it("sends an APR employee's empty day to the classifier, not the review queue", () => {
