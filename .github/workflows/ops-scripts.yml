@@ -114,6 +114,7 @@ on:
           - hrms-nonpeople-sources
           - nonpeople-timing
           - backfill-vendor-recognition-period
+          - backfill-grn-recognition-period
           - fix-process-branches
           - db-bill-snapshot-refresh
           - grn-migrate-2026-27
@@ -294,6 +295,11 @@ jobs:
               # Dry-runs unless given --apply. Apply sets vendor_payment_tracking.recognition_period (NULL rows only) from the db_bill finance month.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/backfill-vendor-recognition-period.ts $FLAG
+              ;;
+            backfill-grn-recognition-period)
+              # Dry-runs unless given --apply. Apply sets recognition_period on db_bill-imported grn_request / grn_cost_allocation rows (NULL only).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/backfill-grn-recognition-period.ts $FLAG
               ;;
             fix-process-branches)
               # Dry-runs unless given --apply. Apply sets process_master.branch_id for Raritiq (-> NOIDA-2) and EBC Bridge (-> NOIDA).
