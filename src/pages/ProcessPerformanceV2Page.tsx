@@ -22,6 +22,7 @@ import { LpFeedbackDashboard } from "@/components/process-performance/LpFeedback
 import { LpOnboardingDashboard } from "@/components/process-performance/LpOnboardingDashboard";
 import { SatyaRetailDashboard } from "@/components/process-performance/SatyaRetailDashboard";
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
+import { DuDigitalDashboard } from "@/components/process-performance/DuDigitalDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
@@ -45,7 +46,7 @@ import {
  * company is passed straight through as projectKey with no separate
  * mapping table, same as bellavita/gnc/clovia/neemans already are.
  */
-type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom";
+type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom" | "du_thailand" | "du_korea";
 type SectionKey = "dashboards" | "uploader" | "mis";
 
 const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
@@ -65,6 +66,8 @@ const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "dubangladesh", label: "DU Bangladesh" },
   { key: "viega", label: "Viega" },
   { key: "exicom", label: "Exicom" },
+  { key: "du_thailand", label: "DU Digital Thailand" },
+  { key: "du_korea", label: "DU Digital Korea" },
 ];
 
 /** Icon + color per company, purely a visual grouping aid on the landing
@@ -86,6 +89,8 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
   dubangladesh: { icon: Globe, tone: "cyan" },
   viega: { icon: Settings, tone: "purple" },
   exicom: { icon: Zap, tone: "fuchsia" },
+  du_thailand: { icon: PhoneIncoming, tone: "red" },
+  du_korea: { icon: PhoneIncoming, tone: "blue" },
 };
 
 /**
@@ -98,7 +103,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" | "du_digital_thailand" | "du_digital_korea" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -156,6 +161,12 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   ],
   exicom: [
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
+  ],
+  du_thailand: [
+    { key: "dashboard", label: "Dashboard", description: "Offered/Answered/SL/AL/Abandon%, AHT, Intraday Call Flow, Language/Queue view, Today/WTD/MTD snapshot — live from uploaded CDR/APR data", kind: "du_digital_thailand" },
+  ],
+  du_korea: [
+    { key: "dashboard", label: "Dashboard", description: "Offered/Answered/SL/AL/Abandon%, AHT, Intraday Call Flow, Language/Queue view, Today/WTD/MTD snapshot — live from uploaded CDR/APR data", kind: "du_digital_korea" },
   ],
 };
 
@@ -300,6 +311,20 @@ const LP_ONBOARDING_UPLOADERS = [
   { code: "LP_ONBOARDING_CDR_MASMIS", label: "CDR", description: "Upload LP Onboarding call detail records", icon: PhoneOutgoing },
 ];
 
+/** DU Digital's 2 uploaders per country (CDR/APR), writing into mas_hrms
+ * tables du_cdr_daily_actual (sql/1810) and du_apr_daily_actual (sql/1710).
+ * Auto-downloaded daily by uploader/du_digital (Task Scheduler), but
+ * also manually uploadable here like every other company's uploaders --
+ * the same DU_CDR_/DU_APR_ upload_type_codes either path writes through. */
+const DU_THAILAND_UPLOADERS = [
+  { code: "DU_CDR_THAILAND", label: "CDR", description: "Upload DU Digital Thailand call detail records", icon: PhoneOutgoing },
+  { code: "DU_APR_THAILAND", label: "APR", description: "Upload DU Digital Thailand agent APR data",      icon: Activity },
+];
+const DU_KOREA_UPLOADERS = [
+  { code: "DU_CDR_KOREA", label: "CDR", description: "Upload DU Digital Korea call detail records", icon: PhoneOutgoing },
+  { code: "DU_APR_KOREA", label: "APR", description: "Upload DU Digital Korea agent APR data",      icon: Activity },
+];
+
 /** Every company that has a real uploader array, keyed for UploaderHub/
  * UploaderWorkspace — Dalmia/DU Bangladesh/Viega/Exicom are deliberately
  * absent (Inbound-dashboard-only so far) and fall through to the stub. */
@@ -316,6 +341,8 @@ const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   satya_retail: SATYA_RETAIL_UPLOADERS,
   lp_feedback: LP_FEEDBACK_UPLOADERS,
   lp_onboarding: LP_ONBOARDING_UPLOADERS,
+  du_thailand: DU_THAILAND_UPLOADERS,
+  du_korea: DU_KOREA_UPLOADERS,
 };
 
 function BoxGrid({ children }: { children: React.ReactNode }) {
@@ -749,6 +776,10 @@ export default function ProcessPerformanceV2Page() {
               <AppreciateWealthDashboard />
             ) : selectedDashboard.kind === "birlanu_dashboard" ? (
               <BirlanuDashboard />
+            ) : selectedDashboard.kind === "du_digital_thailand" ? (
+              <DuDigitalDashboard country="THAILAND" />
+            ) : selectedDashboard.kind === "du_digital_korea" ? (
+              <DuDigitalDashboard country="KOREA" />
             ) : (
               <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
                 Nothing here yet

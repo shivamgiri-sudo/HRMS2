@@ -530,6 +530,10 @@ const KNOWN_IMPORT_RPCS = new Set([
   // See du-apr-daily-bulk.service.ts.
   "import_du_apr_korea_batch",
   "import_du_apr_thailand_batch",
+  // DU Digital's Export Calls Report (CDR), Korea/Thailand dashboards -- the
+  // per-call counterpart to the APR rows above. See du-cdr-bulk.service.ts.
+  "import_du_cdr_korea_batch",
+  "import_du_cdr_thailand_batch",
   // Dalmia Cement's four uploaders (dalmia_daildesk / Outbound / dalmia_apr / after_hour). The first, second and
   // fourth already had importers + live tables (sql/1731, 1732, 1734) that were only ever run by script; they are
   // now reachable from Process Performance V2 -> Dalmia -> Uploader. dalmia_apr is new (sql/1781).
@@ -1177,6 +1181,22 @@ async function dispatchImport(
       "../bulk-upload/du-apr-daily-bulk.service.js"
     );
     const data = await importDuAprThailandBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_cdr_korea_batch") {
+    const { importDuCdrKoreaBatch } = await import(
+      "../bulk-upload/du-cdr-bulk.service.js"
+    );
+    const data = await importDuCdrKoreaBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_du_cdr_thailand_batch") {
+    const { importDuCdrThailandBatch } = await import(
+      "../bulk-upload/du-cdr-bulk.service.js"
+    );
+    const data = await importDuCdrThailandBatch(id, userId);
     return { success: true, data };
   }
 

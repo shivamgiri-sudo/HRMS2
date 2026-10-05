@@ -159,7 +159,7 @@ async function importBatch(
 
     try {
       await db.execute(
-        `INSERT INTO du_apr_daily_actual
+        `INSERT INTO db_masmis.du_apr_daily_actual
            (id, process_id, dashboard_label, agent_name, agent_code, call_date, total_calls,
             login_seconds, net_login_seconds, talk_seconds, idle_seconds, wrapup_seconds,
             break_seconds, dead_seconds, utilization_pct, week_label,

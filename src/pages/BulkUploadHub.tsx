@@ -8,6 +8,8 @@ import {
   type BatchJobStatus,
 } from "@/lib/bulkBatchJob";
 import { apiUrl } from "@/lib/apiBase";
+import { liveSourceNoticeFor } from "@/lib/liveSourcedUploadTypes";
+import { Radio } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
@@ -2069,6 +2071,13 @@ export default function BulkUploadHub() {
                   </select>
                 </Field>
 
+                {selectedTemplate && liveSourceNoticeFor(selectedTemplate.upload_type_code) && (
+                  <div className="flex items-start gap-2 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-900">
+                    <Radio className="mt-0.5 h-4 w-4 shrink-0 text-sky-500" />
+                    <span><b>This file is not required.</b> {liveSourceNoticeFor(selectedTemplate.upload_type_code)!.note}</span>
+                  </div>
+                )}
+
                 {selectedTemplate && (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -2256,7 +2265,14 @@ export default function BulkUploadHub() {
                         </p>
                       </div>
 
-                      <StatusBadge status={template.active_status ? "active" : "inactive"} />
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {liveSourceNoticeFor(template.upload_type_code) && (
+                          <span title="This data is now fetched live -- uploading has no effect" className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
+                            <Radio className="h-3 w-3" /> Not required
+                          </span>
+                        )}
+                        <StatusBadge status={template.active_status ? "active" : "inactive"} />
+                      </div>
                     </div>
 
                     <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">

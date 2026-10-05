@@ -29,6 +29,7 @@ import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-re
 // registration silently never runs in the WORKERS_PROCESS=external topology).
 // Off by default: MANAGER_DAILY_BRIEF_ENABLED must be explicitly "true".
 import { startManagerDailyBriefScheduler } from "./modules/management/daily-brief/daily-brief.cron.js";
+import { startMisEmailScheduler } from "./modules/process-performance/mis-schedule.worker.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { isModelAvailable as warmUpFaceDetectionModels } from "./modules/ats/face-match.service.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
@@ -197,6 +198,12 @@ function startServer() {
       startSocialFeedCron();
       startMcnmeetCron();
       console.log("[scheduler] official-email, integration, daily-games, social-feed and mcnmeet started");
+    }
+
+    // Scheduled MIS emails. Its own switch, deliberately outside ENABLE_SCHEDULERS: that flag
+    // starts every other scheduler on this backend. Enable on one backend only.
+    if (process.env.MIS_EMAIL_SCHEDULER_ENABLED === "true") {
+      startMisEmailScheduler();
     }
 
     if (env.ENABLE_SCHEDULERS) {
