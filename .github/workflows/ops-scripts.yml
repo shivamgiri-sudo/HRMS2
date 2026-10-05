@@ -81,6 +81,7 @@ on:
           - match-month-to-dbbill
           - vendor-ledger-gap-audit
           - vendor-ledger-tally-audit
+          - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
           - budget-driver-diagnose
@@ -386,6 +387,10 @@ jobs:
             recruiter-list-diagnose)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/recruiter-list-diagnose.ts
+              ;;
+            vendor-bills-journal-vs-tracking)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/vendor-bills-journal-vs-tracking.ts
               ;;
             vendor-ledger-tally-audit)
               # Read-only in both modes: SELECTs only.
