@@ -340,7 +340,7 @@ jobs:
               ;;
             hrms-people-bridge)
               # Read-only in both modes: runs the P&L people-cost functions, writes nothing.
-              npx tsx scripts/hrms-people-bridge.ts 2026-05
+              npx tsx scripts/hrms-people-bridge.ts ${INPUT_EMPLOYEE_CODES:-2026-05}
               ;;
             hrms-gap-deepdive)
               # Read-only in both modes: SELECTs only (HRMS and db_bill).

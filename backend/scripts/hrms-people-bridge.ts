@@ -44,6 +44,8 @@ const r0 = (v: number) => Math.round(v);
         const i = pinfo.get(id);
         console.log("BR_PROC " + JSON.stringify({ period, process: i?.process_name ?? id, p_active: i?.active_status, branch: i?.branch_name ?? null, in_base: baseById.has(id), in_rows: rowById.has(id), ...vals }));
       }
+      const np = base.filter((r) => Number(r.indirectCost ?? 0) !== 0 || Number(r.directNonPeopleCost ?? 0) !== 0).map((r) => ({ p: r.processName, b: r.branchName, indirectCost: r0(Number(r.indirectCost ?? 0)), directNonPeopleCost: r0(Number(r.directNonPeopleCost ?? 0)) }));
+      console.log("BR_NONPEOPLE " + JSON.stringify({ period, base_rows_with_nonpeople: np }));
       console.log("BR_ROWS " + JSON.stringify({ period, rows: s.rows.length, agent: sum("agentSalary"), dscPeople: sum("dscPeople"), bmcPeople: sum("bmcPeople"), dscNonPeople: sum("dscNonPeople"), bmcNonPeople: sum("bmcNonPeople"), totalPeopleCost: sum("totalPeopleCost") }));
     } catch (e) { console.log("BR_ERR " + period + " " + (e instanceof Error ? e.message : String(e))); }
   }
