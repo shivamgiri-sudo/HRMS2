@@ -98,6 +98,7 @@ on:
           - budget-driver-diagnose
           - payslip-diagnose
           - meta-whatsapp-diagnose
+          - backend-log-grep
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
           - create-missing-esa-for-run-lines
@@ -392,6 +393,10 @@ jobs:
               # Dry-runs unless given --apply. Apply removes not-yet-joined zero-net lines and recalculates the rest, scoped.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/heal-zero-day-lines.ts $FLAG
+              ;;
+            backend-log-grep)
+              # Read-only: greps backend logs for the phrase given in employee_codes.
+              npx tsx scripts/backend-log-grep.ts "${INPUT_EMPLOYEE_CODES}"
               ;;
             meta-whatsapp-diagnose)
               # Read-only in both modes: SELECTs and GET probes only; prints booleans and counts, never secrets.
