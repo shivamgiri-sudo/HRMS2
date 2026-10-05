@@ -12,7 +12,7 @@ import { bpoPnlAllocationOverlayService } from "../src/modules/process-pnl/bpo-p
 
 const periods = process.argv.slice(2).length ? process.argv.slice(2) : ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"];
 const r2 = (v: unknown) => Math.round(Number(v ?? 0) * 100) / 100;
-const FIELDS = ["recognizedRevenue", "earnedRevenue", "agentSalary", "dsc", "bmc", "grnVendorActual", "grnCommitted", "totalPeopleCost", "contribution", "ebitda", "depreciation", "amortization", "operatingProfit", "financeCost", "pbt"] as const;
+const FIELDS = ["recognizedRevenue", "earnedRevenue", "agentSalary", "dsc", "bmc", "grnVendorActual", "grnCommitted", "dscPeople", "dscNonPeople", "bmcPeople", "bmcNonPeople", "totalPeopleCost", "contribution", "ebitda", "depreciation", "amortization", "operatingProfit", "financeCost", "pbt"] as const;
 
 (async () => {
   const out: Record<string, unknown> = {};

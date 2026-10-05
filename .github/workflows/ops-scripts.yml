@@ -105,6 +105,7 @@ on:
           - dbbill-pnl-by-cc
           - dbbill-invoices-audit
           - hrms-vs-dbbill-diagnose
+          - hrms-gap-deepdive
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -277,6 +278,10 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            hrms-gap-deepdive)
+              # Read-only in both modes: SELECTs only (HRMS and db_bill).
+              npx tsx scripts/hrms-gap-deepdive.ts
               ;;
             hrms-vs-dbbill-diagnose)
               # Read-only in both modes: SELECTs only.
