@@ -91,6 +91,7 @@ on:
           - increment-requests-audit
           - dbbill-increments-audit
           - sca-estimates-audit
+          - repair-sca-estimates
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -301,6 +302,11 @@ jobs:
             sal-diff-investigate)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/sal-diff-investigate.ts
+              ;;
+            repair-sca-estimates)
+              # Dry-runs unless given --apply. Apply fixes display estimates (net, PF, ESIC, employer cost) on the db_bill increment sync rows only.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/repair-sca-estimates.ts $FLAG
               ;;
             sca-estimates-audit)
               # Read-only in both modes: SELECTs only.

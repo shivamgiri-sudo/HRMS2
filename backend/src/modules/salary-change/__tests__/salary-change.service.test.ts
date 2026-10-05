@@ -139,3 +139,39 @@ describe("changeSalary()", () => {
     })).rejects.toThrow(/reason/i);
   });
 });
+
+describe("getEmployeeSalaryProfile()", () => {
+  beforeEach(() => { execute.mockReset(); });
+  const baseEmployee = { id: "e1", employee_code: "MAS60227", full_name: "X" };
+
+  it("keeps the row's own bonus and portfolio and derives the estimates when the row has no catalog package", async () => {
+    execute
+      .mockResolvedValueOnce([[baseEmployee]])
+      .mockResolvedValueOnce([[{
+        id: "a1", package_id: null, gross: 26055, basic: 14000, hra: 7000, conveyance: 1600,
+        bonus: 1166, portfolio: 2289, pf_applicable: 1, esi_applicable: 0, net_estimate: 4675, ctc: 27875, employer_pf: 0, pf_employee: 0,
+      }]])
+      .mockResolvedValueOnce([[]]);
+    const { getEmployeeSalaryProfile } = await import("../salary-change.service.js");
+    const out = await getEmployeeSalaryProfile("e1");
+    const sc = out.salary_components as Record<string, number>;
+    expect(sc.bonus).toBe(1166);
+    expect(sc.portfolio).toBe(2289);
+    expect(sc.net_in_hand).toBe(24375); // not the stored 4,675
+    expect(sc.pf_employee).toBe(1680);
+    expect(sc.ctc).toBe(27875);
+    const sql = String(execute.mock.calls[1][0]);
+    expect(sql).toMatch(/CASE WHEN COALESCE\(sca\.bonus, 0\)\s+> 0 THEN sca\.bonus/);
+  });
+
+  it("leaves a catalog-linked row's figures exactly as stored", async () => {
+    execute
+      .mockResolvedValueOnce([[baseEmployee]])
+      .mockResolvedValueOnce([[{ id: "a2", package_id: "pkg-1", gross: 15059, basic: 8000, net_in_hand: 13986, ctc: 16588, pf_employee: 960 }]])
+      .mockResolvedValueOnce([[]]);
+    const { getEmployeeSalaryProfile } = await import("../salary-change.service.js");
+    const sc = (await getEmployeeSalaryProfile("e1")).salary_components as Record<string, number>;
+    expect(sc.net_in_hand).toBe(13986);
+    expect(sc.ctc).toBe(16588);
+  });
+});
