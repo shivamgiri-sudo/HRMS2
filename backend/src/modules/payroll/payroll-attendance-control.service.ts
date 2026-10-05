@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import { isEmployedOn } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
@@ -835,6 +836,11 @@ async function repairMissingAdrFromApr(conflictKeys: string[], actorUserId: stri
       skipped += 1;
       continue;
     }
+    // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+    if (!(await isEmployedOn(parsed.employeeId, parsed.issueDate))) {
+      skipped += 1;
+      continue;
+    }
 
     const aprMinutes = Math.max(0, Math.round(Number(row.apr_minutes ?? 0)));
     const classification = classifyAprStatus(aprMinutes);
@@ -945,6 +951,11 @@ async function repairMissingAdrFromNcosec(conflictKeys: string[], actorUserId: s
       Boolean(row.regularization_id)
     );
     if (protectedAdr) {
+      skipped += 1;
+      continue;
+    }
+    // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+    if (!(await isEmployedOn(parsed.employeeId, parsed.issueDate))) {
       skipped += 1;
       continue;
     }
@@ -1443,6 +1454,9 @@ export const payrollAttendanceControlService = {
 
       // Locked to a different regularization — don't overwrite
       if (row.adr_id && Number(row.is_locked) === 1 && row.existing_reg_id && row.existing_reg_id !== regId) { skipped++; continue; }
+
+      // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+      if (!(await isEmployedOn(String(row.employee_id), String(row.session_date)))) { skipped++; continue; }
 
       const requestedStatus = String(row.requested_status ?? "present");
       const lwpValue = requestedStatus === "present" ? 0 : requestedStatus === "half_day" ? 0.5 : 1;

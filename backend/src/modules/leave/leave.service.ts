@@ -6,6 +6,7 @@ import {
   halfDayAttendanceTarget,
   halfDayRefusalMessage,
 } from "../../shared/halfDayLeave.js";
+import { partitionByEmployment } from "../../shared/employmentWindow.js";
 import { assertDaysWritable } from "../../shared/attendanceLockGuard.js";
 
 /**
@@ -1015,24 +1016,32 @@ export const leaveService = {
           "This leave approval",
         );
 
-        const valuesSql = chargeable.map(() => "(UUID(), ?, ?, ?, ?, ?, 'leave_service')").join(", ");
+        // The leave itself stands; only its attendance rows are limited to the employment window
+        // (salary start date .. exit date, shared/employmentWindow.ts), so a leave running past the
+        // exit date does not create attendance after it.
+        const { inside: attendanceDays } = await partitionByEmployment(
+          chargeable, () => String(request.employee_id), (d) => String(d),
+        );
+        const valuesSql = attendanceDays.map(() => "(UUID(), ?, ?, ?, ?, ?, 'leave_service')").join(", ");
         const valuesParams: unknown[] = [];
-        for (const d of chargeable) {
+        for (const d of attendanceDays) {
           const statusForDay = isHalfDayApproval
             ? (halfDayTargets.get(String(d)) ?? attendanceStatus)
             : attendanceStatus;
           valuesParams.push(request.employee_id, d, statusForDay, lwpValue, changeReason);
         }
-        await conn.execute(
-          `INSERT INTO attendance_daily_record
-               (id, employee_id, record_date, attendance_status, lwp_value, status_change_reason, created_by)
-           VALUES ${valuesSql}
-           ON DUPLICATE KEY UPDATE
-             attendance_status    = IF(is_locked = 0, VALUES(attendance_status), attendance_status),
-             lwp_value            = IF(is_locked = 0, VALUES(lwp_value), lwp_value),
-             status_change_reason = IF(is_locked = 0, VALUES(status_change_reason), status_change_reason)`,
-          valuesParams
-        );
+        if (attendanceDays.length) {
+          await conn.execute(
+            `INSERT INTO attendance_daily_record
+                 (id, employee_id, record_date, attendance_status, lwp_value, status_change_reason, created_by)
+             VALUES ${valuesSql}
+             ON DUPLICATE KEY UPDATE
+               attendance_status    = IF(is_locked = 0, VALUES(attendance_status), attendance_status),
+               lwp_value            = IF(is_locked = 0, VALUES(lwp_value), lwp_value),
+               status_change_reason = IF(is_locked = 0, VALUES(status_change_reason), status_change_reason)`,
+            valuesParams
+          );
+        }
       }
 
       // Restore balance when rejecting or cancelling a previously approved leave.

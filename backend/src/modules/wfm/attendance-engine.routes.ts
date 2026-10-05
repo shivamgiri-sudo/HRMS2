@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { attendanceEngineService, type CorrectionInput } from './attendance-engine.service.js';
+import { isEmployedOn, OUTSIDE_EMPLOYMENT_MESSAGE } from '../../shared/employmentWindow.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
@@ -1007,6 +1008,10 @@ router.post('/clock-in', h(async (req: AuthenticatedRequest, res: Response) => {
   );
   if ((existing as RowDataPacket[]).length > 0) {
     return res.status(409).json({ success: false, error: 'Already clocked in today' });
+  }
+  // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+  if (!(await isEmployedOn(employee_id, today))) {
+    return res.status(409).json({ success: false, error: OUTSIDE_EMPLOYMENT_MESSAGE });
   }
   await db.execute(
     `INSERT INTO attendance_daily_record

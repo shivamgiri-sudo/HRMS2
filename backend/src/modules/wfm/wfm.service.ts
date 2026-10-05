@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
+import { isEmployedOn, OUTSIDE_EMPLOYMENT_MESSAGE } from "../../shared/employmentWindow.js";
 import { db } from "../../db/mysql.js";
 import type { UserBusinessScope } from "../../shared/enterpriseScope.js";
 import { scopePredicate } from "./branch-scope.js";
@@ -607,6 +608,14 @@ export const wfmService = {
     // still falls through and is applied normally.
     if (reg.status === input.status && (input.status === "approved" || input.status === "rejected")) {
       return reg;
+    }
+
+    // No attendance outside salary start date .. exit date (shared/employmentWindow.ts).
+    if (input.status === "approved"
+        && !(await isEmployedOn(String(reg.employee_id), String(reg.session_date).slice(0, 10)))) {
+      const e: any = new Error(OUTSIDE_EMPLOYMENT_MESSAGE);
+      e.statusCode = 409;
+      throw e;
     }
 
     const conn = await db.getConnection();

@@ -1,4 +1,5 @@
 // backend/src/modules/wfm/attendance-engine.service.ts
+import { isEmployedOn, partitionByEmployment } from "../../shared/employmentWindow.js";
 import { randomUUID } from 'crypto';
 import { halfDayAttendanceTarget, halfDayLwpValue } from "../../shared/halfDayLeave.js";
 import { db } from '../../db/mysql.js';
@@ -1431,6 +1432,16 @@ export const attendanceEngineService = {
     result: EngineResult,
     createdBy: string
   ): Promise<AttendanceDailyRecord> {
+    // Attendance exists only inside the employment window (salary start date to exit date, per
+    // stint for a rejoiner). Every engine writer - nightly batch, heal, punches, COSEC sync, roster
+    // import, restore, APR re-grade - lands here, so this one check closes all of them.
+    if (!(await isEmployedOn(result.employeeId, result.date))) {
+      const [existing] = await db.execute<RowDataPacket[]>(
+        `SELECT * FROM attendance_daily_record WHERE employee_id = ? AND record_date = ? LIMIT 1`,
+        [result.employeeId, result.date]
+      );
+      return (existing as RowDataPacket[])[0] as AttendanceDailyRecord;
+    }
     await db.execute(
        `INSERT INTO attendance_daily_record
          (id, employee_id, record_date, process_id, branch_id, attendance_source,
@@ -1532,6 +1543,13 @@ export const attendanceEngineService = {
     );
     const lockedSet = new Set((lockedRows as RowDataPacket[]).map((r: any) => r.employee_id as string));
 
+    // Skip anyone not employed on this date (resignation LWD passed but not yet marked exited, before the
+    // salary start date, or in a rejoiner's gap) - no record, and no missing-punch notification either.
+    const { outside } = await partitionByEmployment(
+      employees as RowDataPacket[], (r: any) => String(r.employee_id), () => date
+    );
+    const notEmployed = new Set(outside.map((r: any) => String(r.employee_id)));
+
     // Per-employee COSEC exceptions for the whole run — one query, not one per employee.
     const bucketMap = await this.getExceptionBucketMap();
 
@@ -1542,7 +1560,7 @@ export const attendanceEngineService = {
       const chunk = (employees as RowDataPacket[]).slice(i, i + batchSize);
       const results = await Promise.allSettled(
         chunk.map(async (emp: any) => {
-          if (lockedSet.has(emp.employee_id)) { skipped++; return; }
+          if (lockedSet.has(emp.employee_id) || notEmployed.has(String(emp.employee_id))) { skipped++; return; }
           // ?? null, never undefined: undefined would make processEmployee re-query per employee.
           const result = await this.processEmployee(
             emp.employee_id, date, bucketMap.get(emp.employee_id) ?? null
