@@ -60,6 +60,17 @@ ledgerReportsRouter.get(
   }),
 );
 
+/** Outstanding bills with ageing for one vendor. */
+ledgerReportsRouter.get(
+  "/vendor-outstanding/:vendorId",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const asOf = req.query.asOf && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.asOf)) ? String(req.query.asOf) : undefined;
+    const result = await ledgerReportsService.vendorOutstanding(String(req.params.vendorId), asOf, await callerBranchScope(req));
+    res.json({ success: true, data: result });
+  }),
+);
+
 /** Tally-style statement: opening balance, voucher rows, totals, closing Dr/Cr. */
 ledgerReportsRouter.get(
   "/vendor-statement/:vendorId",

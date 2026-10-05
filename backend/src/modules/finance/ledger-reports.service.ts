@@ -453,6 +453,42 @@ export const ledgerReportsService = {
     };
   },
 
+  /**
+   * Tally's "Outstanding Bills" for one vendor: every bill (GRN) with a balance left, with the
+   * paid and balance amounts and its age in days from the bill date, bucketed 0-30 / 31-60 /
+   * 61-90 / 90+. Read from vendor_payment_tracking, the same table the payment dispatch page
+   * pays against, so it agrees with what Finance can actually still pay.
+   */
+  async vendorOutstanding(vendorId: string, asOf?: string, scope?: FinanceBranchScope) {
+    const conditions = ["vpt.vendor_id = ?", "vpt.balance_amount > 0.005", "vpt.payment_status NOT IN ('Rejected','Closed')"];
+    const params: unknown[] = [vendorId];
+    pushBranchScope(conditions, params, scope, "vpt.branch_id");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT vpt.id, g.grn_number, g.invoice_number, g.bill_date, g.due_date,
+              vpt.due_amount, vpt.paid_amount, vpt.balance_amount, vpt.payment_status, vpt.branch_id
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
+        WHERE ${conditions.join(" AND ")}
+        ORDER BY COALESCE(g.bill_date, g.due_date) ASC`, params);
+    const { branchNames } = await resolveDimensionNames((rows as RowDataPacket[]).map((r) => ({ branch_id: r.branch_id } as RowDataPacket)));
+    const ref = asOf ? new Date(`${asOf}T00:00:00Z`) : new Date();
+    const buckets = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+    const bills = (rows as RowDataPacket[]).map((r) => {
+      const billDay = r.bill_date ? dayOf(r.bill_date) : null;
+      const ageDays = billDay ? Math.max(0, Math.floor((ref.getTime() - new Date(`${billDay}T00:00:00Z`).getTime()) / 86_400_000)) : null;
+      const balance = money(Number(r.balance_amount));
+      const bucket = ageDays == null ? "90+" : ageDays <= 30 ? "0-30" : ageDays <= 60 ? "31-60" : ageDays <= 90 ? "61-90" : "90+";
+      buckets[bucket] = money(buckets[bucket] + balance);
+      return {
+        id: r.id, grnNumber: r.grn_number ?? "", invoiceNumber: r.invoice_number ?? "",
+        billDate: billDay, dueDate: r.due_date ? dayOf(r.due_date) : null, ageDays, bucket,
+        billAmount: money(Number(r.due_amount)), paidAmount: money(Number(r.paid_amount)), balance,
+        status: r.payment_status, branchName: r.branch_id ? (branchNames.get(String(r.branch_id)) ?? null) : null,
+      };
+    });
+    return { bills, buckets, total: money(bills.reduce((sum, b) => sum + b.balance, 0)) };
+  },
+
   async vendorLedger(vendorId: string, from?: string, to?: string, scope?: FinanceBranchScope) {
     return ledgerReportsService.accountLedger("vendor", vendorId, from, to, scope);
   },

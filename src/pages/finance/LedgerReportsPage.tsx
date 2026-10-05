@@ -11,6 +11,7 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { VendorLedgerView } from "@/components/finance/vendor/VendorLedgerView";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 
 type TrialBalanceRow = {
@@ -301,161 +302,6 @@ function TrialBalanceTab() {
   );
 }
 
-type VendorStatement = {
-  vendor: { id: string; code: string; name: string };
-  from: string | null; to: string | null;
-  opening: { amount: number; side: string };
-  rows: { date: string; particulars: string; vchType: string; vchNo: string; reference: string; narration: string; branchName: string | null; debit: number; credit: number; balance: number; balanceSide: string }[];
-  totals: { debit: number; credit: number };
-  closing: { amount: number; side: string };
-};
-
-function VendorLedgerTab() {
-  const [search, setSearch] = useState("");
-  const [vendorId, setVendorId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-
-  const vendorQuery = useQuery({
-    queryKey: ["ledger-reports-vendor-search", search],
-    queryFn: async () => {
-      const res = await hrmsApi.get<any>(`/api/erp/vendors?q=${encodeURIComponent(search)}&limit=50&is_active=1`);
-      return (res as any)?.data ?? res ?? [];
-    },
-  });
-  const vendorOptions: { id: string; vendor_code: string; vendor_name: string }[] = vendorQuery.data ?? [];
-
-  const ledgerQuery = useQuery({
-    queryKey: ["ledger-reports-vendor-statement", vendorId, from, to],
-    queryFn: async () => {
-      const qs = new URLSearchParams();
-      if (from) qs.set("from", from);
-      if (to) qs.set("to", to);
-      const res = await hrmsApi.get<{ success: boolean; data: VendorStatement }>(
-        `/api/finance/ledger-reports/vendor-statement/${vendorId}?${qs.toString()}`,
-      );
-      return res.data;
-    },
-    enabled: !!vendorId,
-  });
-  const st = ledgerQuery.data;
-  const drCr = (b: { amount: number; side: string }) => `${money(b.amount)} ${b.side}`;
-  const fmtDay = (d: string) => (d ? d.split("-").reverse().join("-") : "");
-
-  const downloadCsv = () => {
-    if (!st) return;
-    const esc = (v: unknown) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-    const lines = [
-      [`Ledger: ${st.vendor.name} (${st.vendor.code})`],
-      [`Period: ${st.from ?? "start"} to ${st.to ?? "today"}`],
-      ["Date", "Particulars", "Vch Type", "Vch No", "Reference", "Narration", "Debit", "Credit", "Balance"],
-      ["", "Opening Balance", "", "", "", "", "", "", drCr(st.opening)],
-      ...st.rows.map((r) => [fmtDay(r.date), r.particulars, r.vchType, r.vchNo, r.reference, r.narration, r.debit || "", r.credit || "", drCr({ amount: r.balance, side: r.balanceSide })]),
-      ["", "Total", "", "", "", "", st.totals.debit, st.totals.credit, ""],
-      ["", "Closing Balance", "", "", "", "", "", "", drCr(st.closing)],
-    ];
-    const blob = new Blob([lines.map((l) => l.map(esc).join(",")).join("\n")], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `vendor-ledger-${st.vendor.code}.csv`; a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[220px]">
-          <Label>Vendor</Label>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <Input className="h-8 pl-7 text-xs" placeholder="Search name or code…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <Select value={vendorId} onValueChange={setVendorId}>
-            <SelectTrigger className="mt-1 h-8 text-xs"><SelectValue placeholder="Select vendor…" /></SelectTrigger>
-            <SelectContent>
-              {vendorOptions.map((v) => (
-                <SelectItem key={v.id} value={v.id}>{v.vendor_code} — {v.vendor_name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div><Label>From</Label><Input type="date" className="h-8 text-xs" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-        <div><Label>To</Label><Input type="date" className="h-8 text-xs" value={to} onChange={(e) => setTo(e.target.value)} /></div>
-      </div>
-
-      {st && (
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <div className="text-base font-bold text-gray-800">{st.vendor.name}</div>
-            <div className="text-xs text-gray-500">Ledger {st.vendor.code} · {st.from ? fmtDay(st.from) : "beginning"} to {st.to ? fmtDay(st.to) : "today"}</div>
-          </div>
-          <Button size="sm" variant="outline" className="h-8 text-xs" onClick={downloadCsv}>Download CSV</Button>
-        </div>
-      )}
-
-      <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/95 shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-blue-50/60 text-left text-[11px] font-bold uppercase tracking-wide text-blue-800">
-              <tr>
-                <th className="px-3 py-2.5">Date</th>
-                <th className="px-3 py-2.5">Particulars</th>
-                <th className="px-3 py-2.5">Vch Type</th>
-                <th className="px-3 py-2.5">Vch No.</th>
-                <th className="px-3 py-2.5 text-right">Debit</th>
-                <th className="px-3 py-2.5 text-right">Credit</th>
-                <th className="px-3 py-2.5 text-right">Balance</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-blue-100">
-              {!vendorId && <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">Search and select a vendor above</td></tr>}
-              {vendorId && ledgerQuery.isLoading && <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">Loading…</td></tr>}
-              {vendorId && !ledgerQuery.isLoading && st && st.rows.length === 0 && <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">No vouchers for this vendor in the period</td></tr>}
-              {st && (
-                <tr className="bg-slate-50/70 font-semibold text-gray-700">
-                  <td className="px-3 py-2" />
-                  <td className="px-3 py-2" colSpan={5}>Opening Balance</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{drCr(st.opening)}</td>
-                </tr>
-              )}
-              {st?.rows.map((r, i) => (
-                <tr key={`${r.date}-${r.vchNo}-${i}`} className="hover:bg-blue-50/40 align-top">
-                  <td className="whitespace-nowrap px-3 py-2 text-gray-600">{fmtDay(r.date)}</td>
-                  <td className="px-3 py-2">
-                    <div className="font-medium text-gray-800">{r.particulars}</div>
-                    {(r.reference || r.narration) && (
-                      <div className="max-w-md truncate text-[11px] text-gray-500" title={`${r.reference} ${r.narration}`}>{[r.reference, r.narration].filter(Boolean).join(" · ")}</div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2"><Badge variant="outline" className="text-[10px]">{r.vchType}</Badge></td>
-                  <td className="px-3 py-2 text-gray-600">{r.vchNo || "—"}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-rose-600">{r.debit ? money(r.debit) : ""}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-emerald-600">{r.credit ? money(r.credit) : ""}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-gray-700">{drCr({ amount: r.balance, side: r.balanceSide })}</td>
-                </tr>
-              ))}
-            </tbody>
-            {st && (
-              <tfoot>
-                <tr className="border-t-2 border-blue-100 bg-blue-50/40 font-bold text-gray-800">
-                  <td colSpan={4} className="px-3 py-2 text-right">Total</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{money(st.totals.debit)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{money(st.totals.credit)}</td>
-                  <td />
-                </tr>
-                <tr className="bg-blue-50/70 font-bold text-gray-900">
-                  <td colSpan={6} className="px-3 py-2 text-right">Closing Balance</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{drCr(st.closing)}</td>
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function HeadSubHeadLedgerTab() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -570,7 +416,7 @@ export function LedgerReportsContent() {
             <TabsTrigger value="head-subhead" className="cursor-pointer">Head / Sub-head Spend</TabsTrigger>
           </TabsList>
           <TabsContent value="trial-balance" className="mt-4"><TrialBalanceTab /></TabsContent>
-          <TabsContent value="vendor-ledger" className="mt-4"><VendorLedgerTab /></TabsContent>
+          <TabsContent value="vendor-ledger" className="mt-4"><VendorLedgerView /></TabsContent>
           <TabsContent value="head-subhead" className="mt-4"><HeadSubHeadLedgerTab /></TabsContent>
         </Tabs>
       </div>
