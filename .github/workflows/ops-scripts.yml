@@ -73,6 +73,7 @@ on:
           - rejoin-stale-exit-audit
           - attendance-register-exited-verify
           - recode-63388c-dryrun
+          - recode-63388c-person-check
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -217,6 +218,14 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            recode-63388c-person-check)
+              # Read-only: compares the HRMS and db_bill 63388C records (name/DOB/last-4 only) and post-exit activity. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::recode-63388c-person-check is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/recode-63388c-person-check.ts
               ;;
             recode-63388c-dryrun)
               # Read-only inventory for the 63388C code clash: counts of rows per table in HRMS and db_bill. No apply mode.
