@@ -11,6 +11,14 @@ on:
         required: true
         default: "NOIDA-2"
         type: string
+      mode:
+        description: "attrition = attrition section preview; escalations = audit of the red banner vs the tables (all branches if branch is blank or ALL)"
+        required: true
+        default: "attrition"
+        type: choice
+        options:
+          - attrition
+          - escalations
 
 concurrency:
   group: ops-branch-health-preview
@@ -46,7 +54,13 @@ jobs:
           DOTENV_CONFIG_PATH: /var/www/HRMS2/backend/.env
           NODE_ENV: production
           BRANCH: ${{ inputs.branch }}
+          MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
           test -f "$DOTENV_CONFIG_PATH" || { echo "::error::$DOTENV_CONFIG_PATH not found - is this the prod host?"; exit 1; }
-          npx tsx scripts/preview-branch-health-attrition.ts "$BRANCH"
+          if [ "$MODE" = "escalations" ]; then
+            if [ "$BRANCH" = "ALL" ]; then BRANCH=""; fi
+            npx tsx scripts/audit-branch-health-escalations.ts "$BRANCH"
+          else
+            npx tsx scripts/preview-branch-health-attrition.ts "$BRANCH"
+          fi
