@@ -73,8 +73,10 @@ async function main() {
     const sca = await q(`SELECT id FROM salary_component_assignments WHERE employee_id = ?`, [empId]);
     const esa = await q(`SELECT id FROM employee_salary_assignment WHERE employee_id = ?`, [empId]);
     console.log(`  existing for Tina: sca rows=${sca.length}, esa rows=${esa.length}`);
-    if (sca.length || esa.length) throw new Error("Tina already has salary rows - refusing to add duplicates");
-    if (APPLY) {
+    const alreadyDone = sca.length === 1 && esa.length === 1;
+    if ((sca.length || esa.length) && !alreadyDone) throw new Error("Tina has a partial/unexpected set of salary rows - refusing to add more");
+    if (alreadyDone) console.log("  salary already applied (1 sca + 1 esa) - skipping");
+    if (APPLY && !alreadyDone) {
       const conn = await db.getConnection();
       try {
         await conn.beginTransaction();
@@ -152,7 +154,7 @@ async function main() {
         for (const r of todo) {
           await conn.execute(
             `INSERT INTO attendance_daily_record (id, employee_id, record_date, attendance_status, lwp_value, status_change_reason, created_by)
-             VALUES (?, ?, ?, ?, ?, 'db_bill 63388C mirror', NULL)`,
+             VALUES (?, ?, ?, ?, ?, 'db_bill 63388C mirror', 'db_bill_63388c_mirror')`,
             [randomUUID(), empId, r.date, r.st[0], r.st[1]]);
         }
         await conn.commit();
