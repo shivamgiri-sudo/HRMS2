@@ -282,7 +282,12 @@ async function buildVouchersFromLines(
     for (const rule of entityRules) {
       const prefix = String(rule.employee_code_prefix ?? "");
       if (prefix) {
-        if (String(code ?? "").toUpperCase().startsWith(prefix.toUpperCase())) return String(rule.company_code);
+        const upper = String(code ?? "").toUpperCase();
+        // "*C" means a numeric code with that suffix (63107C); anything else is a plain prefix.
+        const hit = prefix.startsWith("*")
+          ? new RegExp(`^\\d+${prefix.slice(1).toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).test(upper)
+          : upper.startsWith(prefix.toUpperCase());
+        if (hit) return String(rule.company_code);
         continue;
       }
       const type = String(rule.employment_type ?? "").trim();

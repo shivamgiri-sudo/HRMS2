@@ -406,3 +406,21 @@ describe("management trainees (codes with no MAS prefix)", () => {
     expect(out.vouchers[0].company_code).toBe("IDC");
   });
 });
+
+describe("numeric codes ending in C (the '*C' entity rule)", () => {
+  const rules = [
+    { company_code: "MAS", employee_code_prefix: "MAS", employment_type: null, branch_id: null, priority: 100 },
+    { company_code: "MAS", employee_code_prefix: "*C", employment_type: null, branch_id: null, priority: 40 },
+  ];
+  const row = (code: string) => ({
+    employee_code: code, designation_name: "X", employment_type: "ONROLL", branch_id: "br-a", branch_name: "AHMEDABAD-JALDARSHAN",
+    net_salary: 5000, gross_salary: 6000, pf_employee: 0, pf_employer: 0, esic_employee: 0, esic_employer: 0,
+    professional_tax: 0, tds: 0, loan_emi: 0, other_deductions: 0,
+  });
+  it("places 63107C in MAS but leaves an unrelated code unassigned", async () => {
+    execute.mockResolvedValue([[]]);
+    const out = await svc.salaryVoucherService.buildVouchersFromLines("2026-08", [row("63107C"), row("ABC123"), row("63107D")] as any, rules as any, {});
+    expect(out.vouchers[0].lines.find((l) => l.ledger_name === "Salary Payable A/C")!.amount).toBe(5000);
+    expect(out.unassigned.sort()).toEqual(["63107D", "ABC123"]);
+  });
+});
