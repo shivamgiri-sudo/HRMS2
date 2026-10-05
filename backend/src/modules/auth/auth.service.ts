@@ -316,12 +316,12 @@ export const authService = {
 
       const valid = await bcrypt.compare(password, user.password_hash as string);
       if (!valid) {
-        // Increment failed attempts; lock for 15 minutes after 5 consecutive failures
+        // Increment failed attempts; lock for 10 minutes after 5 consecutive failures
         const [updateResult] = await db.execute<any>(
           `UPDATE auth_user
               SET failed_login_attempts = failed_login_attempts + 1,
                   locked_until = IF(failed_login_attempts + 1 >= 5,
-                                    DATE_ADD(NOW(), INTERVAL 15 MINUTE),
+                                    DATE_ADD(NOW(), INTERVAL 10 MINUTE),
                                     locked_until)
             WHERE id = ?`,
           [user.id]
@@ -1121,13 +1121,20 @@ export const authService = {
     );
     if (!rows[0]) throw Object.assign(new Error('Invalid or expired reset token'), { statusCode: 400 });
     const hash = await bcrypt.hash(newPassword, 10);
-    await db.execute('UPDATE auth_user SET password_hash = ?, must_change_password = 0 WHERE id = ?', [hash, rows[0].user_id]);
+    // Completing a reset proves control of the account's email, which is stronger evidence than the
+    // password the failed attempts were guessing — so a temporary lockout is cleared with it. Without
+    // this the user resets successfully and is then told "temporarily locked" on the new password.
+    // is_blocked is a deliberate admin action and is never touched here.
+    await db.execute(
+      'UPDATE auth_user SET password_hash = ?, must_change_password = 0, failed_login_attempts = 0, locked_until = NULL WHERE id = ?',
+      [hash, rows[0].user_id]
+    );
     await this.invalidateSessionsAfterPasswordChange(rows[0].user_id);
     writeSecurityEvent({
       event_type: 'PASSWORD_RESET',
       severity: 'info',
       actor_user_id: rows[0].user_id,
-      title: 'Password reset via token',
+      title: 'Password reset via token (temporary lockout cleared)',
     });
   },
 
@@ -1293,7 +1300,17 @@ export const authService = {
 
     // Hash new password and update
     const newHash = await bcrypt.hash(newPassword, 12);
-    await db.execute('UPDATE auth_user SET password_hash = ?, updated_at = NOW() WHERE id = ?', [newHash, userId]);
+    // Same rule as resetPassword(): a verified OTP clears the temporary lockout. is_blocked stays.
+    await db.execute(
+      'UPDATE auth_user SET password_hash = ?, failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() WHERE id = ?',
+      [newHash, userId]
+    );
     await this.invalidateSessionsAfterPasswordChange(userId);
+    writeSecurityEvent({
+      event_type: 'PASSWORD_RESET',
+      severity: 'info',
+      actor_user_id: userId,
+      title: 'Password reset via OTP (temporary lockout cleared)',
+    });
   },
 };
