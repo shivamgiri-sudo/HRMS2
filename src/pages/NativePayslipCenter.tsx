@@ -207,7 +207,7 @@ async function downloadPayslipPdfV2(payslip: Payslip): Promise<void> {
     employerPf: employerPfV2,
     employerEsic: employerEsicV2,
     wDays: Number(payslip.working_days ?? 0),
-    earnedDays: Number(payslip.present_days ?? 0),
+    earnedDays: payslipDays(payslip as never).paidDays || Number(payslip.present_days ?? 0),
     weekOffDays: Number(payslip.eligible_weekoff_days ?? 0),
     paidHolidays: Number(payslip.eligible_holiday_days ?? 0),
     basic, hra, conv, pa, ma, sa, oa, arrear, bonus, incentive,
