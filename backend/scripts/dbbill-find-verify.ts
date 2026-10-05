@@ -13,8 +13,8 @@ async function main() {
   const rows = await billQuery<RowDataPacket>(
     `SELECT EmpCode, EmpName, DOB, DOJ, DOL, Status, left_type, ResignationDate, BranchName, CostCenter, Desgination, lastUpdated
        FROM masjclrentry
-      WHERE (UPPER(EmpName) LIKE 'NITISH%' AND UPPER(EmpName) LIKE '%RANA%') OR UPPER(EmpName) LIKE 'NITESH%RANA%'
-         OR UPPER(EmpName) LIKE 'NITISH%' AND UPPER(EmpName) LIKE '%RAN%' OR UPPER(TRIM(EmpCode)) LIKE '%63449%'
+      WHERE UPPER(EmpName) LIKE '%RANA%' AND (UPPER(EmpName) LIKE '%NIT%' OR UPPER(EmpName) LIKE '%NEET%')
+         OR UPPER(TRIM(EmpCode)) LIKE '%63449%'
       ORDER BY EmpCode LIMIT 30`);
   console.log("db_bill matches:", rows.length);
   for (const r of rows) {
