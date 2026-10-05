@@ -111,6 +111,7 @@ on:
           - dbbill-grn-sample
           - dbbill-grn-by-cc
           - hrms-nonpeople-detail
+          - hrms-nonpeople-sources
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -283,6 +284,10 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            hrms-nonpeople-sources)
+              # Read-only in both modes: aggregate SELECTs only.
+              npx tsx scripts/hrms-nonpeople-sources.ts
               ;;
             hrms-nonpeople-detail)
               # Read-only in both modes: the GRN reader every P&L surface uses.
