@@ -5,6 +5,7 @@
  * Width: 900px (max-width) for maximum data density.
  */
 import type { BranchHealthReport } from "./metrics.js";
+import { CHRONIC_DAYS } from "./history.js";
 
 const C = {
   primary: "#1e3a5f",
@@ -1224,13 +1225,23 @@ export function renderEmail(
   );
 
   // ── Escalation banner: first thing in the body, red, impossible to miss ──
-  const escalationBanner = escalations.length
+  const sinceLabel = (iso: string): string =>
+    new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  const streakTag = (e: { days?: number; since?: string }): string =>
+    e.days && e.days >= 2
+      ? `<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:#7f1d1d;color:#fff;font-size:10px;font-weight:700;">RED ${e.days} DAYS · since ${esc(sinceLabel(e.since!))}</span>`
+      : `<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:#fecaca;color:#7f1d1d;font-size:10px;font-weight:700;">NEW TODAY</span>`;
+  const sorted = [...escalations].sort((a, b) => (b.days ?? 1) - (a.days ?? 1));
+  const chronic = sorted.filter((e) => (e.days ?? 1) >= CHRONIC_DAYS);
+  const escalationBanner = sorted.length
     ? `<table width="100%" cellpadding="0" cellspacing="0" style="border:2px solid ${C.danger};background:#fef2f2;margin-bottom:14px;">
-    <tr><td style="padding:10px 14px;background:${C.danger};${FONT}font-size:14px;font-weight:700;color:#ffffff;letter-spacing:0.5px;">🚨 ${escalations.length} ESCALATION${escalations.length > 1 ? "S" : ""} — OVERDUE OR NOT IMPROVING. ACT TODAY.</td></tr>
-    ${escalations
+    <tr><td style="padding:10px 14px;background:${C.danger};${FONT}font-size:14px;font-weight:700;color:#ffffff;letter-spacing:0.5px;">🚨 ${sorted.length} ESCALATION${sorted.length > 1 ? "S" : ""} — OVERDUE OR NOT IMPROVING. ACT TODAY.</td></tr>
+    ${chronic.length ? `<tr><td style="padding:6px 14px;background:#7f1d1d;${FONT}font-size:11px;font-weight:700;color:#ffffff;">${chronic.length} item${chronic.length > 1 ? "s have" : " has"} been red ${CHRONIC_DAYS}+ days — this email is also copied to the HR Head and Operations Head.</td></tr>` : ""}
+    ${sorted
       .map(
         (e, i) => `<tr><td style="padding:8px 14px;border-top:1px solid #fecaca;${FONT}">
       <span style="font-size:13px;font-weight:700;color:${C.danger};">${i + 1}. ${esc(e.label)}</span>
+      ${streakTag(e)}
       <span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:3px;background:${C.danger};color:#fff;font-size:10px;font-weight:700;">${esc(e.owner)}</span><br>
       <span style="font-size:12px;color:#991b1b;">${esc(e.detail)}</span></td></tr>`,
       )

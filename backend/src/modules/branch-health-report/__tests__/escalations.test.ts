@@ -57,4 +57,18 @@ describe("buildEscalations", () => {
     expect(html).toContain("October 2026 budget NOT CREATED");
     expect(html.indexOf("ESCALATION")).toBeLessThan(html.indexOf("Budget vs Consumption"));
   });
+
+  it("shows the red streak and the next-level notice once an item is chronic", async () => {
+    const { fetchAllBranchHealthData } = await import("../query.js");
+    const full: any = await fetchAllBranchHealthData("Nowhere", "2026-10-05");
+    const raw = { ...full, branchId: "b1", budgetHeader: { missing: true, status: null } };
+    const report = buildBranchHealthReport("Kolkata", "2026-10-05", raw);
+    report.escalations[0].days = 4;
+    report.escalations[0].since = "2026-10-02";
+    const html = renderEmail(report, { generatedAt: "now" });
+    expect(html).toContain("RED 4 DAYS · since 2 Oct");
+    expect(html).toContain("HR Head and Operations Head");
+    report.escalations[0].days = 1;
+    expect(renderEmail(report, { generatedAt: "now" })).toContain("NEW TODAY");
+  });
 });

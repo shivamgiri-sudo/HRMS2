@@ -77,3 +77,11 @@ export async function resolveRecipients(
   );
   return { to, cc, toFellBackToHr };
 }
+
+/** Next level up, added to the CC when an escalation has stayed red CHRONIC_DAYS+ days. */
+const ESCALATION_ROLES = ["hr_head", "operations_head"];
+
+export async function resolveEscalationRecipients(): Promise<string[]> {
+  const emails = await emailsForRoles(ESCALATION_ROLES, null);
+  return unique(emails).filter((e) => !NEVER_CC.has(e.toLowerCase()));
+}

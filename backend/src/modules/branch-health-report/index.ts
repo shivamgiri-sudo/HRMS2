@@ -10,7 +10,8 @@ import { getCurrentDateIST, getGeneratedAtIST } from "../../shared/istDate.js";
 import { fetchAllBranchHealthData } from "./query.js";
 import { buildBranchHealthReport, type BranchHealthReport } from "./metrics.js";
 import { renderEmail, subjectLine } from "./template.js";
-import { resolveRecipients } from "./recipients.js";
+import { resolveRecipients, resolveEscalationRecipients } from "./recipients.js";
+import { attachStreaks, recordSnapshot, CHRONIC_DAYS } from "./history.js";
 import { ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
 
 /** Branches that do not get this report (owner instruction 2026-09-25). */
@@ -49,6 +50,7 @@ export async function buildBranchHealthReports(
   for (const branch of branches) {
     const raw = await fetchAllBranchHealthData(branch, reportDate);
     const report = buildBranchHealthReport(branch, reportDate, raw);
+    await attachStreaks(report);
     const html = renderEmail(report, { generatedAt, dashboardUrl });
     built.push({
       branch,
@@ -112,7 +114,18 @@ export async function sendBranchHealthReports(
       const resolved = await resolveRecipients(b.branch);
       const redirected = !!opts.redirectTo?.length;
       const to = redirected ? opts.redirectTo! : resolved.to;
-      const cc = redirected ? [] : resolved.cc;
+      let cc = redirected ? [] : resolved.cc;
+      // An item red CHRONIC_DAYS+ days is not being fixed at branch level: copy the next level up.
+      if (!redirected && b.report.escalations.some((e) => (e.days ?? 1) >= CHRONIC_DAYS)) {
+        const toSet = new Set(to.map((e) => e.toLowerCase()));
+        const have = new Set(cc.map((e) => e.toLowerCase()));
+        cc = [
+          ...cc,
+          ...(await resolveEscalationRecipients()).filter(
+            (e) => !toSet.has(e.toLowerCase()) && !have.has(e.toLowerCase()),
+          ),
+        ];
+      }
       const subject = redirected
         ? `[TEST → ${resolved.to.join(", ") || "no branch head"}] ${b.subject}`
         : b.subject;
@@ -162,6 +175,11 @@ export async function sendBranchHealthReports(
         html: b.html,
       });
       await opts.onSent?.(b.branch, b.reportDate);
+      if (!redirected) {
+        await recordSnapshot(b.report).catch((e: unknown) =>
+          console.warn(`[branch-health] snapshot not stored for ${b.branch}: ${e instanceof Error ? e.message : e}`),
+        );
+      }
       results.push({
         ...base,
         subject,

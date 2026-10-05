@@ -21,11 +21,19 @@ export interface BranchHealthReport {
   criticalPoints: CriticalPoint[];
   /** Overdue / persistent problems the branch must act on now. Shown in red at the top of the email. */
   escalations: Escalation[];
+  /** Keys that were red today, whether or not they reached the banner yet (e.g. shrinkage above 10% on day one). */
+  trackedKeys: string[];
   positiveAchievements: PositiveAchievement[];
   overallStatus: "healthy" | "watch" | "critical";
 }
 
 export interface Escalation {
+  /** Stable id used to count consecutive red days in the history table. */
+  key: string;
+  /** Consecutive days red including today; filled from history after the report is built. */
+  days?: number;
+  /** First day of the current red streak. */
+  since?: string;
   label: string;
   detail: string;
   /** Who should act, shown as a tag. */
@@ -61,6 +69,12 @@ const T = {
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 /** Month name and day-of-month of a YYYY-MM-DD report date. */
+function shiftDays(d: string, by: number): string {
+  const x = new Date(`${d}T00:00:00Z`);
+  x.setUTCDate(x.getUTCDate() + by);
+  return x.toISOString().slice(0, 10);
+}
+
 function monthDay(reportDate: string): { name: string; day: number; daysInMonth: number } {
   const y = Number(reportDate.slice(0, 4));
   const mo = Number(reportDate.slice(5, 7));
@@ -80,20 +94,20 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
   const out: Escalation[] = [];
   const { name: month, day, daysInMonth } = monthDay(reportDate);
   const monthPct = (day / daysInMonth) * 100;
-  const add = (label: string, detail: string, owner: string) => out.push({ label, detail, owner });
+  const add = (key: string, label: string, detail: string, owner: string) => out.push({ key, label, detail, owner });
 
   // Budget lifecycle: created by day 2, approved by day 5.
   if (raw.branchId) {
     if (raw.budgetHeader.missing && day >= E.budgetCreateByDay) {
-      add(`${month} budget NOT CREATED — day ${day} of the month`,
+      add("budget_missing", `${month} budget NOT CREATED — day ${day} of the month`,
         `It should exist by day ${E.budgetCreateByDay}. Without it every GRN this month is unbudgeted and nothing can be tracked against a limit`, "Branch Head");
     } else if (raw.budgetHeader.status === "draft" && day >= E.budgetCreateByDay) {
-      add(`${month} budget still in DRAFT — day ${day}`, "Created but never submitted for approval", "Branch Head");
+      add("budget_draft", `${month} budget still in DRAFT — day ${day}`, "Created but never submitted for approval", "Branch Head");
     } else if (
       raw.budgetHeader.status && raw.budgetHeader.status !== "finance_head_approved" &&
       raw.budgetHeader.status !== "draft" && day >= E.budgetApproveByDay
     ) {
-      add(`${month} budget NOT APPROVED — day ${day}, status: ${raw.budgetHeader.status.replace(/_/g, " ")}`,
+      add("budget_unapproved", `${month} budget NOT APPROVED — day ${day}, status: ${raw.budgetHeader.status.replace(/_/g, " ")}`,
         `Should be fully approved by day ${E.budgetApproveByDay}`, "Finance Head");
     }
   }
@@ -102,7 +116,7 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
   if (raw.budget.totalBudget > 0 && day >= 5) {
     const usedPct = ((raw.budget.consumed + raw.budget.reserved) / raw.budget.totalBudget) * 100;
     if (usedPct >= monthPct + E.paceAheadPts && usedPct >= 50) {
-      add(`Spending far ahead of the month: ${usedPct.toFixed(0)}% of budget used, ${monthPct.toFixed(0)}% of month gone`,
+      add("spend_pace", `Spending far ahead of the month: ${usedPct.toFixed(0)}% of budget used, ${monthPct.toFixed(0)}% of month gone`,
         `At this pace the budget runs out around day ${Math.max(day, Math.floor((day * 100) / usedPct))} of ${daysInMonth}`, "Branch Head");
     }
   }
@@ -111,60 +125,88 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
   const sh = raw.shrinkage;
   const prev = raw.prevShrinkage;
   if (prev && sh.shrinkagePct >= T.shrinkage.warnPct && prev.shrinkagePct >= T.shrinkage.warnPct) {
-    add(`Shrinkage above ${T.shrinkage.warnPct}% for 2 days running (${prev.shrinkagePct}% yesterday, ${sh.shrinkagePct}% today)`,
+    add("shrinkage_high", `Shrinkage above ${T.shrinkage.warnPct}% for 2 days running (${prev.shrinkagePct}% yesterday, ${sh.shrinkagePct}% today)`,
       "This is not a one-day blip — the cause has not been fixed", "Ops Manager");
   }
 
   // Aged approvals.
   const g = raw.grnStats;
   if (g.pending > 0 && g.oldestPendingDays >= E.grnStaleDays) {
-    add(`${g.pending} GRN${g.pending > 1 ? "s" : ""} stuck in approval — oldest ${g.oldestPendingDays} days`,
+    add("grn_stuck", `${g.pending} GRN${g.pending > 1 ? "s" : ""} stuck in approval — oldest ${g.oldestPendingDays} days`,
       "Vendors are waiting and the spend is not charged to any budget until approved", "Approvers");
   }
   if (day >= daysInMonth - 2 && g.pending > 0) {
-    add(`Month closes in ${daysInMonth - day} day${daysInMonth - day === 1 ? "" : "s"} with ${g.pending} GRN${g.pending > 1 ? "s" : ""} unapproved`,
+    add("grn_month_end", `Month closes in ${daysInMonth - day} day${daysInMonth - day === 1 ? "" : "s"} with ${g.pending} GRN${g.pending > 1 ? "s" : ""} unapproved`,
       "Unapproved GRNs fall out of this month's P&L and budget", "Approvers");
   }
   if (raw.leaveAging.oldestDays >= E.approvalStaleDays || raw.regularization.oldestDays >= E.approvalStaleDays) {
-    add(`Leave / regularization requests waiting ${Math.max(raw.leaveAging.oldestDays, raw.regularization.oldestDays)}+ days`,
+    add("approvals_aged", `Leave / regularization requests waiting ${Math.max(raw.leaveAging.oldestDays, raw.regularization.oldestDays)}+ days`,
       `${raw.leaveAging.over7Days} leave and ${raw.regularization.over7Days} regularization requests are over 7 days old; payroll will be wrong if they stay open`, "Managers");
   }
   if (raw.regularization.escalated > 0) {
-    add(`${raw.regularization.escalated} regularization request${raw.regularization.escalated > 1 ? "s" : ""} already escalated and still open`, "Manager did not act before escalation", "Managers");
+    add("reg_escalated", `${raw.regularization.escalated} regularization request${raw.regularization.escalated > 1 ? "s" : ""} already escalated and still open`, "Manager did not act before escalation", "Managers");
   }
 
   // Hiring delivery already missed.
   if (raw.openHiring.pastDeliveryRequisitions > 0 && raw.openHiring.pastDeliveryOpenPositions > 0) {
-    add(`${raw.openHiring.pastDeliveryRequisitions} batch${raw.openHiring.pastDeliveryRequisitions > 1 ? "es" : ""} PAST delivery date, ${raw.openHiring.pastDeliveryOpenPositions} positions still unfilled`,
+    add("hiring_past_delivery", `${raw.openHiring.pastDeliveryRequisitions} batch${raw.openHiring.pastDeliveryRequisitions > 1 ? "es" : ""} PAST delivery date, ${raw.openHiring.pastDeliveryOpenPositions} positions still unfilled`,
       "Client delivery date has gone; seats are empty", "Recruitment");
   }
   if (raw.offers.conversionPct != null && raw.offers.offered >= 5 && raw.offers.conversionPct < E.offerJoinCriticalPct) {
-    add(`Offer-to-join only ${raw.offers.conversionPct}% (${raw.offers.joined}/${raw.offers.offered}) in 30 days`,
+    add("offer_join_low", `Offer-to-join only ${raw.offers.conversionPct}% (${raw.offers.joined}/${raw.offers.offered}) in 30 days`,
       "More than half of the offers are being wasted", "Recruitment");
   }
 
   // Exits / absconding left open.
   if (raw.headcount.exitsNotClosed >= E.exitsOpen) {
-    add(`${raw.headcount.exitsNotClosed} exits not closed in the system`, "Clearance / F&F cannot start until the exit is closed", "HR");
+    add("exits_open", `${raw.headcount.exitsNotClosed} exits not closed in the system`, "Clearance / F&F cannot start until the exit is closed", "HR");
   }
   const at = raw.attrition;
   if (at && at.absentStreak >= 5) {
-    add(`${at.absentStreak} employees absent 3+ days in a row`, "Possible absconding — contact each one today and record the outcome", "Branch HR");
+    add("absent_streak", `${at.absentStreak} employees absent 3+ days in a row`, "Possible absconding — contact each one today and record the outcome", "Branch HR");
   }
 
   // Loss that has persisted long enough to be real.
   const pnl = raw.runningPnl;
   if (pnl.dataAvailable && pnl.opPct != null && pnl.opPct < 0 && day >= 10) {
-    add(`Branch is loss-making ${day} days into the month: ${pnl.opPct.toFixed(1)}% OP`,
+    add("loss_making", `Branch is loss-making ${day} days into the month: ${pnl.opPct.toFixed(1)}% OP`,
       `Revenue ₹${fmt(pnl.revenueRunning)} vs cost ₹${fmt(pnl.totalCostRunning)}`, "Branch Head");
   }
   if (raw.budgetByHead.overBudget.length > 0) {
-    add(`${raw.budgetByHead.overBudget.length} budget head${raw.budgetByHead.overBudget.length > 1 ? "s" : ""} already OVER budget`,
+    add("heads_over", `${raw.budgetByHead.overBudget.length} budget head${raw.budgetByHead.overBudget.length > 1 ? "s" : ""} already OVER budget`,
       raw.budgetByHead.overBudget.map((h) => `${h.head} (${h.pct}%)`).join(" · "), "Branch Head");
   }
   if (raw.grnStats.unbudgeted.count > 0) {
-    add(`₹${fmt(raw.grnStats.unbudgeted.amountExGst)} spent with no budget line (${raw.grnStats.unbudgeted.count} GRN${raw.grnStats.unbudgeted.count > 1 ? "s" : ""})`,
+    add("unbudgeted_spend", `₹${fmt(raw.grnStats.unbudgeted.amountExGst)} spent with no budget line (${raw.grnStats.unbudgeted.count} GRN${raw.grnStats.unbudgeted.count > 1 ? "s" : ""})`,
       "Spend on record but not covered by any approved budget", "Branch Head");
+  }
+
+  // Payroll readiness for the cycle month: every rule needs a calendar date that has passed.
+  const pr = raw.payrollReadiness;
+  const cal = pr?.calendar;
+  if (pr && cal) {
+    const [cy, cm] = pr.cycleMonth.split("-").map(Number);
+    const cycleName = `${MONTHS[cm - 1]} ${cy}`;
+    const passed = (d: string | null) => !!d && reportDate > d;
+    const daysLate = (d: string) => Math.round((Date.parse(`${reportDate}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86400000);
+    const cutoff = cal.attendanceCutoff;
+    if (passed(cutoff) && ((pr.pendingRegularization ?? 0) > 0 || (pr.pendingLeave ?? 0) > 0)) {
+      add("payroll_attendance_open", `${cycleName} attendance NOT CLOSED — cut-off was ${cutoff} (${daysLate(cutoff!)} day${daysLate(cutoff!) === 1 ? "" : "s"} ago)`,
+        `${pr.pendingRegularization ?? 0} regularization and ${pr.pendingLeave ?? 0} leave request${(pr.pendingLeave ?? 0) === 1 ? "" : "s"} for ${cycleName} still undecided; payroll will be paid on incomplete attendance`, "Managers / Branch HR");
+    }
+    const incDeadline = cal.incentiveDeadline;
+    if (passed(incDeadline) && pr.incentivesExpected && pr.incentiveState === "none") {
+      add("payroll_incentive_missing", `${cycleName} incentives NOT UPLOADED — deadline was ${incDeadline}`,
+        "This branch uploaded incentives in earlier months; staff will be paid without them unless uploaded and approved", "Branch Head / MIS");
+    } else if (passed(incDeadline) && pr.incentiveState === "pending_approval") {
+      add("payroll_incentive_unapproved", `${cycleName} incentives uploaded but NOT APPROVED — deadline was ${incDeadline}`,
+        "Uploaded batch is waiting for approval; unapproved incentives are not paid", "Finance / Payroll Head");
+    }
+    const runDate = cal.payrollRunDate;
+    if ((pr.pendingIncrements ?? 0) > 0 && runDate && reportDate >= shiftDays(runDate, -3)) {
+      add("payroll_increments_pending", `${pr.pendingIncrements} salary increment${(pr.pendingIncrements ?? 0) > 1 ? "s" : ""} not approved — payroll runs ${runDate}`,
+        `Oldest request is ${pr.oldestIncrementDays ?? 0} days old; an increment approved after the run misses ${cycleName} pay`, "Payroll Head");
+    }
   }
   return out;
 }
@@ -172,10 +214,15 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
 export function classifySignals(raw: BranchHealthRawData, reportDate: string = ""): {
   criticalPoints: CriticalPoint[];
   escalations: Escalation[];
+  trackedKeys: string[];
   positiveAchievements: PositiveAchievement[];
   overallStatus: "healthy" | "watch" | "critical";
 } {
   const escalations = reportDate ? buildEscalations(raw, reportDate) : [];
+  const trackedKeys = [...new Set([
+    ...escalations.map((e) => e.key),
+    ...(raw.shrinkage.shrinkagePct >= T.shrinkage.warnPct ? ["shrinkage_high"] : []),
+  ])];
   const criticalPoints: CriticalPoint[] = [];
   const positiveAchievements: PositiveAchievement[] = [];
 
@@ -435,7 +482,7 @@ export function classifySignals(raw: BranchHealthRawData, reportDate: string = "
       ? "watch"
       : "healthy";
 
-  return { criticalPoints, escalations, positiveAchievements, overallStatus };
+  return { criticalPoints, escalations, trackedKeys, positiveAchievements, overallStatus };
 }
 
 export function buildBranchHealthReport(
@@ -443,7 +490,7 @@ export function buildBranchHealthReport(
   reportDate: string,
   raw: BranchHealthRawData,
 ): BranchHealthReport {
-  const { criticalPoints, escalations, positiveAchievements, overallStatus } =
+  const { criticalPoints, escalations, trackedKeys, positiveAchievements, overallStatus } =
     classifySignals(raw, reportDate);
   return {
     branch,
@@ -451,6 +498,7 @@ export function buildBranchHealthReport(
     raw,
     criticalPoints,
     escalations,
+    trackedKeys,
     positiveAchievements,
     overallStatus,
   };
