@@ -7,6 +7,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   // path and a Gate pageCode.
   "/ats/dashboard-v2": "ATS_DASHBOARD",
   "/ats/sourcing-analysis": "ATS_DASHBOARD",
+  "/ats/hiring-engine": "ATS_HIRING_ENGINE",
   "/ats/meta-campaigns": "ATS_META_CAMPAIGNS",
   "/ats/meta-leads": "ATS_META_CAMPAIGNS",
   "/ats/meta-shortlist": "ATS_META_CAMPAIGNS",

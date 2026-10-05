@@ -15,6 +15,20 @@
     "client_invoice_payment_log",
     "client_invoice_payment_status"
   ],
+  "modules/hiring-engine/he-drive.service.ts": [
+    "he_drive",
+    "he_match"
+  ],
+  "modules/hiring-engine/he-ingest.service.ts": [
+    "he_call"
+  ],
+  "modules/hiring-engine/he-insight.service.ts": [
+    "he_lead_insight"
+  ],
+  "modules/hiring-engine/he-lead.service.ts": [
+    "he_consent",
+    "he_lead"
+  ],
   "modules/integrations/cosec/cosec-registration.service.ts": [
     "mx_usermst"
   ],

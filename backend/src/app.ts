@@ -194,6 +194,9 @@ import { attendanceExceptionBucketRouter } from "./modules/wfm/attendance-except
 import { rosterImportRouter } from "./modules/wfm/roster-import.routes.js";
 import { rosterUploadTrackerRouter } from "./modules/wfm/roster-upload-tracker.routes.js";
 import { opsControlTowerRouter } from "./modules/ops-control-tower/ops-control-tower.routes.js";
+import { heRouter } from "./modules/hiring-engine/he.routes.js";
+import { heWebhookRouter } from "./modules/hiring-engine/he-webhook.routes.js";
+import { hePublicRouter } from "./modules/hiring-engine/he-public.routes.js";
 import { rosterBuilderRouter } from "./modules/wfm/roster-builder.routes.js";
 import { rosterIntelligenceRouter } from "./modules/wfm/roster-intelligence.routes.js";
 import { rosterAnalyticsRouter } from "./modules/wfm/roster-analytics.routes.js";
@@ -680,6 +683,12 @@ app.use("/api/job-requisition", jobRequisitionRouter);
 // and VOICEBOT_CALLBACK_TOKEN respectively, and each REFUSES the request when its secret is
 // unset rather than falling open. Every other route in the router is requireAuth + requireRole.
 app.use("/api/meta", metaCampaignRouter);
+// Hiring Engine capture webhooks: unauthenticated by design (Pinbot / email provider / voice bot cannot present a
+// session); every route is gated on HE_WEBHOOK_TOKEN and refuses when it is unset. Authenticated API is /api/he.
+app.use("/api/he-hook", heWebhookRouter);
+// Candidate live-location page API. Unauthenticated: the per-match token is the credential (see he-public.routes.ts).
+app.use("/api/he-public", hePublicRouter);
+app.use("/api/he", heRouter);
 app.use("/api/ats", atsFormConfigRouter);
 // Unauthenticated by design so a walk-in can self-register. Rate limiting is
 // applied per-verb inside registrationEnhancedRouter (POST submissions only) so

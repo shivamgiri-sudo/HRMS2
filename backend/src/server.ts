@@ -71,6 +71,7 @@ import { startHelpdeskSlaCron } from "./modules/helpdesk/helpdesk-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 import { startOpsNudgeScheduler } from "./modules/ops-control-tower/ops-nudge.cron.js";
+import { startHiringEngineScheduler } from "./modules/hiring-engine/he-engine.cron.js";
 import { startAtsDailyReportScheduler } from "./modules/ats/ats-daily-report.cron.js";
 import { startBranchActivityReportScheduler } from "./modules/ats/branch-activity-report/scheduler.js";
 import { startBranchHealthReportScheduler } from "./modules/branch-health-report/scheduler.js";
@@ -362,6 +363,8 @@ function startServer() {
         }
         // No-op unless OPS_AUTO_NUDGE_ENABLED=true; also a no-op per run until WhatsApp is configured.
         startOpsNudgeScheduler();
+        // No-op unless HE_ENGINE_ENABLED=true; a dry run unless HE_ENGINE_LIVE=true.
+        startHiringEngineScheduler();
         // No-op unless ATS_BRANCH_ACTIVITY_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
         startBranchActivityReportScheduler();
         // No-op unless BRANCH_HEALTH_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).

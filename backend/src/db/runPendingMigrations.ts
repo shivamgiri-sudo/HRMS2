@@ -1282,6 +1282,11 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2082_increment_package_split_flag.sql", // Registered 2026-10-05. Seeds payroll_config_flags 'increment_package_split_enabled' = 'false' (global row, NOT EXISTS-guarded). Increment requests priced from their effective date, split by days mid-month; stays OFF until the owner enables it.
   "migrations/2083_employee_attendance_logic_override.sql", // Registered 2026-10-05. employee_attendance_logic_override: one row per employee whose attendance source (APR / COSEC / APR+COSEC) is set personally on the Attendance Rules page; beats the process/designation rules. One new table, additive, idempotent; with no rows the engine is unchanged.
   "migrations/2084_branch_health_signal_daily.sql", // Registered 2026-10-05. branch_health_signal_daily: red-signal history per branch per day for the Branch Health Report streaks. One new table, additive, idempotent; the report also creates it on first write.
+  "migrations/2100_hiring_engine_core.sql", // Registered 2026-10-05. Walk-in Hiring Engine phase 1 tables: he_lead (unified pool by mobile10), he_lead_event, he_consent, he_drive, he_match, he_message, he_location_ping, he_template. CREATE TABLE IF NOT EXISTS only, utf8mb4_unicode_ci, no FKs.
+  "migrations/2101_hiring_engine_signals.sql", // Registered 2026-10-05. Hiring Engine capture + analysis layer: he_message_event (delivery/engagement per message, WhatsApp + email), he_call (voice BRD checkpoints + structured outcome), he_signal (typed extracted datapoints with source + confidence), he_lead_insight (derived engagement/reliability/next action). CREATE TABLE IF NOT EXISTS only.
+  "migrations/2102_hiring_engine_page_access.sql", // Registered 2026-10-05. INSERT IGNORE grants for page ATS_HIRING_ENGINE (/ats/hiring-engine) to super_admin, admin, hr, hr_admin, recruitment_hr, ceo.
+  "migrations/2103_hiring_engine_template_seed.sql", // Registered 2026-10-05. Seeds he_template with the 22 follow-up templates (11 x Hinglish/English) in DRAFT; nothing sends until approval_state=approved. INSERT IGNORE.
+  "migrations/2104_hiring_engine_hr_alert.sql", // Registered 2026-10-05. he_hr_alert: one row per drive per 30-minute window so the branch arrival alert is sent once. CREATE TABLE IF NOT EXISTS.
 ];
 
 export type MigrationHealth = {

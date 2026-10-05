@@ -27,6 +27,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/ats/dashboard",
   "/ats/dashboard-v2",
   "/ats/extensions",
+  "/ats/hiring-engine",
   "/ats/form-config",
   "/ats/joining-control-room",
   "/ats/joining-documents-tracker",

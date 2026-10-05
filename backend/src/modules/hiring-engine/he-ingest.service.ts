@@ -1,0 +1,176 @@
+/**
+ * Inbound capture. Every WhatsApp reply, delivery status, email event and voice result lands here:
+ * stored raw, mined into signals, applied to lead/match state, mirrored to meta_lead_raw so the existing
+ * Meta inbox pages stay correct, then the lead insight is recomputed.
+ */
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { logger } from "../../logger.js";
+import { normalizeMobile10 } from "./he-phone.js";
+import {
+  callOutcome, signalsFromEmailEvent, signalsFromReply, signalsFromVoice,
+  type EmailEvent, type VoiceResult,
+} from "./he-signals.js";
+import { planFromCallOutcome, planFromReply, type LeadStatus, type TransitionPlan } from "./he-state.js";
+import { addEvent, findLeadByMobile, persistSignals, revokeConsent, setLeadStatus, upsertLead } from "./he-lead.service.js";
+import { recomputeInsight } from "./he-insight.service.js";
+
+async function activeMatch(leadId: string): Promise<{ id: string; slotOffers: number } | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM he_match WHERE lead_id = ? AND state IN ('invited','confirmed','slot_released') ORDER BY updated_at DESC LIMIT 1`, [leadId]);
+  if (!rows[0]) return null;
+  const [o] = await db.execute<RowDataPacket[]>(
+    "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'", [leadId]);
+  return { id: rows[0].id as string, slotOffers: Number(o[0].n) };
+}
+
+/** Mirror outcomes onto the Meta lead row so /ats/meta-leads and the WhatsApp inbox stay truthful. */
+async function mirrorToMeta(metaLeadId: string | null, plan: TransitionPlan): Promise<void> {
+  if (!metaLeadId) return;
+  const confirmed = plan.leadStatus === "confirmed" || plan.leadStatus === "rescheduled" ? 1 : null;
+  const resched = plan.event === "reschedule_requested" ? 1 : null;
+  const declined = plan.leadStatus === "declined" || plan.leadStatus === "opted_out" ? 1 : null;
+  if (confirmed == null && resched == null && declined == null) return;
+  // meta_lead_raw.walkin_reply is VARCHAR(30) holding the same keywords the Wassenger webhook writes.
+  const keyword = confirmed ? "confirmed" : resched ? "reschedule" : "not_interested";
+  await db.execute(
+    `UPDATE meta_lead_raw SET
+       walkin_confirmed = COALESCE(?, walkin_confirmed),
+       walkin_reschedule_requested = COALESCE(?, walkin_reschedule_requested),
+       walkin_declined = COALESCE(?, walkin_declined),
+       walkin_reply = COALESCE(?, walkin_reply), walkin_reply_at = NOW()
+     WHERE id = ?`,
+    [confirmed, resched, declined, keyword, metaLeadId]);
+}
+
+async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPlan, ctx: { matchId: string | null; channel: string; detail: string | null; metaLeadId: string | null; replyText: string | null }): Promise<void> {
+  if (plan.leadStatus && plan.leadStatus !== current) await setLeadStatus(leadId, plan.leadStatus);
+  if (plan.matchState && ctx.matchId) await db.execute("UPDATE he_match SET state = ? WHERE id = ?", [plan.matchState, ctx.matchId]);
+  if (plan.revokeConsent) await revokeConsent(leadId, "whatsapp_contact");
+  await addEvent(leadId, plan.event, { channel: ctx.channel, detail: ctx.detail });
+  if (plan.humanHandoff) await addEvent(leadId, "needs_human_followup", { channel: ctx.channel, detail: "second decline / declined offered slot" });
+  await mirrorToMeta(ctx.metaLeadId, plan);
+}
+
+export async function recordInboundReply(p: { mobile: string; text: string; providerMessageId?: string | null; channel?: "whatsapp" | "email" }): Promise<{ leadId: string; intent: string } | null> {
+  const mobile10 = normalizeMobile10(p.mobile);
+  if (!mobile10) return null;
+  const channel = p.channel ?? "whatsapp";
+  let lead = await findLeadByMobile(mobile10);
+  if (!lead) {
+    const created = await upsertLead({ mobile: mobile10, source: "inbound" });
+    if (!created) return null;
+    lead = await findLeadByMobile(mobile10);
+    if (!lead) return null;
+  }
+  // Idempotent on provider retries.
+  if (p.providerMessageId) {
+    const [dup] = await db.execute<RowDataPacket[]>("SELECT 1 FROM he_message WHERE provider_message_id = ? AND direction = 'in' LIMIT 1", [p.providerMessageId]);
+    if (dup.length) return { leadId: lead.id, intent: "duplicate" };
+  }
+  const { intent, signals } = signalsFromReply(p.text, channel);
+  const [msg] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
+  const messageId = msg[0].id as string;
+  await db.execute(
+    "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, provider_message_id, intent) VALUES (?,?,?,?,?,?,?,?)",
+    [messageId, lead.id, mobile10, "in", channel, p.text.slice(0, 2000), p.providerMessageId ?? null, intent]);
+  // Mark the most recent outbound message as replied (drives reply-rate analysis).
+  const [lastOut] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM he_message WHERE lead_id = ? AND direction = 'out' AND channel = ? ORDER BY created_at DESC LIMIT 1", [lead.id, channel]);
+  if (lastOut[0]) await db.execute("INSERT INTO he_message_event (message_id, lead_id, channel, event_type) VALUES (?,?,?, 'replied')", [lastOut[0].id, lead.id, channel]);
+
+  await persistSignals(lead.id, signals, messageId);
+  const match = await activeMatch(lead.id);
+  const plan = planFromReply(lead.status, intent, match?.slotOffers ?? 0);
+  await applyPlan(lead.id, lead.status, plan, { matchId: match?.id ?? null, channel, detail: p.text, metaLeadId: lead.meta_lead_id, replyText: p.text });
+  await recomputeInsight(lead.id);
+  return { leadId: lead.id, intent };
+}
+
+export type DeliveryStatus = "sent" | "delivered" | "read" | "failed";
+export async function recordDeliveryStatus(providerMessageId: string, status: DeliveryStatus, error?: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, lead_id, channel, delivery_status FROM he_message WHERE provider_message_id = ? AND direction = 'out' LIMIT 1", [providerMessageId]);
+  if (!rows[0]) return false;
+  const order = ["queued", "sent", "delivered", "read"];
+  const cur = rows[0].delivery_status as string | null;
+  // Statuses arrive out of order; never downgrade delivered/read to sent. 'failed' always recorded.
+  if (status !== "failed" && cur && order.indexOf(cur) >= order.indexOf(status)) return true;
+  await db.execute("UPDATE he_message SET delivery_status = ?, error_message = ? WHERE id = ?", [status, error ? error.slice(0, 500) : null, rows[0].id]);
+  await db.execute("INSERT INTO he_message_event (message_id, lead_id, channel, event_type, detail) VALUES (?,?,?,?,?)", [rows[0].id, rows[0].lead_id, rows[0].channel, status, error ? error.slice(0, 300) : null]);
+  if (rows[0].lead_id) await recomputeInsight(rows[0].lead_id as string);
+  return true;
+}
+
+export async function recordEmailEvent(p: { providerMessageId: string; event: EmailEvent; detail?: string }): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id, lead_id FROM he_message WHERE provider_message_id = ? AND channel = 'email' LIMIT 1", [p.providerMessageId]);
+  if (!rows[0]) return false;
+  const leadId = rows[0].lead_id as string | null;
+  const map: Record<EmailEvent, string> = { sent: "sent", delivered: "delivered", opened: "opened", clicked: "clicked", bounced: "bounced", replied: "replied", unsubscribed: "unsubscribed" };
+  await db.execute("INSERT INTO he_message_event (message_id, lead_id, channel, event_type, detail) VALUES (?,?,'email',?,?)", [rows[0].id, leadId, map[p.event], p.detail?.slice(0, 300) ?? null]);
+  if (leadId) {
+    await persistSignals(leadId, signalsFromEmailEvent(p.event, p.detail), String(rows[0].id));
+    if (p.event === "unsubscribed") await revokeConsent(leadId, "whatsapp_contact");
+    await recomputeInsight(leadId);
+  }
+  return true;
+}
+
+export interface VoiceCallbackInput {
+  leadId?: string;
+  mobile?: string;
+  providerCallId?: string | null;
+  attemptNo?: number;
+  startedAt?: string | null;
+  result: VoiceResult;
+  offeredSlotAt?: string | null; // YYYY-MM-DD HH:MM:SS IST, from the slot service
+  transcript?: string | null;
+  summary?: string | null;
+  recordingUrl?: string | null;
+}
+
+export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId: string; outcome: string } | null> {
+  let lead = p.leadId
+    ? ((await db.execute<RowDataPacket[]>("SELECT id, mobile10, full_name, email, status, ats_candidate_id, meta_lead_id FROM he_lead WHERE id = ? LIMIT 1", [p.leadId]))[0][0] as never)
+    : p.mobile ? await findLeadByMobile(p.mobile) : null;
+  if (!lead) return null;
+  const l = lead as { id: string; status: LeadStatus; meta_lead_id: string | null };
+  // Provider retries: one row per provider_call_id.
+  if (p.providerCallId) {
+    const [dup] = await db.execute<RowDataPacket[]>("SELECT 1 FROM he_call WHERE provider_call_id = ? LIMIT 1", [p.providerCallId]);
+    if (dup.length) return { leadId: l.id, outcome: "duplicate" };
+  }
+  const r = p.result;
+  const outcome = callOutcome(r);
+  const match = await activeMatch(l.id);
+  const outcomeText = r.failedReason ? `CALL_FAILED:${r.failedReason}` : outcome;
+  // get_next_slot already reserved the replacement on the match mid-call; that is the slot that was offered.
+  let offeredSlotAt = p.offeredSlotAt ?? null;
+  if (!offeredSlotAt && r.offeredSlotAnswer && match) {
+    const [cur] = await db.execute<RowDataPacket[]>("SELECT slot_at FROM he_match WHERE id = ? LIMIT 1", [match.id]);
+    offeredSlotAt = cur[0]?.slot_at ? String(cur[0].slot_at) : null;
+  }
+  await db.execute(
+    `INSERT INTO he_call (lead_id, match_id, provider_call_id, attempt_no, started_at, duration_s, identity_confirmed, language_used, email_received,
+                          assessment_done, original_slot_answer, offered_slot_at, offered_slot_answer, outcome, decline_reason, sentiment, handoff_reason,
+                          transcript, summary, recording_url)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [l.id, match?.id ?? null, p.providerCallId ?? null, p.attemptNo ?? 1, p.startedAt ?? null, r.durationS ?? null, r.identityConfirmed ?? null, r.language ?? null,
+      r.emailReceived ?? null, r.assessmentDone ?? null, r.originalSlotAnswer ?? null, offeredSlotAt, r.offeredSlotAnswer ?? null,
+      outcomeText.slice(0, 60), r.declineReason ?? null, r.sentiment ?? null,
+      outcome === "WALKIN_DECLINED_NEEDS_FOLLOWUP" ? "declined original and offered slot" : null,
+      p.transcript ?? null, p.summary?.slice(0, 1000) ?? null, p.recordingUrl ?? null]);
+  await persistSignals(l.id, signalsFromVoice(r), p.providerCallId ?? null);
+  const plan = planFromCallOutcome(l.status, outcome);
+  await applyPlan(l.id, l.status, plan, { matchId: match?.id ?? null, channel: "voice", detail: outcomeText, metaLeadId: l.meta_lead_id, replyText: null });
+  // A rescheduled call moves the slot to the one the slot service reserved mid-call (never invented here).
+  if (outcome === "WALKIN_RESCHEDULED" && offeredSlotAt && match) {
+    await db.execute("UPDATE he_match SET slot_at = ? WHERE id = ?", [offeredSlotAt, match.id]);
+    if (l.meta_lead_id) await db.execute("UPDATE meta_lead_raw SET interview_date = DATE(?), interview_time = TIME(?) WHERE id = ?", [offeredSlotAt, offeredSlotAt, l.meta_lead_id]);
+  }
+  if (l.meta_lead_id) {
+    await db.execute("UPDATE meta_lead_raw SET voice_call_outcome = ?, voice_called_at = COALESCE(?, NOW()) WHERE id = ?", [outcomeText.slice(0, 60), p.startedAt ?? null, l.meta_lead_id]);
+  }
+  await recomputeInsight(l.id);
+  logger.info({ leadId: l.id, outcome: outcomeText }, "[hiring-engine] voice result recorded");
+  return { leadId: l.id, outcome: outcomeText };
+}

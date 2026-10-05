@@ -55,19 +55,30 @@ export class PinbotWhatsAppProvider implements CommunicationProvider {
     templateName: string,
     bodyParams: readonly string[],
     languageCode = "en",
+    /** Dynamic URL-button suffix (button index 0), for templates whose button URL ends in {{1}}. */
+    urlButtonSuffix?: string,
   ): Promise<ProviderResponse> {
+    const components: Array<Record<string, unknown>> = [
+      {
+        type: "body",
+        parameters: bodyParams.map((text) => ({ type: "text", text })),
+      },
+    ];
+    if (urlButtonSuffix) {
+      components.push({
+        type: "button",
+        sub_type: "url",
+        index: "0",
+        parameters: [{ type: "text", text: urlButtonSuffix }],
+      });
+    }
     return this.post({
       to: toMsisdn(recipient),
       type: "template",
       template: {
         name: templateName,
         language: { code: languageCode },
-        components: [
-          {
-            type: "body",
-            parameters: bodyParams.map((text) => ({ type: "text", text })),
-          },
-        ],
+        components,
       },
     });
   }
