@@ -76,6 +76,7 @@ on:
           - recode-63388c-person-check
           - recode-63388c-name-search
           - recode-63388c-attribution
+          - recode-63388c-apply
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -220,6 +221,12 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            recode-63388c-apply)
+              # PHASE 1 of the 63388C code clash. dry-run prints the plan and writes nothing; apply re-codes the HRMS
+              # employee to 63388C-OLD and creates the db_bill employee as 63388C. Apply needs the typed confirm above.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/recode-63388c-apply.ts $FLAG
               ;;
             recode-63388c-attribution)
               # Read-only: date bands and counts per table to attribute 63388C rows to one person or the other. No apply mode.
