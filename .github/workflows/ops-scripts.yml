@@ -99,6 +99,7 @@ on:
           - sep-attendance-grid
           - night-shift-apr-attribution-audit
           - apr-coverage-audit
+          - post-exit-attendance-audit
           - create-missing-esa-for-run-lines
           - employee-components-audit
           - fix-63694c-package
@@ -376,6 +377,10 @@ jobs:
               # Dry-runs unless given --apply. Apply inserts the esa row the engine needs; no existing line is changed.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/create-missing-esa-for-run-lines.ts $FLAG
+              ;;
+            post-exit-attendance-audit)
+              # Read-only in both modes: SELECTs only, prints grouped counts only.
+              npx tsx scripts/post-exit-attendance-audit.ts 2026-06-01
               ;;
             apr-coverage-audit)
               # Read-only in both modes: SELECTs only, prints counts per date / hour only.
