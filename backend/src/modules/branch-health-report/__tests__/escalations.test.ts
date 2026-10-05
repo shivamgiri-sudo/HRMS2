@@ -56,7 +56,7 @@ describe("buildEscalations", () => {
   });
   it("flags shrinkage that stays high two days running", () => {
     const raw = calm({ shrinkage: { shrinkagePct: 14 }, prevShrinkage: { shrinkagePct: 12 } });
-    expect(buildEscalations(raw, "2026-10-15")[0].label).toMatch(/2 days running/);
+    expect(buildEscalations(raw, "2026-10-15")[0].label).toMatch(/Shrinkage above 10%.*14% today, 12% yesterday/);
   });
   it("flags spend far ahead of the calendar", () => {
     const raw = calm({ budget: { totalBudget: 100, consumed: 70, reserved: 0 } });

@@ -53,7 +53,7 @@ const ESCALATION_SOURCES: Record<string, string> = {
   budget_missing: "Branch budget workspace: no header for this branch and month (finance_budget_header)",
   budget_not_submitted: "Branch budget workspace: best header for the month is draft / revision required / rejected / closed",
   budget_unapproved: "Branch budget workspace: header is submitted or branch-head approved, not yet active",
-  spend_pace: "Section 1: (consumed + reserved) ÷ approved budget, against days elapsed in the month",
+  spend_pace: "Section 1: (consumed + reserved) ÷ budget, against days elapsed in the month. Section 1 utilization shows consumed only",
   shrinkage_high: "Section 5: absent ÷ scheduled today and yesterday (roster-based)",
   grn_stuck: "Section 2: GRNs awaiting approval, oldest by raised date",
   grn_month_end: "Section 2: GRNs awaiting approval on the last 3 days of the month",
@@ -95,6 +95,9 @@ const T = {
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 /** Month name and day-of-month of a YYYY-MM-DD report date. */
+const niceDate = (iso: string): string =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+
 function shiftDays(d: string, by: number): string {
   const x = new Date(`${d}T00:00:00Z`);
   x.setUTCDate(x.getUTCDate() + by);
@@ -145,8 +148,8 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
   if (raw.budget.totalBudget > 0 && day >= 5) {
     const usedPct = ((raw.budget.consumed + raw.budget.reserved) / raw.budget.totalBudget) * 100;
     if (usedPct >= monthPct + E.paceAheadPts && usedPct >= 50) {
-      add("spend_pace", `Spending far ahead of the month: ${usedPct.toFixed(0)}% of budget used, ${monthPct.toFixed(0)}% of month gone`,
-        `At this pace the budget runs out around day ${Math.max(day, Math.floor((day * 100) / usedPct))} of ${daysInMonth}`, "Branch Head");
+      add("spend_pace", `Spending far ahead of the month: ${usedPct.toFixed(0)}% of budget committed, ${monthPct.toFixed(0)}% of month gone`,
+        `Committed = consumed ${Math.round((raw.budget.consumed / raw.budget.totalBudget) * 100)}% + reserved ${Math.round((raw.budget.reserved / raw.budget.totalBudget) * 100)}%. At this pace the budget is fully committed around day ${Math.max(day, Math.floor((day * 100) / usedPct))} of ${daysInMonth}`, "Branch Head");
     }
   }
 
@@ -154,7 +157,7 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
   const sh = raw.shrinkage;
   const prev = raw.prevShrinkage;
   if (prev && sh.shrinkagePct >= T.shrinkage.warnPct && prev.shrinkagePct >= T.shrinkage.warnPct) {
-    add("shrinkage_high", `Shrinkage above ${T.shrinkage.warnPct}% for 2 days running (${prev.shrinkagePct}% yesterday, ${sh.shrinkagePct}% today)`,
+    add("shrinkage_high", `Shrinkage above ${T.shrinkage.warnPct}% — ${sh.shrinkagePct}% today, ${prev.shrinkagePct}% yesterday`,
       "Not a one-day blip: shrinkage was above the threshold yesterday as well", "Ops Manager");
   }
 
@@ -220,20 +223,20 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
     const daysLate = (d: string) => Math.round((Date.parse(`${reportDate}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86400000);
     const cutoff = cal.attendanceCutoff;
     if (passed(cutoff) && ((pr.pendingRegularization ?? 0) > 0 || (pr.pendingLeave ?? 0) > 0)) {
-      add("payroll_attendance_open", `${cycleName} attendance NOT CLOSED — cut-off was ${cutoff} (${daysLate(cutoff!)} day${daysLate(cutoff!) === 1 ? "" : "s"} ago)`,
+      add("payroll_attendance_open", `${cycleName} attendance NOT CLOSED — cut-off was ${niceDate(cutoff!)} (${daysLate(cutoff!)} day${daysLate(cutoff!) === 1 ? "" : "s"} ago)`,
         `${pr.pendingRegularization ?? 0} regularization and ${pr.pendingLeave ?? 0} leave request${(pr.pendingLeave ?? 0) === 1 ? "" : "s"} for ${cycleName} still undecided; they are not reflected in attendance until decided`, "Managers / Branch HR");
     }
     const incDeadline = cal.incentiveDeadline;
     if (passed(incDeadline) && pr.incentivesExpected && pr.incentiveState === "none") {
-      add("payroll_incentive_missing", `${cycleName} incentives NOT UPLOADED — deadline was ${incDeadline}`,
+      add("payroll_incentive_missing", `${cycleName} incentives NOT UPLOADED — deadline was ${niceDate(incDeadline!)}`,
         "This branch had incentive batches in the two months before; no batch exists yet for this month, and incentives are not paid until a batch is uploaded and approved", "Branch Head / MIS");
     } else if (passed(incDeadline) && pr.incentiveState === "pending_approval") {
-      add("payroll_incentive_unapproved", `${cycleName} incentives uploaded but NOT APPROVED — deadline was ${incDeadline}`,
+      add("payroll_incentive_unapproved", `${cycleName} incentives uploaded but NOT APPROVED — deadline was ${niceDate(incDeadline!)}`,
         "The batch is uploaded but not approved; incentives are not paid until it is", "Finance / Payroll Head");
     }
     const runDate = cal.payrollRunDate;
     if ((pr.pendingIncrements ?? 0) > 0 && runDate && reportDate >= shiftDays(runDate, -3)) {
-      add("payroll_increments_pending", `${pr.pendingIncrements} salary increment${(pr.pendingIncrements ?? 0) > 1 ? "s" : ""} not approved — payroll runs ${runDate}`,
+      add("payroll_increments_pending", `${pr.pendingIncrements} salary increment${(pr.pendingIncrements ?? 0) > 1 ? "s" : ""} not approved — payroll runs ${niceDate(runDate)}`,
         `Oldest request is ${pr.oldestIncrementDays ?? 0} days old; approve before the payroll run date`, "Payroll Head");
     }
   }
