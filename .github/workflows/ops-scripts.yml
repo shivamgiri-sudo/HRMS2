@@ -72,6 +72,7 @@ on:
           - salary-assignment-dedupe-identical
           - rejoin-stale-exit-audit
           - attendance-register-exited-verify
+          - recode-63388c-dryrun
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -216,6 +217,14 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            recode-63388c-dryrun)
+              # Read-only inventory for the 63388C code clash: counts of rows per table in HRMS and db_bill. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::recode-63388c-dryrun is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/recode-63388c-dryrun.ts
               ;;
             attendance-register-exited-verify)
               # Read-only: SELECTs plus the register executor. Lists inactive employees who exited in the month and
