@@ -370,6 +370,9 @@ function mockAdvanceConnection(opts: {
     if (text.includes("branch_code")) {
       return [[{ branch_code: "HQ" }]]; // nextVoucherNumber's own lookup
     }
+    if (text.includes("t2.payment_status")) {
+      return [[]]; // grn-duplicate-guard: no paid twin
+    }
     if (text.includes("FROM company_bank_account") && text.includes("FOR UPDATE")) {
       return [[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]];
     }

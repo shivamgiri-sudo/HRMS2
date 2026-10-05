@@ -1,3 +1,4 @@
+import { assertNoPaidTwin } from "./grn-duplicate-guard.js";
 import { randomUUID } from "crypto";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
@@ -129,6 +130,7 @@ async function validateGrnAllocations(
   input: { grnAllocations?: Array<{ vendorPaymentTrackingId: string; amount: number }>; linkedVendorPaymentId?: string | null },
   amount: number,
   notSelectedMessage: string,
+  guard: { allow?: boolean; actorRole?: string } = {},
 ): Promise<{ allocations: Array<{ vendorPaymentTrackingId: string; amount: number }>; vendorId: string }> {
   let allocations: Array<{ vendorPaymentTrackingId: string; amount: number }> = [];
   if (input.grnAllocations && input.grnAllocations.length > 0) {
@@ -154,7 +156,7 @@ async function validateGrnAllocations(
   let vendorIdSeen: string | null = null;
   for (const alloc of allocations) {
     const [[vpt]] = await connection.execute<RowDataPacket[]>(
-      `SELECT vendor_id, due_amount, tds_deducted_amount, paid_amount
+      `SELECT vendor_id, due_amount, tds_deducted_amount, paid_amount, grn_number
          FROM vendor_payment_tracking WHERE id = ? FOR UPDATE`,
       [alloc.vendorPaymentTrackingId],
     );
@@ -172,6 +174,7 @@ async function validateGrnAllocations(
         `Allocated amount (${alloc.amount}) exceeds the remaining net-payable balance on GRN ${alloc.vendorPaymentTrackingId} (${remaining})`,
       );
     }
+    await assertNoPaidTwin(connection, alloc.vendorPaymentTrackingId, `GRN ${row.grn_number ?? alloc.vendorPaymentTrackingId}`, guard, (m) => new PaymentVoucherError(m, 409));
   }
   return { allocations, vendorId: vendorIdSeen as string };
 }
@@ -241,6 +244,8 @@ export interface RaiseVoucherInput {
    * instead of a fresh bank payment.
    */
   grnAllocations?: Array<{ vendorPaymentTrackingId: string; amount: number }>;
+  /** A finance head / super admin confirming the GRN is NOT a duplicate of one already paid. */
+  allowPossibleDuplicate?: boolean;
   linkedImprestManagerId?: string | null;
   /** Required for 'vendor_advance' (which vendor is being paid an advance) and
    *  'vendor_advance_application' (whose advance balance this draws down). Neither source type
@@ -549,6 +554,7 @@ export const paymentVoucherService = {
       if (input.sourceType === "vendor_grn") {
         const result = await validateGrnAllocations(
           connection, input, amount, "At least one vendor GRN payment record must be selected",
+          { allow: input.allowPossibleDuplicate === true, actorRole },
         );
         grnAllocations = result.allocations;
         expenseClassification = await resolveExpenseClassification(connection, result.vendorId, input);

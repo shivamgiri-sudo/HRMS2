@@ -1,3 +1,4 @@
+import { assertNoPaidTwin } from "./grn-duplicate-guard.js";
 import { createHash, randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
@@ -46,6 +47,8 @@ const BANK_MODES = new Set([
 ]);
 
 export interface DispatchPaymentPayload {
+  /** A finance head / super admin confirming this GRN is NOT a duplicate of one already paid. */
+  allowPossibleDuplicate?: boolean;
   paymentMode: (typeof PAYMENT_MODES)[number];
   paymentDate: string;
   bankId?: string | null;
@@ -218,6 +221,13 @@ export const vendorPaymentLedgerService = {
           `Payment Voucher ${activeVoucher.voucher_number} is already ${activeVoucher.status} for this due. Complete it through the voucher's Release action instead of a direct dispatch.`
         );
       }
+
+      // A bill whose twin is already paid (or being paid) must not be paid again — see grn-duplicate-guard.
+      await assertNoPaidTwin(
+        connection, paymentId, `GRN ${payment.grn_number ?? paymentId}`,
+        { allow: payload.allowPossibleDuplicate === true, actorRole },
+        (m) => requestError(409, m),
+      );
 
       const currentPaid = roundMoney(Number(payment.paid_amount ?? 0));
       const dueAmount = roundMoney(Number(payment.due_amount ?? 0));
