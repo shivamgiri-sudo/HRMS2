@@ -81,6 +81,7 @@ on:
           - match-month-to-dbbill
           - vendor-ledger-gap-audit
           - vendor-ledger-tally-audit
+          - trial-balance-timing
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -391,6 +392,10 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            trial-balance-timing)
+              # Read-only in both modes: SELECT / EXPLAIN only.
+              npx tsx scripts/trial-balance-timing.ts
               ;;
             vendor-ledger-tally-audit)
               # Read-only in both modes: SELECTs only.
