@@ -106,6 +106,7 @@ on:
           - dbbill-invoices-audit
           - hrms-vs-dbbill-diagnose
           - hrms-gap-deepdive
+          - hrms-people-bridge
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -278,6 +279,10 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            hrms-people-bridge)
+              # Read-only in both modes: runs the P&L people-cost functions, writes nothing.
+              npx tsx scripts/hrms-people-bridge.ts
               ;;
             hrms-gap-deepdive)
               # Read-only in both modes: SELECTs only (HRMS and db_bill).
