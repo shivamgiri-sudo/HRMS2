@@ -137,6 +137,22 @@ export function prevIstDate(date: string): string {
   return (toIST(d) ?? d.toISOString())!.slice(0, 10);
 }
 
+/**
+ * The dialler report dates that count toward attendance date `date`: always just `date`.
+ *
+ * `apr` and `dialer_session_log` are per-day rollups (net minutes per ReportDate / session_date,
+ * no login clock time on bulk rows), and the dialler already files a cross-midnight shift under
+ * the date the shift STARTED. Verified on production 2026-10-05 (night-shift-apr-attribution-audit):
+ * of 95 Sep-2026 days with a 00:00-06:00 biometric presence, 91 had their APR on the PREVIOUS date
+ * (Aug: 32 of 35). The old night-shift window summed `date` AND `date + 1`, so the next night's
+ * shift was paid twice (138 of 184 Sep cases) and days with no login of their own were paid from
+ * the next day. db_bill / I-spark use the same one-date rule. `_shiftWindow` is accepted so
+ * callers keep their signature; it must not widen the dates.
+ */
+export function dialerReportDates(date: string, _shiftWindow?: ShiftWindowInfo): string[] {
+  return [date];
+}
+
 export function buildShiftWindowInfo(
   date: string,
   shiftStartTime: string | null | undefined,
@@ -616,9 +632,7 @@ export const attendanceEngineService = {
   },
 
   async getAprNetMinutes(employeeCode: string, date: string, shiftWindow?: ShiftWindowInfo): Promise<number> {
-    const dates = shiftWindow?.isNightShift
-      ? [shiftWindow.startDate, shiftWindow.endDate]
-      : [date];
+    const dates = dialerReportDates(date, shiftWindow);
     const placeholders = dates.map(() => '?').join(', ');
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ReportDate, Net_Login FROM apr WHERE UserID = ? AND ReportDate IN (${placeholders})`,
@@ -637,9 +651,7 @@ export const attendanceEngineService = {
 
   // Sum dialler login minutes — fallback join on employee_code if employee_id is null
   async getDiallerMinutes(employeeId: string, date: string, shiftWindow?: ShiftWindowInfo): Promise<number> {
-    const dates = shiftWindow?.isNightShift
-      ? [shiftWindow.startDate, shiftWindow.endDate]
-      : [date];
+    const dates = dialerReportDates(date, shiftWindow);
     const placeholders = dates.map(() => '?').join(', ');
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(dsl.login_minutes), 0) AS total
@@ -1047,8 +1059,8 @@ export const attendanceEngineService = {
         isAprEmployee = true;
         forcedAprMinutes = diallerMinutes;
         forcedAprSourceSystem = aprMinutes > 0
-          ? (shiftWindow.isNightShift ? 'apr.night_shift_window' : 'apr.ReportDate')
-          : (shiftWindow.isNightShift ? 'dialer_session_log.night_shift_window' : 'dialer_session_log.session_date');
+          ? 'apr.ReportDate'
+          : 'dialer_session_log.session_date';
       }
     }
 
@@ -1219,8 +1231,8 @@ export const attendanceEngineService = {
         ? aprMinutes
         : await this.getDiallerMinutes(employeeId, date, shiftWindow);
       sourceSystem = forcedAprSourceSystem ?? (aprMinutes > 0
-        ? (shiftWindow.isNightShift ? 'apr.night_shift_window' : 'apr.ReportDate')
-        : (shiftWindow.isNightShift ? 'dialer_session_log.night_shift_window' : 'dialer_session_log.session_date'));
+        ? 'apr.ReportDate'
+        : 'dialer_session_log.session_date');
       sourceReference = emp.employee_code;
       rawMinutes = diallerMinutes ?? 0;
       rule = { ...rule, attendance_source: 'dialler', full_day_minutes: 480, half_day_minutes: 240 };

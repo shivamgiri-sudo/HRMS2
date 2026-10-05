@@ -85,10 +85,13 @@ function mockEngineDb(fixture: EngineFixture = {}) {
     diallerTotal: 0,
     ...fixture,
   };
-  dbExecute.mockImplementation(async (sql: string) => {
+  dbExecute.mockImplementation(async (sql: string, params: unknown[] = []) => {
     // dialer_session_log first: its employee_code fallback also joins `employees e`.
     if (sql.includes("FROM dialer_session_log dsl")) return [[{ total: f.diallerTotal }], []];
-    if (sql.includes("SELECT ReportDate, Net_Login FROM apr")) return [f.apr, []];
+    // Answer only the ReportDates actually asked for, like the real table would.
+    if (sql.includes("SELECT ReportDate, Net_Login FROM apr")) {
+      return [f.apr.filter((r) => params.includes(r.ReportDate)), []];
+    }
     if (sql.includes("FROM integration_biometric_daily")) return [f.biometricDaily, []];
     if (sql.includes("COUNT(*) AS cnt FROM apr_eligibility_config")) return [f.aprEligibilityCount, []];
     if (sql.includes("FROM apr_eligibility_config")) return [f.aprEligibility, []];
@@ -110,18 +113,21 @@ describe("attendance engine night-shift process flow", () => {
     dbExecute.mockReset();
   });
 
-  it("sums APR minutes across shift start and next date for night-shift employees", async () => {
+  // The dialler files a cross-midnight shift under the date it STARTED (production audit
+  // 2026-10-05: 91 of 95 early-morning punch days had their APR on the previous date). Each
+  // ReportDate therefore belongs to exactly one attendance date: its own.
+  it("credits a night shift with the APR filed on its own start date only", async () => {
     mockEngineDb({
       apr: [
-        { ReportDate: "2026-07-25", Net_Login: "04:30:00" },
-        { ReportDate: "2026-07-26", Net_Login: "04:30:00" },
+        { ReportDate: "2026-07-25", Net_Login: "09:00:00" },
+        { ReportDate: "2026-07-26", Net_Login: "08:30:00" },
       ],
     });
 
     const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("dialler");
-    expect(result.sourceSystem).toBe("apr.night_shift_window");
+    expect(result.sourceSystem).toBe("apr.ReportDate");
     expect(result.sourceRecordDate).toBe("2026-07-25");
     expect(result.rawMinutes).toBe(540);
     expect(result.diallerMinutes).toBe(540);
@@ -130,17 +136,31 @@ describe("attendance engine night-shift process flow", () => {
 
     const aprSqlCall = dbExecute.mock.calls.find(([sql]: [string]) => sql.includes("FROM apr WHERE UserID = ?"));
     expect(aprSqlCall).toBeTruthy();
-    expect(aprSqlCall?.[0]).toContain("ReportDate IN (?, ?)");
-    expect(aprSqlCall?.[1]).toEqual(["MAS1001", "2026-07-25", "2026-07-26"]);
+    expect(aprSqlCall?.[0]).toContain("ReportDate IN (?)");
+    expect(aprSqlCall?.[1]).toEqual(["MAS1001", "2026-07-25"]);
   });
 
-  it("falls back to dialler sessions across both dates when APR rows are absent", async () => {
+  // Sep 2026 incident: 79 NOIDA-2 night days were paid from the NEXT night's APR, which was
+  // also paid on its own date. One APR day must never feed two attendance dates.
+  it("never credits one APR day to two consecutive night-shift dates", async () => {
+    mockEngineDb({ apr: [{ ReportDate: "2026-09-06", Net_Login: "08:10:00" }] });
+
+    const sat = await attendanceEngineService.processEmployee("emp-1", "2026-09-05");
+    const sun = await attendanceEngineService.processEmployee("emp-1", "2026-09-06");
+
+    expect(sat.rawMinutes).toBe(0);
+    expect(sat.status).toBe("absent");
+    expect(sun.rawMinutes).toBe(490);
+    expect(sun.status).toBe("present");
+  });
+
+  it("falls back to the dialler sessions of the same date when APR rows are absent", async () => {
     mockEngineDb({ apr: [], diallerTotal: 510 });
 
     const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("dialler");
-    expect(result.sourceSystem).toBe("dialer_session_log.night_shift_window");
+    expect(result.sourceSystem).toBe("dialer_session_log.session_date");
     expect(result.rawMinutes).toBe(510);
     expect(result.diallerMinutes).toBe(510);
     expect(result.status).toBe("present");
@@ -148,19 +168,19 @@ describe("attendance engine night-shift process flow", () => {
 
     const diallerSqlCall = dbExecute.mock.calls.find(([sql]: [string]) => sql.includes("FROM dialer_session_log dsl"));
     expect(diallerSqlCall).toBeTruthy();
-    expect(diallerSqlCall?.[0]).toContain("dsl.session_date IN (?, ?)");
-    expect(diallerSqlCall?.[1]).toEqual(["emp-1", "2026-07-25", "2026-07-26"]);
+    expect(diallerSqlCall?.[0]).toContain("dsl.session_date IN (?)");
+    expect(diallerSqlCall?.[1]).toEqual(["emp-1", "2026-07-25"]);
   });
 
   // Until f976c1ea6 (owner ruling 2026-09-07) the engine read wfm_roster_assignment for a
   // week-off flag and graded such a day 'week_off' / 'week_off_worked' from the roster. That
   // step was removed on purpose: attendance is graded from evidence alone, so a rostered
   // week-off with APR login is judged on those minutes like any other day. The fixture below is
-  // the same one the old 'week_off_worked' test used (3h + 2h of APR across the night shift).
+  // the 5h of APR the old 'week_off_worked' test used, filed on the shift's own date.
   it("grades a rostered week-off on its APR night-shift evidence, not on the roster", async () => {
     mockEngineDb({
       apr: [
-        { ReportDate: "2026-07-25", Net_Login: "03:00:00" },
+        { ReportDate: "2026-07-25", Net_Login: "05:00:00" },
         { ReportDate: "2026-07-26", Net_Login: "02:00:00" },
       ],
     });
@@ -169,7 +189,7 @@ describe("attendance engine night-shift process flow", () => {
 
     expect(result.status).toBe("half_day");
     expect(result.source).toBe("dialler");
-    expect(result.sourceSystem).toBe("apr.night_shift_window");
+    expect(result.sourceSystem).toBe("apr.ReportDate");
     expect(result.rawMinutes).toBe(300);
     expect(result.diallerMinutes).toBe(300);
     expect(result.lwpValue).toBe(0.5);
@@ -219,24 +239,24 @@ describe("attendance engine night-shift process flow", () => {
     expect(result.sourceSystem).toBe("attendance_override");
   });
 
-  it("classifies cross-midnight APR totals as half day when combined minutes are between 240 and 479", async () => {
+  it("classifies a night shift as half day when its own-date APR is between 240 and 479", async () => {
     mockEngineDb({
       apr: [
-        { ReportDate: "2026-07-25", Net_Login: "02:30:00" },
-        { ReportDate: "2026-07-26", Net_Login: "02:30:00" },
+        { ReportDate: "2026-07-25", Net_Login: "05:00:00" },
+        { ReportDate: "2026-07-26", Net_Login: "05:00:00" },
       ],
     });
 
     const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("dialler");
-    expect(result.sourceSystem).toBe("apr.night_shift_window");
+    expect(result.sourceSystem).toBe("apr.ReportDate");
     expect(result.rawMinutes).toBe(300);
     expect(result.status).toBe("half_day");
     expect(result.lwpValue).toBe(0.5);
   });
 
-  it("does not let the post-midnight date steal the shift-start payroll attendance", async () => {
+  it("does not pay a night with no login of its own from the next date's APR", async () => {
     mockEngineDb({
       apr: [{ ReportDate: "2026-07-26", Net_Login: "08:30:00" }],
     });
@@ -244,9 +264,8 @@ describe("attendance engine night-shift process flow", () => {
     const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.sourceRecordDate).toBe("2026-07-25");
-    expect(result.sourceSystem).toBe("apr.night_shift_window");
-    expect(result.rawMinutes).toBe(510);
-    expect(result.status).toBe("present");
+    expect(result.rawMinutes).toBe(0);
+    expect(result.status).toBe("absent");
     expect(result.sourceReference).toBe("MAS1001");
   });
 
@@ -262,7 +281,7 @@ describe("attendance engine night-shift process flow", () => {
     const result = await attendanceEngineService.processEmployee("emp-1", "2026-07-25");
 
     expect(result.source).toBe("dialler");
-    expect(result.sourceSystem).toBe("apr.night_shift_window");
+    expect(result.sourceSystem).toBe("apr.ReportDate");
     expect(result.rawMinutes).toBe(300);
     expect(result.diallerMinutes).toBe(300);
     expect(result.status).toBe("half_day");
