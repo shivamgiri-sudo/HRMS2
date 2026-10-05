@@ -157,9 +157,10 @@ export async function changeSalary(params: {
     await conn.execute(
       `INSERT INTO salary_component_assignments
          (id, employee_id, effective_date, package_id, basic, hra, conveyance,
-          special_allowance, gross, pf_applicable, esi_applicable, employer_pf,
-          employer_esi, ctc, net_estimate, assigned_by, assigned_at, approval_reference, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
+          special_allowance, bonus, portfolio, medical_allowance, lta, other_allowance, pli,
+          gross, pf_applicable, esi_applicable, employer_pf,
+          employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by, assigned_at, approval_reference, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
       [
         newAssignmentId,
         employeeId,
@@ -169,11 +170,22 @@ export async function changeSalary(params: {
         pkg.hra,
         pkg.conveyance,
         pkg.special_allowance,
+        // Every component the package carries. Before this, bonus, portfolio, medical, LTA, other allowance and PLI
+        // were not copied, so a package with a bonus produced a row whose parts fell short of its gross and
+        // payroll (which sums the parts) paid less than the approved gross. The catalog calls medical "medical".
+        pkg.bonus ?? 0,
+        pkg.portfolio ?? 0,
+        pkg.medical ?? 0,
+        pkg.lta ?? 0,
+        pkg.other_allowance ?? 0,
+        pkg.pli ?? 0,
         pkg.gross,
         Number(pkg.epf_employee) > 0 ? 1 : 0,
         Number(pkg.esic_employee) > 0 ? 1 : 0,
         pkg.epf_employer,
         pkg.esic_employer,
+        pkg.epf_employee ?? 0,
+        pkg.esic_employee ?? 0,
         pkg.ctc,
         pkg.net_in_hand,
         actorUserId,

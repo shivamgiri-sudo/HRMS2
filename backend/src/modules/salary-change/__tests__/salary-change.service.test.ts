@@ -76,6 +76,12 @@ describe("changeSalary()", () => {
     const insertAssignmentCall = connExecute.mock.calls[0];
     expect(insertAssignmentCall[0]).toContain("INSERT INTO salary_component_assignments");
     expect(insertAssignmentCall[0]).toContain("'active'");
+    // Every component the package carries is copied, so the row's parts add up to its gross.
+    for (const col of ["bonus", "portfolio", "medical_allowance", "lta", "other_allowance", "pli", "pf_employee", "esic_employee"]) {
+      expect(insertAssignmentCall[0]).toContain(col);
+    }
+    const placeholders = (String(insertAssignmentCall[0]).match(/\?/g) ?? []).length;
+    expect(insertAssignmentCall[1]).toHaveLength(placeholders);
 
     const supersedeCall = connExecute.mock.calls[1];
     expect(supersedeCall[0]).toContain("status = 'superseded'");
@@ -92,6 +98,35 @@ describe("changeSalary()", () => {
       module_key: "payroll",
       entity_id: "e1",
     }));
+  });
+
+  it("copies the bonus and every other component so the package row adds up to its gross (band G, gross 15,059)", async () => {
+    execute
+      .mockResolvedValueOnce([[{ id: "e1" }]])
+      .mockResolvedValueOnce([[{ id: "old-assign-1", ctc: 13000 }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 } as unknown]);
+    connExecute
+      .mockResolvedValueOnce([{ affectedRows: 1 } as unknown])
+      .mockResolvedValueOnce([{ affectedRows: 1 } as unknown])
+      .mockResolvedValueOnce([{ affectedRows: 1 } as unknown]);
+    getPackageById.mockResolvedValueOnce({
+      id: "pkg-g", basic: 8000, hra: 4793, conveyance: 1600, bonus: 666, special_allowance: 0,
+      portfolio: 0, medical: 0, lta: 0, other_allowance: 0, pli: 0,
+      gross: 15059, epf_employee: 960, esic_employee: 0, epf_employer: 960, esic_employer: 0, ctc: 16588, net_in_hand: 13986,
+    });
+
+    await changeSalary({
+      employeeId: "e1", packageId: "pkg-g", effectiveDate: "2026-09-01", actorRoles: ["payroll_head"],
+      reason: "Annual increment", requestedByUserId: "req-1", requestedByName: "Manager X", actorUserId: "actor-1",
+    });
+
+    const params = connExecute.mock.calls[0][1] as unknown[];
+    // basic, hra, conveyance, special, bonus: the parts that make up the 15,059 gross
+    expect(params).toEqual(expect.arrayContaining([8000, 4793, 1600, 666, 15059]));
+    const sum = [8000, 4793, 1600, 666].reduce((a, b) => a + b, 0);
+    expect(sum).toBe(15059);
+    // employee statutory amounts travel with the package
+    expect(params).toEqual(expect.arrayContaining([960]));
   });
 
   it("rejects a missing reason before touching the database write path", async () => {
