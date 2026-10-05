@@ -268,6 +268,7 @@ function trendCacheKey(processId: string | null, filters: PnlQueryFilters): stri
     filters.processId ?? "",
     filters.clientId ?? "",
     filters.search?.trim() ?? "",
+    [...(filters.includeProcessIds ?? [])].sort().join(","),
   ].join("|");
 }
 
@@ -333,9 +334,15 @@ async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRo
   // closed branch's processes, and computeBranchRows then drops only those with no money at all
   // (dropDormantClosedBranchRows) so a long-closed branch still does not reappear in dropdowns.
   // DialDesk is an IDC entity, not MAS Callnet (owner rule 2026-09-24): never a P&L column.
-  const conds = ["COALESCE(p.active_status, 1) = 1", notDialDeskProcessSql("p", "bm")];
+  // A closed month keeps an inactive (or mis-branched DialDesk-looking) process when billed revenue
+  // is attached to it: getInvoicedRevenueActuals already restricts to MAS Callnet cost centres, so
+  // the revenue is own-company by construction, and without the process it vanished from every
+  // total with no unattributed line (Finnable, Adani/AWL, EBC Bridge, Aspeya, Raritiq: 10-19 lakh a month).
+  const include = isCurrentOrFuturePeriod(filters.period) ? [] : (filters.includeProcessIds ?? []).filter(Boolean);
+  const eligible = `(COALESCE(p.active_status, 1) = 1 AND ${notDialDeskProcessSql("p", "bm")})`;
+  const conds = [include.length ? `(${eligible} OR p.id IN (${include.map(() => "?").join(", ")}))` : eligible];
+  const params: unknown[] = [...include];
   if (isCurrentOrFuturePeriod(filters.period)) conds.push("COALESCE(bm.active_status, 1) = 1");
-  const params: unknown[] = [];
 
   if (filters.branchId) {
     conds.push("p.branch_id = ?");
@@ -1013,7 +1020,14 @@ function actualVendorStatusExpr(alias: string, columns: Set<string>) {
     return "0 = 1";
   }
 
-  return `LOWER(COALESCE(${statusColumns.join(", ")}, '')) IN ('approved','finance_approved','posted','paid')`;
+  // Same accrual set bpo-pnl.service.ts and the allocation overlay use. This read only 'approved', 'finance_approved',
+  // 'posted' and 'paid', so every bill still 'payment pending' (all of the newest month: Head Office August, VPT 25.3L,
+  // reached the P&L as 0) was missing from the process engine's pools while db_bill and the sheet count the expense
+  // when it is booked, not when it is paid.
+  return `LOWER(REPLACE(COALESCE(${statusColumns.join(", ")}, ''), '_', ' ')) IN (
+    'payment pending','pending','approved','finance approved','posted','scheduled','payment scheduled',
+    'partially paid','paid','closed'
+  )`;
 }
 
 /*
@@ -1036,6 +1050,21 @@ function actualGrnStatusExpr(alias: string) {
   return `LOWER(COALESCE(${alias}.status, '')) IN ('approved','posted','paid')`;
 }
 
+/**
+ * The date a vendor payable counts in. recognition_period (the expense's own accounting month) wins
+ * when it is set; the due date is only the fallback. Every vendor reader below used the due date
+ * alone, so db_bill-migrated bills (recognition_period was NULL on all 14,989 rows) landed in the
+ * month they fell due instead of the month they belong to: only 63% of the value sat in the right
+ * month and about 15 lakh a month slid one month late. bpo-pnl.service and the allocation overlay
+ * already read recognition_period first; this keeps the process-level pools on the same basis.
+ */
+function vendorRecognisedDateExpr(columns: ReadonlySet<string>, withGrnBillDate = false): string {
+  const fallback = withGrnBillDate ? "vpt.due_date, grn.bill_date, vpt.created_at" : "vpt.due_date, vpt.created_at";
+  return columns.has("recognition_period")
+    ? `COALESCE(STR_TO_DATE(CONCAT(vpt.recognition_period, '-01'), '%Y-%m-%d'), ${fallback})`
+    : `COALESCE(${fallback})`;
+}
+
 async function getVendorDirectCostMap(processIds: string[], start: string, end: string, period: string): Promise<Map<string, VendorCostMeta>> {
   const map = new Map<string, VendorCostMeta>();
   if (processIds.length === 0) return map;
@@ -1055,7 +1084,7 @@ async function getVendorDirectCostMap(processIds: string[], start: string, end: 
         WHERE ${resolvedProcessExpr} IN (${placeholders(processIds)})
           AND ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'direct'
           AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
-          AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?
+          AND ${vendorRecognisedDateExpr(vendorPaymentColumns)} BETWEEN ? AND ?
         GROUP BY ${resolvedProcessExpr}`,
       [...processIds, start, end]
     ).catch(() => []);
@@ -1149,7 +1178,7 @@ async function getIndirectAllocationMap(
         WHERE vpt.branch_id IN (${placeholders(branchIds)})
           AND ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'indirect'
           AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
-          AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?
+          AND ${vendorRecognisedDateExpr(vendorPaymentColumns)} BETWEEN ? AND ?
         GROUP BY vpt.branch_id`,
       [...branchIds, start, end]
     );
@@ -1431,6 +1460,7 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
     processId: filters.processId,
     clientId: filters.clientId,
     search: filters.search,
+    includeProcessIds: filters.includeProcessIds,
   };
   const cacheKey = computationCacheKey(normalizedFilters);
   const cached = computationCache.get(cacheKey);
@@ -1642,7 +1672,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
           `SELECT ms.month_key, SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS total
              FROM (${seriesSql}) ms
              LEFT JOIN vendor_payment_tracking vpt
-               ON COALESCE(vpt.due_date, vpt.created_at) BETWEEN ms.start_date AND ms.end_date
+               ON ${vendorRecognisedDateExpr(vendorPaymentColumns)} BETWEEN ms.start_date AND ms.end_date
              LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
             WHERE ${directCostClassExpr("vpt", effectiveProcessExpr("vpt", costCentreProcessIdSupported))} = 'indirect'
               AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
@@ -1721,7 +1751,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
            LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
           WHERE ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'indirect'
             AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
-            AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?`,
+            AND ${vendorRecognisedDateExpr(vendorPaymentColumns)} BETWEEN ? AND ?`,
         [start, end]
       );
       indirectTotal = toNumber(indirectRows[0]?.total);
@@ -2243,7 +2273,7 @@ export const processPnlService = {
           WHERE ${effectiveProcessExpr("vpt", costCentreProcessIdSupported)} = ?
             AND ${directCostClassExpr("vpt", effectiveProcessExpr("vpt", costCentreProcessIdSupported))} = 'direct'
             AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
-            AND COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) BETWEEN ? AND ?
+            AND ${vendorRecognisedDateExpr(vendorPaymentColumns, true)} BETWEEN ? AND ?
           ORDER BY entry_date DESC
           LIMIT 250`
         : `SELECT NULL AS id, NULL AS source_type, NULL AS reference, NULL AS entry_date, 0 AS amount, NULL AS description,
@@ -2334,7 +2364,7 @@ export const processPnlService = {
            WHERE vpt.branch_id = ?
              AND ${directCostClassExpr("vpt", effectiveProcessExpr("vpt", costCentreProcessIdSupported))} = 'indirect'
              AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
-             AND COALESCE(vpt.due_date, vpt.created_at) BETWEEN ? AND ?
+             AND ${vendorRecognisedDateExpr(vendorPaymentColumns)} BETWEEN ? AND ?
            GROUP BY vpt.head, vpt.sub_head
            ORDER BY branch_pool_amount DESC`,
           [branchId, start, end]
@@ -2519,7 +2549,7 @@ export const processPnlService = {
           WHERE ${resolvedVendorProcessExpr} = ?
             AND ${directCostClassExpr("vpt", resolvedVendorProcessExpr)} = 'direct'
             AND ${actualVendorStatusExpr("vpt", vendorPaymentColumns)}
-            AND COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) BETWEEN ? AND ?`,
+            AND ${vendorRecognisedDateExpr(vendorPaymentColumns, true)} BETWEEN ? AND ?`,
         [processId, start, end]
       ).catch(() => []);
 

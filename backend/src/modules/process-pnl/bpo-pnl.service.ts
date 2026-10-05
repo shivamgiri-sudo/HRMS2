@@ -19,6 +19,7 @@ import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentr
 import { isOpenPeriod, getLiveRevenueEstimate } from "./pnl-statement.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
+import { ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
@@ -1054,14 +1055,22 @@ async function getPeopleCosts(
       dscHeadcount: 0,
       unclassifiedPeopleCost: 0,
     };
-    const classified = current.agentSalary + current.dscPeople;
-    const residual = Math.max(0, toNumber(row.directPeopleCost) - classified);
-    if (classified <= 0 && row.directPeopleCost > 0) {
-      current.agentSalary = row.directPeopleCost;
-      current.agentHeadcount = Math.max(1, row.activeHc);
-    } else if (residual > 0.5) {
-      current.dscPeople += residual;
-      current.unclassifiedPeopleCost += residual;
+    // directPeopleCost is the cost-centre-attributed payroll of the process engine. When real payroll
+    // lines exist (people.length > 0) every person is already bucketed above (agent / DSC to their
+    // process, BMC into the branch pool), so topping a process up to directPeopleCost counted the
+    // BMC-class people a second time (live May 2026: BACK OFFICE DSC 16.64L vs 12.38L payroll,
+    // Onfido +2.16L, MGT / BO-AHMH / BSS-OTHERS likewise; about +6.8L a month in total).
+    // The top-up is only a fallback for a period with no payroll at all.
+    if (people.length === 0) {
+      const classified = current.agentSalary + current.dscPeople;
+      const residual = Math.max(0, toNumber(row.directPeopleCost) - classified);
+      if (classified <= 0 && row.directPeopleCost > 0) {
+        current.agentSalary = row.directPeopleCost;
+        current.agentHeadcount = Math.max(1, row.activeHc);
+      } else if (residual > 0.5) {
+        current.dscPeople += residual;
+        current.unclassifiedPeopleCost += residual;
+      }
     }
     processMap.set(row.processId, current);
   }
@@ -1246,6 +1255,60 @@ function actualVendorStatusExpr(columns: Set<string>) {
     'payment pending','pending','approved','posted','scheduled','payment scheduled',
     'partially paid','paid','closed'
   )`;
+}
+
+/**
+ * Processes that carry MAS vendor / GRN spend in a closed month, so the process row exists to receive it.
+ * getGrnVendorActuals builds its result per base row: spend attributed to a process that is not a base row
+ * (an inactive or head-office function) was silently dropped, which is how Head Office lost its whole
+ * August pool (VPT 25.3L, P&L 0). Own-company only (cost centre AND branch), so DialDesk / IDC spend can
+ * never pull a process in.
+ */
+async function getSpendProcessIds(period: string): Promise<string[]> {
+  if (!/^\d{4}-\d{2}$/.test(period)) return [];
+  const ids = new Set<string>();
+  const own = `${ownCompanyBranchSql("bm")} AND (ccm.id IS NULL OR ${ownCompanyCostCentreSql("ccm")})`;
+  if (await tableExists("vendor_payment_tracking")) {
+    const columns = await listColumns("vendor_payment_tracking");
+    const recognition = columns.has("recognition_period")
+      ? "COALESCE(vpt.recognition_period, DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m'))"
+      : "DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m')";
+    const rows = await safeRows<RowDataPacket>(
+      `SELECT DISTINCT COALESCE(vpt.process_id, ccm.process_id) AS process_id
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+         LEFT JOIN branch_master bm ON bm.id = vpt.branch_id
+        WHERE ${recognition} = ? AND ${actualVendorStatusExpr(columns)} AND ${own}`,
+      [period]
+    );
+    for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
+  }
+  if (await tableExists("grn_request")) {
+    const rows = await safeRows<RowDataPacket>(
+      `SELECT DISTINCT COALESCE(g.process_id, ccm.process_id) AS process_id
+         FROM grn_request g
+         LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+         LEFT JOIN branch_master bm ON bm.id = g.branch_id
+        WHERE g.accounting_period = ?
+          AND LOWER(REPLACE(COALESCE(g.status, ''), '_', ' ')) IN ('approved','finance head approved','pending accounts payment','payment scheduled','partially paid','paid','posted')
+          AND ${own}`,
+      [period]
+    );
+    for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
+  }
+  // Smart-GRN allocations (the allocation view the overlay adds per process): a consumed allocation to a process
+  // that is not a row is lost the same way, and the overlay has already removed the matching legacy amount.
+  if (await tableExists("vw_process_pnl_grn_allocation")) {
+    const rows = await safeRows<RowDataPacket>(
+      `SELECT DISTINCT v.process_id AS process_id
+         FROM vw_process_pnl_grn_allocation v
+         LEFT JOIN branch_master bm ON bm.id = v.branch_id
+        WHERE v.period_code COLLATE utf8mb4_unicode_ci = ? AND v.process_id IS NOT NULL AND ${ownCompanyBranchSql("bm")}`,
+      [period]
+    );
+    for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
+  }
+  return Array.from(ids);
 }
 
 async function getGrnVendorActuals(
@@ -1492,7 +1555,18 @@ async function dropDormantClosedBranchRows(rows: BpoPnlRow[], period: string): P
 }
 
 async function computeBranchRows(scope: PnlQueryFilters) {
-  const baseRows = await processPnlService.listProcesses(scope);
+  // Billed revenue first: its process ids widen the base row set (see PnlQueryFilters.includeProcessIds)
+  // so revenue attached to an inactive process is not silently dropped. Reused below, not re-read.
+  const invoicedActuals = await getInvoicedRevenueActuals(scope.period ?? "");
+  // Also keep processes whose employees were paid in the month: their payroll is bucketed by the
+  // employee's own process, and a process that is inactive was dropped, taking its payroll with it
+  // (May 2026: about 13L across Finnable, Captureatrip, corporate functions, EBC Bridge, Adani, Aspeya).
+  const payrollProcessIds = isOpenPeriod(scope.period ?? "") ? [] : Array.from((await getActualPeopleCost(scope.period ?? "")).byProcess.keys());
+  const spendProcessIds = isOpenPeriod(scope.period ?? "") ? [] : await getSpendProcessIds(scope.period ?? "");
+  const includeProcessIds = isOpenPeriod(scope.period ?? "")
+    ? []
+    : Array.from(new Set([...invoicedActuals.byProcess.keys(), ...payrollProcessIds, ...spendProcessIds]));
+  const baseRows = await processPnlService.listProcesses(includeProcessIds.length ? { ...scope, includeProcessIds } : scope);
   const processIds = baseRows.map((row) => row.processId);
   const policies = await getAllocationPolicies(scope.period);
   const warnings: ManualAllocationWarning[] = [];
@@ -1515,7 +1589,7 @@ async function computeBranchRows(scope: PnlQueryFilters) {
     getBudgets(baseRows, scope.period, policies, warnings),
     getGrnVendorActuals(baseRows, scope.period, policies, warnings),
     getCostCentres(processIds),
-    getInvoicedRevenueActuals(scope.period ?? ""),
+    Promise.resolve(invoicedActuals),
     getRewardPenaltyForPeriod(scope.period ?? ""),
     /*
      * Direct salary_prep_line read as a safety net for the canonical engine.

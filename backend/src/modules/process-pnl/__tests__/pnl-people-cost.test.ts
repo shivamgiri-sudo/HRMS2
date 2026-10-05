@@ -23,7 +23,7 @@ try {
 }
 
 const ALL_COLUMNS = new Set([
-  "gross_salary", "pf_employer", "esic_employer", "gratuity",
+  "gross_salary", "pf_employer", "esic_employer", "gratuity", "incentive_total",
   "other_deductions", "loan_emi", "advance_recovery", "lwp_deduction",
 ]);
 
@@ -35,7 +35,7 @@ function evalLine(expr: string): number {
 describe("peopleCostSql — string level", () => {
   it("subtracts other, loan EMI, advance and LWP; never employee-side statutory", () => {
     const sql = peopleCostSql("l");
-    for (const c of ["gross_salary", "pf_employer", "esic_employer", "gratuity",
+    for (const c of ["gross_salary", "pf_employer", "esic_employer", "gratuity", "incentive_total",
       "other_deductions", "loan_emi", "advance_recovery", "lwp_deduction"]) {
       expect(sql).toContain(`COALESCE(l.${c}, 0)`);
     }
@@ -66,8 +66,8 @@ describe.skipIf(!sqlite)("peopleCostSql — evaluated", () => {
       DROP TABLE IF EXISTS salary_prep_line;
       CREATE TABLE salary_prep_line (gross_salary REAL, pf_employer REAL, esic_employer REAL, gratuity REAL,
         other_deductions REAL, loan_emi REAL, advance_recovery REAL, lwp_deduction REAL,
-        pf_employee REAL, professional_tax REAL, tds REAL);
-      INSERT INTO salary_prep_line VALUES (96626, 1800, 0, 4648, 0, 20000, 0, 0, 1800, 200, 500);
+        pf_employee REAL, professional_tax REAL, tds REAL, incentive_total REAL);
+      INSERT INTO salary_prep_line VALUES (96626, 1800, 0, 4648, 0, 20000, 0, 0, 1800, 200, 500, NULL);
     `);
     const e = peopleCostExprs("l");
     expect(evalLine(e.ctcPaid)).toBe(96626 + 1800 + 4648);
@@ -78,8 +78,16 @@ describe.skipIf(!sqlite)("peopleCostSql — evaluated", () => {
   it("NULLs contribute 0 and every deduction bucket is subtracted", () => {
     sqlite!.exec(`
       DELETE FROM salary_prep_line;
-      INSERT INTO salary_prep_line VALUES (50000, NULL, 750, NULL, 1000, NULL, 500, 250, NULL, NULL, NULL);
+      INSERT INTO salary_prep_line VALUES (50000, NULL, 750, NULL, 1000, NULL, 500, 250, NULL, NULL, NULL, NULL);
     `);
     expect(evalLine(peopleCostSql("l"))).toBe(50000 + 750 - 1000 - 500 - 250);
+  });
+
+  it("incentive_total is part of People Cost (owner decision 2026-10-05)", () => {
+    sqlite!.exec(`
+      DELETE FROM salary_prep_line;
+      INSERT INTO salary_prep_line VALUES (50000, 1000, 500, 0, 0, 0, 0, 0, NULL, NULL, NULL, 7000);
+    `);
+    expect(evalLine(peopleCostSql("l"))).toBe(50000 + 1000 + 500 + 7000);
   });
 });

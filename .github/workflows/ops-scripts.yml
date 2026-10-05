@@ -117,6 +117,12 @@ on:
           - repair-sca-estimates
           - du-mis-apply
           - mis-schedule-run-now
+          - backfill-vendor-recognition-period
+          - backfill-grn-recognition-period
+          - fix-process-branches
+          - db-bill-snapshot-refresh
+          - grn-migrate-2026-27
+
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -289,6 +295,35 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            backfill-vendor-recognition-period)
+              # Dry-runs unless given --apply. Apply sets vendor_payment_tracking.recognition_period (NULL rows only) from the db_bill finance month.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/backfill-vendor-recognition-period.ts $FLAG
+              ;;
+            backfill-grn-recognition-period)
+              # Dry-runs unless given --apply. Apply sets recognition_period on db_bill-imported grn_request / grn_cost_allocation rows (NULL only).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/backfill-grn-recognition-period.ts $FLAG
+              ;;
+            fix-process-branches)
+              # Dry-runs unless given --apply. Apply sets process_master.branch_id for Raritiq (-> NOIDA-2) and EBC Bridge (-> NOIDA).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/fix-process-branches.ts $FLAG
+              ;;
+            db-bill-snapshot-refresh)
+              # Dry-run = reconcile only (read-only: compares the mirror with db_bill). Apply = sync (idempotent upserts) then reconcile.
+              # These .mjs scripts read DB_USER / DB_PASSWORD / hosts from process.env or from backend/.env next to them; the
+              # runner checkout has no .env, so lift just those values from the deployed one (never echoed).
+              envv() { grep -m1 "^$1=" /var/www/HRMS2/backend/.env | cut -d= -f2- | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//'; }
+              export DB_USER="$(envv DB_USER)" DB_PASSWORD="$(envv DB_PASSWORD)" HRMS_DB_HOST="$(envv DB_HOST)" BILL_DB_HOST="$(envv BILL_DB_HOST)"
+              if [ "$MODE" = "apply" ]; then node scripts/sync-db-bill-snapshot.mjs; fi
+              node scripts/reconcile-db-bill-snapshot.mjs --hrms-host="$HRMS_DB_HOST" --bill-host="$BILL_DB_HOST"
+              ;;
+            grn-migrate-2026-27)
+              # Dry-runs unless given --apply. Apply adds db_bill GRNs missing from grn_request / vendor_payment_tracking for FY 2026-27 (idempotent).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/migrate-grn-from-dbbill.ts --fy=2026-27 $FLAG
               ;;
             holiday-mapping-audit)
               # Read-only in both modes.
