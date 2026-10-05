@@ -113,6 +113,10 @@ on:
           - hrms-nonpeople-detail
           - hrms-nonpeople-sources
           - nonpeople-timing
+          - backfill-vendor-recognition-period
+          - fix-process-branches
+          - db-bill-snapshot-refresh
+          - grn-migrate-2026-27
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -285,6 +289,26 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            backfill-vendor-recognition-period)
+              # Dry-runs unless given --apply. Apply sets vendor_payment_tracking.recognition_period (NULL rows only) from the db_bill finance month.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/backfill-vendor-recognition-period.ts $FLAG
+              ;;
+            fix-process-branches)
+              # Dry-runs unless given --apply. Apply sets process_master.branch_id for Raritiq (-> NOIDA-2) and EBC Bridge (-> NOIDA).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/fix-process-branches.ts $FLAG
+              ;;
+            db-bill-snapshot-refresh)
+              # Dry-run = reconcile only (read-only: compares the mirror with db_bill). Apply = sync (idempotent upserts) then reconcile.
+              if [ "$MODE" = "apply" ]; then node scripts/sync-db-bill-snapshot.mjs; fi
+              node scripts/reconcile-db-bill-snapshot.mjs
+              ;;
+            grn-migrate-2026-27)
+              # Dry-runs unless given --apply. Apply adds db_bill GRNs missing from grn_request / vendor_payment_tracking for FY 2026-27 (idempotent).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/migrate-grn-from-dbbill.ts --fy=2026-27 $FLAG
               ;;
             nonpeople-timing)
               # Read-only in both modes: SELECTs on HRMS and db_bill, aggregates only.
