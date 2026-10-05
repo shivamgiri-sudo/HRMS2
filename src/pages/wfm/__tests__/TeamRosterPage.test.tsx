@@ -233,6 +233,7 @@ describe("submission drawer body", () => {
       { id: 1, employeeId: "e1", employeeCode: "MAS1", employeeName: "Asha K", date: "2026-10-02", kind: "CHANGE", old: { type: "SHIFT", label: "GEN 09:00-18:00" }, new: { type: "WEEK_OFF", label: null }, reason: "Asked for a day off", warnings: ["Off-day policy: Friday is a fixed weekly off"], status: "pending", skipReason: null, appliedAssignmentId: null },
       { id: 2, employeeId: "e2", employeeCode: "MAS2", employeeName: "Ravi S", date: "2026-10-03", kind: "FILL_BLANK", old: null, new: { type: "SHIFT", label: "GEN 09:00-18:00" }, reason: null, warnings: [], status: "skipped", skipReason: "date already rostered", appliedAssignmentId: null },
     ],
+    coverage: null,
     summary: { total: 2, applied: 0, skipped: 1, failed: 0, pending: 1, withWarnings: 1 },
     timeline: [{ action: "submitted", actorName: "Sam Sub", actorRole: "employee", remarks: null, at: "2026-10-01 09:05:00", meta: null }],
     permissions: { canCancel: false, canManagerDecide: false, canWfmDecide: true, canCopyToDraft: false, ...perms },

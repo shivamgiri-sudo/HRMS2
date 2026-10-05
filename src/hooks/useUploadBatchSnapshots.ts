@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api-client";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 interface UploadBatchSnapshot {
   id: string;
@@ -43,10 +43,11 @@ export function useUploadBatchSnapshots(
       });
       if (type) params.set("type", type);
 
-      const response = await api.get<SnapshotListResponse>(
-        `/bulk-upload/snapshots?${params}`
+      // hrmsApi returns the parsed body (no axios-style .data wrapper). "@/lib/api-client" never existed.
+      const response = await hrmsApi.get<SnapshotListResponse>(
+        `/api/bulk-upload/snapshots?${params}`
       );
-      return response.data.data;
+      return response.data;
     },
     staleTime: 10 * 60 * 1000, // 10min
     gcTime: 15 * 60 * 1000,
@@ -57,10 +58,10 @@ export function useUploadBatchSnapshot(snapshotId: string) {
   return useQuery({
     queryKey: ["upload-batch-snapshot", snapshotId],
     queryFn: async () => {
-      const response = await api.get<{ success: boolean; data: UploadBatchSnapshot }>(
-        `/bulk-upload/snapshots/${snapshotId}`
+      const response = await hrmsApi.get<{ success: boolean; data: UploadBatchSnapshot }>(
+        `/api/bulk-upload/snapshots/${encodeURIComponent(snapshotId)}`
       );
-      return response.data.data;
+      return response.data;
     },
     enabled: !!snapshotId,
     staleTime: 30 * 60 * 1000, // 30min (snapshots immutable)

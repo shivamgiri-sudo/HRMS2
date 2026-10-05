@@ -30,7 +30,8 @@ type DeadKitRow = RowDataPacket & {
 async function findOneDeadKit(): Promise<DeadKitRow | null> {
   // A kit is dead-session if: status='sent', open_marker='Y', and the most recent
   // transaction is either:
-  //   (a) status='failed' AND initiated > SESSION_DEAD_AFTER_DAYS (3) days ago, OR
+  //   (a) status='failed' AND initiated >= SESSION_DEAD_AFTER_DAYS (1) day ago,
+  //       measured in hours like the service (not calendar days), OR
   //   (b) status in ('pending','initiated') AND initiated > 7 days ago
   // This mirrors the kitEsignSessionIsAlive logic in joiningKitDispatch.service.ts.
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -47,7 +48,7 @@ async function findOneDeadKit(): Promise<DeadKitRow | null> {
         AND k.open_marker = 'Y'
         AND k.employee_id IS NOT NULL
         AND (
-          (t.status = 'failed'   AND DATEDIFF(NOW(), t.initiated_at) >= 3)
+          (t.status = 'failed'   AND TIMESTAMPDIFF(HOUR, t.initiated_at, NOW()) / 24 >= 1)
           OR
           (t.status IN ('pending','initiated') AND DATEDIFF(NOW(), t.initiated_at) >= 7)
         )

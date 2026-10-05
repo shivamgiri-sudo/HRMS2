@@ -37,11 +37,14 @@ const cand = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => { calls.length = 0; candidateRows = []; deleteBatches = []; });
 
 describe("retention mode", () => {
-  it("is dry run unless explicitly execute", () => {
-    expect(retentionMode(undefined)).toBe("dry_run");
-    expect(retentionMode("")).toBe("dry_run");
-    expect(retentionMode("true")).toBe("dry_run");
+  // Since 2026-10-03 (commit 7fd7908bc) deletion is the default; only an explicit "dry_run" switches it off.
+  // The remaining safety guarantees (terminal statuses only, snapshot first, small paced deletes) are covered below.
+  it("executes by default; only an explicit dry_run switches deletion off", () => {
+    expect(retentionMode(undefined)).toBe("execute");
+    expect(retentionMode("")).toBe("execute");
+    expect(retentionMode("true")).toBe("execute");
     expect(retentionMode("execute")).toBe("execute");
+    expect(retentionMode("dry_run")).toBe("dry_run");
   });
 });
 
