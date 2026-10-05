@@ -302,8 +302,12 @@ jobs:
               ;;
             db-bill-snapshot-refresh)
               # Dry-run = reconcile only (read-only: compares the mirror with db_bill). Apply = sync (idempotent upserts) then reconcile.
+              # These .mjs scripts read DB_USER / DB_PASSWORD / hosts from process.env or from backend/.env next to them; the
+              # runner checkout has no .env, so lift just those values from the deployed one (never echoed).
+              envv() { grep -m1 "^$1=" /var/www/HRMS2/backend/.env | cut -d= -f2- | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//'; }
+              export DB_USER="$(envv DB_USER)" DB_PASSWORD="$(envv DB_PASSWORD)" HRMS_DB_HOST="$(envv DB_HOST)" BILL_DB_HOST="$(envv BILL_DB_HOST)"
               if [ "$MODE" = "apply" ]; then node scripts/sync-db-bill-snapshot.mjs; fi
-              node scripts/reconcile-db-bill-snapshot.mjs
+              node scripts/reconcile-db-bill-snapshot.mjs --hrms-host="$HRMS_DB_HOST" --bill-host="$BILL_DB_HOST"
               ;;
             grn-migrate-2026-27)
               # Dry-runs unless given --apply. Apply adds db_bill GRNs missing from grn_request / vendor_payment_tracking for FY 2026-27 (idempotent).
