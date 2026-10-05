@@ -20,7 +20,7 @@ async function main() {
   const runs = await q("run", `SELECT id FROM salary_prep_run WHERE run_month = '2026-08' AND (created_by IS NULL OR created_by <> 'test-auto-gen') LIMIT 1`);
   const runId = runs[0].id;
   const codes = await q("sample of employee codes left off the Aug voucher (no MAS/IDC prefix, paid)",
-    `SELECT l.employee_code, ROUND(l.net_salary,2) net, ROUND(l.gross_salary,2) gross, e.employment_type, bm.branch_name, e.status
+    `SELECT l.employee_code, ROUND(l.net_salary,2) net, ROUND(l.gross_salary,2) gross, e.employment_type, bm.branch_name
        FROM salary_prep_line l JOIN employees e ON e.id = l.employee_id LEFT JOIN branch_master bm ON bm.id = e.branch_id
       WHERE l.run_id = ? AND l.employee_code NOT REGEXP '^(MAS|IDC)' AND l.net_salary > 0 ORDER BY l.net_salary DESC LIMIT 12`, [runId]);
   await q("their shape: how many, what do the codes look like, by branch",
@@ -32,6 +32,13 @@ async function main() {
     const bill = await billQuery<any>(`SELECT EmpCode, Branch, NetSalary, Gross1 FROM salary_data WHERE SalDate >= '2026-08-01' AND SalDate < '2026-09-01' AND EmpCode IN (${sample.map(() => "?").join(",")})`, sample);
     console.log("\n## same codes in db_bill"); console.table(bill);
   }
+  const bill2 = await billQuery<any>(
+    `SELECT Branch, COUNT(*) n, ROUND(SUM(NetSalary)) net, MIN(EmpCode) min_code FROM salary_data
+      WHERE SalDate >= '2026-08-01' AND SalDate < '2026-09-01' AND EmpCode REGEXP '^[0-9]+C$' GROUP BY Branch`);
+  console.log("\n## db_bill Aug rows whose code is digits + C"); console.table(bill2);
+  const bill3 = await billQuery<any>(
+    `SELECT Branch, COUNT(*) n, ROUND(SUM(NetSalary)) net FROM salary_data WHERE SalDate >= '2026-08-01' AND SalDate < '2026-09-01' AND EmpCode LIKE 'MAS%' AND Branch LIKE 'AHMEDABAD%' GROUP BY Branch`);
+  console.log("\n## db_bill Aug MAS-prefixed rows at Ahmedabad"); console.table(bill3);
   await closeBillPool();
 }
 main().then(() => db.end?.()).catch(async (e) => { console.error("ERR", e?.message ?? e); try { await db.end?.(); } catch { } process.exit(1); });
