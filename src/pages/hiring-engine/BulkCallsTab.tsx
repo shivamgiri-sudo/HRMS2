@@ -12,6 +12,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { EmptyState, StatTile, num } from "@/components/analytics/analytics-kit";
 import CallingFileExport from "./CallingFileExport";
 import CallResultsImport from "./CallResultsImport";
+import { useMetaRecruitment } from "./MetaRecruitmentStrip";
 
 interface PreviewRow { display: { phone: string; name: string; role: string; when: string }; rowNo: number; ok: boolean; errors: string[]; warnings: string[]; notes: string[]; row?: { mobile10: string; name: string; role: string; interviewAt: string; branchAddress: string; referenceId: string } }
 interface Preview { missingColumns: string[]; tooMany: boolean; rows: PreviewRow[]; summary: { total: number; valid: number; rejected: number; willSkip: number } }
@@ -43,6 +44,8 @@ export default function BulkCallsTab() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const { data: recruitment } = useMetaRecruitment();
+  const recOf = (id: string) => recruitment?.campaigns.find((r) => r.campaignId === id);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
   const [includeConfirmed, setIncludeConfirmed] = useState(false);
@@ -183,6 +186,7 @@ export default function BulkCallsTab() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-slate-900">{c.campaignName}{c.isAhmedabad && <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">AHM</span>}{c.status !== "active" && <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-700" title="This campaign is not marked active in HRMS but has qualified candidates with a future interview">{c.status} in HRMS</span>}</span>
                     <span className="block text-xs text-slate-500">{c.role ?? "—"} · {c.branchName ?? "no branch"}</span>
+                    {recOf(c.id) && <span className="mt-0.5 block text-xs font-medium text-emerald-700">Recruited so far: {num(recOf(c.id)!.joined)} joined · {num(recOf(c.id)!.selected)} selected</span>}
                     <span className="mt-1 block text-xs text-slate-700">{mode === "missed" ? <><b>{num(c.interviewPassed)}</b> qualified with an interview date that has passed</> : <><b>{num(c.invitedFuture)}</b> invited and waiting · {num(c.qualifiedFuture)} qualified with a future interview</>}</span>
                   </span>
                 </label>

@@ -15,6 +15,7 @@ import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches
 import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
 import { listPrepareCampaigns, prepareMissedWalkins, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
 import { applyCallResults, markExportedForCalling, previewCallResults } from "./he-call-results.service.js";
+import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
 export const heRouter = Router();
@@ -351,4 +352,10 @@ heRouter.post("/call-results", requireAuth, requireRole(...WRITE_ROLES), async (
     if (status === 500) logger.error({ err: (err as Error).message }, "[he] results import failed");
     res.status(status).json({ success: false, message: status === 500 ? "Could not import the results" : (err as Error).message });
   }
+});
+
+/** Recruited through Meta campaigns, counted from the requisition side (selected / onboarding / joined), per campaign and in total. */
+heRouter.get("/meta-recruitment", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await getMetaRecruitment() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] meta recruitment failed"); res.status(500).json({ success: false, message: "Could not load the recruitment numbers" }); }
 });

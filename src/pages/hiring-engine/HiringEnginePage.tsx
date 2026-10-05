@@ -5,6 +5,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import MetaRecruitmentStrip from "./MetaRecruitmentStrip";
 
 const LeadsTab = lazy(() => import("./LeadsTab"));
 const DrivesTab = lazy(() => import("./DrivesTab"));
@@ -34,6 +35,7 @@ export default function HiringEnginePage() {
           <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900"><Sparkles className="h-5 w-5 text-blue-600" aria-hidden /> Hiring Engine</h1>
           <p className="text-sm text-slate-600">Turn open positions into walk-ins: who to invite, who confirmed, who is on the way, and what to do next.</p>
         </header>
+        <MetaRecruitmentStrip />
         <nav role="tablist" aria-label="Hiring Engine sections" className="flex gap-1 overflow-x-auto border-b border-slate-200">
           {TABS.map((t) => (
             <button key={t.id} role="tab" type="button" aria-selected={tab === t.id} onClick={() => go(t.id)}
