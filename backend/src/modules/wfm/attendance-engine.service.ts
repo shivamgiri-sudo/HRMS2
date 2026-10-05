@@ -165,7 +165,9 @@ export function buildShiftWindowInfo(
  *   apr_validated_by_cosec — APR first; when APR falls short of a full day the biometric
  *                            reading is classified too and the better of the two is used.
  */
-export type AttendanceLogic = 'apr' | 'cosec' | 'apr_validated_by_cosec';
+import type { AttendanceLogic, AprEligibilityRow } from './attendance-logic-resolver.js';
+import { resolveAttendanceLogicFromRows } from './attendance-logic-resolver.js';
+export type { AttendanceLogic } from './attendance-logic-resolver.js';
 
 /** Ordering used by the tally: a better-evidenced day wins. */
 const STATUS_RANK: Partial<Record<AttendanceStatus, number>> = {
@@ -180,12 +182,8 @@ function statusRank(status: AttendanceStatus | null): number {
 }
 
 // Legacy regex fallback — used when apr_eligibility_config table is empty.
-export function isOperationsExecutiveByRegex(departmentName: string, designationName: string): boolean {
-  const department = departmentName.trim().toLowerCase();
-  const designation = designationName.trim().toLowerCase();
-  return (department === 'operations' || department === 'operation')
-    && /^executive(?:\s*-\s*.+)?$/.test(designation);
-}
+export { isOperationsExecutiveByRegex } from './attendance-logic-resolver.js';
+import { isOperationsExecutiveByRegex } from './attendance-logic-resolver.js';
 
 function isOperationsDepartmentName(departmentName: string): boolean {
   const department = departmentName.trim().toLowerCase();
@@ -410,21 +408,24 @@ export const attendanceEngineService = {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT id, attendance_logic FROM apr_eligibility_config
          WHERE active_status = 1
-           AND attendance_logic <> 'cosec'
            AND (designation_id = ? OR designation_id IS NULL)
            AND (department_id  = ? OR department_id  IS NULL)
            AND (process_id     = ? OR process_id     IS NULL)
          ORDER BY
            (CASE WHEN process_id    IS NOT NULL THEN 4 ELSE 0 END +
             CASE WHEN department_id IS NOT NULL THEN 2 ELSE 0 END +
-            CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC
+            CASE WHEN designation_id IS NOT NULL THEN 1 ELSE 0 END) DESC,
+           (attendance_logic = 'cosec') ASC,
+           id ASC
          LIMIT 1`,
         [designationId, departmentId, processId]
       );
       const matched = (rows as RowDataPacket[])[0] as any;
       if (!matched) return 'cosec';
+      // A COSEC row that is MORE specific than an APR row now wins, which is what lets a process
+      // be moved to COSEC when a company-wide APR row would otherwise still match its people.
       const logic = String(matched.attendance_logic ?? 'apr') as AttendanceLogic;
-      return logic === 'apr_validated_by_cosec' ? 'apr_validated_by_cosec' : 'apr';
+      return logic === 'cosec' || logic === 'apr_validated_by_cosec' ? logic : 'apr';
     } catch {
       // If table or column doesn't exist yet (migration pending), use regex fallback
       return isOperationsExecutiveByRegex(deptNameLower, desigNameLower) ? 'apr' : 'cosec';
@@ -1763,58 +1764,174 @@ export const attendanceEngineService = {
   //
   // The engine decides dialler vs biometric from apr_eligibility_config, not from
   // attendance_rule_config — processDay() overwrites the latter's attendance_source in both
-  // branches. These two methods are the only supported way to change that decision, and
-  // they are what the Attendance Rules Master page writes through.
+  // branches. These methods are the only supported way to read or change that decision, and
+  // they are what the Attendance Rules Master page goes through.
 
-  /** One row per active process, with the logic currently in force and who it affects. */
-  async listProcessAttendanceLogic(): Promise<Array<{
-    process_id: string; process_name: string; attendance_logic: AttendanceLogic;
-    rule_count: number; employee_count: number;
-  }>> {
+  /** Every active config row, in the shape the pure resolver takes. */
+  async loadAprEligibilityRows(): Promise<AprEligibilityRow[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT p.id AS process_id, p.process_name,
-              COALESCE(MAX(a.attendance_logic), 'cosec') AS attendance_logic,
-              COUNT(a.id) AS rule_count,
-              (SELECT COUNT(*) FROM employees e
-                WHERE e.process_id = p.id AND e.employment_status = 'active') AS employee_count
-         FROM process_master p
-         LEFT JOIN apr_eligibility_config a
-                ON a.process_id = p.id AND a.active_status = 1 AND a.attendance_logic <> 'cosec'
-        WHERE p.active_status = 1
-        GROUP BY p.id, p.process_name
-        ORDER BY p.process_name`);
+      `SELECT id, rule_name, designation_id, department_id, process_id, attendance_logic,
+              active_status, DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at, created_by
+         FROM apr_eligibility_config WHERE active_status = 1`);
     return (rows as any[]).map((r) => ({
-      process_id: String(r.process_id),
-      process_name: String(r.process_name),
-      attendance_logic: String(r.attendance_logic) as AttendanceLogic,
-      rule_count: Number(r.rule_count ?? 0),
-      employee_count: Number(r.employee_count ?? 0),
+      id: String(r.id),
+      rule_name: r.rule_name ?? null,
+      designation_id: r.designation_id ?? null,
+      department_id: r.department_id ?? null,
+      process_id: r.process_id ?? null,
+      attendance_logic: String(r.attendance_logic ?? 'apr') as AttendanceLogic,
+      active_status: Number(r.active_status),
+      updated_at: r.updated_at ?? null,
+      created_by: r.created_by ?? null,
     }));
   },
 
   /**
-   * Sets the logic for one process.
+   * One row per active process with what the engine will ACTUALLY do for its people.
    *
-   * 'cosec' deactivates the process's rows rather than deleting them, so the previous
-   * setting stays visible in the table and is reversible by setting APR again.
+   * The effective logic is resolved per (designation, department) group of the process's active
+   * employees with the same rule the engine uses, not read off the process's own config rows.
+   * Company-wide rows (process_id NULL) also decide, so a process with no rows of its own can
+   * still be on APR; reading only its own rows reported COSEC for it.
+   */
+  async listProcessAttendanceLogic(): Promise<Array<{
+    process_id: string; process_name: string; attendance_logic: AttendanceLogic;
+    is_mixed: boolean; has_own_rule: boolean;
+    breakdown: Record<AttendanceLogic, number>;
+    rule_count: number; employee_count: number; last_changed_at: string | null;
+  }>> {
+    const [procRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, process_name FROM process_master WHERE active_status = 1 ORDER BY process_name`);
+    const [groupRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.process_id, e.designation_id, e.department_id,
+              LOWER(COALESCE(dept.dept_name,'')) AS dept_name,
+              LOWER(COALESCE(desig.designation_name,'')) AS designation_name,
+              COUNT(*) AS n
+         FROM employees e
+         LEFT JOIN department_master dept ON dept.id = e.department_id
+         LEFT JOIN designation_master desig ON desig.id = e.designation_id
+        WHERE e.employment_status = 'active' AND e.process_id IS NOT NULL
+        GROUP BY e.process_id, e.designation_id, e.department_id, dept_name, designation_name`);
+    const rows = await this.loadAprEligibilityRows();
+
+    const byProcess = new Map<string, Record<AttendanceLogic, number>>();
+    for (const g of groupRows as any[]) {
+      const res = resolveAttendanceLogicFromRows(
+        rows,
+        { designationId: g.designation_id ?? null, departmentId: g.department_id ?? null, processId: String(g.process_id) },
+        { departmentName: String(g.dept_name ?? ''), designationName: String(g.designation_name ?? '') });
+      const tally = byProcess.get(String(g.process_id))
+        ?? { apr: 0, cosec: 0, apr_validated_by_cosec: 0 };
+      tally[res.logic] += Number(g.n);
+      byProcess.set(String(g.process_id), tally);
+    }
+
+    return (procRows as any[]).map((p) => {
+      const id = String(p.id);
+      const breakdown = byProcess.get(id) ?? { apr: 0, cosec: 0, apr_validated_by_cosec: 0 };
+      const own = rows.filter((r) => r.process_id === id);
+      const employeeCount = breakdown.apr + breakdown.cosec + breakdown.apr_validated_by_cosec;
+      const present = (Object.keys(breakdown) as AttendanceLogic[]).filter((k) => breakdown[k] > 0);
+      let logic: AttendanceLogic;
+      if (present.length) {
+        logic = present.sort((a, b) => breakdown[b] - breakdown[a])[0]!;
+      } else {
+        // No active employees: report what the process's own rule says, else the engine default.
+        logic = (own.find((r) => r.attendance_logic !== 'cosec')?.attendance_logic ?? own[0]?.attendance_logic ?? 'cosec');
+      }
+      return {
+        process_id: id,
+        process_name: String(p.process_name),
+        attendance_logic: logic,
+        is_mixed: present.length > 1,
+        has_own_rule: own.length > 0,
+        breakdown,
+        rule_count: own.length,
+        employee_count: employeeCount,
+        last_changed_at: own.map((r) => r.updated_at).filter(Boolean).sort().pop() ?? null,
+      };
+    });
+  },
+
+  /**
+   * Explains, for one employee, which feed the engine will use and why: the winning config row,
+   * the threshold rule, and whether a scoped dialler rule forces APR on top.
+   */
+  async explainEmployeeAttendanceLogic(employeeId: string): Promise<{
+    employee: { id: string; employee_code: string; name: string; process: string | null;
+      department: string | null; designation: string | null; branch: string | null };
+    logic: AttendanceLogic;
+    decided_by: 'rule' | 'no_matching_rule' | 'legacy_name_match';
+    matched_rule: { id: string; rule_name: string | null; scope: string } | null;
+    forced_apr_by_dialler_rule: boolean;
+    uses_apr: boolean;
+    threshold_rule: { rule_name: string; scope_type: string; full_day_minutes: number; half_day_minutes: number; grace_minutes: number };
+  } | null> {
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id, e.employee_code, e.designation_id, e.department_id, e.process_id, e.branch_id,
+              CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS full_name,
+              dept.dept_name, desig.designation_name, p.process_name, b.branch_name
+         FROM employees e
+         LEFT JOIN department_master dept ON dept.id = e.department_id
+         LEFT JOIN designation_master desig ON desig.id = e.designation_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+        WHERE e.id = ? LIMIT 1`, [employeeId]);
+    const e = (empRows as any[])[0];
+    if (!e) return null;
+
+    const rows = await this.loadAprEligibilityRows();
+    const res = resolveAttendanceLogicFromRows(
+      rows,
+      { designationId: e.designation_id ?? null, departmentId: e.department_id ?? null, processId: e.process_id ?? null },
+      { departmentName: String(e.dept_name ?? ''), designationName: String(e.designation_name ?? '') });
+
+    const today = new Date().toISOString().split('T')[0]!;
+    const rule = await this.resolveRule(e.designation_id ?? null, e.process_id ?? null, e.branch_id ?? null, today);
+    const forced = rule.attendance_source === 'dialler'
+      && Boolean(rule.designation_id || rule.process_id || rule.branch_id);
+
+    const scopeParts: string[] = [];
+    if (res.row?.process_id) scopeParts.push('process');
+    if (res.row?.department_id) scopeParts.push('department');
+    if (res.row?.designation_id) scopeParts.push('designation');
+
+    return {
+      employee: {
+        id: String(e.id), employee_code: String(e.employee_code), name: String(e.full_name).trim(),
+        process: e.process_name ?? null, department: e.dept_name ?? null,
+        designation: e.designation_name ?? null, branch: e.branch_name ?? null,
+      },
+      logic: forced && res.logic === 'cosec' ? 'apr' : res.logic,
+      decided_by: res.via === 'row' ? 'rule' : res.via === 'regex_fallback' ? 'legacy_name_match' : 'no_matching_rule',
+      matched_rule: res.row
+        ? { id: res.row.id, rule_name: res.row.rule_name, scope: scopeParts.length ? scopeParts.join(' + ') : 'everyone' }
+        : null,
+      forced_apr_by_dialler_rule: forced,
+      uses_apr: (forced ? 'apr' : res.logic) !== 'cosec',
+      threshold_rule: {
+        rule_name: rule.rule_name, scope_type: rule.scope_type,
+        full_day_minutes: rule.full_day_minutes, half_day_minutes: rule.half_day_minutes,
+        grace_minutes: rule.grace_minutes,
+      },
+    };
+  },
+
+  /**
+   * Sets the logic for one process, for every (designation, department) pair the table already
+   * uses for APR — the Operations executive designations. Taking the pair set from existing
+   * rows rather than hardcoding it means a designation added to the scheme later is picked up
+   * without touching this code. Rejected when no such pair exists rather than silently writing
+   * nothing.
    *
-   * The other two write one row per (designation, department) pair the table already uses
-   * for APR — the Operations executive designations. Taking the pair set from existing rows
-   * rather than hardcoding it means a designation added to the scheme later is picked up
-   * without touching this code. A process configured while no such pair exists is rejected
-   * rather than silently writing nothing.
+   * COSEC is written as an explicit process-scoped row, not by deactivating the process's rows.
+   * Deactivating left any company-wide APR row (process_id NULL) still matching the process's
+   * people, so the page said COSEC while the engine kept using APR. A process-scoped COSEC row is
+   * more specific than that company-wide row, so it wins.
    */
   async setProcessAttendanceLogic(
     processId: string, logic: AttendanceLogic, actor: string,
   ): Promise<{ deactivated: number; written: number }> {
-    if (logic === 'cosec') {
-      const [res] = await db.execute<ResultSetHeader>(
-        `UPDATE apr_eligibility_config
-            SET active_status = 0, updated_at = NOW()
-          WHERE process_id = ? AND active_status = 1`, [processId]);
-      return { deactivated: res.affectedRows ?? 0, written: 0 };
-    }
-
     const [pairRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT designation_id, department_id
          FROM apr_eligibility_config
@@ -1827,7 +1944,8 @@ export const attendanceEngineService = {
 
     const [procRows] = await db.execute<RowDataPacket[]>(
       `SELECT process_name FROM process_master WHERE id = ? LIMIT 1`, [processId]);
-    const processName = String((procRows as any[])[0]?.process_name ?? processId);
+    if (!(procRows as any[]).length) throw Object.assign(new Error('Process not found'), { statusCode: 404 });
+    const processName = String((procRows as any[])[0]!.process_name);
 
     let written = 0;
     for (const pair of pairs) {
@@ -1845,15 +1963,16 @@ export const attendanceEngineService = {
       if (row) {
         await db.execute(
           `UPDATE apr_eligibility_config
-              SET active_status = 1, attendance_logic = ?, updated_at = NOW()
-            WHERE id = ?`, [logic, row.id]);
+              SET active_status = 1, attendance_logic = ?, updated_at = NOW(),
+                  notes = CONCAT('Set to ', ?, ' via Attendance Rules Master by ', ?, ' on ', DATE_FORMAT(NOW(), '%Y-%m-%d'), '.')
+            WHERE id = ?`, [logic, logic, actor, row.id]);
       } else {
         await db.execute(
           `INSERT INTO apr_eligibility_config
              (id, rule_name, designation_id, department_id, process_id, active_status,
               attendance_logic, notes, created_by, created_at, updated_at)
            VALUES (UUID(), ?, ?, ?, ?, 1, ?, ?, ?, NOW(), NOW())`,
-          [`APR: ${desigName} / ${processName}`, pair.designation_id, pair.department_id,
+          [`${logic === 'cosec' ? 'COSEC' : 'APR'}: ${desigName} / ${processName}`, pair.designation_id, pair.department_id,
            processId, logic, `Set via Attendance Rules Master by ${actor}.`, actor]);
       }
       written++;

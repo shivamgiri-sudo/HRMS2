@@ -1,3 +1,4 @@
+import { getDayThresholdsInForce } from './attendance-thresholds-in-force.service.js';
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { requireAuth } from '../../middleware/authMiddleware.js';
@@ -568,6 +569,19 @@ router.delete('/rules/:id', requireRole('admin'), h(async (req, res) => {
 // Readable by the same roles that can open the rules master.
 router.get('/attendance-logic', requireRole('admin', 'hr', 'wfm'), h(async (_req, res) => {
   const data = await attendanceEngineService.listProcessAttendanceLogic();
+  return res.json({ success: true, data });
+}));
+
+// GET /attendance-logic/thresholds-in-force - the day thresholds the engine really applies.
+router.get('/attendance-logic/thresholds-in-force', requireRole('admin', 'hr', 'wfm'), h(async (_req, res) => {
+  const data = await getDayThresholdsInForce();
+  return res.json({ success: true, data });
+}));
+
+// GET /attendance-logic/employee/:employeeId - which feed decides this employee's day, and why.
+router.get('/attendance-logic/employee/:employeeId', requireRole('admin', 'hr', 'wfm'), h(async (req, res) => {
+  const data = await attendanceEngineService.explainEmployeeAttendanceLogic(req.params.employeeId);
+  if (!data) return res.status(404).json({ success: false, message: 'Employee not found' });
   return res.json({ success: true, data });
 }));
 
