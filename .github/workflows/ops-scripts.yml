@@ -79,6 +79,7 @@ on:
           - recode-63388c-apply
           - recode-63388c-phase2
           - recode-63388c-payroll-check
+          - recode-63388c-phase3
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -223,6 +224,11 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            recode-63388c-phase3)
+              # PHASE 3 of the 63388C clash: re-point Tina's August payroll line from Talabhai to her. dry-run writes nothing.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/recode-63388c-phase3.ts $FLAG
               ;;
             recode-63388c-payroll-check)
               # Read-only: August payroll lines for both 63388C people vs db_bill salary_data. No apply mode.
