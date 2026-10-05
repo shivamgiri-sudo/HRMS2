@@ -96,6 +96,7 @@ on:
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
           - sep-attendance-vs-dbbill
+          - sep-attendance-grid
           - create-missing-esa-for-run-lines
           - employee-components-audit
           - fix-63694c-package
@@ -373,6 +374,10 @@ jobs:
               # Dry-runs unless given --apply. Apply inserts the esa row the engine needs; no existing line is changed.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/create-missing-esa-for-run-lines.ts $FLAG
+              ;;
+            sep-attendance-grid)
+              # Read-only in both modes: SELECTs against HRMS and db_bill only. Codes from employee_codes (comma list).
+              npx tsx scripts/sep-attendance-grid.ts "${INPUT_EMPLOYEE_CODES}"
               ;;
             sep-attendance-vs-dbbill)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
