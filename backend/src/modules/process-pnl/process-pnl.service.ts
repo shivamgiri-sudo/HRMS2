@@ -268,6 +268,7 @@ function trendCacheKey(processId: string | null, filters: PnlQueryFilters): stri
     filters.processId ?? "",
     filters.clientId ?? "",
     filters.search?.trim() ?? "",
+    [...(filters.includeProcessIds ?? [])].sort().join(","),
   ].join("|");
 }
 
@@ -333,9 +334,15 @@ async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRo
   // closed branch's processes, and computeBranchRows then drops only those with no money at all
   // (dropDormantClosedBranchRows) so a long-closed branch still does not reappear in dropdowns.
   // DialDesk is an IDC entity, not MAS Callnet (owner rule 2026-09-24): never a P&L column.
-  const conds = ["COALESCE(p.active_status, 1) = 1", notDialDeskProcessSql("p", "bm")];
+  // A closed month keeps an inactive (or mis-branched DialDesk-looking) process when billed revenue
+  // is attached to it: getInvoicedRevenueActuals already restricts to MAS Callnet cost centres, so
+  // the revenue is own-company by construction, and without the process it vanished from every
+  // total with no unattributed line (Finnable, Adani/AWL, EBC Bridge, Aspeya, Raritiq: 10-19 lakh a month).
+  const include = isCurrentOrFuturePeriod(filters.period) ? [] : (filters.includeProcessIds ?? []).filter(Boolean);
+  const eligible = `(COALESCE(p.active_status, 1) = 1 AND ${notDialDeskProcessSql("p", "bm")})`;
+  const conds = [include.length ? `(${eligible} OR p.id IN (${include.map(() => "?").join(", ")}))` : eligible];
+  const params: unknown[] = [...include];
   if (isCurrentOrFuturePeriod(filters.period)) conds.push("COALESCE(bm.active_status, 1) = 1");
-  const params: unknown[] = [];
 
   if (filters.branchId) {
     conds.push("p.branch_id = ?");
@@ -1431,6 +1438,7 @@ async function buildComputationContext(filters: Partial<PnlQueryFilters>): Promi
     processId: filters.processId,
     clientId: filters.clientId,
     search: filters.search,
+    includeProcessIds: filters.includeProcessIds,
   };
   const cacheKey = computationCacheKey(normalizedFilters);
   const cached = computationCache.get(cacheKey);

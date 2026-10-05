@@ -1492,7 +1492,11 @@ async function dropDormantClosedBranchRows(rows: BpoPnlRow[], period: string): P
 }
 
 async function computeBranchRows(scope: PnlQueryFilters) {
-  const baseRows = await processPnlService.listProcesses(scope);
+  // Billed revenue first: its process ids widen the base row set (see PnlQueryFilters.includeProcessIds)
+  // so revenue attached to an inactive process is not silently dropped. Reused below, not re-read.
+  const invoicedActuals = await getInvoicedRevenueActuals(scope.period ?? "");
+  const includeProcessIds = isOpenPeriod(scope.period ?? "") ? [] : Array.from(invoicedActuals.byProcess.keys());
+  const baseRows = await processPnlService.listProcesses(includeProcessIds.length ? { ...scope, includeProcessIds } : scope);
   const processIds = baseRows.map((row) => row.processId);
   const policies = await getAllocationPolicies(scope.period);
   const warnings: ManualAllocationWarning[] = [];
@@ -1515,7 +1519,7 @@ async function computeBranchRows(scope: PnlQueryFilters) {
     getBudgets(baseRows, scope.period, policies, warnings),
     getGrnVendorActuals(baseRows, scope.period, policies, warnings),
     getCostCentres(processIds),
-    getInvoicedRevenueActuals(scope.period ?? ""),
+    Promise.resolve(invoicedActuals),
     getRewardPenaltyForPeriod(scope.period ?? ""),
     /*
      * Direct salary_prep_line read as a safety net for the canonical engine.
