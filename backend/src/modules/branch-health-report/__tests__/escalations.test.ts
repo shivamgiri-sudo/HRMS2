@@ -54,6 +54,13 @@ describe("buildEscalations", () => {
     const raw = calm({ budgetHeader: { missing: true, status: null } });
     expect(buildEscalations(raw, "2026-10-05").every((e) => !!e.source)).toBe(true);
   });
+  it("stuck GRNs: says HRMS-only and names the stage holding them", () => {
+    const raw = calm({ grnStats: { pending: 3, oldestPendingDays: 9, unbudgeted: { count: 0, amountExGst: 0 },
+      pendingByStage: [{ status: "submitted", stage: "With Branch Head (submitted)", count: 3, oldestDays: 9 }] } });
+    const e = buildEscalations(raw, "2026-10-15").find((x) => x.key === "grn_stuck")!;
+    expect(e.label).toMatch(/3 HRMS GRNs stuck/);
+    expect(e.detail).toMatch(/3 with branch head \(submitted\) \(oldest 9d\).*db_bill GRNs are excluded/);
+  });
   it("flags shrinkage that stays high two days running", () => {
     const raw = calm({ shrinkage: { shrinkagePct: 14 }, prevShrinkage: { shrinkagePct: 12 } });
     expect(buildEscalations(raw, "2026-10-15")[0].label).toMatch(/Shrinkage above 10%.*14% today, 12% yesterday/);

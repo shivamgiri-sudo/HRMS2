@@ -55,7 +55,7 @@ const ESCALATION_SOURCES: Record<string, string> = {
   budget_unapproved: "Branch budget workspace: header is submitted or branch-head approved, not yet active",
   spend_pace: "Section 1: (consumed + reserved) ÷ budget, against days elapsed in the month. Section 1 utilization shows consumed only",
   shrinkage_high: "Section 5: absent ÷ scheduled today and yesterday (roster-based)",
-  grn_stuck: "Section 2: GRNs awaiting approval, oldest by raised date",
+  grn_stuck: "Section 2: HRMS-raised GRNs only (no db_bill source id, not the migration user), in submitted / approved-at-a-stage / returned status; age from raised date",
   grn_month_end: "Section 2: GRNs awaiting approval on the last 3 days of the month",
   approvals_aged: "Section 7 backlog: pending leave by applied date, regularization by created date",
   reg_escalated: "Section 7: attendance_regularization status = escalated",
@@ -164,8 +164,9 @@ export function buildEscalations(raw: BranchHealthRawData, reportDate: string): 
   // Aged approvals.
   const g = raw.grnStats;
   if (g.pending > 0 && g.oldestPendingDays >= E.grnStaleDays) {
-    add("grn_stuck", `${g.pending} GRN${g.pending > 1 ? "s" : ""} stuck in approval — oldest ${g.oldestPendingDays} days`,
-      "Not reserved against the budget until approved", "Approvers");
+    const stages = g.pendingByStage.map((s) => `${s.count} ${s.stage.toLowerCase()} (oldest ${s.oldestDays}d)`).join(" · ");
+    add("grn_stuck", `${g.pending} HRMS GRN${g.pending > 1 ? "s" : ""} stuck in approval — oldest ${g.oldestPendingDays} days`,
+      `${stages ? `${stages}. ` : ""}Not reserved against the budget until approved. Migrated db_bill GRNs are excluded`, "Approvers");
   }
   if (day >= daysInMonth - 2 && g.pending > 0) {
     add("grn_month_end", `${daysInMonth - day === 0 ? "Last day of the month" : `Month ends in ${daysInMonth - day} day${daysInMonth - day === 1 ? "" : "s"}`} with ${g.pending} GRN${g.pending > 1 ? "s" : ""} unapproved`,
