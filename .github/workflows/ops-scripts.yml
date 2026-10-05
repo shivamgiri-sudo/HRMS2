@@ -78,6 +78,7 @@ on:
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
+          - recruiter-list-diagnose
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
           - create-missing-esa-for-run-lines
@@ -370,6 +371,10 @@ jobs:
               # Dry-runs unless given --apply. Apply removes not-yet-joined zero-net lines and recalculates the rest, scoped.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/heal-zero-day-lines.ts $FLAG
+              ;;
+            recruiter-list-diagnose)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/recruiter-list-diagnose.ts
               ;;
             zero-day-gross-audit)
               # Read-only in both modes: SELECTs only.
