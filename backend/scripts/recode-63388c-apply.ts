@@ -39,16 +39,25 @@ async function main() {
   const [bill] = await billQuery<RowDataPacket>(`SELECT * FROM masjclrentry WHERE UPPER(TRIM(EmpCode)) = ? LIMIT 1`, [CODE]);
   const fail = (m: string) => { console.error(`PRECONDITION FAILED: ${m}`); process.exitCode = 2; };
 
-  if (hr.length !== 1) return fail(`expected exactly 1 HRMS row for ${CODE}, found ${hr.length} (already moved?)`);
-  const hrName = `${hr[0].first_name} ${hr[0].last_name ?? ""}`.trim().toUpperCase();
-  if (hrName !== "TALABHAI THAKOR") return fail(`HRMS ${CODE} is "${hrName}", not TALABHAI THAKOR`);
-  if (old.length) return fail(`${OLD} already exists in HRMS`);
+  // Two valid starting states: (A) untouched - 63388C is Talabhai; (B) resumed - step 1 already done (63388C-OLD is
+  // Talabhai, 63388C is free) because step 2 failed on an earlier run.
+  const nameOf = (r: RowDataPacket) => `${r.first_name} ${r.last_name ?? ""}`.trim().toUpperCase();
+  let resumed = false;
+  if (hr.length === 1) {
+    if (nameOf(hr[0]) !== "TALABHAI THAKOR") return fail(`HRMS ${CODE} is "${nameOf(hr[0])}", not TALABHAI THAKOR`);
+    if (old.length) return fail(`${OLD} already exists in HRMS`);
+  } else if (hr.length === 0 && old.length === 1) {
+    const [o] = await q(`SELECT first_name, last_name FROM employees WHERE employee_code = ?`, [OLD]);
+    if (nameOf(o) !== "TALABHAI THAKOR") return fail(`${OLD} is "${nameOf(o)}", not TALABHAI THAKOR`);
+    resumed = true;
+  } else return fail(`unexpected state: ${hr.length} row(s) for ${CODE}, ${old.length} for ${OLD}`);
   if (!bill) return fail(`no db_bill row for ${CODE}`);
   const billName = String(bill.EmpName ?? "").trim().toUpperCase();
   if (billName !== "TINA DIPAKBHAI VALERA") return fail(`db_bill ${CODE} is "${billName}", not TINA DIPAKBHAI VALERA`);
-  console.log(`preconditions OK. Talabhai id=${hr[0].id}; db_bill person=${billName}`);
+  const talabhaiId = String(resumed ? (await q(`SELECT id FROM employees WHERE employee_code = ?`, [OLD]))[0].id : hr[0].id);
+  console.log(`preconditions OK (${resumed ? "RESUMED: step 1 already done" : "fresh"}). Talabhai id=${talabhaiId}; db_bill person=${billName}`);
 
-  console.log(`\nSTEP 1  employees: ${CODE} -> ${OLD} (employee_code, biometric_code) for id=${hr[0].id}`);
+  console.log(`\nSTEP 1  employees: ${CODE} -> ${OLD} (employee_code, biometric_code) for id=${talabhaiId}${resumed ? " (already done - skipped)" : ""}`);
   console.log(`STEP 2  create ${CODE} from db_bill via employeeSyncHandler (status=${bill.Status}, DOJ=${bill.DOJ instanceof Date ? bill.DOJ.toLocaleDateString("en-CA") : String(bill.DOJ)} local, ${bill.DOJ instanceof Date ? bill.DOJ.toISOString() : ""} utc)`);
   const plan: Array<{ col: string; name: string; id: string | null }> = [];
   for (const m of MASTERS) {
@@ -76,21 +85,30 @@ async function main() {
   }
   if (!APPLY) { console.log("\nDry-run only. Nothing written."); return; }
 
+  if (!resumed) {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     const [u] = await conn.execute<any>(
       `UPDATE employees SET employee_code = ?, biometric_code = ?, updated_at = NOW() WHERE id = ? AND employee_code = ?`,
-      [OLD, OLD, hr[0].id, CODE]);
+      [OLD, OLD, talabhaiId, CODE]);
     if (u.affectedRows !== 1) throw new Error(`re-code affected ${u.affectedRows} rows`);
     await conn.commit();
     console.log(`STEP 1 done: Talabhai is now ${OLD}`);
   } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
+  }
 
-  const rec = employeeSyncHandler.transform(bill as never);
-  const res = await employeeSyncHandler.syncToHRMS([rec]);
-  console.log("STEP 2 sync result:", JSON.stringify(res));
-  if (res.errors || res.inserted !== 1) throw new Error("Tina was not created as a single insert; inspect, then revert step 1 if needed");
+  // The sync handler's fixed INSERT lists columns the table no longer has (it failed on `title`), so build the INSERT
+  // from the transformed record, keeping only columns that exist in employees, and say which were skipped.
+  const rec = employeeSyncHandler.transform(bill as never) as unknown as Record<string, unknown>;
+  const cols = new Set((await q(`SELECT COLUMN_NAME c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employees'`)).map((r) => String(r.c)));
+  const keys = Object.keys(rec).filter((k) => cols.has(k) && rec[k] !== undefined);
+  console.log("STEP 2 skipped (no such column):", Object.keys(rec).filter((k) => !cols.has(k)).join(", ") || "none");
+  const extra = ["created_at", "updated_at"].filter((c) => cols.has(c));
+  await db.execute(
+    `INSERT INTO employees (id, ${[...keys, ...extra].join(", ")}) VALUES (UUID(), ${keys.map(() => "?").join(", ")}${extra.map(() => ", NOW()").join("")})`,
+    keys.map((k) => rec[k] ?? null) as never);
+  console.log(`STEP 2 inserted ${CODE} with ${keys.length} columns`);
 
   const [tina] = await q(`SELECT id FROM employees WHERE employee_code = ?`, [CODE]);
   const found = plan.filter((p) => p.id);
