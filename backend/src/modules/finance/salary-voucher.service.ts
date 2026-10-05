@@ -200,7 +200,7 @@ export const salaryVoucherService = {
    * salary into MasCallnet's books because it was the first rule in the table is exactly the
    * failure 1098 refused to risk by shipping empty.
    */
-  async generate(runId: string, options: { companyCode?: string; serialFrom?: number } = {}) {
+  async generate(runId: string, options: { companyCode?: string; serialFrom?: number; skipBuckets?: Set<string> } = {}) {
     const [runRows] = await db.execute<RowDataPacket[]>(
       // run_month is already 'YYYY-MM'; the run table has no separate month/year columns.
       `SELECT id, run_month FROM salary_prep_run WHERE id = ? LIMIT 1`,
@@ -274,7 +274,7 @@ async function buildVouchersFromLines(
   period: string,
   lines: PrepLine[],
   entityRules: RowDataPacket[],
-  options: { companyCode?: string; serialFrom?: number },
+  options: { companyCode?: string; serialFrom?: number; skipBuckets?: Set<string> },
 ): Promise<{ period: string; vouchers: Voucher[]; unassigned: string[]; unpaid: string[] }> {
   const entityOf = (code: string): string | null => {
     for (const rule of entityRules) {
@@ -316,6 +316,9 @@ async function buildVouchersFromLines(
     // branch_id — the thing the API scopes on — is then whichever row sorted first. See
     // docs/finance/OPEN-QUESTIONS.md.
     const key = `${company}|${branchId}`;
+    // Buckets whose voucher was already pulled out for Tally are left out BEFORE numbering, so the
+    // vouchers that remain take consecutive numbers from the serial the caller supplied.
+    if (options.skipBuckets?.has(key)) continue;
     if (!buckets.has(key)) {
       buckets.set(key, { company, branchId, branchName, rows: [] });
     }

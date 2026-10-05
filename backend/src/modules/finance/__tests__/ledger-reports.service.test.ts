@@ -108,6 +108,7 @@ describe("ledgerReportsService.vendorLedger", () => {
 describe("ledgerReportsService.headSubHeadLedger", () => {
   it("sums spend per head/subhead and resolves display names", async () => {
     execute.mockImplementation(async (sql: string) => {
+      if (/FROM grn_request g/.test(sql)) return [[]]; // no unposted purchases
       if (/GROUP BY jel.account_id/.test(sql)) {
         return [[{ account_id: "sh-1", total_spent: "12345.67", grn_count: "3" }]];
       }
@@ -172,5 +173,22 @@ describe("ledgerReportsService.vendorStatement (Tally-style)", () => {
     await ledgerReportsService.vendorStatement("v1");
     const call = execute.mock.calls.find(([sql]) => /FROM vendor_payment_tracking vpt LEFT JOIN grn_request/.test(sql))!;
     expect(call[1]).toEqual(["v1", "v2"]);
+  });
+
+  it("adds vendor GRNs that never reached the journal, and shows an unmatched head as such", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      if (/FROM grn_request g/.test(sql)) {
+        return [[
+          { id: "g1", grn_number: "G1", head: "Repairs", sub_head: "AC Servicing", sub_head_id: "sh-1", amt: "1000" },
+          { id: "g2", grn_number: "G2", head: "Misc", sub_head: "Odd", sub_head_id: null, amt: "500" },
+        ]];
+      }
+      if (/GROUP BY jel.account_id/.test(sql)) return [[{ account_id: "sh-1", total_spent: "12000", grn_count: "3" }]];
+      if (/finance_expense_sub_head_master/.test(sql)) return [[{ id: "sh-1", head_name: "Repairs", sub_head_name: "AC Servicing" }]];
+      return [[]];
+    });
+    const result = await ledgerReportsService.headSubHeadLedger();
+    expect(result.find((r) => r.accountId === "sh-1")).toMatchObject({ totalSpent: 13000, grnCount: 4 });
+    expect(result.find((r) => r.accountId.startsWith("unmapped:"))).toMatchObject({ headSubHead: "(no matching ledger head) Misc / Odd", totalSpent: 500 });
   });
 });

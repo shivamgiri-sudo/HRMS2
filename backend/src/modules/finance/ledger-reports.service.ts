@@ -340,6 +340,42 @@ async function loadVendorTotals(opts: {
   return out;
 }
 
+/**
+ * Vendor GRNs that count as spend but have no GRN journal entry (their head/sub-head did not match
+ * an active ledger head when they were approved, so posting was refused). The Head / Sub-head
+ * Spend report and the sub-head drill-down add them, so spend is not understated; a GRN whose head
+ * still has no matching ledger head is shown under "(no matching ledger head) <head> / <sub-head>".
+ */
+async function unpostedPurchases(opts: {
+  from?: string; to?: string; subHeadId?: string; scope?: FinanceBranchScope; branchId?: string; costCentreId?: string; processId?: string;
+}): Promise<RowDataPacket[]> {
+  const c = [
+    "g.grn_type = 'vendor'",
+    "g.status IN ('pending_accounts_payment','payment_scheduled','partially_paid','paid','approved')",
+    "NOT EXISTS (SELECT 1 FROM journal_entry je WHERE je.source_type = 'grn' AND je.source_id = g.id AND je.reversed_by_entry_id IS NULL)",
+  ];
+  const p: unknown[] = [];
+  if (opts.from) { c.push("COALESCE(g.bill_date, DATE(g.created_at)) >= ?"); p.push(opts.from); }
+  if (opts.to) { c.push("COALESCE(g.bill_date, DATE(g.created_at)) <= ?"); p.push(opts.to); }
+  if (opts.branchId) { c.push("g.branch_id = ?"); p.push(opts.branchId); }
+  if (opts.costCentreId) { c.push("g.cost_centre_id = ?"); p.push(opts.costCentreId); }
+  if (opts.processId) { c.push("g.process_id = ?"); p.push(opts.processId); }
+  if (opts.subHeadId) {
+    if (opts.subHeadId.startsWith("unmapped:")) return [];
+    c.push("sh.id = ?"); p.push(opts.subHeadId);
+  }
+  pushBranchScope(c, p, opts.scope, "g.branch_id");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT g.id, g.grn_number, g.invoice_number, g.head, g.sub_head, g.vendor_id, g.branch_id, g.cost_centre_id, g.process_id,
+            COALESCE(g.bill_date, DATE(g.created_at)) AS bill_day,
+            COALESCE(NULLIF(g.amount_with_tax, 0), g.amount) AS amt, sh.id AS sub_head_id
+       FROM grn_request g
+       LEFT JOIN finance_expense_head_master h ON LOWER(TRIM(h.head_name)) = LOWER(TRIM(g.head)) AND h.active_status = 1
+       LEFT JOIN finance_expense_sub_head_master sh ON sh.head_id = h.id AND LOWER(TRIM(sh.sub_head_name)) = LOWER(TRIM(g.sub_head)) AND sh.active_status = 1
+      WHERE ${c.join(" AND ")}`, p);
+  return rows as RowDataPacket[];
+}
+
 export type TrialBalanceRow = {
   accountType: AccountType;
   accountId: string;
@@ -576,8 +612,16 @@ export const ledgerReportsService = {
     const dispatched = accountType === "vendor"
       ? await vendorDispatchPayments(accountId, from, to, scope)
       : [];
+    // Spend on this sub-head that was never journaled (see unpostedPurchases).
+    const unposted = accountType === "expense_sub_head"
+      ? (await unpostedPurchases({ from, to, subHeadId: accountId, scope })).map((u) => ({
+          journal_entry_id: `grn:${u.id}`, entry_date: u.bill_day, narration: `GRN ${u.grn_number ?? u.id} (not yet posted to the ledger) — ${u.head} / ${u.sub_head}`,
+          source_type: "grn_unposted", source_id: u.id, branch_id: u.branch_id, cost_centre_id: u.cost_centre_id, process_id: u.process_id,
+          debit_amount: u.amt, credit_amount: 0, line_narration: null,
+        } as unknown as RowDataPacket))
+      : [];
 
-    const allRows = [...(rows as RowDataPacket[]), ...dispatched];
+    const allRows = [...(rows as RowDataPacket[]), ...dispatched, ...unposted];
     const { branchNames, costCentreNames, processNames } = await resolveDimensionNames(allRows);
 
     const ordered = allRows
@@ -762,14 +806,26 @@ export const ledgerReportsService = {
       params,
     );
 
-    const refs = (rows as RowDataPacket[]).map((r) => ({ accountType: "expense_sub_head" as const, accountId: String(r.account_id) }));
+    const unposted = await unpostedPurchases({ from, to, scope, ...filters });
+    const merged = new Map<string, { accountId: string; label?: string; total: number; count: number }>();
+    for (const r of rows as RowDataPacket[]) {
+      merged.set(String(r.account_id), { accountId: String(r.account_id), total: Number(r.total_spent), count: Number(r.grn_count) });
+    }
+    for (const u of unposted) {
+      const id = u.sub_head_id ? String(u.sub_head_id) : `unmapped:${String(u.head ?? "").trim()}/${String(u.sub_head ?? "").trim()}`;
+      const cur = merged.get(id) ?? { accountId: id, label: u.sub_head_id ? undefined : `(no matching ledger head) ${u.head} / ${u.sub_head}`, total: 0, count: 0 };
+      cur.total += Number(u.amt); cur.count += 1;
+      merged.set(id, cur);
+    }
+
+    const refs = [...merged.values()].filter((m) => !m.accountId.startsWith("unmapped:")).map((m) => ({ accountType: "expense_sub_head" as const, accountId: m.accountId }));
     const names = await resolveAccountNames(refs);
 
-    return (rows as RowDataPacket[]).map((r) => ({
-      accountId: String(r.account_id),
-      headSubHead: names.get(`expense_sub_head:${r.account_id}`) ?? `(unresolved ${r.account_id})`,
-      totalSpent: money(Number(r.total_spent)),
-      grnCount: Number(r.grn_count),
+    return [...merged.values()].sort((x, y) => y.total - x.total).map((m) => ({
+      accountId: m.accountId,
+      headSubHead: m.label ?? names.get(`expense_sub_head:${m.accountId}`) ?? `(unresolved ${m.accountId})`,
+      totalSpent: money(m.total),
+      grnCount: m.count,
     }));
   },
 };

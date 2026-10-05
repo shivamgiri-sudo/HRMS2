@@ -10,6 +10,7 @@
  * Every money field is a plain DECIMAL from the API — this module and its callers only
  * format it, never compute it, same convention as clientBillingApi.ts.
  */
+import { downloadTallyFile } from "@/lib/tallyExportDownload";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 export type GstExportType = "GSTR1" | "GSTR3B_OUTWARD" | "TALLY_SALES";
@@ -164,29 +165,11 @@ export async function downloadBatchCsv(
   options: { includeExceptions?: boolean } = {}
 ): Promise<void> {
   const qs = options.includeExceptions ? "?includeExceptions=true" : "";
-  let blob: Blob;
-  try {
-    blob = await hrmsApi.getBlob(`/api/gst/exports/${encodeURIComponent(batch.id)}/csv${qs}`);
-  } catch (err) {
-    // requestBlob's own error carries the raw response body as its message. The 409 this route
-    // returns for a batch with unresolved exceptions is real JSON ({success:false,error:"..."}),
-    // so parse it back out rather than surfacing the caller with a literal JSON string.
-    const raw = err instanceof Error ? err.message : String(err);
-    let parsedMessage: string | undefined;
-    try {
-      parsedMessage = JSON.parse(raw)?.error;
-    } catch {
-      // raw wasn't JSON — fall through and surface it as-is below.
-    }
-    throw new Error(parsedMessage || raw);
-  }
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${batch.export_type}-${batch.company_gstin}-${batch.period_month}.csv`;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-  await markDownloaded(batch.id);
+  // Tally-bound: the server locks each invoice as it is pulled and refuses to hand it over twice;
+  // the helper explains that and lets a finance head re-export with a reason.
+  const result = await downloadTallyFile(
+    `/api/gst/exports/${encodeURIComponent(batch.id)}/csv${qs}`,
+    `${batch.export_type}-${batch.company_gstin}-${batch.period_month}.csv`,
+  );
+  if (result === "downloaded") await markDownloaded(batch.id);
 }

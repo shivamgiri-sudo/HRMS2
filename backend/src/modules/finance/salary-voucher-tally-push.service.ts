@@ -80,9 +80,9 @@ export const salaryVoucherTallyPush = {
    * One request per voucher, so a rejected voucher is reported on its own and the rest still
    * post. Only balanced vouchers are sent.
    */
-  async push(runId: string, vouchers: Voucher[], actorUserId: string) {
+  async push(runId: string, vouchers: Voucher[], actorUserId: string, opts: { ignorePosted?: boolean } = {}) {
     const cfg = tallyConfig();
-    const done = await this.alreadyPosted(runId);
+    const done = opts.ignorePosted ? new Set<string>() : await this.alreadyPosted(runId);
     const results: { voucher_no: string; branch_name: string; outcome: "posted" | "failed" | "skipped"; detail: string }[] = [];
     for (const v of vouchers) {
       if (done.has(v.voucher_no)) { results.push({ voucher_no: v.voucher_no, branch_name: v.branch_name, outcome: "skipped", detail: "Already posted to Tally from this run." }); continue; }

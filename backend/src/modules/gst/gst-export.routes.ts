@@ -14,6 +14,7 @@ import {
 } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { callerBranchScope } from "../finance/finance-branch-guard.js";
+import { splitByLock, tallyExportLock } from "../finance/tally-export-lock.service.js";
 import { gstExportService, type GstExportType } from "./gst-export.service.js";
 
 const GST_WRITE_ROLES = ["accounts_head", "finance_head", "super_admin"] as const;
@@ -150,6 +151,41 @@ router.get(
       });
     }
 
+    // Tally-bound: every invoice is locked as it is pulled, so a regenerated batch for the same
+    // period cannot hand the same invoice over a second time (Tally would import it twice).
+    const gstin = String((batch as any).company_gstin);
+    const user = actor(req);
+    const reexport = String(req.query.reexport ?? "") === "true";
+    const keyOf = (r: any) => `${r.source_type}:${r.source_id}`;
+    const items = (rows as any[]).map((r) => ({ key: keyOf(r), label: String(r.bill_no ?? "") }));
+    const { fresh, locked } = await splitByLock("gst_sales", gstin, items);
+    let exportRows = rows as any[];
+    let claimed: string[] = [];
+    try {
+      if (reexport) {
+        const why = tallyExportLock.assertReexport(req.query.reason, (req as any).userRoles, user.role);
+        await tallyExportLock.recordReexport("gst_sales", gstin, locked, user.id, user.role, why, "csv");
+        claimed = await tallyExportLock.lock("gst_sales", gstin, fresh, user.id, "csv");
+      } else {
+        if (!fresh.length && items.length) {
+          return res.status(409).json({
+            success: false, code: "ALL_LOCKED",
+            error: `All ${locked.length} invoice(s) in this batch were already pulled out for Tally. Importing them again would duplicate them. A finance head can re-export with a reason.`,
+          });
+        }
+        claimed = await tallyExportLock.lock("gst_sales", gstin, fresh, user.id, "csv");
+        if (claimed.length !== fresh.length) {
+          await tallyExportLock.release("gst_sales", gstin, claimed, user.id, user.role, "Export aborted: another export took some invoices at the same moment").catch(() => undefined);
+          return res.status(409).json({ success: false, code: "RACE", error: "Another export took some of these invoices at the same moment. Try again." });
+        }
+        const lockedKeys = new Set(locked.map((l) => l.key));
+        exportRows = (rows as any[]).filter((r) => !lockedKeys.has(keyOf(r)));
+      }
+    } catch (error) {
+      return res.status(403).json({ success: false, error: error instanceof Error ? error.message : "Not allowed" });
+    }
+    res.setHeader("X-Tally-Skipped-Already-Exported", String(reexport ? 0 : locked.length));
+
     const cols = [
       "sequence_no", "source_type", "bill_no", "invoice_date", "financial_year", "month_label",
       "company_name", "company_gstin", "branch_name", "branch_state_code",
@@ -167,7 +203,7 @@ router.get(
       return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
     };
     const lines = [cols.join(",")];
-    for (const r of rows as any[]) lines.push(cols.map((c) => cell(r[c])).join(","));
+    for (const r of exportRows) lines.push(cols.map((c) => cell(r[c])).join(","));
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(

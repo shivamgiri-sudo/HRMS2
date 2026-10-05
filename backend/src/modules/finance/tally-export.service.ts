@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { refuse } from "../process-pnl/finance-error.js";
+import { splitByLock, tallyExportLock } from "./tally-export-lock.service.js";
 
 /**
  * Tally XML export (PRD §6.2.1) — the ENVELOPE > BODY > DATA > TALLYMESSAGE > VOUCHER format,
@@ -334,9 +335,11 @@ export const tallyExportService = {
    * on each entry it locks). A range that mixes a closed period with rows still outstanding in an
    * open one stays provisional — never partially final — per PRD §6.3.
    */
-  async buildEnvelope(bankAccountId: string, from?: string, to?: string) {
-    const rows = await fetchVoucherRows(bankAccountId, from, to);
-    const isFinal = rows.length > 0 && rows.every((r) => r.period_status === "closed");
+  async buildEnvelope(bankAccountId: string, from?: string, to?: string, exclude?: Set<string>) {
+    const all = await fetchVoucherRows(bankAccountId, from, to);
+    const isFinalAll = all.length > 0 && all.every((r) => r.period_status === "closed");
+    const rows = exclude ? all.filter((r) => !exclude.has(r.voucher_number)) : all;
+    const isFinal = isFinalAll;
     const watermark = isFinal ? "" : "\n  <!-- PROVISIONAL EXPORT: no bank_reconciliation for this period is closed yet. Not for final Tally posting. -->";
     const body = rows.map(buildVoucherXml).join("\n");
     const xml = `<ENVELOPE>${watermark}
@@ -356,7 +359,7 @@ ${body}
 `;
     const totalDebit = rows.reduce((sum, r) => sum + r.net_amount + r.tds_amount, 0);
     const totalCredit = totalDebit; // every voucher is individually balanced by construction
-    return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit };
+    return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit, voucherNumbers: rows.map((r) => r.voucher_number) };
   },
 
   /**
@@ -369,10 +372,10 @@ ${body}
    * and this check costs one extra read; if they ever diverge, that is exactly the class of bug
    * a statutory export must never paper over.
    */
-  async buildEnvelopeVerified(bankAccountId: string, from?: string, to?: string) {
+  async buildEnvelopeVerified(bankAccountId: string, from?: string, to?: string, exclude?: Set<string>) {
     const [journalResult, legacyResult] = await Promise.all([
-      this.buildEnvelopeFromJournal(bankAccountId, from, to),
-      this.buildEnvelope(bankAccountId, from, to),
+      this.buildEnvelopeFromJournal(bankAccountId, from, to, exclude),
+      this.buildEnvelope(bankAccountId, from, to, exclude),
     ]);
     const totalDiff = Math.abs(journalResult.totalDebit - legacyResult.totalDebit);
     if (journalResult.entryCount !== legacyResult.entryCount || totalDiff > 0.01) {
@@ -385,8 +388,48 @@ ${body}
     return journalResult;
   },
 
-  async exportAndLog(bankAccountId: string, from: string | undefined, to: string | undefined, actorUserId: string, actorRole?: string) {
-    const result = await this.buildEnvelopeVerified(bankAccountId, from, to);
+  /**
+   * The export Finance pulls for Tally. A FINAL export (every voucher in a closed bank
+   * reconciliation period) is locked as it is pulled: each voucher is recorded, and the same
+   * voucher is never handed over again — Tally would import it as a second voucher. A repeat
+   * call returns only vouchers not pulled before, or refuses when there are none. A finance head
+   * can re-export with a reason. A PROVISIONAL export (not yet final) is a preview: not locked.
+   */
+  async exportAndLog(
+    bankAccountId: string, from: string | undefined, to: string | undefined, actorUserId: string, actorRole?: string,
+    opts: { reexport?: boolean; reason?: unknown; roles?: string[] } = {},
+  ) {
+    const full = await this.buildEnvelopeVerified(bankAccountId, from, to);
+    let result = full;
+    let skipped = 0;
+    let reexported = 0;
+    let claimedKeys: string[] = [];
+
+    if (full.isFinal && full.entryCount > 0) {
+      const items = full.voucherNumbers.map((n) => ({ key: n, label: n }));
+      const { fresh, locked } = await splitByLock("bank_voucher", bankAccountId, items);
+      if (opts.reexport) {
+        const why = tallyExportLock.assertReexport(opts.reason, opts.roles, actorRole);
+        await tallyExportLock.recordReexport("bank_voucher", bankAccountId, locked, actorUserId, actorRole, why, "xml");
+        reexported = locked.length;
+        claimedKeys = await tallyExportLock.lock("bank_voucher", bankAccountId, fresh, actorUserId, "xml");
+      } else {
+        if (!fresh.length) {
+          throw refuse(409, "TALLY_EXPORT_LOCKED",
+            `All ${locked.length} voucher(s) in this range were already pulled out for Tally. Importing them again would duplicate them. A finance head can re-export with a reason.`);
+        }
+        claimedKeys = await tallyExportLock.lock("bank_voucher", bankAccountId, fresh, actorUserId, "xml");
+        if (claimedKeys.length !== fresh.length) {
+          await tallyExportLock.release("bank_voucher", bankAccountId, claimedKeys, actorUserId, actorRole, "Export aborted: another export took some vouchers at the same moment").catch(() => undefined);
+          throw refuse(409, "TALLY_EXPORT_RACE", "Another export took some of these vouchers at the same moment. Try again.");
+        }
+        if (locked.length) {
+          skipped = locked.length;
+          result = await this.buildEnvelopeVerified(bankAccountId, from, to, new Set(locked.map((l) => l.key)));
+        }
+      }
+    }
+
     await logSensitiveAction({
       actor_user_id: actorUserId,
       actor_role: actorRole,
@@ -397,10 +440,10 @@ ${body}
       change_summary: {
         from: from ?? null, to: to ?? null,
         entry_count: result.entryCount, total_debit: result.totalDebit, total_credit: result.totalCredit,
-        is_final: result.isFinal,
+        is_final: result.isFinal, locked: result.isFinal ? result.entryCount : 0, skipped_already_exported: skipped, reexported,
       },
     }).catch(() => undefined);
-    return result;
+    return { ...result, skipped, reexported, claimedKeys };
   },
 
   /**
@@ -412,9 +455,11 @@ ${body}
    * be called directly, compared against buildEnvelope()'s output, and switched over
    * deliberately rather than silently.
    */
-  async buildEnvelopeFromJournal(bankAccountId: string, from?: string, to?: string) {
-    const rows = await fetchVoucherRowsFromJournal(bankAccountId, from, to);
-    const isFinal = rows.length > 0 && rows.every((r) => r.period_status === "closed");
+  async buildEnvelopeFromJournal(bankAccountId: string, from?: string, to?: string, exclude?: Set<string>) {
+    const all = await fetchVoucherRowsFromJournal(bankAccountId, from, to);
+    const isFinalAll = all.length > 0 && all.every((r) => r.period_status === "closed");
+    const rows = exclude ? all.filter((r) => !exclude.has(r.voucher_number)) : all;
+    const isFinal = isFinalAll;
     const watermark = isFinal ? "" : "\n  <!-- PROVISIONAL EXPORT: no bank_reconciliation for this period is closed yet. Not for final Tally posting. -->";
     const body = rows.map(buildVoucherXml).join("\n");
     const xml = `<ENVELOPE>${watermark}
@@ -434,6 +479,6 @@ ${body}
 `;
     const totalDebit = rows.reduce((sum, r) => sum + r.net_amount + r.tds_amount, 0);
     const totalCredit = totalDebit;
-    return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit };
+    return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit, voucherNumbers: rows.map((r) => r.voucher_number) };
   },
 };

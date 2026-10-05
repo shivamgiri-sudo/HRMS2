@@ -139,10 +139,13 @@ companyBankAccountRouter.get(
       req.query.to ? String(req.query.to) : undefined,
       actor(req).id,
       actor(req).role,
+      { reexport: String(req.query.reexport ?? "") === "true", reason: req.query.reason, roles: (req as any).userRoles },
     );
     res.setHeader("Content-Type", "application/xml; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="tally-export-${req.params.id}.xml"`);
+    // A provisional export is a preview, never locked, and named so it is not imported by mistake.
+    res.setHeader("Content-Disposition", `attachment; filename="tally-export-${req.params.id}${result.isFinal ? (result.reexported ? "-REEXPORT" : "") : "-PREVIEW"}.xml"`);
     res.setHeader("X-Tally-Export-Final", String(result.isFinal));
+    res.setHeader("X-Tally-Skipped-Already-Exported", String(result.skipped));
     res.setHeader("X-Tally-Export-Entry-Count", String(result.entryCount));
     res.send(result.xml);
   }),

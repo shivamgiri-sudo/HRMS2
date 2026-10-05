@@ -63,7 +63,7 @@ describe("finance list and export reads resolve scope", () => {
     ["imprest details report", () => routeBlock(IMPREST, "/reports/details")],
     ["imprest details export", () => routeBlock(IMPREST, "/reports/details/export")],
     ["salary vouchers", () => routeBlock(VOUCHER, "/runs/:runId/vouchers")],
-    ["salary voucher export", () => routeBlock(VOUCHER, "/runs/:runId/vouchers/export")],
+    ["salary voucher export", () => routeBlock(VOUCHER, "/runs/:runId/vouchers/export", 2600)],
     ["IDC db_bill voucher", () => routeBlock(VOUCHER, "/runs/bill/:period/vouchers")],
   ])("%s", (_name, get) => {
     expect(isScoped(get())).toBe(true);
@@ -79,7 +79,7 @@ describe("an export never returns what its list would not", () => {
     expect(detailsExport).toContain("branchScope: await scopeOf(req)");
 
     const vouchers = routeBlock(VOUCHER, "/runs/:runId/vouchers", 700);
-    const vouchersExport = routeBlock(VOUCHER, "/runs/:runId/vouchers/export", 900);
+    const vouchersExport = routeBlock(VOUCHER, "/runs/:runId/vouchers/export", 2600);
     expect(vouchers).toContain("scopeVouchers(req,");
     expect(vouchersExport).toContain("scopeVouchers(req,");
   });

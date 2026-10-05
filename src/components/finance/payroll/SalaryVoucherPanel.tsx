@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Download, RefreshCw } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { downloadTallyFile } from "@/lib/tallyExportDownload";
 import { money } from "@/components/finance/grn/grn-format";
 import {
   GRN_TR, GrnAlert, GrnCard, GrnCardHeader, GrnCellSub, GrnChip, GrnEmptyState, GrnIconButton,
@@ -47,6 +48,7 @@ type Voucher = {
   totals: { debit: number; credit: number; balanced: boolean };
   payroll_gross: number;
   employees: number;
+  tally_lock?: { status: string; format: string | null; exported_at: string; exported_by_name: string | null; reexport_count: number } | null;
 };
 
 type Payload = {
@@ -125,13 +127,37 @@ export function SalaryVoucherPanel() {
     const count = voucherQuery.data?.vouchers.length ?? 0;
     if (!window.confirm(`Post ${count} salary voucher(s) to Tally now? Vouchers already posted from this run are skipped.`)) return;
     setPushing(true); setPushError(""); setPushResult(null);
+    const send = async (extra: Record<string, unknown> = {}) =>
+      unwrap<any>(await hrmsApi.post<any>(`/api/finance/payroll/runs/${runId}/vouchers/push-to-tally`, {
+        serialFrom: serialFrom.trim(), companyCode: companyCode || undefined, ...extra,
+      }));
     try {
-      const body = { serialFrom: serialFrom.trim(), companyCode: companyCode || undefined };
-      setPushResult(unwrap(await hrmsApi.post<any>(`/api/finance/payroll/runs/${runId}/vouchers/push-to-tally`, body)));
+      try {
+        setPushResult(await send());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Posting to Tally failed";
+        if (!/already pulled out/i.test(message)) throw error;
+        const reason = window.prompt(`${message}\n\nFinance head only: type a reason (at least 10 characters) to post them again, or press Cancel.`);
+        if (!reason) return;
+        setPushResult(await send({ reexport: true, reason }));
+      }
+      void voucherQuery.refetch();
     } catch (error) {
       setPushError(error instanceof Error ? error.message : "Posting to Tally failed");
     } finally {
       setPushing(false);
+    }
+  };
+
+  const lockedCount = (voucherQuery.data?.vouchers ?? []).filter((v) => v.tally_lock).length;
+  const releaseLocks = async () => {
+    const reason = window.prompt("Release the lock on this run's vouchers so they can be exported again.\nUse this only if the import into Tally failed. Finance head only. Type a reason (at least 10 characters):");
+    if (!reason) return;
+    try {
+      await hrmsApi.post<any>(`/api/finance/payroll/runs/${runId}/vouchers/locks/release`, { reason });
+      void voucherQuery.refetch();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not release the lock");
     }
   };
   const data = voucherQuery.data;
@@ -157,17 +183,15 @@ export function SalaryVoucherPanel() {
                   onClick={async () => {
                     if (!runId) return;
                     // Fetched through hrmsApi so the bearer token goes with it — a bare
-                    // window.open sends no Authorization header and the API answers
-                    // "Missing authorization token". Same API route, so the file still comes from
-                    // the same scope resolution as the table.
+                    // window.open sends no Authorization header. With a serial the file is the real
+                    // import file and its vouchers are locked; without one it is a PREVIEW.
                     try {
-                      const blob = await hrmsApi.getBlob(`${exportUrl}${query ? "&" : "?"}format=${format}`);
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = `salary-voucher-${period || runId}.${ext}`;
-                      a.click();
-                      URL.revokeObjectURL(url);
+                      const preview = !serialFrom.trim() && format !== "xml";
+                      const result = await downloadTallyFile(
+                        `${exportUrl}${query ? "&" : "?"}format=${format}`,
+                        `salary-voucher-${period || runId}${preview ? "-PREVIEW" : ""}.${ext}`,
+                      );
+                      if (result === "downloaded") void voucherQuery.refetch();
                     } catch (error) {
                       window.alert(error instanceof Error ? error.message : "Export failed");
                     }
@@ -180,6 +204,9 @@ export function SalaryVoucherPanel() {
               <GrnChip active={false} onClick={postToTally}>
                 {pushing ? "Posting…" : "Post to Tally"}
               </GrnChip>
+              {lockedCount > 0 && (
+                <GrnChip active={false} onClick={releaseLocks}>🔒 Release locks ({lockedCount})</GrnChip>
+              )}
               <GrnIconButton aria-label="Refresh" onClick={() => voucherQuery.refetch()}>
                 <RefreshCw className={`h-3.5 w-3.5 ${voucherQuery.isFetching ? "animate-spin" : ""}`} />
               </GrnIconButton>
@@ -300,14 +327,21 @@ export function SalaryVoucherPanel() {
                 `${voucher.branch_name} · ${voucher.cost_centre} · ${voucher.employees} employees · ${voucher.date}`
               }
               action={
-                voucher.totals.balanced ? (
+                <span className="flex items-center gap-3">
+                  {voucher.tally_lock && (
+                    <span className="rounded bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700" title="Locked: already pulled out for Tally">
+                      🔒 {voucher.tally_lock.status === "posted" ? "Posted to Tally" : `Exported (${voucher.tally_lock.format ?? "file"})`} · {String(voucher.tally_lock.exported_at).slice(0, 10).split("-").reverse().join("-")}{voucher.tally_lock.exported_by_name ? ` · ${voucher.tally_lock.exported_by_name}` : ""}
+                    </span>
+                  )}
+                  {voucher.totals.balanced ? (
                   <span className="text-[11px] font-semibold text-grn-ok">Balanced</span>
                 ) : (
                   <span className="flex items-center gap-1 text-[11px] font-semibold text-grn-crit">
                     <AlertTriangle className="h-3.5 w-3.5" />
                     Does not balance
                   </span>
-                )
+                  )}
+                </span>
               }
             />
 

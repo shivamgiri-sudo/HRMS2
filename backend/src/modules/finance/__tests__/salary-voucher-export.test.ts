@@ -124,8 +124,8 @@ describe("authorisation", () => {
 
   it("applies branch scope on top of the role, on both endpoints", () => {
     const calls = SRC.match(/await scopeVouchers\(req, /g) ?? [];
-    // list, export, the db_bill IDC endpoint and the Tally push — all scope.
-    expect(calls.length, "every voucher endpoint must scope").toBe(4);
+    // list, export (preview + claim), the db_bill IDC endpoint and the Tally push — all scope.
+    expect(calls.length, "every voucher endpoint must scope").toBe(5);
   });
 
   it("scopes by the voucher's branch id rather than its name", () => {
@@ -138,7 +138,7 @@ describe("authorisation", () => {
     expect(SRC).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
     // The one POST sends vouchers OUT to Tally; it writes nothing to payroll.
     const writes = [...SRC.matchAll(/salaryVoucherRouter\.(post|put|patch|delete)\(\s*"([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`);
-    expect(writes).toEqual(["post /runs/:runId/vouchers/push-to-tally"]);
+    expect(writes.sort()).toEqual(["post /runs/:runId/vouchers/locks/release", "post /runs/:runId/vouchers/push-to-tally"]);
   });
 });
 
@@ -180,7 +180,7 @@ describe("the voucher serial is Tally's, not ours", () => {
   });
 
   it("uses the validated parser on both the list and the export", () => {
-    const uses = SRC.match(/serialFrom: parseSerial\(req\.query\.serialFrom\)/g) ?? [];
+    const uses = SRC.match(/serialFrom: parseSerial\(req\.query\.serialFrom\)|const serialFrom = parseSerial\(req\.query\.serialFrom\)/g) ?? [];
     // list, export, and the db_bill IDC endpoint all validate the serial the same way.
     expect(uses, "every voucher endpoint must validate the serial").toHaveLength(3);
   });
@@ -216,5 +216,26 @@ describe("Tally HTTP gateway push", () => {
     const { buildTallyXml } = await import("../salary-voucher-formats.js");
     expect(buildTallyXml([], "MAS Callnet")).toContain("<SVCURRENTCOMPANY>MAS Callnet</SVCURRENTCOMPANY>");
     expect(buildTallyXml([])).toContain("<DESC></DESC>");
+  });
+});
+
+describe("Tally export lock (no duplicate imports)", () => {
+  it("exports lock the vouchers first and only claim ones nobody pulled before", () => {
+    expect(SRC).toContain("tallyExportLock.lock(\"salary_voucher\"");
+    expect(SRC).toContain("ALL_LOCKED");
+    expect(SRC).toContain("skipBuckets");
+  });
+  it("a preview without a serial is never locked and the XML refuses to be a preview", () => {
+    expect(SRC).toContain('"-PREVIEW"');
+    expect(SRC).toContain("before exporting the Tally XML");
+  });
+  it("re-export and release are finance-head only and need a reason", () => {
+    const lock = readFileSync(at("../tally-export-lock.service.ts"), "utf8");
+    expect(lock).toContain('new Set(["finance_head", "super_admin"])');
+    expect(lock).toContain("MIN_REASON = 10");
+    expect(SRC).toContain('requireRole("finance_head", "super_admin")');
+  });
+  it("keys a voucher by company and branch, not by its number", () => {
+    expect(SRC).toContain("`${v.company_code}|${v.branch_id}`");
   });
 });
