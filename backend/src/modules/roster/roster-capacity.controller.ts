@@ -64,11 +64,22 @@ export const rosterCapacityController = {
         parseInt(dayOfWeek)
       );
 
-      if (!config) {
-        return res.status(404).json({ error: 'Capacity config not found' });
-      }
+      // An unconfigured day is a normal state (the page shows defaults), not a 404.
+      res.json(config ?? null);
+    } catch (error: unknown) {
+      const err = error as Error;
+      res.status(500).json({ error: err.message });
+    }
+  },
 
-      res.json(config);
+  async listCapacityConfigs(req: Request, res: Response) {
+    try {
+      const { processId } = req.params;
+      if (!(await assertProcessScope(req, processId))) {
+        return res.status(403).json({ error: 'Not authorized for this process' });
+      }
+      const configs = await rosterCapacityService.listCapacityConfigs(processId);
+      res.json({ success: true, data: configs });
     } catch (error: unknown) {
       const err = error as Error;
       res.status(500).json({ error: err.message });

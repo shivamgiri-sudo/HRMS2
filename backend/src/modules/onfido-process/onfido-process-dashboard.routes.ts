@@ -102,13 +102,10 @@ router.get(
       from: q.from ?? d90.toISOString().slice(0, 10),
       to: q.to ?? new Date().toISOString().slice(0, 10),
     };
+    // Most callers are not Onfido analysts, and an analyst can have an empty
+    // range: both are a normal empty state (200, data: null), not a 404.
     const data = await svc.getAnalystPerformance(email, filters);
-    if (!data)
-      return res.status(404).json({
-        success: false,
-        message: "No Onfido records for your account in this range.",
-      });
-    res.json({ success: true, data });
+    res.json({ success: true, data: data ?? null });
   }),
 );
 

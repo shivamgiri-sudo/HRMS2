@@ -778,7 +778,14 @@ export function FraudComparisonPanel({
                   previewUrl={digilockerUrls?.previewUrl}
                   faceDetectUrl={digilockerUrls?.faceDetectUrl}
                   isPdf={digilockerUrls?.isPdf}
-                  photoUrl={`/api/ats/fraud-alerts/documents/digilocker-face-photo/${candidateId}`}
+                  // Only ask for the eKYC photo when the server says one exists, so a
+                  // candidate without one does not produce a 404. With no identity
+                  // snapshot (older payload / snapshot failed) keep the old try-and-fall-back.
+                  photoUrl={
+                    identity && !identity.subject.hasDigilockerPhoto
+                      ? undefined
+                      : `/api/ats/fraud-alerts/documents/digilocker-face-photo/${candidateId}`
+                  }
                   label="DigiLocker Aadhaar"
                   subLabel="Govt-verified · ground truth"
                   isTrusted={!!digilockerFile}

@@ -80,8 +80,6 @@ const KNOWN_GAPS: Record<string, string> = {
     "Blocked on a schema decision. The client sends review_period/status/comments/acknowledged_*; performance_feedback_report has none of them and is a generated artifact (report_generated_at, total_reviewers), not a hand-authored record. Needs a separate employee review table.",
   "PATCH /api/performance-feedback/reports/:p":
     "Same schema decision as POST /reports. The delete flow is PATCH {status:'deleted'} against a status column that does not exist.",
-  "GET /api/wfm/roster":
-    "Deliberately unbuilt. /roster/assignments cannot serve it: requireRosterPlanScope throws when planId is absent, before the global-role bypass, and the caller is a plan-agnostic date-range view. Needs a cross-plan read model.",
 
   // The two NativeOpsCommandCenter entries are retired 2026-08-28, and their premise had gone
   // stale in the same way the TNI pair's had: that page is committed and IS mounted, at

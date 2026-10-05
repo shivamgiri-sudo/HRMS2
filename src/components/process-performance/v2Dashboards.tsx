@@ -207,7 +207,7 @@ export function V2DashboardView({ company, dashboard, onOpenDashboard }: {
 }) {
   return (
     <>
-      dashboard.kind === "inbound" ? (
+      {dashboard.kind === "inbound" ? (
               // Dialer-backed inbound processes share one full dashboard (overview / hour / date /
               // agent / LOB / wait & abandon / callers, with call-level drill-down). GNC's earlier
               // GncInboundDashboard component stays on disk but is no longer routed. Clovia still
@@ -271,7 +271,7 @@ export function V2DashboardView({ company, dashboard, onOpenDashboard }: {
               <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
                 Nothing here yet
               </div>
-            )
+            )}
     </>
   );
 }

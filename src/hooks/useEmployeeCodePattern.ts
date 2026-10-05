@@ -29,7 +29,9 @@ export function useEmployeeCodePattern() {
     queryKey: ["employee-code-pattern"],
     queryFn: async (): Promise<EmployeeCodePattern> => {
       try {
-        const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/org/settings/employee_code_pattern");
+        // optional=1: an unset key answers 200 { data: null } instead of a 404, so the
+        // default pattern is used without an error request on every /onboarding load.
+        const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/org/settings/employee_code_pattern?optional=1");
         if (res.data?.setting_value) {
           const val = typeof res.data.setting_value === 'string' ? JSON.parse(res.data.setting_value) : res.data.setting_value;
           return val as EmployeeCodePattern;

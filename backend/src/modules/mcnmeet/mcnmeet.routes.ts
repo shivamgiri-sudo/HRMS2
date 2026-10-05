@@ -40,6 +40,9 @@ function getAllowedMeetingTypes(role: string | undefined): MeetingType[] {
 }
 
 function featureGuard(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  // /config is the client's "is the module on?" probe: it must answer 200 { enabled: false }
+  // when disabled so pages can render a disabled state without a failing request.
+  if (req.path === '/config') return next();
   if (!env.MCNMEET_ENABLED) {
     return res.status(404).json({ success: false, message: 'MCNmeet module is disabled' });
   }
@@ -55,7 +58,7 @@ router.param("id", meetingParamGuard);
 
 router.get('/config', (req: AuthenticatedRequest, res: Response) => {
   const role = req.authUser?.role;
-  const allowedTypes = getAllowedMeetingTypes(role);
+  const allowedTypes = env.MCNMEET_ENABLED ? getAllowedMeetingTypes(role) : [];
 
   res.json({
     success: true,

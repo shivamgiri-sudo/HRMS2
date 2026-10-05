@@ -31,7 +31,7 @@ import { OpportunitiesMissed } from "@/components/my-kpi/OpportunitiesMissed";
 import { ClapBreakdown } from "@/components/my-kpi/ClapBreakdown";
 import { MyLearningSection } from "@/components/my-kpi/MyLearningSection";
 import { RealTimeGuidePanel } from "@/components/my-kpi/RealTimeGuidePanel";
-import { useAgentQualityData, useCallDetail } from "@/hooks/useAgentQualityData";
+import { useAgentQualityData, useCallDetail, qualityRetry } from "@/hooks/useAgentQualityData";
 import { HeroCard } from "@/components/quality-dashboard/HeroCard";
 import { QuickWins } from "@/components/quality-dashboard/QuickWins";
 import { WeaknessPanel } from "@/components/quality-dashboard/WeaknessPanel";
@@ -218,6 +218,7 @@ export default function MyKpiDashboard() {
     weakness,
     callsReview,
     error: qualityError,
+    serviceUnavailable: qualityUnavailable,
     refetch: qualityRefetch,
     cqScoreLoading,
     weaknessLoading,
@@ -243,6 +244,10 @@ export default function MyKpiDashboard() {
         }),
     staleTime: 120_000,
     placeholderData: (prev) => prev,
+    // Page 0 is already fetched by useAgentQualityData; only page through once
+    // that succeeded, so a down quality service is not asked twice more.
+    enabled: !!callsReview,
+    retry: qualityRetry(1),
   });
 
   // Derived KPI data
@@ -280,7 +285,7 @@ export default function MyKpiDashboard() {
   // Quality derived state
   const hasNoCalls = !qualityLoading && callsReview && callsReview.total_calls === 0;
   const hasPendingScoring = !qualityLoading && callsReview && callsReview.total_calls > 0 && callsReview.calls.length === 0;
-  const showQualityEmptyState = qualityError ? "error" : hasNoCalls ? "no-calls" : hasPendingScoring ? "scoring-pending" : null;
+  const showQualityEmptyState = qualityError ? (qualityUnavailable ? "unavailable" : "error") : hasNoCalls ? "no-calls" : hasPendingScoring ? "scoring-pending" : null;
 
   const processId = (user as { process_id?: string | number } | null)?.process_id;
 
@@ -620,6 +625,14 @@ export default function MyKpiDashboard() {
               {/* Quality empty states */}
               {showQualityEmptyState === "error" && (
                 <DataError onRetry={() => qualityRefetch()} />
+              )}
+              {showQualityEmptyState === "unavailable" && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center gap-3" data-testid="quality-unavailable">
+                  <Activity size={16} className="text-slate-400 flex-shrink-0" />
+                  <p className="text-xs text-slate-500">
+                    Quality data is temporarily unavailable. Your scores will appear here once the quality service is back.
+                  </p>
+                </div>
               )}
               {showQualityEmptyState === "no-calls" && <NoCalls />}
               {showQualityEmptyState === "scoring-pending" && <ScoringPending />}

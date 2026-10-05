@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ExternalLink, Loader, RefreshCcw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ExternalLink, Info, Loader, RefreshCcw, ShieldCheck } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi, type HrmsApiError } from "@/lib/hrmsApi";
 
@@ -25,6 +25,9 @@ export function LmsPortalFrame({ portal }: { portal: LmsPortal }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [needsAdminLink, setNeedsAdminLink] = useState(false);
+  // LMS_IDENTITY_NOT_MAPPED on the trainee/coordinator portals is a data gap HR or the
+  // LMS admin closes, not a failure: show the server's message as information.
+  const [notMappedMessage, setNotMappedMessage] = useState<string | null>(null);
   const [linkAdminId, setLinkAdminId] = useState("");
   const [linkPassword, setLinkPassword] = useState("");
   const [linking, setLinking] = useState(false);
@@ -35,6 +38,7 @@ export function LmsPortalFrame({ portal }: { portal: LmsPortal }) {
     setLoading(true);
     setError(null);
     setNeedsAdminLink(false);
+    setNotMappedMessage(null);
     try {
       const res = await hrmsApi.get<{ success: boolean; data: LaunchContext }>(
         `/api/lms/launch-context?portal=${portal}`,
@@ -44,6 +48,12 @@ export function LmsPortalFrame({ portal }: { portal: LmsPortal }) {
       const code = (err as HrmsApiError)?.code;
       if (portal === "admin" && code === "LMS_IDENTITY_NOT_MAPPED") {
         setNeedsAdminLink(true);
+      } else if (code === "LMS_IDENTITY_NOT_MAPPED") {
+        setNotMappedMessage(
+          err instanceof Error && err.message
+            ? err.message
+            : "Your HRMS account is not linked to an LMS profile yet.",
+        );
       } else {
         setError(err instanceof Error ? err.message : "Unable to open LMS");
       }
@@ -157,6 +167,16 @@ export function LmsPortalFrame({ portal }: { portal: LmsPortal }) {
                 {linking ? "Verifying..." : "Verify & link"}
               </button>
             </div>
+          </div>
+        )}
+
+        {!loading && notMappedMessage && (
+          <div
+            role="status"
+            className="m-5 flex max-w-xl items-start gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-5 text-sm font-medium text-sky-900"
+          >
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+            <p>{notMappedMessage}</p>
           </div>
         )}
 

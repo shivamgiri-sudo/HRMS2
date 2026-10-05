@@ -118,7 +118,10 @@ export function useMeetingsList(filters?: { status?: string; type?: string; from
   });
 }
 
-export function useMyMeetings(filters?: { status?: string; from?: string; to?: string; page?: number }) {
+export function useMyMeetings(
+  filters?: { status?: string; from?: string; to?: string; page?: number },
+  options?: { enabled?: boolean },
+) {
   const params = new URLSearchParams();
   if (filters?.status) params.set('status', filters.status);
   if (filters?.from)   params.set('from', filters.from);
@@ -132,6 +135,7 @@ export function useMyMeetings(filters?: { status?: string; from?: string; to?: s
       meetings: r.meetings ?? [],
       total: r.total ?? 0,
     })),
+    enabled: options?.enabled ?? true,
     staleTime: 30 * 1000,
   });
 }

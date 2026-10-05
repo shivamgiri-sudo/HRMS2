@@ -4,7 +4,7 @@
  * Uses React Query for state management and caching
  */
 import { useQuery, useQueries } from "@tanstack/react-query";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { hrmsApi, getHrmsApiErrorStatus } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCallback } from "react";
 
@@ -85,9 +85,21 @@ export interface AgentQualityDataState {
 }
 
 /**
- * Fetch CQ score data
- * Cache: 5 minutes
+ * The /api/agent/* quality routes answer 503 when the external quality service is
+ * down and nothing is cached. That is an outage, not a transient blip: retrying
+ * only multiplies failing requests, and the UI should show a calm "unavailable"
+ * note rather than an error.
  */
+export function isQualityServiceUnavailable(error: unknown): boolean {
+  return getHrmsApiErrorStatus(error) === 503;
+}
+
+/** React Query `retry` that never retries a 503 from the quality service. */
+export function qualityRetry(maxRetries: number) {
+  return (failureCount: number, error: unknown) =>
+    !isQualityServiceUnavailable(error) && failureCount < maxRetries;
+}
+
 /**
  * Unwraps the `{ success, data }` envelope the /api/agent/* routes return.
  *
@@ -192,7 +204,7 @@ export function useAgentQualityData(employeeId?: string, callIdToLoad?: string) 
         staleTime: 5 * 60 * 1000, // 5 minutes
         gcTime: 10 * 60 * 1000, // 10 minutes
         enabled: isEnabled && !callIdToLoad,
-        retry: 2,
+        retry: qualityRetry(2),
       },
       {
         queryKey: ["quality-dashboard", "weakness", effectiveEmployeeId],
@@ -200,7 +212,7 @@ export function useAgentQualityData(employeeId?: string, callIdToLoad?: string) 
         staleTime: 10 * 60 * 1000, // 10 minutes
         gcTime: 15 * 60 * 1000, // 15 minutes
         enabled: isEnabled && !callIdToLoad,
-        retry: 2,
+        retry: qualityRetry(2),
       },
       {
         queryKey: ["quality-dashboard", "calls-review", effectiveEmployeeId],
@@ -208,14 +220,14 @@ export function useAgentQualityData(employeeId?: string, callIdToLoad?: string) 
         staleTime: 2 * 60 * 1000, // 2 minutes
         gcTime: 5 * 60 * 1000, // 5 minutes
         enabled: isEnabled && !callIdToLoad,
-        retry: 2,
+        retry: qualityRetry(2),
       },
       {
         queryKey: ["quality-dashboard", "call-detail", callIdToLoad],
         queryFn: () => (callIdToLoad ? fetchCallDetail(callIdToLoad) : null),
         staleTime: 0, // No cache - always fresh
         enabled: isEnabled && !!callIdToLoad,
-        retry: 1,
+        retry: qualityRetry(1),
       },
     ],
   });
@@ -246,6 +258,8 @@ export function useAgentQualityData(employeeId?: string, callIdToLoad?: string) 
     callDetail: callDetailQuery.data || null,
     isLoading,
     error,
+    /** True when a quality endpoint answered 503 (external quality service down, no cache). */
+    serviceUnavailable: queries.some((q) => isQualityServiceUnavailable(q.error)),
     refetch,
     // Individual query states for granular loading/error states
     cqScoreLoading: cqScoreQuery.isLoading,
