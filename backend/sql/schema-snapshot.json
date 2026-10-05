@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1231,
-  "columnCount": 17893,
+  "columnCount": 17894,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -11319,7 +11319,8 @@
       "meta_target_age_max",
       "meta_target_locations",
       "meta_target_radius_km",
-      "meta_screening_config"
+      "meta_screening_config",
+      "ad_required"
     ],
     "job_requisition_alert_log": [
       "id",
