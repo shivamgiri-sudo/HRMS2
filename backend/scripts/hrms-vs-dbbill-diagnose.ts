@@ -12,6 +12,7 @@
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { PROCESS_BY_COST_CENTRE } from "../src/modules/process-pnl/pnl-actuals.service.js";
 
 const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPacket[]>(sql, p))[0];
 const out = (tag: string, rows: unknown[]) => { for (const r of rows) console.log(`${tag} ${JSON.stringify(r)}`); };
@@ -22,7 +23,7 @@ const run = async (tag: string, sql: string, p: unknown[] = []) => {
 };
 
 (async () => {
-  for (const t of ["billing_provision_snapshot", "billing_invoice_particular_snapshot", "billing_credit_note_snapshot", "billing_invoice_snapshot"]) {
+  for (const t of ["billing_provision_snapshot", "billing_invoice_particular_snapshot", "billing_credit_note_snapshot"]) {
     await run("HD_SNAP", `SELECT '${t}' t, period_code p, COUNT(*) n, MAX(synced_at) last_sync FROM ${t} WHERE period_code IN (${IN}) GROUP BY period_code ORDER BY period_code`, PERIODS)
       .catch(() => undefined);
   }
@@ -31,7 +32,7 @@ const run = async (tag: string, sql: string, p: unknown[] = []) => {
 
   await run("HD_REV", `
     SELECT x.period_code p, x.cc, ccm.id ccm_id, ccm.company_name, ccm.active_status ccm_active, ccm.revenue_flag, ccm.branch_id, bm.branch_name,
-           COALESCE(pc.process_id, ccm.process_id) process_id, pm.process_name,
+           pc.process_id modal_process_id, ccm.process_id ccm_process_id, pmm.process_name modal_process, pmc.process_name ccm_process,
            SUM(x.particulars) particulars, SUM(x.prov) provision, SUM(x.bill) billing_amt, MAX(x.rev_active) revenue_active, SUM(x.credit) credit_note
       FROM (
         SELECT period_code, cost_centre_code COLLATE utf8mb4_unicode_ci cc, SUM(amount) particulars, 0 prov, 0 bill, NULL rev_active, 0 credit
@@ -45,9 +46,10 @@ const run = async (tag: string, sql: string, p: unknown[] = []) => {
       ) x
       LEFT JOIN cost_centre_master ccm ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = x.cc
       LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
-      LEFT JOIN process_master pm ON pm.id = COALESCE(ccm.process_id, NULL)
-      LEFT JOIN (SELECT NULL cost_centre_id, NULL process_id) pc ON pc.cost_centre_id = ccm.id
-     GROUP BY x.period_code, x.cc, ccm.id, ccm.company_name, ccm.active_status, ccm.revenue_flag, ccm.branch_id, bm.branch_name, ccm.process_id, pm.process_name
+      LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+      LEFT JOIN process_master pmm ON pmm.id = pc.process_id
+      LEFT JOIN process_master pmc ON pmc.id = ccm.process_id
+     GROUP BY x.period_code, x.cc, ccm.id, ccm.company_name, ccm.active_status, ccm.revenue_flag, ccm.branch_id, bm.branch_name, pc.process_id, ccm.process_id, pmm.process_name, pmc.process_name
      ORDER BY x.period_code, x.cc`, [...PERIODS, ...PERIODS, ...PERIODS]);
 
   await run("HD_RUN", `SELECT id, run_month, run_kind, status, total_employees, total_gross, scope_kind, branch_id, process_id FROM salary_prep_run WHERE run_month IN (${IN}) ORDER BY run_month, id`, PERIODS);
