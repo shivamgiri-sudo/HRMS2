@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1230,
-  "columnCount": 17888,
+  "tableCount": 1231,
+  "columnCount": 17893,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -3364,6 +3364,13 @@
       "is_active",
       "assigned_by",
       "assigned_at"
+    ],
+    "branch_health_signal_daily": [
+      "branch_name",
+      "report_date",
+      "signal_key",
+      "label",
+      "created_at"
     ],
     "branch_master": [
       "id",

@@ -1281,6 +1281,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2081_rejoin_stint_payroll_flag.sql", // Registered 2026-10-04. Seeds payroll_config_flags 'rejoin_stint_payroll_enabled' = 'false' (global row, NOT EXISTS-guarded because NULL branch/process defeat the unique key). Stint-aware payroll for rejoiners stays OFF until the owner enables it.
   "migrations/2082_increment_package_split_flag.sql", // Registered 2026-10-05. Seeds payroll_config_flags 'increment_package_split_enabled' = 'false' (global row, NOT EXISTS-guarded). Increment requests priced from their effective date, split by days mid-month; stays OFF until the owner enables it.
   "migrations/2083_employee_attendance_logic_override.sql", // Registered 2026-10-05. employee_attendance_logic_override: one row per employee whose attendance source (APR / COSEC / APR+COSEC) is set personally on the Attendance Rules page; beats the process/designation rules. One new table, additive, idempotent; with no rows the engine is unchanged.
+  "migrations/2084_branch_health_signal_daily.sql", // Registered 2026-10-05. branch_health_signal_daily: red-signal history per branch per day for the Branch Health Report streaks. One new table, additive, idempotent; the report also creates it on first write.
 ];
 
 export type MigrationHealth = {
