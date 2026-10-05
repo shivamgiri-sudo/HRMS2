@@ -342,9 +342,19 @@ export const ledgerReportsService = {
 
   /**
    * Tally-style vendor ledger ("Ledger Vouchers" view of a Sundry Creditor): opening balance,
-   * one row per voucher with Date / Particulars (To|By counter-ledger) / Vch Type / Vch No /
-   * Debit / Credit, period totals, and a closing balance shown Dr or Cr. Bills (GRNs) are the
-   * credit side; payments are the debit side. Balance sign: Dr positive, Cr negative.
+   * one row per voucher with Date / Particulars (To|By) / Vch Type / Vch No / Debit / Credit,
+   * period totals, and a closing balance shown Dr or Cr. Bills are the credit side, payments the
+   * debit side. Balance sign: Dr positive, Cr negative.
+   *
+   * BUILT FROM THE OPERATIONAL TABLES, not the journal. vendor_payment_tracking is what Finance
+   * pays against, and across all vendors the journal disagreed with it (GRN credits did not match
+   * the bills, and most payments never reached the journal). Here every bill is a credit at its
+   * bill date, every recorded payment (vendor_payment_transaction) is a debit, and where a bill's
+   * paid_amount is larger than its recorded payments (payments loaded from the legacy system
+   * without detail) the difference appears as one debit row, so the closing balance always equals
+   * the sum of balance_amount that Payment Dispatch shows.
+   *
+   * A vendor stored under several vendor_master ids (same name, 159 such groups) is one ledger.
    */
   async vendorStatement(vendorId: string, from?: string, to?: string, scope?: FinanceBranchScope) {
     const [vendorRows] = await db.execute<RowDataPacket[]>(
@@ -352,88 +362,85 @@ export const ledgerReportsService = {
     const vendor = (vendorRows as RowDataPacket[])[0];
     if (!vendor) return null;
 
-    // Opening balance: everything dated before `from`, journal and dispatch payments alike.
-    let opening = 0;
-    if (from) {
-      const oc = ["jel.account_type = 'vendor'", "jel.account_id = ?", "je.reversed_by_entry_id IS NULL", "je.entry_date < ?"];
-      const op: unknown[] = [vendorId, from];
-      pushBranchScope(oc, op, scope, "je.branch_id");
-      const [o] = await db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(jel.debit_amount),0) d, COALESCE(SUM(jel.credit_amount),0) c
-           FROM journal_entry_line jel JOIN journal_entry je ON je.id = jel.journal_entry_id
-          WHERE ${oc.join(" AND ")}`, op);
-      opening = Number((o as RowDataPacket[])[0].d) - Number((o as RowDataPacket[])[0].c);
-      const before = await vendorDispatchPayments(vendorId, undefined, undefined, scope, from);
-      opening += before.reduce((sum, r) => sum + Number(r.debit_amount), 0);
-      opening = money(opening);
-    }
+    const [idRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM vendor_master WHERE UPPER(TRIM(vendor_name)) = UPPER(TRIM(?))`, [vendor.vendor_name]);
+    const ids = [...new Set([vendorId, ...(idRows as RowDataPacket[]).map((r) => String(r.id))])];
+    const inIds = ids.map(() => "?").join(",");
 
-    const jc = ["jel.account_type = 'vendor'", "jel.account_id = ?", "je.reversed_by_entry_id IS NULL"];
-    const jp: unknown[] = [vendorId];
-    if (from) { jc.push("je.entry_date >= ?"); jp.push(from); }
-    if (to) { jc.push("je.entry_date <= ?"); jp.push(to); }
-    pushBranchScope(jc, jp, scope, "je.branch_id");
-    const [journalRows] = await db.execute<RowDataPacket[]>(
-      `SELECT je.id AS journal_entry_id, je.entry_date, je.narration, je.source_type, je.source_id, je.branch_id,
-              jel.debit_amount, jel.credit_amount, jel.narration AS line_narration,
-              g.grn_number, g.invoice_number, pv.voucher_number
-         FROM journal_entry_line jel
-         JOIN journal_entry je ON je.id = jel.journal_entry_id
-         LEFT JOIN grn_request g ON je.source_type = 'grn' AND g.id = je.source_id
-         LEFT JOIN payment_voucher pv ON je.source_type = 'payment_voucher' AND pv.id = je.source_id
-        WHERE ${jc.join(" AND ")}
-        ORDER BY je.entry_date ASC, je.posted_at ASC`, jp);
+    const bc = [`vpt.vendor_id IN (${inIds})`, "NOT (vpt.payment_status = 'Rejected' AND COALESCE(vpt.paid_amount,0) = 0)"];
+    const bp: unknown[] = [...ids];
+    pushBranchScope(bc, bp, scope, "vpt.branch_id");
+    const [bills] = await db.execute<RowDataPacket[]>(
+      `SELECT vpt.id, vpt.branch_id, vpt.due_amount, vpt.paid_amount, vpt.payment_date, vpt.payment_mode, vpt.bank_name AS vpt_bank,
+              vpt.transaction_id AS vpt_txn, COALESCE(g.bill_date, DATE(vpt.created_at)) AS bill_day,
+              g.grn_number, g.invoice_number
+         FROM vendor_payment_tracking vpt LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
+        WHERE ${bc.join(" AND ")}`, bp);
 
-    // The other side of each journal entry is the "Particulars" Tally prints after To/By.
-    const counter = new Map<string, string[]>();
-    const entryIds = [...new Set((journalRows as RowDataPacket[]).map((r) => String(r.journal_entry_id)))];
-    for (let i = 0; i < entryIds.length; i += 500) {
-      const chunk = entryIds.slice(i, i + 500);
-      const [others] = await db.execute<RowDataPacket[]>(
-        `SELECT journal_entry_id, account_type, account_id FROM journal_entry_line
-          WHERE journal_entry_id IN (${chunk.map(() => "?").join(",")})
-            AND NOT (account_type = 'vendor' AND account_id = ?)`, [...chunk, vendorId]);
-      const names = await resolveAccountNames((others as RowDataPacket[]).map((o) => ({ accountType: o.account_type as AccountType, accountId: String(o.account_id) })));
-      for (const o of others as RowDataPacket[]) {
-        const name = names.get(`${o.account_type}:${o.account_id}`);
-        if (!name) continue;
-        const list = counter.get(String(o.journal_entry_id)) ?? [];
-        if (!list.includes(name)) list.push(name);
-        counter.set(String(o.journal_entry_id), list);
+    const billIds = (bills as RowDataPacket[]).map((r) => String(r.id));
+    const txByBill = new Map<string, RowDataPacket[]>();
+    for (let i = 0; i < billIds.length; i += 500) {
+      const chunk = billIds.slice(i, i + 500);
+      const [tx] = await db.execute<RowDataPacket[]>(
+        `SELECT vendor_payment_id, payment_date, payment_mode, bank_name, transaction_id, amount, net_amount, tds_amount, remarks, sequence_no
+           FROM vendor_payment_transaction WHERE vendor_payment_id IN (${chunk.map(() => "?").join(",")})`, chunk);
+      for (const t of tx as RowDataPacket[]) {
+        const list = txByBill.get(String(t.vendor_payment_id)) ?? [];
+        list.push(t);
+        txByBill.set(String(t.vendor_payment_id), list);
       }
     }
 
-    const dispatched = await vendorDispatchPayments(vendorId, from, to, scope);
-    const raw = [
-      ...(journalRows as RowDataPacket[]).map((r) => {
-        const isGrn = r.source_type === "grn";
-        const isPv = r.source_type === "payment_voucher";
-        const debit = Number(r.debit_amount) > 0;
-        return {
-          day: dayOf(r.entry_date), branchId: r.branch_id,
-          particulars: `${debit ? "To" : "By"} ${(counter.get(String(r.journal_entry_id)) ?? []).slice(0, 2).join(", ") || (isGrn ? "Purchase" : "Journal")}`,
-          vchType: isGrn ? "Purchase" : isPv ? "Payment" : "Journal",
-          vchNo: String(isGrn ? r.grn_number ?? "" : isPv ? r.voucher_number ?? "" : r.source_id ?? ""),
-          reference: String(isGrn ? r.invoice_number ?? "" : ""),
-          narration: String(r.line_narration ?? r.narration ?? ""),
-          debit: Number(r.debit_amount), credit: Number(r.credit_amount),
-        };
-      }),
-      ...dispatched.map((r) => ({
-        day: dayOf(r.entry_date), branchId: r.branch_id,
-        particulars: `To ${r.bank_name || r.payment_mode || "Bank"}`,
-        vchType: "Payment",
-        vchNo: String(r.transaction_id || r.grn_number || ""),
-        reference: String(r.grn_number ? `Against ${r.grn_number}${r.invoice_number ? ` / ${r.invoice_number}` : ""}` : ""),
-        narration: `${r.payment_mode ?? ""}${Number(r.tds_amount) > 0 ? ` (net ${money(Number(r.net_amount))}, TDS ${money(Number(r.tds_amount))})` : ""}${r.remarks ? ` - ${r.remarks}` : ""}`.trim(),
-        debit: Number(r.debit_amount), credit: 0,
-      })),
-    ].map((row, i) => ({ row, i })).sort((a, b) => a.row.day.localeCompare(b.row.day) || a.i - b.i).map((x) => x.row);
+    type Item = { day: string; branchId: unknown; particulars: string; vchType: string; vchNo: string; reference: string; narration: string; debit: number; credit: number };
+    const items: Item[] = [];
+    for (const b of bills as RowDataPacket[]) {
+      const billNo = String(b.grn_number ?? "");
+      const billDay = dayOf(b.bill_day);
+      const due = money(Number(b.due_amount));
+      if (due !== 0) {
+        items.push({ day: billDay, branchId: b.branch_id, particulars: "By Purchase", vchType: "Purchase", vchNo: billNo, reference: String(b.invoice_number ?? ""), narration: "", debit: 0, credit: due });
+      }
+      const txs = txByBill.get(String(b.id)) ?? [];
+      let recorded = 0;
+      for (const t of txs) {
+        const amt = money(Number(t.amount));
+        recorded = money(recorded + amt);
+        items.push({
+          day: dayOf(t.payment_date), branchId: b.branch_id,
+          particulars: `To ${t.bank_name || t.payment_mode || "Bank"}`, vchType: "Payment",
+          vchNo: String(t.transaction_id || billNo || ""),
+          reference: billNo ? `Against ${billNo}${b.invoice_number ? ` / ${b.invoice_number}` : ""}` : "",
+          narration: `${t.payment_mode ?? ""}${Number(t.tds_amount) > 0 ? ` (net ${money(Number(t.net_amount))}, TDS ${money(Number(t.tds_amount))})` : ""}${t.remarks ? ` - ${t.remarks}` : ""}`.trim(),
+          debit: amt, credit: 0,
+        });
+      }
+      const gap = money(Number(b.paid_amount) - recorded);
+      if (Math.abs(gap) > 0.005) {
+        items.push({
+          day: dayOf(b.payment_date ?? b.bill_day), branchId: b.branch_id,
+          particulars: gap > 0 ? `To ${b.vpt_bank || b.payment_mode || "Payment"} (earlier payment)` : "By Payment adjustment",
+          vchType: gap > 0 ? "Payment" : "Journal", vchNo: String(b.vpt_txn || billNo || ""),
+          reference: billNo ? `Against ${billNo}${b.invoice_number ? ` / ${b.invoice_number}` : ""}` : "",
+          narration: "Payment recorded on the bill without individual payment details",
+          debit: gap > 0 ? gap : 0, credit: gap < 0 ? -gap : 0,
+        });
+      }
+    }
+    items.sort((x, y) => x.day.localeCompare(y.day) || (x.credit > 0 ? 0 : 1) - (y.credit > 0 ? 0 : 1));
 
-    const { branchNames } = await resolveDimensionNames(raw.map((r) => ({ branch_id: r.branchId } as RowDataPacket)));
+    let opening = 0;
+    const inPeriod: Item[] = [];
+    for (const it of items) {
+      if (from && it.day < from) { opening += it.debit - it.credit; continue; }
+      if (to && it.day > to) continue;
+      inPeriod.push(it);
+    }
+    opening = money(opening);
+
+    const { branchNames } = await resolveDimensionNames(inPeriod.map((r) => ({ branch_id: r.branchId } as RowDataPacket)));
     let running = opening;
     let totalDebit = 0, totalCredit = 0;
-    const rows = raw.map((r) => {
+    const rows = inPeriod.map((r) => {
       running = money(running + r.debit - r.credit);
       totalDebit += r.debit; totalCredit += r.credit;
       return {
@@ -460,8 +467,11 @@ export const ledgerReportsService = {
    * pays against, so it agrees with what Finance can actually still pay.
    */
   async vendorOutstanding(vendorId: string, asOf?: string, scope?: FinanceBranchScope) {
-    const conditions = ["vpt.vendor_id = ?", "vpt.balance_amount > 0.005", "vpt.payment_status NOT IN ('Rejected','Closed')"];
-    const params: unknown[] = [vendorId];
+    const [vn] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM vendor_master WHERE UPPER(TRIM(vendor_name)) = (SELECT UPPER(TRIM(vendor_name)) FROM vendor_master WHERE id = ? LIMIT 1)`, [vendorId]);
+    const ids = [...new Set([vendorId, ...(vn as RowDataPacket[]).map((r) => String(r.id))])];
+    const conditions = [`vpt.vendor_id IN (${ids.map(() => "?").join(",")})`, "vpt.balance_amount > 0.005", "vpt.payment_status NOT IN ('Rejected','Closed')"];
+    const params: unknown[] = [...ids];
     pushBranchScope(conditions, params, scope, "vpt.branch_id");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT vpt.id, g.grn_number, g.invoice_number, g.bill_date, g.due_date,

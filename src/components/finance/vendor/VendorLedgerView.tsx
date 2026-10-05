@@ -67,7 +67,7 @@ function VendorPicker({ value, onChange }: { value: VendorOption | null; onChang
     enabled: open,
     staleTime: 30_000,
     queryFn: async () => {
-      const res = await hrmsApi.get<any>(`/api/erp/vendors?q=${encodeURIComponent(debounced)}&limit=50&is_active=1`);
+      const res = await hrmsApi.get<any>(`/api/erp/vendors?q=${encodeURIComponent(debounced)}&limit=50`);
       const body = (res as any)?.data ?? res;
       const rows = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : [];
       return rows as VendorOption[];

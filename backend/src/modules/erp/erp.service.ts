@@ -57,9 +57,13 @@ function buildVendorWhere(filters: VendorListFilters): { where: string; params: 
   // caller has to filter client-side.
   const term = String(filters.q ?? "").trim();
   if (term) {
-    conds.push("(vendor_name LIKE ? OR vendor_code LIKE ? OR gst_number LIKE ?)");
-    const like = `%${term.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
-    params.push(like, like, like);
+    // Every word must appear somewhere in name / code / GST, in any order, so "sai sachi" finds
+    // "SACHI SAI ..." and a stray double space does not return nothing.
+    for (const word of term.split(/\s+/).filter(Boolean)) {
+      conds.push("(vendor_name LIKE ? OR vendor_code LIKE ? OR gst_number LIKE ?)");
+      const like = `%${word.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
+      params.push(like, like, like);
+    }
   }
 
   return { where: conds.length ? `WHERE ${conds.join(" AND ")}` : "", params };
