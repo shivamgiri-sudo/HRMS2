@@ -94,6 +94,7 @@ on:
           - sca-estimates-audit
           - repair-sca-estimates
           - du-mis-apply
+          - mis-schedule-run-now
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -435,6 +436,11 @@ jobs:
               # dry-run reports table/template state (READ ONLY session). apply runs sql/1965 + sql/1966 (additive, idempotent).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               node scripts/du-mis-apply.mjs $FLAG
+              ;;
+            mis-schedule-run-now)
+              # dry-run lists the schedule (recipients, subject, range). apply EMAILS it now to its recipients.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
+              npx tsx scripts/mis-schedule-run-now.ts $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
