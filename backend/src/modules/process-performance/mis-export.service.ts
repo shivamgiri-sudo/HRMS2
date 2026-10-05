@@ -17,6 +17,9 @@ import { getBirlanuDashboard } from "./birlanu-dashboard.service.js";
 import { getLpFeedbackDashboard } from "./lp-feedback-dashboard.service.js";
 import { getLpOnboardingDashboard } from "./lp-onboarding-dashboard.service.js";
 import { getSatyaRetailDashboard } from "./satya-retail-dashboard.service.js";
+import { buildSatyaMisWorkbook } from "./satya-retail-mis-workbook.service.js";
+import { buildLpMisWorkbook } from "./lp-mis-workbook.service.js";
+import { normalizeFilters } from "./satya-retail-report.service.js";
 import { getAppreciateWealthDashboard, parseFilters as parseAwFilters } from "./appreciate-wealth-dashboard.service.js";
 import { getInboundInsights, isInsightProject } from "../call-master/inbound-insights.service.js";
 import { buildPeriodColumns, proratedTarget, eachDay, type PeriodColumn } from "./mis-period-columns.js";
@@ -591,6 +594,16 @@ export interface MisBuildResult { raw: RawSheetResult[]; sections: string[]; ski
 export async function buildMisExcel(
   companyKey: string, companyLabel: string, fromInput: string, toInput: string, filePath: string,
 ): Promise<MisBuildResult> {
+  // Satya Retail's MIS is the ops team's workbook layout (Dashboard, Snap, AGENT-WISE,
+  // DD Raw, Alloction), built from the same report data as the dashboard -- see
+  // satya-retail-mis-workbook.service.ts. Every other company keeps the slide bundle below.
+  if (companyKey === "satya_retail") {
+    return buildSatyaMisWorkbook(filePath, normalizeFilters({ from: fromInput, to: toInput }));
+  }
+  // LP Feedback / LP Onboarding MIS mirror their own workbooks' visible sheets -- see lp-mis-workbook.service.ts.
+  if (companyKey === "lp_feedback" || companyKey === "lp_onboarding") {
+    return buildLpMisWorkbook(companyKey, fromInput, toInput, filePath);
+  }
   const registry = await buildRegistry();
   const entries = registry[companyKey];
   if (!entries || entries.length === 0) throw new Error(`No MIS bundle is configured for "${companyKey}" yet.`);

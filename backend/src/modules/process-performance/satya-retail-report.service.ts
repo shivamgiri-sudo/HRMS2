@@ -63,23 +63,23 @@ import type { RowDataPacket } from "mysql2";
  * looking at it -- same convention the old literal attempt column implied).
  */
 
-const A = "db_masmis.satya_allocation";
+export const A = "db_masmis.satya_allocation";
 const DIALER_CDR_TABLE = "dialer_db.data_master_in";
 const SATYA_CLIENT_ID = 499;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ROSTERS = ["Morning", "Absentee", "Unmapped"] as const;
 
-const A_DATE = `STR_TO_DATE(report_date, '%e-%b-%y')`;
-const WH = `CASE WHEN warehouse IS NULL OR warehouse = '' OR warehouse = 'Warehouse' THEN 'Unmapped' ELSE warehouse END`;
-const ROSTER = `CASE WHEN roster IN ('Morning','Absentee') THEN roster ELSE 'Unmapped' END`;
-const BEAT = `CASE WHEN beat_name IS NULL OR beat_name = '' OR beat_name = 'Beatname' THEN 'Unmapped' ELSE beat_name END`;
-const REVENUE = `CASE WHEN order_value REGEXP '^[0-9,]+([.][0-9]+)?$' THEN CAST(REPLACE(order_value, ',', '') AS DECIMAL(12,2)) ELSE 0 END`;
+export const A_DATE = `STR_TO_DATE(report_date, '%e-%b-%y')`;
+export const WH = `CASE WHEN warehouse IS NULL OR warehouse = '' OR warehouse = 'Warehouse' THEN 'Unmapped' ELSE warehouse END`;
+export const ROSTER = `CASE WHEN roster IN ('Morning','Absentee') THEN roster ELSE 'Unmapped' END`;
+export const BEAT = `CASE WHEN beat_name IS NULL OR beat_name = '' OR beat_name = 'Beatname' THEN 'Unmapped' ELSE beat_name END`;
+export const REVENUE = `CASE WHEN order_value REGEXP '^[0-9,]+([.][0-9]+)?$' THEN CAST(REPLACE(order_value, ',', '') AS DECIMAL(12,2)) ELSE 0 END`;
 
 /** Additive counters shared by every allocation aggregate (headline, day,
  * roster, agent, warehouse, beat). Everything is a plain sum, so the client
  * can roll days up into weeks/MTD without losing accuracy. */
-const COUNTERS = `
+export const COUNTERS = `
   COUNT(*) AS allocation,
   SUM(disposition = 'Pending Call') AS pending,
   SUM(unique_flag = '1' AND disposition <> 'Pending Call') AS uniq,
@@ -214,7 +214,12 @@ export function normalizeFilters(input: { from?: unknown; to?: unknown; warehous
 
 /** Ids of older exact-duplicate allocation rows (same date + uid + flag as a
  * newer row) -- see the header comment. */
-async function allocDuplicateIds(): Promise<number[]> {
+export async function allocDuplicateIds(): Promise<number[]> {
+  // Two rules, both matching the ops team's MIS workbook (verified 2026-10-03 against its
+  // Alloction sheet: Absentee 1-Sep 578 - 124 shared with Morning = 454):
+  //  1. an exact repeat of the same date + uid + unique flag -> keep the newest row;
+  //  2. an Absentee row whose uid is also on a Morning row for the same date -> drop the
+  //     Absentee copy (the shop was allocated to the morning roster that day).
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.id
        FROM ${A} a
@@ -223,12 +228,18 @@ async function allocDuplicateIds(): Promise<number[]> {
               WHERE uid IS NOT NULL AND uid <> ''
               GROUP BY report_date, uid, unique_flag
              HAVING COUNT(*) > 1) d
-         ON d.report_date = a.report_date AND d.uid = a.uid AND d.unique_flag <=> a.unique_flag AND a.id < d.keep_id`,
+         ON d.report_date = a.report_date AND d.uid = a.uid AND d.unique_flag <=> a.unique_flag AND a.id < d.keep_id
+     UNION
+     SELECT a.id
+       FROM ${A} a
+      WHERE a.roster = 'Absentee' AND a.uid IS NOT NULL AND a.uid <> ''
+        AND EXISTS (SELECT 1 FROM ${A} m
+                     WHERE m.roster = 'Morning' AND m.report_date = a.report_date AND m.uid = a.uid)`,
   );
   return rows.map((r) => Number(r.id)).filter((n) => Number.isInteger(n));
 }
 
-function allocWhere(f: SatyaReportFilters, dupIds: number[], extra?: { sql: string; params: unknown[] }): { sql: string; params: unknown[] } {
+export function allocWhere(f: SatyaReportFilters, dupIds: number[], extra?: { sql: string; params: unknown[] }): { sql: string; params: unknown[] } {
   const parts = [`${A_DATE} >= ?`, `${A_DATE} < DATE_ADD(?, INTERVAL 1 DAY)`];
   const params: unknown[] = [f.from, f.to];
   if (f.warehouse) { parts.push(`(${WH}) = ?`); params.push(f.warehouse); }
@@ -279,7 +290,7 @@ function dialerCdrBase(f: SatyaReportFilters): { sql: string; params: (string | 
   return { sql, params: w.params };
 }
 
-interface DialerCdrRow {
+export interface DialerCdrRow {
   scenario: string; subScenario: string; warehouse: string; beatName: string;
   numberVal: string; callDate: Date; agentName: string; attempt: number;
 }
@@ -299,7 +310,7 @@ interface DialerCdrRow {
 const AGENT_CODE_RE = /MAS[0-9]+/;
 const DIALER_FETCH_TIMEOUT_MS = 90_000;
 
-async function fetchDialerCdrRows(f: SatyaReportFilters): Promise<DialerCdrRow[]> {
+export async function fetchDialerCdrRows(f: SatyaReportFilters): Promise<DialerCdrRow[]> {
   const w = dialerWhere(f);
   // Plain columns only -- the "Unmapped" fallback (CASE) and the MASxxxxx extraction
   // (REGEXP_SUBSTR) both moved to the JS .map() below: computed per-row in SQL they were a real,
