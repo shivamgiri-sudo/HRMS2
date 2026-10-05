@@ -25,7 +25,7 @@ import {
 // Measured on live data: 150,000 rows x 46 columns took ~67s to build (41 MB),
 // which would blow past production nginx's 60s proxy_read_timeout. 75,000 rows
 // keeps the worst case around 30s; a month of Bellavita Chat is ~70,000.
-const MASMIS_ROW_CAP = 75_000;
+const MASMIS_ROW_CAP = 1_000_000;
 const DIALER_ROW_CAP = 75_000;
 /** Total build time allowed before remaining raw rows/sheets are skipped (and reported). */
 const TIME_BUDGET_MS = 45_000;
@@ -252,9 +252,14 @@ async function writeMasmisRaw(
 
   const [colRows] = await db.query<RowDataPacket[]>(`SHOW COLUMNS FROM db_masmis.\`${src.table}\``);
   const allCols = colRows.map((c) => String(c.Field));
-  const cols = allCols.filter((c) => !EXCLUDED_RAW_COLUMNS.has(c) && !(src.excludeColumns ?? []).includes(c));
+  const tableCols = allCols.filter((c) => !EXCLUDED_RAW_COLUMNS.has(c) && !(src.excludeColumns ?? []).includes(c));
+  const derived = src.derivedColumns ?? [];
+  const cols = [...tableCols, ...derived.map((d) => d.header)];
   const hasId = allCols.includes("id");
-  const select = cols.map((c) => `\`${c}\``).join(", ");
+  const select = [
+    ...tableCols.map((c) => `\`${c}\``),
+    ...derived.map((d) => `(${d.expr}) AS \`${d.header}\``),
+  ].join(", ");
 
   const where: string[] = [];
   const params: unknown[] = [];

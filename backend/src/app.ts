@@ -319,6 +319,7 @@ import { bellavitaCartDashboardRouter } from "./modules/process-performance/bell
 import { appreciateWealthDashboardRouter } from "./modules/process-performance/appreciate-wealth-dashboard.routes.js";
 import { dashboardExportRouter } from "./modules/process-performance/dashboard-export.routes.js";
 import { misScheduleRouter } from "./modules/process-performance/mis-schedule.routes.js";
+import { altRxRouter } from "./modules/process-performance/alt-rx/alt-rx.routes.js";
 import { misExportRouter } from "./modules/process-performance/mis-export.routes.js";
 import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.routes.js";
 import { processDataSourceRouter } from "./modules/process-data-source/process-data-source.routes.js";
@@ -1044,6 +1045,7 @@ app.use("/api/process-performance", dashboardExportRouter);
 app.use("/api/inbound-insights", tpzInsightsGate);
 app.use("/api/inbound-insights", inboundInsightsRouter);
 app.use("/api/process-performance", misScheduleRouter);
+app.use("/api/process-performance", altRxRouter);
 app.use("/api/process-performance", misExportRouter);
 app.use("/api/process-kpi-dashboard", kpiScorecardRouter);
 app.use("/api/process-data-source", processDataSourceRouter);

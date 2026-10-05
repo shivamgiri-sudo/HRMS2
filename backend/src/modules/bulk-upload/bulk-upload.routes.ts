@@ -102,6 +102,7 @@ router.get("/coverage", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRe
  * their own branch/process, not the whole company's.
  */
 const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
+  "ALT_RX_DUMP_MASMIS",
   "AW_BILLING_MASMIS", "AW_INBOUND_MASMIS", "AW_MANDATE_MASMIS", "AW_NEW_CDR_MASMIS", "AW_OUT_MASMIS", "AW_CHAT_MASMIS",
   "BB_APR_MASMIS", "BB_CART_MASMIS", "BB_CHAT_MASMIS", "BB_SALE_MASMIS",
   "BIRLANU_APR_MASMIS", "BIRLANU_SALE_MASMIS",
@@ -529,6 +530,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_bb_apr_masmis_batch",
   "import_bb_cart_masmis_batch",
   "import_bb_chat_masmis_batch",
+  "import_alt_rx_dump_batch",
   // Bla Bli Blu Overall Sales (curated workbook sheet, distinct from the Shopify direct export)
   "import_bla_bli_blu_abandon_batch",
   "import_bla_bli_blu_overall_sales_batch",

@@ -71,6 +71,7 @@ on:
           - bank-manual-approve
           - digilocker-pending-diagnose
           - digilocker-sync-pending
+          - alt-rx-apply
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
@@ -638,6 +639,11 @@ jobs:
               # Dry-run lists recipients and subject; apply EMAILS the branch head / HR / COO the corrected 2026-10-03 report.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
               npx tsx scripts/branch-activity-resend.ts 2026-10-03 NOIDA-2 $FLAG
+              ;;
+            alt-rx-apply)
+              # dry-run reports db_masmis.altdump + template (READ ONLY). apply registers the template and tries the CREATE.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              node scripts/alt-rx-apply.mjs $FLAG
               ;;
             du-mis-apply)
               # dry-run reports table/template state (READ ONLY session). apply runs sql/1965 + sql/1966 (additive, idempotent).

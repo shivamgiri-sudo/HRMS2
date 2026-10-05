@@ -321,6 +321,12 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_alt_rx_dump_batch") {
+    const { importAltRxDumpBatch } = await import("./alt-rx-dump-bulk.service.js");
+    const data = await importAltRxDumpBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_bb_chat_masmis_batch") {
     const { importBbChatMasmisBatch } = await import("./bb-chat-masmis-bulk.service.js");
     const data = await importBbChatMasmisBatch(id, userId);

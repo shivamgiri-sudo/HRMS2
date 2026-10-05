@@ -33,6 +33,8 @@ export interface MasmisRawSource {
    * distinct value of this column -- e.g. bb_sale has re-uploaded duplicate rows per
    * bella_vita_order_id, so this collapses them to one row per real order. */
   dedupeBy?: string;
+  /** Computed columns appended after the table's own columns: a header plus a SQL expression. */
+  derivedColumns?: Array<{ header: string; expr: string }>;
   /** Shown in the Raw Data Notes sheet. */
   note?: string;
 }
@@ -78,7 +80,11 @@ const AW_DATE = (c: string) =>
   `CASE WHEN ${c} REGEXP '^[0-9]{5}$' THEN DATE_ADD('1899-12-30', INTERVAL CAST(${c} AS UNSIGNED) DAY) ` +
   `WHEN ${c} REGEXP '^[0-9]{1,2}-[A-Za-z]{3}-[0-9]{2}$' THEN STR_TO_DATE(${c}, '%e-%b-%y') ELSE NULL END`;
 
-const NO_RANGE_NOTE = "Exported in full: this report does not filter these rows by the selected date range.";
+const DU_TIME_COLUMNS = [
+  { header: "Thailand Date & Time (THA)", expr: "DATE_FORMAT(DATE_SUB(call_datetime, INTERVAL 2 HOUR), '%c/%e/%Y %k:%i')" },
+  { header: "Indian Date & Time (IST)", expr: "DATE_FORMAT(DATE_SUB(call_datetime, INTERVAL 210 MINUTE), '%c/%e/%Y %k:%i')" },
+];
+const NO_RANGE_NOTE ="Exported in full: this report does not filter these rows by the selected date range.";
 
 export const RAW_SOURCES: Record<string, RawSource[]> = {
   gnc_sale: [
@@ -157,14 +163,29 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
   ],
 
   housing_owner: [
-    { kind: "masmis", sheet: "owner_sale", table: "owner_sale", note: NO_RANGE_NOTE },
-    { kind: "masmis", sheet: "Owner_cdr", table: "Owner_cdr", note: NO_RANGE_NOTE },
+    { kind: "masmis", sheet: "owner_sale", table: "owner_sale", dateExpr: "STR_TO_DATE(CONCAT(LPAD(`day`, 2, '0'), '-', LEFT(`month`, 3), '-', RIGHT(`month`, 2)), '%d-%b-%y')" },
+    { kind: "masmis", sheet: "Owner_cdr", table: "Owner_cdr", dateExpr: D_MON_YY("report_date") },
     { kind: "masmis", sheet: "owner_agent_details", table: "owner_agent_details", note: "Agent roster/targets -- not date based." },
   ],
   housing_premium: [
-    { kind: "masmis", sheet: "pre_sale", table: "pre_sale", note: NO_RANGE_NOTE },
-    { kind: "masmis", sheet: "Pre_cdr", table: "Pre_cdr", note: NO_RANGE_NOTE },
+    { kind: "masmis", sheet: "pre_sale", table: "pre_sale", dateExpr: "report_date" },
+    { kind: "masmis", sheet: "Pre_cdr", table: "Pre_cdr", dateExpr: "report_date_iso" },
     { kind: "masmis", sheet: "pre_agent_details", table: "pre_agent_details", note: "Agent roster/targets -- not date based." },
+  ],
+
+  du_thailand: [
+    {
+      kind: "masmis", sheet: "DU CDR (Thailand)", table: "du_cdr_daily_actual", dateExpr: "call_date", extraWhere: "dashboard_label = 'THAILAND'",
+      derivedColumns: DU_TIME_COLUMNS,
+    },
+    { kind: "masmis", sheet: "DU APR (Thailand)", table: "du_apr_daily_actual", dateExpr: "call_date", extraWhere: "dashboard_label = 'THAILAND'" },
+  ],
+  du_korea: [
+    {
+      kind: "masmis", sheet: "DU CDR (Korea)", table: "du_cdr_daily_actual", dateExpr: "call_date", extraWhere: "dashboard_label = 'KOREA'",
+      derivedColumns: DU_TIME_COLUMNS,
+    },
+    { kind: "masmis", sheet: "DU APR (Korea)", table: "du_apr_daily_actual", dateExpr: "call_date", extraWhere: "dashboard_label = 'KOREA'" },
   ],
 
   lp_feedback: [

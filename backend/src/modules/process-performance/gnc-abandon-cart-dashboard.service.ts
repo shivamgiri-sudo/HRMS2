@@ -102,6 +102,42 @@ interface ProductRow extends RowDataPacket {
   sale_count: number;
   revenue: string | null;
 }
+interface AgentAllocRow extends RowDataPacket {
+  emp_id: string;
+  total: number;
+  connected: number;
+  not_connected: number;
+  same_day_connected: number;
+}
+interface AgentSaleRow extends RowDataPacket {
+  emp_id: string;
+  emp_name: string | null;
+  sale_count: number;
+  revenue: string | null;
+  cod_count: number;
+  paid_count: number;
+}
+
+export interface GncAbandonCartAgentRow {
+  empId: string;
+  name: string;
+  totalAllocation: number;
+  connected: number;
+  notConnected: number;
+  connectedPct: number;
+  sameDayConnected: number;
+  saleCount: number;
+  revenue: number;
+  aov: number;
+  codCount: number;
+  paidCount: number;
+  convOnConnectPct: number;
+}
+export interface GncAbandonCartAgentWiseData {
+  from: string;
+  to: string;
+  agents: GncAbandonCartAgentRow[];
+}
 
 const num = (v: string | number | null | undefined): number => {
   const n = Number(v);
@@ -305,4 +341,73 @@ export async function getGncAbandonCartDashboard(fromInput: string, toInput: str
       return { product: r.product ?? "Unknown", saleCount: sc, revenue: rev, aov: sc > 0 ? Math.round((rev / sc) * 100) / 100 : 0 };
     }),
   };
+}
+
+/**
+ * Agent-wise Performance for Abandon Cart: gnc_allocation (calling volume,
+ * emp_id only -- confirmed real and populated, 2026-09-27) joined in
+ * application code with gnc_sale WHERE campaign = 'Abandon Cart' (sale
+ * outcomes + emp_name, same table/columns gnc-sale-dashboard.service.ts's
+ * own agent performance already uses). The two are merged by emp_id here
+ * rather than in SQL because gnc_allocation has no emp_name column -- an
+ * agent who called but made zero sales still needs to appear, just without
+ * a name, so a LEFT JOIN either direction would silently drop someone.
+ */
+export async function getGncAbandonCartAgentWise(fromInput: string, toInput: string): Promise<GncAbandonCartAgentWiseData> {
+  const fallback = currentMonthRange();
+  const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
+  const to = DATE_RE.test(toInput) ? toInput : fallback.to;
+
+  const [allocRows, saleRows] = await Promise.all([
+    db.execute<AgentAllocRow[]>(
+      `SELECT emp_id, COUNT(*) AS total,
+         SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'connected' THEN 1 ELSE 0 END) AS connected,
+         SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'not connected' THEN 1 ELSE 0 END) AS not_connected,
+         SUM(CASE WHEN same_day_connect = 'Connected' THEN 1 ELSE 0 END) AS same_day_connected
+       FROM db_masmis.gnc_allocation
+       WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY) AND emp_id IS NOT NULL AND emp_id != ''
+       GROUP BY emp_id`,
+      [from, to],
+    ).then(([r]) => r),
+    db.execute<AgentSaleRow[]>(
+      `SELECT emp_id, MAX(emp_name) AS emp_name, COUNT(*) AS sale_count, SUM(gross_amount) AS revenue,
+         SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count,
+         SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS paid_count
+       FROM db_masmis.gnc_sale
+       WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY) AND campaign = 'Abandon Cart' AND emp_id IS NOT NULL AND emp_id != ''
+       GROUP BY emp_id`,
+      [from, to],
+    ).then(([r]) => r),
+  ]);
+
+  const byId = new Map<string, GncAbandonCartAgentRow>();
+  for (const a of allocRows) {
+    byId.set(a.emp_id, {
+      empId: a.emp_id, name: a.emp_id, totalAllocation: num(a.total), connected: num(a.connected),
+      notConnected: num(a.not_connected), connectedPct: pct(num(a.connected), num(a.total)), sameDayConnected: num(a.same_day_connected),
+      saleCount: 0, revenue: 0, aov: 0, codCount: 0, paidCount: 0, convOnConnectPct: 0,
+    });
+  }
+  for (const s of saleRows) {
+    const saleCount = num(s.sale_count);
+    const revenue = num(s.revenue);
+    const existing = byId.get(s.emp_id);
+    if (existing) {
+      existing.name = s.emp_name || existing.name;
+      existing.saleCount = saleCount;
+      existing.revenue = revenue;
+      existing.aov = saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0;
+      existing.codCount = num(s.cod_count);
+      existing.paidCount = num(s.paid_count);
+      existing.convOnConnectPct = pct(saleCount, existing.connected);
+    } else {
+      byId.set(s.emp_id, {
+        empId: s.emp_id, name: s.emp_name || s.emp_id, totalAllocation: 0, connected: 0, notConnected: 0, connectedPct: 0, sameDayConnected: 0,
+        saleCount, revenue, aov: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
+        codCount: num(s.cod_count), paidCount: num(s.paid_count), convOnConnectPct: 0,
+      });
+    }
+  }
+
+  return { from, to, agents: [...byId.values()].sort((a, b) => b.revenue - a.revenue) };
 }

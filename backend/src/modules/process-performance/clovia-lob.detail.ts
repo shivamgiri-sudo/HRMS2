@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getDialerPool } from "../../db/dialerDb.js";
 import {
   type Column, type DetailPayload, type DetailSection, type DispoRow, type QualRow,
   QUALITY_PARAMS, dispoKpis, fmtDdMmYyyy, maskFreeText, maskPhone, nameFromLogin, pct, round2, sum,
@@ -20,15 +21,40 @@ const HIDDEN_COLUMNS = new Set(["uploaded_by", "upload_batch_id", "chat_transcri
 const PHONE_COLUMNS = new Set(["phone_number"]);
 const FREE_TEXT_COLUMNS = new Set(["comment", "aoi_if_any", "acpt_reason"]);
 
-export type RecordTable = "cl_chat" | "cl_outbound" | "cl_dispo" | "cl_quality" | "cl_email_raw" | "cl_feedback" | "cl_rechurn_call" | "cl_apr";
-const RECORD_TABLES = new Set<string>(["cl_chat", "cl_outbound", "cl_dispo", "cl_quality", "cl_email_raw", "cl_feedback", "cl_rechurn_call", "cl_apr"]);
+export type RecordTable = "cl_chat" | "cl_dispo" | "cl_quality" | "cl_email_raw" | "cl_feedback" | "cl_rechurn_call" | "cl_apr";
+const RECORD_TABLES = new Set<string>(["cl_chat", "cl_dispo", "cl_quality", "cl_email_raw", "cl_feedback", "cl_rechurn_call", "cl_apr"]);
+/** "call" is handled separately in getRecord() -- it reads live from dialer_db.cdr_ob_250, not a db_masmis table. */
 export const RECORD_TYPE_TABLE: Record<string, RecordTable> = {
-  chat: "cl_chat", call: "cl_outbound", ticket: "cl_dispo", audit: "cl_quality", emailrow: "cl_email_raw",
+  chat: "cl_chat", ticket: "cl_dispo", audit: "cl_quality", emailrow: "cl_email_raw",
   feedback: "cl_feedback", rechurn: "cl_rechurn_call", apr: "cl_apr",
 };
 
+const OB_PHONE_COLUMNS = new Set(["PhoneNumber"]);
+
+/** "call" reads live from dialer_db.cdr_ob_250, not the old cl_outbound upload --
+ * clovia-lob-outbound.service.ts's row ids are cdr_ob_250's own primary key. */
+async function getOutboundRecord(id: number): Promise<DetailPayload | null> {
+  const pool = await getDialerPool();
+  const [rows] = await pool.execute<any[]>(`SELECT * FROM cdr_ob_250 WHERE id = ? LIMIT 1`, [id]);
+  const r = rows[0];
+  if (!r) return null;
+  const kv: NonNullable<DetailSection["kv"]> = [];
+  for (const [col, raw] of Object.entries(r)) {
+    let value: string | number | null = raw === null || raw === undefined || String(raw).trim() === "" ? null : String(raw);
+    if (value !== null && OB_PHONE_COLUMNS.has(col)) value = maskPhone(value);
+    kv.push({ label: col.replace(/([a-z])([A-Z])/g, "$1 $2"), value });
+  }
+  return {
+    title: `CALL #${id}`,
+    subtitle: r.CallDate ? `Source date ${fmtDdMmYyyy(String(r.CallDate).slice(0, 10))}` : undefined,
+    badge: { label: "dialer_db.cdr_ob_250", tone: "slate" },
+    sections: [{ title: "Record", type: "kv", kv }],
+  };
+}
+
 /** Every stored field of one row (see the masking rules above). */
 export async function getRecord(recordType: string, id: number): Promise<DetailPayload | null> {
+  if (recordType === "call") return getOutboundRecord(id);
   const table = RECORD_TYPE_TABLE[recordType];
   if (!table || !RECORD_TABLES.has(table) || !Number.isFinite(id)) return null;
   const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM db_masmis.\`${table}\` WHERE id = ? LIMIT 1`, [id]);

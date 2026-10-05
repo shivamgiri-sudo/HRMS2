@@ -87,6 +87,11 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     uploads: { BIRLANU_SALE_MASMIS: "import_birlanu_sale_batch", BIRLANU_APR_MASMIS: "import_birlanu_apr_batch" },
   },
   {
+    key: "alt_rx", label: "ALT RX", processCodes: [],
+    perfPrefixes: ["/alt-rx"], inboundKeys: [],
+    uploads: { ALT_RX_DUMP_MASMIS: "import_alt_rx_dump_batch" },
+  },
+  {
     key: "satya_retail", label: "Satya Retail", processCodes: ["SATYA_RETAIL", "BSS_OB_NOIDA_1045", "IDAM", "VST"], // Satya agents sit on IDAM / VST (traced in prod 2026-10-02) // SATYA_RETAIL (migration 1920, no branch); BSS_OB_NOIDA_1045 = "SATYA E-COM SERVICES LIMITED", the Noida row staff sit on
     perfPrefixes: ["/satya-retail-dashboard", "/satya-retail-report"], inboundKeys: [],
     uploads: { SATYA_ALLOCATION_MASMIS: "import_satya_allocation_batch", SATYA_CDR_MASMIS: "import_satya_cdr_batch" },

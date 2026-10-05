@@ -1,16 +1,17 @@
 import {
-  appendDashboardToWorkbook, newWorkbookWriter, writeNotesSheet, safeSheetName, isKnownDashboard,
+  appendDashboardToWorkbook, newWorkbookWriter, safeSheetName, isKnownDashboard,
   type DashboardExcelRequest, type ExportSlideInput, type RawSheetResult,
 } from "./dashboard-export.service.js";
 
 import { getBellavitaSaleDashboard } from "./bellavita-sale-dashboard.service.js";
 import { getBellavitaChatOverview } from "./bellavita-chat-overview.service.js";
 import { getBellavitaCartDashboard } from "./bellavita-cart-dashboard.service.js";
-import { getGncSaleDashboard } from "./gnc-sale-dashboard.service.js";
+import { getGncSaleDashboard, getGncAbandonCartDaily } from "./gnc-sale-dashboard.service.js";
 import { getGncChatDashboard } from "./gnc-chat-dashboard.service.js";
 import { getNeemansPerformanceDashboard } from "./neemans-performance-dashboard.service.js";
 import { getNeemansCartDashboard } from "./neemans-cart-dashboard.service.js";
 import { getHousingOwnerDashboard, getHousingOwnerEntityTrend, type HousingOwnerGroupRow } from "./housing-owner-dashboard.service.js";
+import { getDuDigitalDashboard, type DuDashboardLabel } from "./du-digital-dashboard.service.js";
 import {
   getHousingPremiumOverview, getHousingPremiumDayWise, getHousingPremiumAgentWise, getHousingPremiumSlotWise, type OverviewValues,
 } from "./housing-premium-dashboard.service.js";
@@ -238,7 +239,81 @@ async function bellavitaCartSlides(from: string, to: string): Promise<ExportSlid
 
 async function gncSaleSlides(from: string, to: string): Promise<ExportSlideInput[]> {
   const d = await getGncSaleDashboard(from, to);
+  const abandonDaily = await getGncAbandonCartDaily(from, to);
+  const abandonSalesByDate = new Map(d.dateWiseBreakdown.map((r) => [r.date, r.byCampaign["Abandon Cart"]?.totalSaleCount ?? 0]));
   return [{
+    title: "GNC Abandon Cart Allocation",
+    tables: [{
+      title: "GNC-Abandon Cart - Overall Allocation Overview",
+      columns: [
+        "Date", "Total Allocation", "Workable Case", "Gross Target", "Net Target", "Net Revenue", "Net Achv %",
+        "Connected", "Connect%", "Same Day Unique Attempt", "Same Day Connected Count", "Same Day Connected %",
+        "NC Connected Count", "NC Connected %", "Conversion %", "Total Allocation", "Workable Case", "Connected", "Connect% (L/I)", "Sale Count",
+      ],
+      rows: abandonDaily.map((r) => {
+        const sale = abandonSalesByDate.get(r.date) ?? 0;
+        return [
+          r.date, r.total, "—", "—", "—", "—", "—",
+          r.connected, fmtPct(pct(r.connected, r.total)),
+          r.attempted, r.sameDayConnected, fmtPct(pct(r.sameDayConnected, r.attempted)),
+          r.ncConnected, fmtPct(pct(r.ncConnected, r.total)), fmtPct(pct(sale, r.total)),
+          r.total, "—", r.connected, fmtPct(pct(r.connected, r.attempted)), sale,
+        ];
+      }),
+    }],
+  }, {
+    title: "GNC Overall",
+    kpis: [
+      { label: "Sale Count", value: fmtNum(d.headline.saleCount) },
+      { label: "Amount", value: fmtNum(d.headline.turnover) },
+      { label: "Prepaid %", value: fmtPct(d.headline.prepaidPct) },
+      { label: "COD %", value: fmtPct(d.headline.codPct) },
+      { label: "Ach %", value: "—" },
+      { label: "Total Allocation", value: fmtNum(d.headline.totalAllocation) },
+      { label: "Same Day Connected", value: fmtPct(d.headline.sameDayConnectedPct) },
+      { label: "Active", value: fmtNum(d.headline.activeAgents) },
+    ],
+    tables: [
+      {
+        title: "COD vs Prepaid (date-wise)",
+        columns: ["Date", "Prepaid", "COD", "Total Sales"],
+        rows: d.dateWiseTrend.map((r) => [r.date, r.prepaidCount, r.codCount, r.saleCount]),
+      },
+      {
+        title: "LOB (campaign-wise sale count)",
+        columns: ["Campaign", "Sale Count"],
+        rows: d.campaignRevenue.map((c) => [c.campaign, c.saleCount]),
+      },
+      {
+        title: "Revenue top 10 agents",
+        columns: ["Agent", "Revenue"],
+        rows: [...d.topPerformers].sort((a, b) => b.turnover - a.turnover).slice(0, 10).map((p) => [p.empName, fmtInr(p.turnover)]),
+      },
+      {
+        title: "Allocation funnel",
+        columns: ["Stage", "Count", "% of base"],
+        rows: d.funnel.map((f) => [f.stage, f.count, `${f.pctOfBase}%`]),
+      },
+    ],
+  }, {
+    title: "Date Wise Performance",
+    tables: [{
+      title: "Date Wise Performance",
+      columns: [
+        "Date",
+        ...d.campaigns.flatMap((c) => [`${c} COD Sale`, `${c} COD Top line`, `${c} Paid Sale`, `${c} Paid Top line`, `${c} Grand Total Sale`, `${c} Grand Total Top line`]),
+        "RTD & RTO Sale", "RTD & RTO Top line", "Net Sale", "Net Sale Amount",
+      ],
+      rows: d.dateWiseBreakdown.map((r) => [
+        r.date,
+        ...d.campaigns.flatMap((c) => {
+          const b = r.byCampaign[c];
+          return [b?.codSaleCount ?? 0, b?.codAmount ?? 0, b?.paidSaleCount ?? 0, b?.paidAmount ?? 0, b?.totalSaleCount ?? 0, b?.totalAmount ?? 0];
+        }),
+        "—", "—", "—", "—",
+      ]),
+    }],
+  }, {
     title: "Sale Performance",
     kpis: [
       { label: "Turn Over", value: fmtInr(d.headline.turnover) },
@@ -583,6 +658,47 @@ async function housingPremiumSlides(from: string, to: string): Promise<ExportSli
   }];
 }
 
+async function duDigitalSlides(label: DuDashboardLabel, from: string, to: string): Promise<ExportSlideInput[]> {
+  const d = await getDuDigitalDashboard(label, from, to);
+  const k = d.kpis;
+  return [
+    {
+      title: "Overview",
+      kpis: [
+        { label: "Offered", value: fmtNum(k.offered) },
+        { label: "Answered", value: fmtNum(k.answered) },
+        { label: "Abandoned", value: fmtNum(k.abandoned) },
+        { label: "SL %", value: `${k.slPct}%` },
+        { label: "AL %", value: `${k.alPct}%` },
+        { label: "Abandon %", value: `${k.abandonPct}%` },
+        { label: "AHT", value: k.aht },
+        { label: "Agents", value: fmtNum(k.agentCount) },
+      ],
+      tables: [{
+        title: "Date Wise Performance",
+        columns: ["Date", "Offered", "Answered", "Answered within 20s", "Abandoned", "SL %", "AL %", "Abandon %", "AHT", "Agents"],
+        rows: d.daily.map((r) => [r.date, r.offered, r.answered, r.answeredWithin20, r.abandoned, `${r.slPct}%`, `${r.alPct}%`, `${r.abandonPct}%`, fmtHms(r.ahtSec), r.agentCount]),
+      }],
+    },
+    {
+      title: "Agent Wise Performance",
+      tables: [{
+        title: "Agent Wise Performance",
+        columns: ["Agent", "Offered", "Answered", "Abandoned", "AL %", "Calls", "Login", "Talk"],
+        rows: d.agents.map((a) => [a.agent, a.offered, a.answered, a.abandoned, `${a.alPct}%`, a.calls, a.login, a.talk]),
+      }],
+    },
+    {
+      title: "Slot Wise Performance",
+      tables: [{
+        title: "Slot Wise Performance",
+        columns: ["Date", "Slot", "Offered", "Answered", "Answered within 20s", "Abandoned", "SL %", "AL %", "AHT"],
+        rows: d.slots.map((s) => [s.date, s.hour, s.offered, s.answered, s.answeredWithin20, s.abandoned, `${s.slPct}%`, `${s.alPct}%`, fmtHms(s.ahtSec)]),
+      }],
+    },
+  ];
+}
+
 async function cloviaSlides(from: string, to: string): Promise<ExportSlideInput[]> {
   const d = await getCloviaChannelsDashboard(from, to);
   return [
@@ -694,6 +810,12 @@ async function buildRegistry(): Promise<Record<string, MisBundleEntry[]>> {
     housing_premium: [
       { dashboardKey: "housing_premium", title: "Overview", build: housingPremiumSlides },
     ],
+    du_thailand: [
+      { dashboardKey: "du_thailand", title: "DU Digital Thailand", build: (f, t) => duDigitalSlides("THAILAND", f, t) },
+    ],
+    du_korea: [
+      { dashboardKey: "du_korea", title: "DU Digital Korea", build: (f, t) => duDigitalSlides("KOREA", f, t) },
+    ],
     clovia: [
       { dashboardKey: "clovia", title: "Channels", build: cloviaSlides },
     ],
@@ -758,6 +880,7 @@ export async function buildMisExcel(
   if (companyKey === "lp_feedback" || companyKey === "lp_onboarding") {
     return buildLpMisWorkbook(companyKey, fromInput, toInput, filePath);
   }
+
   const registry = await buildRegistry();
   const entries = registry[companyKey];
   if (!entries || entries.length === 0) throw new Error(`No MIS bundle is configured for "${companyKey}" yet.`);
@@ -768,7 +891,6 @@ export async function buildMisExcel(
   const sections: string[] = [];
   const skipped: string[] = [];
   const deadline = Date.now() + 90_000; // MIS spans several dashboards, so a longer budget than a single-dashboard export
-
   for (const entry of entries) {
     if (!isKnownDashboard(entry.dashboardKey)) { skipped.push(`${entry.title}: no raw-source registry entry for "${entry.dashboardKey}"`); continue; }
     let slides: ExportSlideInput[];
@@ -794,7 +916,6 @@ export async function buildMisExcel(
     for (const s of skipped) ws.addRow([s]).commit();
     ws.commit();
   }
-  if (allRaw.length > 0) writeNotesSheet(wb, allRaw, used);
   await wb.commit();
   return { raw: allRaw, sections, skipped };
 }
