@@ -108,6 +108,7 @@ on:
           - hrms-gap-deepdive
           - hrms-people-bridge
           - dbbill-expense-discover
+          - dbbill-grn-sample
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -281,13 +282,17 @@ jobs:
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
               ;;
+            dbbill-grn-sample)
+              # Read-only in both modes: billQuery allows SELECT only.
+              npx tsx scripts/dbbill-grn-sample.ts
+              ;;
             dbbill-expense-discover)
               # Read-only in both modes: billQuery allows SELECT/SHOW/DESCRIBE only.
               npx tsx scripts/dbbill-expense-discover.ts
               ;;
             hrms-people-bridge)
               # Read-only in both modes: runs the P&L people-cost functions, writes nothing.
-              npx tsx scripts/hrms-people-bridge.ts
+              npx tsx scripts/hrms-people-bridge.ts 2026-05
               ;;
             hrms-gap-deepdive)
               # Read-only in both modes: SELECTs only (HRMS and db_bill).
