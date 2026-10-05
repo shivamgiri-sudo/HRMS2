@@ -122,8 +122,29 @@ async function main() {
     const preDoj = rows.filter((r) => r.date < doj);
     if (preDoj.length) console.log(`  skipping ${preDoj.length} db_bill day(s) before DOJ ${doj}: ${preDoj.map((r) => `${r.date} ${r.st[0]}`).join(", ")}`);
     const todo = rows.filter((r) => !have.has(r.date) && r.date >= doj);
+    // Pipeline placeholders (missing_punch, unlocked) that db_bill resolved to a real status are brought in line.
+    const fixes = existing
+      .map((e) => ({ d: String(e.d), cur: String(e.s), b: billByDate.get(String(e.d)) }))
+      .filter((x) => x.b && x.cur === "missing_punch" && x.b[0] !== x.cur);
+    console.log(`  to update (missing_punch -> db_bill status): ${fixes.length}`);
+    for (const f of fixes) console.log(`   ${f.d} missing_punch -> ${f.b![0]} lwp=${f.b![1]}`);
     console.log(`  to insert: ${todo.length}`);
     for (const r of todo) console.log(`   ${r.date} ${r.st[0]} lwp=${r.st[1]}`);
+    if (APPLY && fixes.length) {
+      const conn = await db.getConnection();
+      try {
+        await conn.beginTransaction();
+        for (const f of fixes) {
+          const [u] = await conn.execute<any>(
+            `UPDATE attendance_daily_record SET attendance_status = ?, lwp_value = ?, status_change_reason = 'db_bill 63388C mirror'
+              WHERE employee_id = ? AND record_date = ? AND attendance_status = 'missing_punch' AND is_locked = 0`,
+            [f.b![0], f.b![1], empId, f.d]);
+          if (u.affectedRows !== 1) throw new Error(`update of ${f.d} affected ${u.affectedRows} rows`);
+        }
+        await conn.commit();
+        console.log(`  ATTENDANCE updated: ${fixes.length} rows`);
+      } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
+    }
     if (APPLY && todo.length) {
       const conn = await db.getConnection();
       try {
