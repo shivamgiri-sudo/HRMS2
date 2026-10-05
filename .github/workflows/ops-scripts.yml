@@ -82,6 +82,7 @@ on:
           - recode-63388c-phase3
           - recode-63388c-compare
           - recode-63388c-phase4
+          - recode-63388c-phase5
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -226,6 +227,11 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            recode-63388c-phase5)
+              # PHASE 5 of the 63388C clash: copy Tina's db_bill qualification to employee_education. dry-run writes nothing.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/recode-63388c-phase5.ts $FLAG
               ;;
             recode-63388c-phase4)
               # PHASE 4 of the 63388C clash: re-code Talabhai's ATS candidate/bridge rows to 63388C-OLD. dry-run writes nothing.
