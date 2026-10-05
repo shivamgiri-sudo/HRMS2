@@ -100,6 +100,7 @@ on:
           - repair-sca-estimates
           - du-mis-apply
           - mis-schedule-run-now
+          - pnl-branch-op-audit
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -272,6 +273,10 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            pnl-branch-op-audit)
+              # Read-only in both modes: runs the P&L summary, writes nothing.
+              npx tsx scripts/pnl-branch-op-audit.ts
               ;;
             holiday-mapping-audit)
               # Read-only in both modes.
