@@ -19,6 +19,7 @@ import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentr
 import { isOpenPeriod, getLiveRevenueEstimate } from "./pnl-statement.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
+import { ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
@@ -1256,6 +1257,48 @@ function actualVendorStatusExpr(columns: Set<string>) {
   )`;
 }
 
+/**
+ * Processes that carry MAS vendor / GRN spend in a closed month, so the process row exists to receive it.
+ * getGrnVendorActuals builds its result per base row: spend attributed to a process that is not a base row
+ * (an inactive or head-office function) was silently dropped, which is how Head Office lost its whole
+ * August pool (VPT 25.3L, P&L 0). Own-company only (cost centre AND branch), so DialDesk / IDC spend can
+ * never pull a process in.
+ */
+async function getSpendProcessIds(period: string): Promise<string[]> {
+  if (!/^\d{4}-\d{2}$/.test(period)) return [];
+  const ids = new Set<string>();
+  const own = `${ownCompanyBranchSql("bm")} AND (ccm.id IS NULL OR ${ownCompanyCostCentreSql("ccm")})`;
+  if (await tableExists("vendor_payment_tracking")) {
+    const columns = await listColumns("vendor_payment_tracking");
+    const recognition = columns.has("recognition_period")
+      ? "COALESCE(vpt.recognition_period, DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m'))"
+      : "DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m')";
+    const rows = await safeRows<RowDataPacket>(
+      `SELECT DISTINCT COALESCE(vpt.process_id, ccm.process_id) AS process_id
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+         LEFT JOIN branch_master bm ON bm.id = vpt.branch_id
+        WHERE ${recognition} = ? AND ${actualVendorStatusExpr(columns)} AND ${own}`,
+      [period]
+    );
+    for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
+  }
+  if (await tableExists("grn_request")) {
+    const rows = await safeRows<RowDataPacket>(
+      `SELECT DISTINCT COALESCE(g.process_id, ccm.process_id) AS process_id
+         FROM grn_request g
+         LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+         LEFT JOIN branch_master bm ON bm.id = g.branch_id
+        WHERE g.accounting_period = ?
+          AND LOWER(REPLACE(COALESCE(g.status, ''), '_', ' ')) IN ('approved','finance head approved','pending accounts payment','payment scheduled','partially paid','paid','posted')
+          AND ${own}`,
+      [period]
+    );
+    for (const r of rows) if (r.process_id) ids.add(String(r.process_id));
+  }
+  return Array.from(ids);
+}
+
 async function getGrnVendorActuals(
   baseRows: ProcessPnlRecord[],
   period: string,
@@ -1507,9 +1550,10 @@ async function computeBranchRows(scope: PnlQueryFilters) {
   // employee's own process, and a process that is inactive was dropped, taking its payroll with it
   // (May 2026: about 13L across Finnable, Captureatrip, corporate functions, EBC Bridge, Adani, Aspeya).
   const payrollProcessIds = isOpenPeriod(scope.period ?? "") ? [] : Array.from((await getActualPeopleCost(scope.period ?? "")).byProcess.keys());
+  const spendProcessIds = isOpenPeriod(scope.period ?? "") ? [] : await getSpendProcessIds(scope.period ?? "");
   const includeProcessIds = isOpenPeriod(scope.period ?? "")
     ? []
-    : Array.from(new Set([...invoicedActuals.byProcess.keys(), ...payrollProcessIds]));
+    : Array.from(new Set([...invoicedActuals.byProcess.keys(), ...payrollProcessIds, ...spendProcessIds]));
   const baseRows = await processPnlService.listProcesses(includeProcessIds.length ? { ...scope, includeProcessIds } : scope);
   const processIds = baseRows.map((row) => row.processId);
   const policies = await getAllocationPolicies(scope.period);
