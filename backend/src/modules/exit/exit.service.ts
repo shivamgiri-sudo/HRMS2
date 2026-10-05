@@ -790,11 +790,24 @@ export const exitService = {
     // write the new date into exit_request but stamp employees.date_of_exit from the stale
     // value — reintroducing the exact two-systems-disagree split this precedence exists to
     // prevent, on the one transition where it is unrecoverable.
+    //
+    // No "today" fallback (owner decision 2026-10-06). Marking someone exited stamps
+    // employees.date_of_exit, which payroll, salary days, F&F and the attendance window treat as the
+    // end of employment. When no last working day had ever been entered, this used to write the
+    // date of the click instead - a guess that could pay or dock days the person never worked.
+    // Refuse instead; HR confirms the real last working day on the same action. The automatic exit
+    // job never reaches this: it only exits rows whose confirmed LWD has already passed.
     const lastWorkingDay =
       confirmedLwdInput ??
       (exitRecord.last_working_day_confirmed as string | null) ??
       (exitRecord.last_working_day_proposed as string | null) ??
-      new Date().toISOString().slice(0, 10);
+      null;
+    if (nextStatus === "exited" && !lastWorkingDay) {
+      throw Object.assign(
+        new Error("Confirm the employee's last working day before marking the exit as Exited. The Exit Date is set from it."),
+        { statusCode: 400, code: "EXIT_LWD_REQUIRED" },
+      );
+    }
 
     // Notice columns, folded into the single status UPDATE below so they commit atomically
     // with the transition that agreed them.
