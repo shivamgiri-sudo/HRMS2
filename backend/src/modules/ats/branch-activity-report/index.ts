@@ -297,6 +297,8 @@ export interface SendOptions {
   branches?: string[];
   /** Default true: build reports and resolve recipients, but send nothing. */
   dryRun?: boolean;
+  /** Prepended to every subject, e.g. "[REVISED] " when re-sending a corrected report. */
+  subjectPrefix?: string;
   /** Testing: deliver every branch's email to these addresses instead (no branch head / HR / COO mailed). */
   redirectTo?: string[];
   /** Idempotency hooks: skip a branch already sent for this date (restart / double-registration safe). */
@@ -357,9 +359,10 @@ export async function sendBranchActivityReports(
       const redirected = !!opts.redirectTo?.length;
       const to = redirected ? opts.redirectTo! : resolved.to;
       const cc = redirected ? [] : resolved.cc;
+      const baseSubject = `${opts.subjectPrefix ?? ""}${r.subject}`;
       const subject = redirected
-        ? `[TEST → ${resolved.to.join(", ") || "no branch head"}] ${r.subject}`
-        : r.subject;
+        ? `[TEST → ${resolved.to.join(", ") || "no branch head"}] ${baseSubject}`
+        : baseSubject;
       if (!to.length) {
         results.push({
           ...base,

@@ -57,6 +57,7 @@ on:
           - holiday-mapping-audit
           - branch-activity-audit
           - ats-candidate-created-date-repair
+          - branch-activity-resend-noida2
           - master-duplicate-audit
           - master-duplicate-merge
           - kit-esign-diagnose
@@ -376,6 +377,11 @@ jobs:
               # dry-runs unless given --apply.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               node scripts/ats-candidate-created-date-repair.mjs $FLAG
+              ;;
+            branch-activity-resend-noida2)
+              # Dry-run lists recipients and subject; apply EMAILS the branch head / HR / COO the corrected 2026-10-03 report.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
+              npx tsx scripts/branch-activity-resend.ts 2026-10-03 NOIDA-2 $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
