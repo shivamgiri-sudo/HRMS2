@@ -23,6 +23,7 @@ import { ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCo
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
+import { grnAccountingMonthSql, vendorAccountingMonthSql } from "./pnl-grn-month.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
@@ -1270,9 +1271,7 @@ async function getSpendProcessIds(period: string): Promise<string[]> {
   const own = `${ownCompanyBranchSql("bm")} AND (ccm.id IS NULL OR ${ownCompanyCostCentreSql("ccm")})`;
   if (await tableExists("vendor_payment_tracking")) {
     const columns = await listColumns("vendor_payment_tracking");
-    const recognition = columns.has("recognition_period")
-      ? "COALESCE(vpt.recognition_period, DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m'))"
-      : "DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m')";
+    const recognition = vendorAccountingMonthSql("vpt");
     const rows = await safeRows<RowDataPacket>(
       `SELECT DISTINCT COALESCE(vpt.process_id, ccm.process_id) AS process_id
          FROM vendor_payment_tracking vpt
@@ -1334,9 +1333,7 @@ async function getGrnVendorActuals(
       : columns.has("pnl_cost_amount")
         ? "COALESCE(vpt.pnl_cost_amount, vpt.due_amount, 0)"
         : "COALESCE(vpt.due_amount, 0)";
-    const recognitionExpr = columns.has("recognition_period")
-      ? "COALESCE(vpt.recognition_period, DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m'))"
-      : "DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m')";
+    const recognitionExpr = vendorAccountingMonthSql("vpt");
     const bucketExpr = columns.has("pnl_bucket")
       ? "COALESCE(vpt.pnl_bucket, CASE WHEN vpt.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END)"
       : "CASE WHEN vpt.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END";
@@ -1391,9 +1388,7 @@ async function getGrnVendorActuals(
       : columns.has("pnl_cost_amount")
         ? "COALESCE(g.pnl_cost_amount, g.amount, 0)"
         : "COALESCE(g.amount, 0)";
-    const recognitionExpr = columns.has("recognition_period")
-      ? "COALESCE(g.recognition_period, DATE_FORMAT(COALESCE(g.bill_date, g.reviewed_at, g.created_at), '%Y-%m'))"
-      : "DATE_FORMAT(COALESCE(g.bill_date, g.reviewed_at, g.created_at), '%Y-%m')";
+    const recognitionExpr = grnAccountingMonthSql("g");
     const bucketExpr = columns.has("pnl_bucket")
       ? "COALESCE(g.pnl_bucket, CASE WHEN g.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END)"
       : "CASE WHEN g.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END";
