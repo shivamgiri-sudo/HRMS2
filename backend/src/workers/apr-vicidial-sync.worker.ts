@@ -556,3 +556,26 @@ export function stopAprVicidialSyncWorker(): void {
   serverPools.clear();
   console.log(`[${WORKER_NAME}] Stopped`);
 }
+
+// ── One-off backfills (scripts/apr-resync-dates.ts) ─────────────────────────────────────────────
+// The same collection and upsert the hourly sync uses, split so a backfill can preview first.
+export type { AggRow };
+
+/** What the dialler servers hold for one IST date. Reads only. */
+export async function collectAprRowsForDate(istDate: string): Promise<Map<string, AggRow>> {
+  const rowMap = new Map<string, AggRow>();
+  await syncFromConfiguredServers(istDate, rowMap);
+  await syncFromLegacyDialer(istDate, rowMap);
+  return rowMap;
+}
+
+/** Net login seconds of one collected row, as the upsert stores it in Net_Login. */
+export function aggNetSeconds(a: AggRow): number {
+  return a.wait_sec + a.talk_sec + a.dispo_sec + a.PAUSE_sec;
+}
+
+/** Writes collected rows with the hourly sync's upsert (manual rows stay protected). */
+export async function writeAprRowsForDate(istDate: string, rowMap: Map<string, AggRow>): Promise<{ upserted: number; skipped: number }> {
+  const enrichMap = await loadEnrichmentMap();
+  return upsertAggregatedRows(rowMap, enrichMap, istDate);
+}
