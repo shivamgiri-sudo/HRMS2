@@ -23,6 +23,7 @@ import { maternityService } from "../compliance/maternity.service.js";
 import { calculateWeekoffEligibility } from "./weekoff-eligibility.service.js";
 import { resolveHolidaysForEmployeeV2 } from "./holiday-work.service.js";
 import { isStintPayrollEnabled, loadStintScopes, type StintScope } from "./stint-payroll.service.js";
+import { isIncrementSplitEnabled, resolveIncrementPackage, toPackageParts, type Executor as IncrementExecutor } from "./increment-package-split.js";
 import { checkAndReverseLeave } from "./leave-reversal.service.js";
 import {
   detectAndCalculateHolidayWork,
@@ -958,6 +959,9 @@ export async function calculatePayrollRunScoped(
   // Rejoin v3 stint-aware payroll (migration 2081), default OFF and fail-closed: any read error is
   // OFF. When off, nothing below changes: stintScope is undefined for every employee.
   const stintPayrollOn = await isStintPayrollEnabled();
+  // Increment requests priced from their effective date (split by days mid-month). Default OFF: unchanged behaviour.
+  const incrementSplitOn = await isIncrementSplitEnabled();
+  let incrementSplitApplied = 0;
 
   // Salary is resolved as of the run month, not as of today.
   //
@@ -1527,13 +1531,37 @@ export async function calculatePayrollRunScoped(
       // Use conn so reads are within the transaction snapshot.
       const [scaRows] = await conn.execute<RowDataPacket[]>(
         `SELECT basic, hra, conveyance, special_allowance,
-              bonus, portfolio, medical_allowance, lta, other_allowance, pli, gross
+              bonus, portfolio, medical_allowance, lta, other_allowance, pli, gross, effective_date
          FROM salary_component_assignments
         WHERE employee_id = ? AND status = 'active'
         ORDER BY effective_date DESC LIMIT 1`,
         [emp.employee_id],
       );
-      const scaRow = (scaRows as any[])[0];
+      let scaRow = (scaRows as any[])[0];
+      // Approved increment requests: from the effective date the catalog package for the approved CTC replaces an
+      // older package row, split by calendar days when the date falls inside the employee's paid window. Off by
+      // default; see increment-package-split.ts. Any failure here leaves the package row exactly as read.
+      if (incrementSplitOn && scaRow && Number(scaRow.gross) > 0) {
+        try {
+          const windowStart = (emp.salary_start_date && String(emp.salary_start_date).slice(0, 10) > monthStart)
+            ? String(emp.salary_start_date).slice(0, 10)
+            : monthStart;
+          const windowEnd = payableThrough(emp.employment_end_date, monthEnd);
+          const inc = await resolveIncrementPackage(conn as unknown as IncrementExecutor, {
+            employeeId: emp.employee_id,
+            current: toPackageParts(scaRow),
+            currentEffectiveDate: scaRow.effective_date,
+            windowStart,
+            windowEnd,
+          });
+          if (inc) {
+            scaRow = { ...scaRow, ...inc.package };
+            incrementSplitApplied++;
+          }
+        } catch (err) {
+          logger.warn(`[payroll] run ${runId}: increment package split skipped for ${emp.employee_code}: ${err instanceof Error ? err.message : err}`);
+        }
+      }
 
       const [compRows] = await conn.execute<RowDataPacket[]>(
         `SELECT scm.component_code, ssc.calc_type, ssc.value
@@ -2732,6 +2760,10 @@ export async function calculatePayrollRunScoped(
     "SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1",
     [runId],
   );
+
+  if (incrementSplitApplied > 0) {
+    logger.info(`[payroll] run ${runId}: ${incrementSplitApplied} employee(s) priced from an approved increment request`);
+  }
 
   return {
     run_id: runId,
