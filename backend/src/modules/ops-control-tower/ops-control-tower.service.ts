@@ -564,13 +564,24 @@ export async function getEsignPendingDetail(
 // guess from the migration's own naming and should be checked against real data.
 const APPOINTMENT_ESIGN_DONE_VALUES = ["signed", "esigned", "completed"];
 
+/**
+ * HR's APPOINTMENT_LETTER_ESIGN provisioning task is the owner of "does this person need a letter chased".
+ * 'waived' is a deliberate exemption (the same convention the document checklist and provisioning blocks use);
+ * live 2026-10-05: 139 of the 143 employees listed as overdue had that task waived by HR. 'confirmed' / 'actioned'
+ * mean HR closed it too.
+ */
+const APPOINTMENT_TASK_CLOSED_SQL = `NOT EXISTS (SELECT 1 FROM it_provisioning_request wt
+                      WHERE wt.employee_id = e.id AND wt.request_type = 'join'
+                        AND wt.task_code = 'APPOINTMENT_LETTER_ESIGN' AND wt.status IN ('waived', 'confirmed', 'actioned'))`;
+
 function appointmentLetterSql(scoped: boolean): string {
   const doneClause = `LOWER(COALESCE(al.employee_esign_status, '')) IN (${APPOINTMENT_ESIGN_DONE_VALUES.map(() => "?").join(",")})`;
   return `SELECT e.branch_id, e.id AS employee_id, e.employee_code, e.full_name, e.created_at,
                  CASE WHEN ${doneClause} THEN al.employee_esign_at ELSE NULL END AS done_at
             FROM employees e
             LEFT JOIN appointment_letter_issue al ON al.employee_id = e.id
-           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}`;
+           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
+             AND ${APPOINTMENT_TASK_CLOSED_SQL}`;
 }
 
 export async function getAppointmentLetterBlock(
@@ -797,6 +808,10 @@ export async function getAccountDetailsMissingDetail(
 // report exists and overall_status = 'clear'; anything else (pending/in_progress/refer/negative,
 // or no report row yet) counts as pending.
 const BGV_DONE = ["clear"];
+/** HR waived BGV initiation for this joiner (live 2026-10-05: 61 of the pending list) — a deliberate exemption, not an open item. */
+const BGV_WAIVED_SQL = `NOT EXISTS (SELECT 1 FROM it_provisioning_request wb
+                      WHERE wb.employee_id = e.id AND wb.request_type = 'join'
+                        AND wb.task_code = 'HR_BGV_INITIATION' AND wb.status = 'waived')`;
 
 export async function getBgvPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
@@ -808,6 +823,7 @@ export async function getBgvPendingBlock(): Promise<CountBlock> {
        LEFT JOIN candidate_bgv_report r ON r.candidate_id = b.candidate_id
       WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (r.overall_status IS NULL OR r.overall_status NOT IN (${BGV_DONE.map(() => "?").join(",")}))
+        AND ${BGV_WAIVED_SQL}
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
   );
@@ -829,6 +845,7 @@ export async function getBgvPendingDetail(
        LEFT JOIN candidate_bgv_report r ON r.candidate_id = b.candidate_id
       WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (r.overall_status IS NULL OR r.overall_status NOT IN (${BGV_DONE.map(() => "?").join(",")}))
+        AND ${BGV_WAIVED_SQL}
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [branchId, NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
