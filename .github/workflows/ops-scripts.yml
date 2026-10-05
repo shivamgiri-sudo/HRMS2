@@ -83,6 +83,7 @@ on:
           - recode-63388c-compare
           - recode-63388c-phase4
           - recode-63388c-phase5
+          - code-lookup-verify
           - reconcile-aug-incentives
           - zero-day-gross-audit
           - heal-zero-day-lines
@@ -227,6 +228,14 @@ jobs:
                 exit 1
               fi
               node scripts/roster-requests-verify.mjs
+              ;;
+            code-lookup-verify)
+              # Read-only: one employee code in HRMS and db_bill (record, dates, status, same-PAN/Aadhaar siblings). No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::code-lookup-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/code-lookup-verify.ts MAS63449
               ;;
             recode-63388c-phase5)
               # PHASE 5 of the 63388C clash: copy Tina's db_bill qualification to employee_education. dry-run writes nothing.
