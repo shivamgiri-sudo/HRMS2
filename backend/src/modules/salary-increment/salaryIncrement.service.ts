@@ -76,10 +76,18 @@ export const salaryIncrementService = {
     const params: unknown[] = [];
     if (filters.scope && filters.scope.sql !== "1=1") { conds.push(`(${filters.scope.sql})`); params.push(...filters.scope.params); }
     if (filters.employee_id) { conds.push("sir.employee_id = ?"); params.push(filters.employee_id); }
-    if (filters.status === "pending") {
-      conds.push("sir.status IN ('submitted','hr_validated','finance_validated')");
-    } else if (filters.status) {
-      conds.push("sir.status = ?"); params.push(filters.status);
+    // The 14,467 "Legacy Migration" rows (source = 'legacy': created by the system in July 2026 from db_bill history,
+    // 0% change, never approved) are records, not increments. They stay out of every working view and are
+    // reachable only through the explicit "legacy" filter.
+    if (filters.status === "legacy") {
+      conds.push("sir.source = 'legacy'");
+    } else {
+      conds.push("sir.source = 'hrms'");
+      if (filters.status === "pending") {
+        conds.push("sir.status IN ('submitted','hr_validated','finance_validated')");
+      } else if (filters.status) {
+        conds.push("sir.status = ?"); params.push(filters.status);
+      }
     }
     const term = (filters.search ?? "").trim();
     if (term) {

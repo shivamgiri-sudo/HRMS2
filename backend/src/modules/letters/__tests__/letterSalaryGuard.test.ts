@@ -40,6 +40,7 @@ describe("resolveApprovedIncrementVars", () => {
     const sql = String(execute.mock.calls[0][0]);
     expect(sql).toMatch(/status = 'implemented'/);
     expect(sql).toMatch(/approved_at IS NOT NULL/);
+    expect(sql).toMatch(/source = 'hrms'/); // a legacy migration row is not an increment
   });
 
   it("refuses with a 409 when no approved and implemented increment exists", async () => {

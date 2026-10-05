@@ -213,7 +213,7 @@ export function IncrementRequestsPanel() {
 
       {/* Status filter */}
       <div className="flex gap-2 flex-wrap">
-        {["pending", "all", "approved", "implemented", "rejected"].map((s) => (
+        {["pending", "all", "approved", "implemented", "rejected", "legacy"].map((s) => (
           <button
             key={s}
             onClick={() => { setStatusFilter(s); setPage(1); }}
@@ -223,7 +223,7 @@ export function IncrementRequestsPanel() {
                 : "bg-background border-border hover:bg-muted"
             }`}
           >
-            {s === "all" ? "All" : s === "pending" ? "Pending approval" : STATUS_LABELS[s as IncrStatus]}
+            {s === "all" ? "All" : s === "pending" ? "Pending approval" : s === "legacy" ? "Legacy import" : STATUS_LABELS[s as IncrStatus]}
           </button>
         ))}
         <Input

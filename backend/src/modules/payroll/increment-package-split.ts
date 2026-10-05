@@ -117,7 +117,7 @@ export async function resolveIncrementPackage(
   const [incRows] = await exec.execute<RowDataPacket[]>(
     `SELECT id, proposed_ctc, effective_from
        FROM salary_increment_request
-      WHERE employee_id = ? AND status = 'implemented' AND approved_at IS NOT NULL AND effective_from <= ?
+      WHERE employee_id = ? AND source = 'hrms' AND status = 'implemented' AND approved_at IS NOT NULL AND effective_from <= ?
       ORDER BY effective_from DESC, implemented_at DESC
       LIMIT 1`,
     [employeeId, windowEnd],

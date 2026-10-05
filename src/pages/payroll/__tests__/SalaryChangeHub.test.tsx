@@ -57,6 +57,7 @@ describe("Salary Change & Increment hub", () => {
     roles = ["payroll_head"];
     const html = render("increment");
     expect(html).toContain("Pending approval");
+    expect(html).toContain("Legacy import");
     expect(html).not.toContain("Finance Validated");
   });
 

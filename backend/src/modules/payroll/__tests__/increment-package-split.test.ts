@@ -106,6 +106,7 @@ describe("resolveIncrementPackage", () => {
     const sql = String(ex.execute.mock.calls[0][0]);
     expect(sql).toMatch(/status = 'implemented'/);
     expect(sql).toMatch(/approved_at IS NOT NULL/);
+    expect(sql).toMatch(/source = 'hrms'/); // never a legacy migration row
     expect(sql).toMatch(/effective_from <= \?/);
     expect(ex.execute.mock.calls[0][1]).toEqual(["e1", "2026-09-30"]);
   });

@@ -53,7 +53,7 @@ export async function resolveApprovedIncrementVars(employeeId: string): Promise<
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT proposed_ctc, effective_from
        FROM salary_increment_request
-      WHERE employee_id = ? AND status = 'implemented' AND approved_at IS NOT NULL
+      WHERE employee_id = ? AND source = 'hrms' AND status = 'implemented' AND approved_at IS NOT NULL
       ORDER BY effective_from DESC, implemented_at DESC
       LIMIT 1`,
     [employeeId],

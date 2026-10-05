@@ -50,4 +50,20 @@ describe("increment request list is paged (14,467 imported requests froze the ta
     expect(out.page).toBe(1);
     expect(out.limit).toBe(25);
   });
+
+  it("keeps the 14,467 legacy migration rows out of every working view", async () => {
+    for (const status of [undefined, "pending", "implemented", "approved"]) {
+      execute.mockReset();
+      execute.mockResolvedValueOnce([[]]).mockResolvedValueOnce([[{ n: 0 }]]);
+      await salaryIncrementService.list({ status });
+      expect(String(execute.mock.calls[0][0])).toMatch(/sir\.source = 'hrms'/);
+    }
+  });
+
+  it("reaches them only through the explicit legacy filter", async () => {
+    await salaryIncrementService.list({ status: "legacy" });
+    const sql = String(execute.mock.calls[0][0]);
+    expect(sql).toMatch(/sir\.source = 'legacy'/);
+    expect(sql).not.toMatch(/sir\.source = 'hrms'/);
+  });
 });
