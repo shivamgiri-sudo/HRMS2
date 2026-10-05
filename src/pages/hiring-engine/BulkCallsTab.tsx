@@ -16,7 +16,7 @@ import CallResultsImport from "./CallResultsImport";
 interface PreviewRow { display: { phone: string; name: string; role: string; when: string }; rowNo: number; ok: boolean; errors: string[]; warnings: string[]; notes: string[]; row?: { mobile10: string; name: string; role: string; interviewAt: string; branchAddress: string; referenceId: string } }
 interface Preview { missingColumns: string[]; tooMany: boolean; rows: PreviewRow[]; summary: { total: number; valid: number; rejected: number; willSkip: number } }
 interface Batch { id: string; label: string | null; status: string; total_rows: number; rejected_rows: number; created_at: string; queued: number | null; in_progress: number | null; completed: number | null; skipped: number | null; cancelled: number | null; confirmed: number | null; rescheduled: number | null; declined: number | null; no_answer: number | null }
-interface Campaign { id: string; campaignName: string; requisitionCode: string | null; role: string | null; branchName: string | null; city: string | null; isAhmedabad: boolean; qualifiedFuture: number; invitedFuture: number }
+interface Campaign { id: string; status: string; campaignName: string; requisitionCode: string | null; role: string | null; branchName: string | null; city: string | null; isAhmedabad: boolean; qualifiedFuture: number; invitedFuture: number }
 interface Job { id: string; row_no: number; mobile10: string; candidate_name: string; role: string; interview_at: string; reference_id: string; status: string; skip_reason: string | null; attempts: number; outcome: string | null }
 
 const TEMPLATE = [
@@ -159,8 +159,8 @@ export default function BulkCallsTab() {
   return (
     <div className="space-y-6">
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Prepare from Meta campaigns">
-        <h2 className="flex items-center gap-2 font-semibold text-slate-900"><ListChecks className="h-4 w-4 text-blue-600" aria-hidden /> Prepare from active Meta campaigns</h2>
-        <p className="mt-1 text-sm text-slate-600">Builds the calling list for qualified candidates whose interview is still in the future. Ahmedabad (AHM) campaigns are pre-selected. You review the list before anything is queued.</p>
+        <h2 className="flex items-center gap-2 font-semibold text-slate-900"><ListChecks className="h-4 w-4 text-blue-600" aria-hidden /> Prepare from Meta campaigns</h2>
+        <p className="mt-1 text-sm text-slate-600">Builds the calling list for qualified candidates whose interview is still in the future. Ahmedabad (AHM) campaigns are pre-selected. A campaign marked draft or paused in HRMS is listed too when it has such candidates. You review the list before anything is queued.</p>
         {campaigns.length === 0 ? <p className="mt-3 text-sm text-slate-500">No active campaigns found.</p> : (
           <ul className="mt-3 grid gap-2 md:grid-cols-2">
             {campaigns.map((c) => (
@@ -168,7 +168,7 @@ export default function BulkCallsTab() {
                 <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors focus-within:ring-2 focus-within:ring-blue-500 ${picked.includes(c.id) ? "border-blue-300 bg-blue-50/50" : "border-slate-200 hover:bg-slate-50"}`}>
                   <input type="checkbox" className="mt-1 h-4 w-4 cursor-pointer" checked={picked.includes(c.id)} onChange={(e) => setPicked((p) => (e.target.checked ? [...p, c.id] : p.filter((x) => x !== c.id)))} aria-label={`Include ${c.campaignName}`} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-slate-900">{c.campaignName}{c.isAhmedabad && <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">AHM</span>}</span>
+                    <span className="block truncate font-medium text-slate-900">{c.campaignName}{c.isAhmedabad && <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">AHM</span>}{c.status !== "active" && <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-700" title="This campaign is not marked active in HRMS but has qualified candidates with a future interview">{c.status} in HRMS</span>}</span>
                     <span className="block text-xs text-slate-500">{c.role ?? "—"} · {c.branchName ?? "no branch"}</span>
                     <span className="mt-1 block text-xs text-slate-700"><b>{num(c.invitedFuture)}</b> invited and waiting · {num(c.qualifiedFuture)} qualified with a future interview</span>
                   </span>

@@ -28,9 +28,14 @@ const RECENT_EXPORT = `EXISTS (SELECT 1 FROM he_lead_event ev JOIN he_lead hl ON
      AND hl.mobile10 = RIGHT(REGEXP_REPLACE(ml.parsed_phone, '[^0-9]', ''), 10))`;
 const OPEN_REQ = "jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount";
 
-export async function listPrepareCampaigns(): Promise<Array<{ id: string; campaignName: string; requisitionCode: string | null; role: string | null; branchName: string | null; city: string | null; isAhmedabad: boolean; qualifiedFuture: number; invitedFuture: number }>> {
+/**
+ * Campaigns HR can prepare a list from. HRMS status is not a reliable "is it live" signal (the live Ahmedabad campaign
+ * sits in `draft`), so this lists active campaigns AND draft/paused ones that really have qualified candidates with a
+ * future interview. Completed/archived campaigns and empty drafts stay hidden. The status is returned so it can be shown.
+ */
+export async function listPrepareCampaigns(): Promise<Array<{ id: string; status: string; campaignName: string; requisitionCode: string | null; role: string | null; branchName: string | null; city: string | null; isAhmedabad: boolean; qualifiedFuture: number; invitedFuture: number }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT c.id, c.campaign_name, jr.requisition_code, jr.designation_name, jr.branch_name, bm.city,
+    `SELECT c.id, c.campaign_status, c.campaign_name, jr.requisition_code, jr.designation_name, jr.branch_name, bm.city,
             SUM(ml.screening_result = 'qualified' AND ml.interview_date IS NOT NULL AND ml.interview_time IS NOT NULL AND ${FUTURE}
                 AND ml.walkin_declined = 0 AND ${OPEN_REQ.replace(/jr\./g, "jr.")}) AS qualified_future,
             SUM(ml.screening_result = 'qualified' AND ml.interview_date IS NOT NULL AND ml.interview_time IS NOT NULL AND ${FUTURE}
@@ -39,11 +44,12 @@ export async function listPrepareCampaigns(): Promise<Array<{ id: string; campai
        LEFT JOIN job_requisition jr ON jr.id = c.requisition_id
        LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
        LEFT JOIN meta_lead_raw ml ON ml.campaign_id = c.id
-      WHERE c.campaign_status = 'active'
-      GROUP BY c.id, c.campaign_name, jr.requisition_code, jr.designation_name, jr.branch_name, bm.city
+      WHERE c.campaign_status IN ('active','draft','paused')
+      GROUP BY c.id, c.campaign_status, c.campaign_name, jr.requisition_code, jr.designation_name, jr.branch_name, bm.city
+      HAVING c.campaign_status = 'active' OR qualified_future > 0
       ORDER BY c.campaign_name`);
   return rows.map((r) => ({
-    id: r.id as string, campaignName: r.campaign_name as string, requisitionCode: (r.requisition_code as string | null) ?? null,
+    id: r.id as string, status: r.campaign_status as string, campaignName: r.campaign_name as string, requisitionCode: (r.requisition_code as string | null) ?? null,
     role: (r.designation_name as string | null) ?? null, branchName: (r.branch_name as string | null) ?? null, city: (r.city as string | null) ?? null,
     isAhmedabad: isAhmedabad(r.campaign_name as string, r.branch_name as string, r.city as string),
     qualifiedFuture: Number(r.qualified_future ?? 0), invitedFuture: Number(r.invited_future ?? 0),
