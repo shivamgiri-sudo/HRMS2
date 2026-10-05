@@ -88,6 +88,7 @@ on:
           - fix-gst-credit-note-roundoff
           - backfill-grn-journal
           - voucher-unassigned-detail
+          - unposted-grn-forensics
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -403,6 +404,10 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            unposted-grn-forensics)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/unposted-grn-forensics.ts
               ;;
             voucher-unassigned-detail)
               # Read-only in both modes: SELECTs only.
