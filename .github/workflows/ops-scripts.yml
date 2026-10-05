@@ -79,6 +79,7 @@ on:
           - zero-day-gross-audit
           - aug-payroll-vs-dbbill-gap
           - match-month-to-dbbill
+          - vendor-ledger-gap-audit
           - heal-zero-day-lines
           - recruiter-list-diagnose
           - apply-aug-increments-from-dbbill
@@ -379,6 +380,10 @@ jobs:
             recruiter-list-diagnose)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/recruiter-list-diagnose.ts
+              ;;
+            vendor-ledger-gap-audit)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/vendor-ledger-gap-audit.ts
               ;;
             match-month-to-dbbill)
               # Dry-runs unless given --apply. Apply sets voucher-relevant line figures to db_bill (backup table first, one transaction).
