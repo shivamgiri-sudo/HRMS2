@@ -64,6 +64,7 @@ on:
           - deduction-duplicates-scan
           - salary-rows-review
           - dbbill-validate-flagged
+          - dbbill-orphan-check
           - salary-assignment-deactivate-mas63386
           - sal-diff-investigate
           - saldiff-topup-duplicate-reject
@@ -268,6 +269,10 @@ jobs:
             dbbill-validate-flagged)
               # Read-only in both modes: SELECTs against HRMS and db_bill only.
               npx tsx scripts/dbbill-validate-flagged.ts
+              ;;
+            dbbill-orphan-check)
+              # Read-only in both modes: SELECTs against HRMS and db_bill only.
+              npx tsx scripts/dbbill-orphan-check.ts --ids 392 --name KRUNAL --name SOLANKI --codes MAS02602
               ;;
             salary-assignment-deactivate-mas63386)
               # Dry-runs unless given --apply. Apply deactivates ONE guarded row (active_status 1 -> 0).
