@@ -80,6 +80,7 @@ on:
           - aug-payroll-vs-dbbill-gap
           - match-month-to-dbbill
           - vendor-ledger-gap-audit
+          - vendor-ledger-tally-audit
           - heal-zero-day-lines
           - recruiter-list-diagnose
           - budget-driver-diagnose
@@ -385,6 +386,10 @@ jobs:
             recruiter-list-diagnose)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/recruiter-list-diagnose.ts
+              ;;
+            vendor-ledger-tally-audit)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/vendor-ledger-tally-audit.ts sanchia sachi "sai sa"
               ;;
             vendor-ledger-gap-audit)
               # Read-only in both modes: SELECTs only.
