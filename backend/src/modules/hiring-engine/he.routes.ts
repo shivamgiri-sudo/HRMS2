@@ -13,7 +13,7 @@ import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches, previewBulkCalls, runBulkCallJobs, startBulkBatch } from "./he-bulk-call.service.js";
 import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
-import { listPrepareCampaigns, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
+import { listPrepareCampaigns, prepareMissedWalkins, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
 import { applyCallResults, markExportedForCalling, previewCallResults } from "./he-call-results.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 
@@ -260,6 +260,23 @@ heRouter.post("/bulk-calls/prepare", requireAuth, requireRole(...WRITE_ROLES), a
   } catch (err) { logger.error({ err: (err as Error).message }, "[he] bulk prepare failed"); res.status(500).json({ success: false, message: "Could not prepare the list" }); }
 });
 
+/** Candidates who were given an interview that passed and never walked in, re-invited for a new date. */
+heRouter.post("/bulk-calls/prepare-missed", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  const b = (req.body ?? {}) as { campaignIds?: unknown; newDate?: unknown; slotStart?: unknown; slotEnd?: unknown; slotMinutes?: unknown; perSlot?: unknown; includeRecentlyExported?: unknown };
+  if (!Array.isArray(b.campaignIds) || b.campaignIds.length === 0) return res.status(400).json({ success: false, message: "Select at least one campaign" });
+  if (typeof b.newDate !== "string" || !DATE_RE.test(b.newDate)) return res.status(400).json({ success: false, message: "newDate (YYYY-MM-DD) is required" });
+  const todayIst = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+  if (b.newDate < todayIst) return res.status(400).json({ success: false, message: "The new interview date cannot be in the past" });
+  const hhmm = (v: unknown, d: string) => (typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : d);
+  const num = (v: unknown, d: number, lo: number, hi: number) => { const n = Number(v); return Number.isFinite(n) && n >= lo && n <= hi ? Math.floor(n) : d; };
+  try {
+    res.json({ success: true, data: await prepareMissedWalkins({
+      campaignIds: b.campaignIds.map(String), newDate: b.newDate, slotStart: hhmm(b.slotStart, "10:00"), slotEnd: hhmm(b.slotEnd, "17:30"),
+      slotMinutes: num(b.slotMinutes, 30, 10, 120), perSlot: num(b.perSlot, 6, 1, 50), includeRecentlyExported: b.includeRecentlyExported === true,
+    }) });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] prepare-missed failed"); res.status(500).json({ success: false, message: "Could not prepare the re-invite list" }); }
+});
+
 heRouter.post("/bulk-calls/preview", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
   const rows = bulkRows(req.body);
   if (!rows) return res.status(400).json({ success: false, message: "rows (an array of objects) is required" });
@@ -310,9 +327,9 @@ heRouter.post("/bulk-calls/:id/cancel", requireAuth, requireRole(...WRITE_ROLES)
 
 /** Log that a calling file was downloaded for the third-party tool (audit + stops the same people being exported again). */
 heRouter.post("/bulk-calls/exported", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
-  const b = (req.body ?? {}) as { mobiles?: unknown; label?: unknown };
+  const b = (req.body ?? {}) as { mobiles?: unknown; label?: unknown; slots?: unknown; names?: unknown };
   if (!Array.isArray(b.mobiles) || b.mobiles.length === 0 || b.mobiles.length > BULK_CALL_MAX_ROWS) return res.status(400).json({ success: false, message: "mobiles (1-500) is required" });
-  try { res.json({ success: true, data: await markExportedForCalling(b.mobiles.map(String), { userId: (req as AuthenticatedRequest).authUser?.id ?? null, label: typeof b.label === "string" ? b.label : undefined }) }); }
+  try { res.json({ success: true, data: await markExportedForCalling(b.mobiles.map(String), { userId: (req as AuthenticatedRequest).authUser?.id ?? null, label: typeof b.label === "string" ? b.label : undefined, slots: b.slots && typeof b.slots === "object" && !Array.isArray(b.slots) ? (b.slots as Record<string, string>) : undefined, names: b.names && typeof b.names === "object" && !Array.isArray(b.names) ? (b.names as Record<string, string>) : undefined }) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] export log failed"); res.status(500).json({ success: false }); }
 });
 

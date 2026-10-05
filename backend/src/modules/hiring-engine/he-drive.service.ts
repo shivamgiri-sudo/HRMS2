@@ -110,17 +110,20 @@ export async function suggestMatches(driveId: string, limit?: number): Promise<n
   if (mreq.ageMax != null) { pre.push("(l.age IS NULL OR l.age <= ?)"); preArgs.push(mreq.ageMax); }
   if (mreq.nightShift === true) pre.push("(l.night_shift_ok IS NULL OR l.night_shift_ok = 1)");
   const [leads] = await db.execute<RowDataPacket[]>(
-    `SELECT l.id, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng
+    `SELECT l.id, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng,
+            EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
        FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
         AND NOT EXISTS (SELECT 1 FROM he_match m WHERE m.lead_id = l.id AND m.state IN ('invited','confirmed') AND m.slot_at >= NOW())
         AND NOT EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NOT NULL)
         ${pre.map((c) => `AND ${c}`).join("\n        ")}
-      ORDER BY eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`, preArgs);
+      ORDER BY has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`, preArgs);
   const scored = leads
-    .map((l) => ({ id: l.id as string, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng) }, mreq), eng: Number(l.eng) }))
+    .map((l) => ({ id: l.id as string, consented: Number(l.has_consent) === 1, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng) }, mreq), eng: Number(l.eng) }))
     .filter((x) => x.res.eligible)
-    .sort((a, b) => b.res.score + b.eng * 0.2 - (a.res.score + a.eng * 0.2))
+    // Reachable people first: only consented leads can be messaged, so they must not be crowded out of a capped list by
+    // better-fitting people who cannot be contacted. The rest only fill spare room (e.g. for a telecaller to get consent).
+    .sort((a, b) => Number(b.consented) * 1000 + b.res.score + b.eng * 0.2 - (Number(a.consented) * 1000 + a.res.score + a.eng * 0.2))
     .slice(0, want);
   for (const s of scored) {
     await db.execute(

@@ -40,7 +40,13 @@ export async function applyCallResults(raw: Array<Record<string, unknown>>, o: {
       if (lead.created) out.newLeads++;
       // Without a vendor call id, key on phone + call time + outcome + duration so a repeat call on another day still counts.
       const providerCallId = r.callId ?? `imp:${createHash("sha1").update(`${r.mobile10}|${r.startedAt ?? ""}|${r.outcome}|${r.durationS ?? ""}`).digest("hex").slice(0, 24)}`;
-      const res = await recordVoiceResult({ leadId: lead.id, providerCallId, startedAt: r.startedAt ?? null, result: r.voice!, summary: r.remarks ?? null, offeredSlotAt: r.newInterviewAt ?? null });
+      // "Confirmed" carries no date in the tool's report, so use the slot we put in the file (latest hand-over within 5 days).
+      let confirmedSlotAt: string | null = null;
+      if (r.outcome === "WALKIN_CONFIRMED_YES") {
+        const [ev] = await db.execute<RowDataPacket[]>("SELECT meta_json FROM he_lead_event WHERE lead_id = ? AND event_type = 'exported_for_calling' AND meta_json IS NOT NULL AND created_at > DATE_SUB(NOW(), INTERVAL 5 DAY) ORDER BY id DESC LIMIT 1", [lead.id]);
+        try { const mj = ev[0]?.meta_json; const j = typeof mj === "string" ? JSON.parse(mj) : mj; confirmedSlotAt = j?.interviewAt ?? null; } catch { confirmedSlotAt = null; }
+      }
+      const res = await recordVoiceResult({ leadId: lead.id, providerCallId, startedAt: r.startedAt ?? null, result: r.voice!, summary: r.remarks ?? null, offeredSlotAt: r.newInterviewAt ?? null, confirmedSlotAt });
       if (res?.outcome === "duplicate") out.duplicates++;
       else { out.applied++; await addEvent(lead.id, "call_result_imported", { channel: "voice", actor: o.userId, detail: `${r.outcome}${r.remarks ? " - " + r.remarks : ""}`.slice(0, 480) }); }
     } catch { out.failedRows.push(r.rowNo); }
@@ -49,12 +55,14 @@ export async function applyCallResults(raw: Array<Record<string, unknown>>, o: {
 }
 
 /** Record that these candidates were handed to the calling tool, so the next prepared list does not repeat them. */
-export async function markExportedForCalling(mobiles: string[], o: { userId: string | null; label?: string }): Promise<{ marked: number }> {
+export async function markExportedForCalling(mobiles: string[], o: { userId: string | null; label?: string; slots?: Record<string, string>; names?: Record<string, string> }): Promise<{ marked: number }> {
   let marked = 0;
   for (const m of Array.from(new Set(mobiles)).slice(0, 2000)) {
-    const lead = await upsertLead({ mobile: m, source: "calling_tool", linkMeta: true });
+    const lead = await upsertLead({ mobile: m, fullName: o.names?.[m]?.slice(0, 150) || null, source: "calling_tool", linkMeta: true });
     if (!lead) continue;
-    await addEvent(lead.id, "exported_for_calling", { channel: "voice", actor: o.userId, detail: (o.label ?? "calling file").slice(0, 200) });
+    // The interview slot written into the file is remembered, so when the tool reports "confirmed" the HRMS knows WHICH slot was confirmed.
+    const slot = o.slots?.[m];
+    await addEvent(lead.id, "exported_for_calling", { channel: "voice", actor: o.userId, detail: (o.label ?? "calling file").slice(0, 200), meta: slot && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(slot) ? { interviewAt: slot } : undefined });
     marked++;
   }
   return { marked };

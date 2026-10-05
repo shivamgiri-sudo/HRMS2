@@ -56,3 +56,20 @@ export function inviteTarget(o: { openPositions: number; showRatePct: number; in
   const cappedShows = Math.min(targetShows, o.capacity);
   return { targetShows: cappedShows, invites: Math.ceil(cappedShows / show) };
 }
+
+/**
+ * Spread `count` candidates over a day's slots so nobody is told the same time as sixty others. Evenly spread when the
+ * day has room (never more than `perSlot` in a slot); when it does not, the first `capacity` get a seat and the rest
+ * are reported as overflow so the caller can say so instead of over-booking the branch.
+ */
+export function assignSlots(count: number, c: { start: string; end: string; minutes: number; perSlot: number }): { times: string[]; capacity: number; overflow: number } {
+  const slots = generateSlots({ date: "x", start: c.start, end: c.end, minutes: c.minutes, capacity: c.perSlot }).map((s) => s.slice(2)); // " HH:MM:00"
+  const times = slots.map((s) => s.trim());
+  const capacity = times.length * c.perSlot;
+  if (count <= 0 || times.length === 0) return { times: [], capacity, overflow: Math.max(0, count) };
+  const seats = Math.min(count, capacity);
+  const out: string[] = [];
+  if (seats >= capacity) for (const t of times) for (let k = 0; k < c.perSlot; k++) out.push(t);
+  else for (let i = 0; i < seats; i++) out.push(times[Math.min(times.length - 1, Math.floor((i * times.length) / seats))]);
+  return { times: out, capacity, overflow: count - seats };
+}

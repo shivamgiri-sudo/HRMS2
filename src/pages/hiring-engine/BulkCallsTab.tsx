@@ -16,7 +16,7 @@ import CallResultsImport from "./CallResultsImport";
 interface PreviewRow { display: { phone: string; name: string; role: string; when: string }; rowNo: number; ok: boolean; errors: string[]; warnings: string[]; notes: string[]; row?: { mobile10: string; name: string; role: string; interviewAt: string; branchAddress: string; referenceId: string } }
 interface Preview { missingColumns: string[]; tooMany: boolean; rows: PreviewRow[]; summary: { total: number; valid: number; rejected: number; willSkip: number } }
 interface Batch { id: string; label: string | null; status: string; total_rows: number; rejected_rows: number; created_at: string; queued: number | null; in_progress: number | null; completed: number | null; skipped: number | null; cancelled: number | null; confirmed: number | null; rescheduled: number | null; declined: number | null; no_answer: number | null }
-interface Campaign { id: string; status: string; campaignName: string; requisitionCode: string | null; role: string | null; branchName: string | null; city: string | null; isAhmedabad: boolean; qualifiedFuture: number; invitedFuture: number }
+interface Campaign { id: string; status: string; campaignName: string; requisitionCode: string | null; role: string | null; branchName: string | null; city: string | null; isAhmedabad: boolean; qualifiedFuture: number; invitedFuture: number; interviewPassed: number }
 interface Job { id: string; row_no: number; mobile10: string; candidate_name: string; role: string; interview_at: string; reference_id: string; status: string; skip_reason: string | null; attempts: number; outcome: string | null }
 
 const TEMPLATE = [
@@ -28,7 +28,7 @@ const TEMPLATE = [
 const OUTCOME: Record<string, string> = { WALKIN_CONFIRMED_YES: "Confirmed", WALKIN_RESCHEDULED: "Rescheduled", WALKIN_DECLINED_NEEDS_FOLLOWUP: "Declined - needs follow-up", NO_ANSWER: "No answer", WRONG_PERSON_REACHED: "Wrong person" };
 const outcomeLabel = (o: string | null) => (o ? (OUTCOME[o] ?? (o.startsWith("CALL_FAILED") ? "Call failed" : o)) : "—");
 const pill = (s: string) => ({ active: "bg-emerald-50 text-emerald-700 ring-emerald-200", queued: "bg-blue-50 text-blue-700 ring-blue-200", done: "bg-slate-100 text-slate-600 ring-slate-200", cancelled: "bg-rose-50 text-rose-700 ring-rose-200", placed: "bg-amber-50 text-amber-700 ring-amber-200", completed: "bg-emerald-50 text-emerald-700 ring-emerald-200", skipped: "bg-slate-100 text-slate-500 ring-slate-200" }[s] ?? "bg-slate-50 text-slate-600 ring-slate-200");
-const EXCLUDED: Record<string, string> = { already_sent_to_calling_tool: "already sent to the calling tool today", already_confirmed: "already confirmed on WhatsApp", invite_not_sent_yet: "invite not sent yet", interview_date_passed: "interview date has passed", no_interview_assigned: "no interview slot assigned", declined: "declined", requisition_closed_or_filled: "requisition closed or filled" };
+const EXCLUDED: Record<string, string> = { already_walked_in: "already walked in", duplicate_phone: "same phone twice", opted_out: "opted out", no_slot_capacity: "no slot left that day (raise seats per slot)",  already_sent_to_calling_tool: "already sent to the calling tool today", already_confirmed: "already confirmed on WhatsApp", invite_not_sent_yet: "invite not sent yet", interview_date_passed: "interview date has passed", no_interview_assigned: "no interview slot assigned", declined: "declined", requisition_closed_or_filled: "requisition closed or filled" };
 const field = "rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500";
 
 export default function BulkCallsTab() {
@@ -48,6 +48,12 @@ export default function BulkCallsTab() {
   const [includeConfirmed, setIncludeConfirmed] = useState(false);
   const [requireInvite, setRequireInvite] = useState(true);
   const [includeExported, setIncludeExported] = useState(false);
+  const tomorrowIst = () => new Date(Date.now() + 330 * 60_000 + 86_400_000).toISOString().slice(0, 10);
+  const [mode, setMode] = useState<"upcoming" | "missed">("upcoming");
+  const [newDate, setNewDate] = useState(tomorrowIst);
+  const [slotStart, setSlotStart] = useState("10:00");
+  const [slotEnd, setSlotEnd] = useState("17:30");
+  const [perSlot, setPerSlot] = useState(6);
   const [excluded, setExcluded] = useState<Record<string, number> | null>(null);
 
   const loadBatches = useCallback(async () => {
@@ -102,11 +108,13 @@ export default function BulkCallsTab() {
   const prepare = async () => {
     setMsg(null); setPreview(null); setRows([]); setAttest(false); setExcluded(null); setBusy("prepare");
     try {
-      const r = await hrmsApi.post<{ data: { rows: Array<Record<string, unknown>>; truncated: boolean; excluded: Record<string, number> } }>("/api/he/bulk-calls/prepare", { campaignIds: picked, includeConfirmed, requireInviteSent: requireInvite, includeRecentlyExported: includeExported });
+      const r = mode === "missed"
+        ? await hrmsApi.post<{ data: { rows: Array<Record<string, unknown>>; truncated: boolean; excluded: Record<string, number> } }>("/api/he/bulk-calls/prepare-missed", { campaignIds: picked, newDate, slotStart, slotEnd, perSlot, includeRecentlyExported: includeExported })
+        : await hrmsApi.post<{ data: { rows: Array<Record<string, unknown>>; truncated: boolean; excluded: Record<string, number> } }>("/api/he/bulk-calls/prepare", { campaignIds: picked, includeConfirmed, requireInviteSent: requireInvite, includeRecentlyExported: includeExported });
       setExcluded(r.data.excluded);
-      if (!r.data.rows.length) { setMsg({ ok: false, text: "No qualified candidates with a future interview match these campaigns right now." }); return; }
+      if (!r.data.rows.length) { setMsg({ ok: false, text: mode === "missed" ? "No candidate who missed their interview needs a new invite in these campaigns right now." : "No qualified candidates with a future interview match these campaigns right now." }); return; }
       const names = campaigns.filter((c) => picked.includes(c.id)).map((c) => c.campaignName).join(", ");
-      await runPreview(r.data.rows, `Campaigns: ${names}`.slice(0, 140));
+      await runPreview(r.data.rows, `${mode === "missed" ? `Re-invite ${newDate}: ` : "Campaigns: "}${names}`.slice(0, 140));
       if (r.data.truncated) setMsg({ ok: false, text: "More than 500 candidates match. Only the first 500 (earliest interviews) are listed; queue them, then prepare again." });
     } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Could not prepare the list" }); }
     finally { setBusy(null); }
@@ -160,7 +168,12 @@ export default function BulkCallsTab() {
     <div className="space-y-6">
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Prepare from Meta campaigns">
         <h2 className="flex items-center gap-2 font-semibold text-slate-900"><ListChecks className="h-4 w-4 text-blue-600" aria-hidden /> Prepare from Meta campaigns</h2>
-        <p className="mt-1 text-sm text-slate-600">Builds the calling list for qualified candidates whose interview is still in the future. Ahmedabad (AHM) campaigns are pre-selected. A campaign marked draft or paused in HRMS is listed too when it has such candidates. You review the list before anything is queued.</p>
+        <div role="radiogroup" aria-label="Who to call" className="mt-3 inline-flex rounded-lg border border-slate-200 p-0.5 text-sm">
+          {([["upcoming", "Confirm upcoming interviews"], ["missed", "Did not walk in - invite again"]] as const).map(([k, l]) => (
+            <button key={k} type="button" role="radio" aria-checked={mode === k} onClick={() => { setMode(k); setPreview(null); setRows([]); setExcluded(null); setPicked(campaigns.filter((c) => c.isAhmedabad && (k === "missed" ? c.interviewPassed > 0 : c.qualifiedFuture > 0)).map((c) => c.id)); }} className={`cursor-pointer rounded-md px-3 py-1.5 font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${mode === k ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{l}</button>
+          ))}
+        </div>
+        <p className="mt-2 text-sm text-slate-600">{mode === "missed" ? "Finds qualified candidates whose interview date has passed and who never registered at the branch, and invites them for the new date below. Anyone with a walk-in record (by link, phone or queue token) is left out." : "Builds the calling list for qualified candidates whose interview is still in the future. Ahmedabad (AHM) campaigns are pre-selected. A campaign marked draft or paused in HRMS is listed too when it has such candidates. You review the list before anything is queued."}</p>
         {campaigns.length === 0 ? <p className="mt-3 text-sm text-slate-500">No active campaigns found.</p> : (
           <ul className="mt-3 grid gap-2 md:grid-cols-2">
             {campaigns.map((c) => (
@@ -170,18 +183,27 @@ export default function BulkCallsTab() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-slate-900">{c.campaignName}{c.isAhmedabad && <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">AHM</span>}{c.status !== "active" && <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-700" title="This campaign is not marked active in HRMS but has qualified candidates with a future interview">{c.status} in HRMS</span>}</span>
                     <span className="block text-xs text-slate-500">{c.role ?? "—"} · {c.branchName ?? "no branch"}</span>
-                    <span className="mt-1 block text-xs text-slate-700"><b>{num(c.invitedFuture)}</b> invited and waiting · {num(c.qualifiedFuture)} qualified with a future interview</span>
+                    <span className="mt-1 block text-xs text-slate-700">{mode === "missed" ? <><b>{num(c.interviewPassed)}</b> qualified with an interview date that has passed</> : <><b>{num(c.invitedFuture)}</b> invited and waiting · {num(c.qualifiedFuture)} qualified with a future interview</>}</span>
                   </span>
                 </label>
               </li>
             ))}
           </ul>
         )}
+        {mode === "missed" && (
+          <div className="mt-3 flex flex-wrap items-end gap-4 rounded-lg bg-slate-50 p-3 text-sm">
+            <label className="block"><span className="mb-1 block text-xs font-medium text-slate-600">New interview date</span><input type="date" className={field} value={newDate} min={new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)} onChange={(e) => setNewDate(e.target.value)} /></label>
+            <label className="block"><span className="mb-1 block text-xs font-medium text-slate-600">First slot</span><input type="time" className={field} value={slotStart} onChange={(e) => setSlotStart(e.target.value)} /></label>
+            <label className="block"><span className="mb-1 block text-xs font-medium text-slate-600">Last slot ends</span><input type="time" className={field} value={slotEnd} onChange={(e) => setSlotEnd(e.target.value)} /></label>
+            <label className="block"><span className="mb-1 block text-xs font-medium text-slate-600">Seats per 30 min</span><input type="number" min={1} max={50} className={`${field} w-24`} value={perSlot} onChange={(e) => setPerSlot(Number(e.target.value))} /></label>
+            <p className="text-xs text-slate-500">Candidates are spread across the day so nobody is told the same time as everyone else.</p>
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-700">
-          <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="h-4 w-4 cursor-pointer" checked={requireInvite} onChange={(e) => setRequireInvite(e.target.checked)} /> Only candidates who were already sent the invite</label>
-          <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="h-4 w-4 cursor-pointer" checked={includeConfirmed} onChange={(e) => setIncludeConfirmed(e.target.checked)} /> Include those who already confirmed on WhatsApp</label>
+          {mode === "upcoming" && <><label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="h-4 w-4 cursor-pointer" checked={requireInvite} onChange={(e) => setRequireInvite(e.target.checked)} /> Only candidates who were already sent the invite</label>
+          <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="h-4 w-4 cursor-pointer" checked={includeConfirmed} onChange={(e) => setIncludeConfirmed(e.target.checked)} /> Include those who already confirmed on WhatsApp</label></>}
           <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" className="h-4 w-4 cursor-pointer" checked={includeExported} onChange={(e) => setIncludeExported(e.target.checked)} /> Include those already sent to the calling tool in the last 18 hours</label>
-          <button type="button" disabled={picked.length === 0 || busy !== null} onClick={() => void prepare()} className="ml-auto cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">{busy === "prepare" ? "Preparing…" : `Prepare calling list (${picked.length} campaign${picked.length === 1 ? "" : "s"})`}</button>
+          <button type="button" disabled={picked.length === 0 || busy !== null} onClick={() => void prepare()} className="ml-auto cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">{busy === "prepare" ? "Preparing…" : mode === "missed" ? `Prepare re-invite list (${picked.length} campaign${picked.length === 1 ? "" : "s"})` : `Prepare calling list (${picked.length} campaign${picked.length === 1 ? "" : "s"})`}</button>
         </div>
         {excluded && Object.keys(excluded).length > 0 && (
           <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Qualified candidates left out: {Object.entries(excluded).map(([k, v]) => `${v} ${EXCLUDED[k] ?? k}`).join(" · ")}.</p>

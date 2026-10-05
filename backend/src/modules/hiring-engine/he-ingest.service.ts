@@ -134,6 +134,8 @@ export interface VoiceCallbackInput {
   startedAt?: string | null;
   result: VoiceResult;
   offeredSlotAt?: string | null; // YYYY-MM-DD HH:MM:SS IST, from the slot service
+  /** The slot the candidate confirmed when it was not the one already on record (e.g. a re-invite for a new date). */
+  confirmedSlotAt?: string | null;
   transcript?: string | null;
   summary?: string | null;
   recordingUrl?: string | null;
@@ -182,6 +184,9 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
     if (match) await db.execute("UPDATE he_match SET slot_at = ? WHERE id = ?", [offeredSlotAt, match.id]);
     // Also for results that come back from an external calling tool, which has no he_match to move.
     if (l.meta_lead_id) await db.execute("UPDATE meta_lead_raw SET interview_date = DATE(?), interview_time = TIME(?) WHERE id = ?", [offeredSlotAt, offeredSlotAt, l.meta_lead_id]);
+  }
+  if (outcome === "WALKIN_CONFIRMED_YES" && p.confirmedSlotAt && l.meta_lead_id) {
+    await db.execute("UPDATE meta_lead_raw SET interview_date = DATE(?), interview_time = TIME(?) WHERE id = ?", [p.confirmedSlotAt, p.confirmedSlotAt, l.meta_lead_id]);
   }
   if (l.meta_lead_id) {
     await db.execute("UPDATE meta_lead_raw SET voice_call_outcome = ?, voice_called_at = COALESCE(?, NOW()) WHERE id = ?", [outcomeText.slice(0, 60), p.startedAt ?? null, l.meta_lead_id]);

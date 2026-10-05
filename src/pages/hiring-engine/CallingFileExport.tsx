@@ -45,7 +45,7 @@ export default function CallingFileExport({ rows, label, onLogged }: { rows: Exp
       // here must not block HR's work: the file is still produced, with a warning.
       let marked: number | null = null;
       try {
-        const r = await hrmsApi.post<{ data: { marked: number } }>("/api/he/bulk-calls/exported", { mobiles: rows.map((x) => x.mobile10), label });
+        const r = await hrmsApi.post<{ data: { marked: number } }>("/api/he/bulk-calls/exported", { mobiles: rows.map((x) => x.mobile10), label, slots: Object.fromEntries(rows.map((x) => [x.mobile10, x.interviewAt])), names: Object.fromEntries(rows.map((x) => [x.mobile10, x.name])) });
         marked = r.data.marked;
       } catch { /* warned below */ }
 

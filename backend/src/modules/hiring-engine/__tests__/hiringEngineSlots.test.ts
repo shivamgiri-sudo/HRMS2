@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { driveCapacity, generateSlots, inviteTarget, istAddMinutes, nextFreeSlot, nowIst } from "../he-slots.js";
+import { assignSlots, driveCapacity, generateSlots, inviteTarget, istAddMinutes, nextFreeSlot, nowIst } from "../he-slots.js";
 
 const cfg = { date: "2026-10-07", start: "10:00", end: "12:00", minutes: 30, capacity: 2 };
 
@@ -23,4 +23,31 @@ describe("slots", () => {
 describe("inviteTarget", () => {
   it("scales demand by hire and show rate", () => expect(inviteTarget({ openPositions: 7, showRatePct: 40, interviewToHirePct: 35, capacity: 100 })).toEqual({ targetShows: 20, invites: 50 }));
   it("caps at drive capacity", () => expect(inviteTarget({ openPositions: 50, showRatePct: 50, capacity: 24 })).toEqual({ targetShows: 24, invites: 48 }));
+});
+
+describe("assignSlots", () => {
+  const day = { start: "10:00", end: "17:30", minutes: 30, perSlot: 6 }; // 15 slots x 6 = 90 seats
+  const perSlot = (ts: string[]) => ts.reduce<Record<string, number>>((m, t) => ((m[t] = (m[t] ?? 0) + 1), m), {});
+  it("spreads 60 people across the day, never above the per-slot limit", () => {
+    const r = assignSlots(60, day);
+    expect(r.times.length).toBe(60);
+    expect(r.overflow).toBe(0);
+    expect(Math.max(...Object.values(perSlot(r.times)))).toBeLessThanOrEqual(6);
+    expect(Object.keys(perSlot(r.times)).length).toBe(15);
+    expect(r.times[0]).toBe("10:00:00");
+  });
+  it("a small group is spread out, not piled into the first slot", () => {
+    const r = assignSlots(5, day);
+    expect(new Set(r.times).size).toBe(5);
+  });
+  it("reports overflow instead of over-booking", () => {
+    const r = assignSlots(100, day);
+    expect(r.times.length).toBe(90);
+    expect(r.overflow).toBe(10);
+    expect(Math.max(...Object.values(perSlot(r.times)))).toBe(6);
+  });
+  it("nothing to assign / no slots", () => {
+    expect(assignSlots(0, day).times).toEqual([]);
+    expect(assignSlots(3, { ...day, start: "18:00", end: "10:00" })).toMatchObject({ times: [], overflow: 3 });
+  });
 });
