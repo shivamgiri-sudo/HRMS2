@@ -6,6 +6,8 @@
  *   npx tsx scripts/meta-whatsapp-diagnose.ts
  */
 import "dotenv/config";
+import fs from "fs";
+import path from "path";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { isMetaConfigured } from "../src/modules/meta-campaign/meta-api.client.js";
@@ -25,7 +27,31 @@ async function probe(label: string, url: string, init: RequestInit = {}) {
   }
 }
 
+/** Presence-only scan of env files next to the live one: which names exist, never any value. */
+function scanEnvFiles() {
+  const dir = path.resolve(process.cwd());
+  const wanted = ["META_MARKETING_ACCESS_TOKEN", "WASSENGER_API_TOKEN", "WASSENGER_DEVICE_ID", "META_PAGE_IDS", "META_LEAD_VERIFY_TOKEN"];
+  const seen: string[] = [];
+  for (const base of [dir, path.join(dir, ".."), "/var/www/HRMS2/backend", "/var/www/HRMS2"]) {
+    let names: string[] = [];
+    try { names = fs.readdirSync(base).filter((n) => /^\.env/.test(n) || /env.*(bak|backup|old|orig)/i.test(n)); } catch { continue; }
+    for (const n of names) {
+      const f = path.join(base, n);
+      if (seen.includes(f)) continue;
+      seen.push(f);
+      try {
+        const st = fs.statSync(f);
+        if (!st.isFile()) continue;
+        const text = fs.readFileSync(f, "utf8");
+        const present = wanted.filter((k) => new RegExp(`^\\s*${k}\\s*=\\s*\\S+`, "m").test(text));
+        console.log(`ENVFILE ${f} modified=${st.mtime.toISOString()} hasValuesFor=${JSON.stringify(present)}`);
+      } catch (e) { console.log(`ENVFILE ${f} unreadable: ${(e as Error).message}`); }
+    }
+  }
+}
+
 async function main() {
+  scanEnvFiles();
   console.log("ENV", JSON.stringify({
     metaConfigured: isMetaConfigured(),
     META_MARKETING_ACCESS_TOKEN: has("META_MARKETING_ACCESS_TOKEN"),
@@ -33,7 +59,8 @@ async function main() {
     WHATSAPP_PROVIDER: process.env.WHATSAPP_PROVIDER ?? null,
     LOCAL_WHATSAPP_API_URL: has("LOCAL_WHATSAPP_API_URL"),
     LOCAL_WHATSAPP_API_KEY: has("LOCAL_WHATSAPP_API_KEY"),
-    WASSENGER_API_KEY: has("WASSENGER_API_KEY"),
+    WASSENGER_API_TOKEN: has("WASSENGER_API_TOKEN"), WASSENGER_DEVICE_ID: has("WASSENGER_DEVICE_ID"),
+    META_LEAD_VERIFY_TOKEN: has("META_LEAD_VERIFY_TOKEN"), META_MARKETING_APP_ID: has("META_MARKETING_APP_ID"),
     PINBOT: has("PINBOT_API_KEY"),
     emailConfigured: emailService.isConfigured(),
     SMTP_HOST: has("SMTP_HOST"), RESEND: has("RESEND_API_KEY"),
@@ -48,6 +75,7 @@ async function main() {
     await probe("meta /me", `https://graph.facebook.com/v19.0/me?access_token=${encodeURIComponent(process.env.META_MARKETING_ACCESS_TOKEN!)}`);
   }
   const wa = (process.env.LOCAL_WHATSAPP_API_URL ?? "").replace(/\/+$/, "");
+  if (has("WASSENGER_API_TOKEN")) await probe("wassenger devices", "https://api.wassenger.com/v1/devices", { headers: { Token: process.env.WASSENGER_API_TOKEN! } });
   if (wa) await probe("local whatsapp api", wa + "/");
   await probe("outbound internet (graph.facebook.com)", "https://graph.facebook.com/");
 
