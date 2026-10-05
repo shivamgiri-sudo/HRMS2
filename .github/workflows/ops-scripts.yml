@@ -90,6 +90,7 @@ on:
           - voucher-unassigned-detail
           - unposted-grn-forensics
           - duplicate-grn-forensics
+          - grn-pair-deepdive
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -410,6 +411,10 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            grn-pair-deepdive)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/grn-pair-deepdive.ts
               ;;
             duplicate-grn-forensics)
               # Read-only in both modes: SELECTs only.
