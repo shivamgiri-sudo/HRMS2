@@ -49,7 +49,7 @@ async function main() {
   console.log(`preconditions OK. Talabhai id=${hr[0].id}; db_bill person=${billName}`);
 
   console.log(`\nSTEP 1  employees: ${CODE} -> ${OLD} (employee_code, biometric_code) for id=${hr[0].id}`);
-  console.log(`STEP 2  create ${CODE} from db_bill via employeeSyncHandler (status=${bill.Status}, DOJ=${String(bill.DOJ).slice(0, 10)})`);
+  console.log(`STEP 2  create ${CODE} from db_bill via employeeSyncHandler (status=${bill.Status}, DOJ=${bill.DOJ instanceof Date ? bill.DOJ.toLocaleDateString("en-CA") : String(bill.DOJ)} local, ${bill.DOJ instanceof Date ? bill.DOJ.toISOString() : ""} utc)`);
   const plan: Array<{ col: string; name: string; id: string | null }> = [];
   for (const m of MASTERS) {
     const name = String(bill[m.billCol] ?? "").trim();
@@ -57,7 +57,19 @@ async function main() {
     if (name) {
       const r = await q(`SELECT id FROM ${m.table} WHERE UPPER(TRIM(${m.nameCol})) = ?`, [name.toUpperCase()]);
       if (r.length === 1) id = String(r[0].id);
-      else console.log(`  WARNING ${m.col}: "${name}" matches ${r.length} rows in ${m.table} - will be left NULL`);
+      else if (r.length > 1) {
+        // Ambiguous name: take the master that most employees at the same cost centre already use, only on a clear winner.
+        const ids = r.map((x) => String(x.id));
+        const ph = ids.map(() => "?").join(",");
+        const use = await q(
+          `SELECT ${m.col} AS mid, COUNT(*) n FROM employees
+            WHERE ${m.col} IN (${ph}) AND cost_centre_id = (SELECT id FROM cost_centre_master WHERE UPPER(TRIM(cost_centre_name)) = ? LIMIT 1)
+            GROUP BY ${m.col} ORDER BY n DESC`,
+          [...ids, String(bill.CostCenter ?? "").trim().toUpperCase()]);
+        console.log(`  NOTE ${m.col}: "${name}" matches ${r.length} rows; usage at this cost centre: ${JSON.stringify(use)}`);
+        if (use.length >= 1 && (use.length === 1 || Number(use[0].n) > Number(use[1].n))) id = String(use[0].mid);
+        else console.log(`  WARNING ${m.col}: no clear winner - will be left NULL`);
+      } else console.log(`  WARNING ${m.col}: "${name}" matches 0 rows in ${m.table} - will be left NULL`);
     }
     plan.push({ col: m.col, name, id });
     console.log(`STEP 3  ${m.col} <- ${m.table} "${name || "(blank in db_bill)"}" -> ${id ?? "NULL"}`);
