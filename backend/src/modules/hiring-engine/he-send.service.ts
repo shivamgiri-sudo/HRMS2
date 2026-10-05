@@ -33,6 +33,8 @@ export interface SendOpts {
   dryRun?: boolean;
   /** Skip quiet-hours/cap/gap (never consent, opt-out, pause or closed-requisition) - e.g. opt-out acknowledgement. */
   transactional?: boolean;
+  /** Cadence follow-ups run an hour after the previous touch, below the 120 min default between unrelated sends. */
+  minGapMinutes?: number;
 }
 
 const FIRST_CONTACT = new Set<TemplateKey>(["he_walkin_invite", "he_winback", "he_other_role_offer"]);
@@ -68,7 +70,7 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   let m: RowDataPacket | undefined;
   if (o.matchId) {
     const [mr] = await db.execute<RowDataPacket[]>(
-      `SELECT m.id, m.slot_at, m.token, m.state, d.id AS drive_id, d.drive_date, d.status AS drive_status,
+      `SELECT m.id, m.requisition_id, m.slot_at, m.token, m.state, d.id AS drive_id, d.drive_date, d.status AS drive_status,
               jr.designation_name, jr.branch_name, jr.bmi_assessment_url, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount,
               bm.address, bm.latitude, bm.longitude
          FROM he_match m LEFT JOIN he_drive d ON d.id = m.drive_id JOIN job_requisition jr ON jr.id = m.requisition_id
@@ -87,7 +89,7 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   const verdict = checkSendAllowed({
     now: new Date(), consent, optedOut: lead.status === "opted_out", paused: sendsPaused() || m?.drive_status === "paused",
     sentToday: o.transactional ? 0 : Number(sent[0].today), lastSentAt: !o.transactional && lastAny[0].last_at ? new Date(String(lastAny[0].last_at).replace(" ", "T") + "+05:30") : null,
-    requisitionOpen,
+    requisitionOpen, ...(o.minGapMinutes ? { minGapMinutes: o.minGapMinutes } : {}),
     ...(o.transactional ? { quietStartHour: 24, quietEndHour: 0 } : {}),
   });
   if (!verdict.ok) return { status: "blocked", reason: verdict.reason };
@@ -123,8 +125,8 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   const [idr] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
   const messageId = idr[0].id as string;
   await db.execute(
-    "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, error_message) VALUES (?,?,?,?,?,?,?,?,?,?)",
-    [messageId, o.leadId, lead.mobile10, "out", "whatsapp", `${o.key}:${lang}`, body.slice(0, 2000), res.success ? res.message_id ?? null : null, res.success ? "sent" : "failed", res.success ? null : String(res.error ?? "").slice(0, 500)]);
+    "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, error_message, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    [messageId, o.leadId, lead.mobile10, "out", "whatsapp", `${o.key}:${lang}`, body.slice(0, 2000), res.success ? res.message_id ?? null : null, res.success ? "sent" : "failed", res.success ? null : String(res.error ?? "").slice(0, 500), m?.requisition_id ?? null, m?.drive_id ?? null]);
   if (!res.success) {
     await addEvent(o.leadId, "send_failed", { channel: "whatsapp", detail: `${o.key}: ${res.error}`, driveId: m?.drive_id });
     logger.warn({ leadId: o.leadId, key: o.key, error: res.error }, "[he-send] failed");

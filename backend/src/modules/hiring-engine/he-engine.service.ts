@@ -6,7 +6,8 @@
  *   3 reminders          - T-1d and T-2h for confirmed candidates
  *   4 arrival sync       - candidates who registered at the branch on the drive day are marked arrived
  *   5 no-shows           - slot passed with no arrival -> no_show + one recovery message
- *   6 voice calls        - invited, 30+ min since the WhatsApp invite, no reply -> BRD confirmation call (1 retry after 2h)
+ *   2b cadence follow-up - email sent an hour ago -> WhatsApp invite (HE_CADENCE_GAP_MIN, default 60)
+ *   6 voice calls        - invited, one cadence gap since the WhatsApp invite, no reply -> BRD confirmation call (1 retry after 2h)
  *   7 bulk calls         - jobs of ACTIVE manual bulk-upload batches (same rules: 09-20 IST, 1 retry after 2h)
  */
 import type { RowDataPacket } from "mysql2";
@@ -16,6 +17,9 @@ import { addEvent, setLeadStatus } from "./he-lead.service.js";
 import { recomputeInsight } from "./he-insight.service.js";
 import { reserveSlot, suggestMatches } from "./he-drive.service.js";
 import { sendTemplateToLead, sendsPaused, type SendResult } from "./he-send.service.js";
+import { emailConfigured, sendInviteEmail, INVITE_EMAIL_KEY } from "./he-email.service.js";
+import { cadenceGapMin, nextCadenceStep } from "./he-cadence.js";
+import { istHour } from "./he-guardrails.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
 
@@ -45,9 +49,9 @@ async function voiceCalls(dryRun: boolean, c: Counts, max: number): Promise<void
     `SELECT m.id FROM he_match m
       WHERE m.state = 'invited' AND m.slot_at > NOW()
         AND EXISTS (SELECT 1 FROM he_message o WHERE o.lead_id = m.lead_id AND o.direction = 'out' AND o.template_key LIKE 'he_walkin_invite%'
-                      AND o.created_at < DATE_SUB(NOW(), INTERVAL 30 MINUTE))
+                      AND o.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
         AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > DATE_SUB(NOW(), INTERVAL 2 DAY))
-      ORDER BY m.slot_at LIMIT ?`, [max]);
+      ORDER BY m.slot_at LIMIT ?`, [cadenceGapMin(), max]);
   for (const r of rows) {
     const res = await placeVoiceCall(r.id as string, { dryRun });
     if (res.status === "placed") c.sent++;
@@ -89,23 +93,51 @@ async function driveInvites(dryRun: boolean, c: Counts, max: number): Promise<vo
     const driveId = d.id as string;
     if (!dryRun) await suggestMatches(driveId);
     const [ms] = await db.execute<RowDataPacket[]>(
-      // Only leads that can actually be messaged: unconsented suggestions would be blocked at send time but still eat the
-      // invite budget. They stay 'suggested' (visible in the drive) until consent exists, e.g. after a telecaller call.
-      `SELECT m.id, m.lead_id FROM he_match m
+      // Reachable people only: an email address (and a configured mail provider) or WhatsApp consent. Anyone with neither stays
+      // 'suggested' (visible in the drive) until a telecaller gets consent or an email.
+      `SELECT m.id, m.lead_id,
+              (l.email IS NOT NULL AND l.email <> '') AS has_email,
+              EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
+         FROM he_match m JOIN he_lead l ON l.id = m.lead_id
         WHERE m.drive_id = ? AND m.state = 'suggested'
-          AND EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
+          AND ((l.email IS NOT NULL AND l.email <> '') OR EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL))
         ORDER BY m.score DESC LIMIT ?`, [driveId, budget]);
+    const quiet = istHour(new Date()) >= 20 || istHour(new Date()) < 9;
     for (const m of ms) {
       if (budget <= 0) return;
       if (dryRun) { c.dryRun++; budget--; continue; }
+      const step = nextCadenceStep({ now: new Date(), gapMin: cadenceGapMin(), canEmail: Boolean(Number(m.has_email)) && emailConfigured(), waConsent: Boolean(Number(m.has_consent)), emailSentAt: null, waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: quiet });
+      if (!step.step) { c.blocked[step.reason] = (c.blocked[step.reason] ?? 0) + 1; continue; }
       const slot = await reserveSlot(m.id as string);
       if (!slot) break; // drive full
-      const res = await sendTemplateToLead({ leadId: m.lead_id as string, key: "he_walkin_invite", matchId: m.id as string });
+      // Step 1 is the email when there is one; otherwise the WhatsApp invite goes first and the call follows an hour later.
+      const res = step.step === "email"
+        ? await sendInviteEmail(m.id as string)
+        : await sendTemplateToLead({ leadId: m.lead_id as string, key: "he_walkin_invite", matchId: m.id as string });
       if (res.status === "sent") await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ?", [m.id]);
       else await db.execute("UPDATE he_match SET slot_at = NULL WHERE id = ?", [m.id]);
       tally(c, res);
       budget--;
     }
+  }
+}
+
+/** Step 2: matches whose invite EMAIL went out a cadence gap ago and have no WhatsApp invite yet get the WhatsApp invite now. */
+async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number): Promise<void> {
+  const gap = cadenceGapMin();
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT m.id, m.lead_id, e.created_at AS email_at FROM he_match m
+       JOIN he_message e ON e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = ? AND e.direction = 'out' AND e.delivery_status <> 'failed'
+      WHERE m.state = 'invited' AND m.slot_at > NOW() AND e.created_at <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+        AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%' AND w.created_at >= e.created_at)
+        AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at >= e.created_at)
+        AND EXISTS (SELECT 1 FROM he_consent k WHERE k.lead_id = m.lead_id AND k.consent_type = 'whatsapp_contact' AND k.revoked_at IS NULL)
+      ORDER BY m.slot_at LIMIT ?`, [INVITE_EMAIL_KEY, gap, max]);
+  for (const r of rows) {
+    if (dryRun) { c.dryRun++; continue; }
+    const step = nextCadenceStep({ now: new Date(), gapMin: gap, canEmail: true, waConsent: true, emailSentAt: new Date(String(r.email_at).replace(" ", "T") + "+05:30"), waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: false });
+    if (step.step !== "whatsapp") continue;
+    tally(c, await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_walkin_invite", matchId: r.id as string, minGapMinutes: gap }));
   }
 }
 
@@ -169,6 +201,7 @@ export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number }
   if (!s.paused) {
     await guard("replacement", () => replacementSlots(dryRun, s.replacementSlots, 50));
     await guard("invites", () => driveInvites(dryRun, s.invites, o.maxInvites ?? 100));
+    await guard("whatsapp-follow-ups", () => whatsappFollowUps(dryRun, s.invites, o.maxInvites ?? 100));
     await guard("reminders", () => reminders(dryRun, s.reminders));
     await guard("voice", () => voiceCalls(dryRun, s.calls, 20));
     await guard("bulk-calls", async () => { s.bulkCalls = await runBulkCallJobs({ dryRun, max: 20 }); });
