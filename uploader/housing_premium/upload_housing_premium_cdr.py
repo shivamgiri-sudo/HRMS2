@@ -183,6 +183,37 @@ def refresh_daily_summary(cfg: dict[str, Any], iso_dates: set[date]) -> None:
         conn.close()
 
 
+def verify_daily_summary(cfg: dict[str, Any], iso_dates: set[date]) -> None:
+    """Fails loudly if pre_cdr_daily_summary does not match Pre_cdr for the dates this run touched.
+    Compares the summed row_count per date against the raw COUNT(*) in Pre_cdr. Raises RuntimeError
+    on any mismatch so a silently stale rollup (the 4-Oct gap) cannot pass as a successful import."""
+    if not iso_dates:
+        return
+    dates = sorted(iso_dates)
+    placeholders = ", ".join(["%s"] * len(dates))
+    conn = connect(cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT report_date_iso, COUNT(*) FROM db_masmis.Pre_cdr WHERE report_date_iso IN ({placeholders}) GROUP BY report_date_iso",
+                dates,
+            )
+            raw = {row[0]: int(row[1]) for row in cur.fetchall()}
+            cur.execute(
+                f"SELECT report_date_iso, SUM(row_count) FROM db_masmis.pre_cdr_daily_summary WHERE report_date_iso IN ({placeholders}) GROUP BY report_date_iso",
+                dates,
+            )
+            summary = {row[0]: int(row[1] or 0) for row in cur.fetchall()}
+    finally:
+        conn.close()
+    mismatched = [
+        f"{d}: Pre_cdr={raw.get(d, 0)} summary={summary.get(d, 0)}"
+        for d in dates if raw.get(d, 0) != summary.get(d, 0)
+    ]
+    if mismatched:
+        raise RuntimeError("pre_cdr_daily_summary does not match Pre_cdr -- " + "; ".join(mismatched))
+
+
 # --------------------------------- formatting --------------------------------- #
 
 def clean_number(v: Any) -> str | None:
@@ -522,10 +553,17 @@ def main() -> None:
         try:
             print(f"Refreshing pre_cdr_daily_summary for {len(iso_dates_seen)} date(s)...")
             refresh_daily_summary(cfg, iso_dates_seen)
+            verify_daily_summary(cfg, iso_dates_seen)
+            print("pre_cdr_daily_summary verified against Pre_cdr.")
         except pymysql.err.ProgrammingError as exc:
             # 1146 = table doesn't exist -- migration 449 hasn't run yet. The real import
-            # above already succeeded and committed; never let this courtesy step undo that.
-            print(f"  (skipped: pre_cdr_daily_summary not set up yet -- {exc})")
+            # above already succeeded and committed, so this is not fatal; it is still shouted
+            # on stderr so the Housing Premium totals are not silently left stale.
+            print(f"WARNING: pre_cdr_daily_summary missing -- Housing Premium rollup NOT updated for these dates ({exc})", file=sys.stderr)
+        except RuntimeError as exc:
+            # Rollup refresh ran but disagrees with Pre_cdr: fail the run so it shows as failed.
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     print("Done.")
 
