@@ -1020,7 +1020,14 @@ function actualVendorStatusExpr(alias: string, columns: Set<string>) {
     return "0 = 1";
   }
 
-  return `LOWER(COALESCE(${statusColumns.join(", ")}, '')) IN ('approved','finance_approved','posted','paid')`;
+  // Same accrual set bpo-pnl.service.ts and the allocation overlay use. This read only 'approved', 'finance_approved',
+  // 'posted' and 'paid', so every bill still 'payment pending' (all of the newest month: Head Office August, VPT 25.3L,
+  // reached the P&L as 0) was missing from the process engine's pools while db_bill and the sheet count the expense
+  // when it is booked, not when it is paid.
+  return `LOWER(REPLACE(COALESCE(${statusColumns.join(", ")}, ''), '_', ' ')) IN (
+    'payment pending','pending','approved','finance approved','posted','scheduled','payment scheduled',
+    'partially paid','paid','closed'
+  )`;
 }
 
 /*
