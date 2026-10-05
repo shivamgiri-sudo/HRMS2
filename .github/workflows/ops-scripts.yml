@@ -109,6 +109,8 @@ on:
           - hrms-people-bridge
           - dbbill-expense-discover
           - dbbill-grn-sample
+          - dbbill-grn-by-cc
+          - hrms-nonpeople-detail
       mode:
         description: "dry-run reports what it would do and writes nothing"
         required: true
@@ -281,6 +283,14 @@ jobs:
             meta-outreach-audit)
               # Read-only in both modes.
               npx tsx scripts/meta-outreach-audit.ts 7
+              ;;
+            hrms-nonpeople-detail)
+              # Read-only in both modes: the GRN reader every P&L surface uses.
+              npx tsx scripts/hrms-nonpeople-detail.ts
+              ;;
+            dbbill-grn-by-cc)
+              # Read-only in both modes: billQuery allows SELECT only.
+              npx tsx scripts/dbbill-grn-by-cc.ts
               ;;
             dbbill-grn-sample)
               # Read-only in both modes: billQuery allows SELECT only.
