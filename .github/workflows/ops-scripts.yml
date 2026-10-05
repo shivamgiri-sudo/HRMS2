@@ -77,6 +77,7 @@ on:
           - attendance-register-exited-verify
           - reconcile-aug-incentives
           - zero-day-gross-audit
+          - aug-payroll-vs-dbbill-gap
           - heal-zero-day-lines
           - recruiter-list-diagnose
           - apply-aug-increments-from-dbbill
@@ -377,6 +378,10 @@ jobs:
             recruiter-list-diagnose)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/recruiter-list-diagnose.ts
+              ;;
+            aug-payroll-vs-dbbill-gap)
+              # Read-only in both modes: SELECTs only. Per-employee HRMS vs db_bill salary_data for the month.
+              npx tsx scripts/aug-payroll-vs-dbbill-gap.ts
               ;;
             zero-day-gross-audit)
               # Read-only in both modes: SELECTs only.
