@@ -41,3 +41,21 @@ describe("rateLimitKey — one bucket per signed-in user, not per office IP", ()
     expect((await hit("bob")).status).toBe(200);   // same office IP, own bucket
   });
 });
+
+describe("listEndpointLimiter counts a request once, however many routers it is mounted before", () => {
+  it("one GET through five mounts costs one unit of budget", async () => {
+    verify.mockImplementation((t: string) => ({ id: t, email: "" }));
+    const { listEndpointLimiter } = await import("../rateLimiter.js");
+    const app = express();
+    app.set("trust proxy", 1);
+    const passThrough = () => { const r = express.Router(); r.get("/other", (_q, s) => s.json({})); return r; };
+    for (let i = 0; i < 4; i++) app.use("/api/employees", listEndpointLimiter, passThrough());
+    const handler = express.Router();
+    handler.get("/me", (_q, s) => s.json({ ok: true }));
+    app.use("/api/employees", listEndpointLimiter, handler);
+    const first = await request(app).get("/api/employees/me").set("Authorization", "Bearer carol");
+    const second = await request(app).get("/api/employees/me").set("Authorization", "Bearer carol");
+    expect(first.status).toBe(200);
+    expect(Number(first.headers["ratelimit-remaining"]) - Number(second.headers["ratelimit-remaining"])).toBe(1);
+  });
+});

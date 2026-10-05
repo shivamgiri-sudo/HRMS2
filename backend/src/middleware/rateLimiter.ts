@@ -1,5 +1,5 @@
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import type { Request } from "express";
+import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { authService } from "../modules/auth/auth.service.js";
 
 /*
@@ -38,7 +38,7 @@ export const globalLimiter = rateLimit({
 });
 
 /** 300 req/min per user (per IP when anonymous) — for paginated list endpoints (employees, payslips, reports) */
-export const listEndpointLimiter = rateLimit({
+const listEndpointLimiterRaw = rateLimit({
   windowMs: 60 * 1000,
   max: 300,
   standardHeaders: true,
@@ -48,7 +48,7 @@ export const listEndpointLimiter = rateLimit({
 });
 
 /** 20 payroll runs per 5 min per user — expensive CPU+DB operation */
-export const payrollRunLimiter = rateLimit({
+const payrollRunLimiterRaw = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 20,
   standardHeaders: true,
@@ -80,7 +80,7 @@ export const publicRegistrationLimiter = rateLimit({
 });
 
 /** 150 req/min per user (per IP when anonymous) — for report generation endpoints */
-export const reportLimiter = rateLimit({
+const reportLimiterRaw = rateLimit({
   windowMs: 60 * 1000,
   max: 150,
   standardHeaders: true,
@@ -127,3 +127,26 @@ export const lmsAdminLinkLimiter = rateLimit({
     message: "Too many LMS admin link attempts. Please wait a few minutes and try again.",
   },
 });
+
+/*
+ * COUNT EACH REQUEST ONCE PER LIMITER.
+ *
+ * The same limiter instance is mounted in front of many routers on one path —
+ * `app.use("/api/employees", listEndpointLimiter, routerA)`, then routerB, routerC… and ~10 on
+ * /api/payroll. A request that is not handled by the first router falls through to the next mount
+ * and passed the limiter AGAIN, so one GET /api/employees/me was counted ~5 times (measured live:
+ * remaining dropped 5-7 per single call) and the real budget was ~60/min, not 300. Ordinary page
+ * loads then got 429. The limiter now runs at most once per request; later mounts just pass through.
+ */
+function oncePerRequest(limiter: RequestHandler, mark: string): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const flags = req as unknown as Record<string, boolean>;
+    if (flags[mark]) return next();
+    flags[mark] = true;
+    return limiter(req, res, next);
+  };
+}
+
+export const listEndpointLimiter = oncePerRequest(listEndpointLimiterRaw, "__rlListCounted");
+export const reportLimiter = oncePerRequest(reportLimiterRaw, "__rlReportCounted");
+export const payrollRunLimiter = oncePerRequest(payrollRunLimiterRaw, "__rlPayrollRunCounted");
