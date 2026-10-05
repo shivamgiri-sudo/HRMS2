@@ -30,6 +30,15 @@ const PROTECTED = `(adr.is_locked = 1 OR adr.override_by IS NOT NULL OR adr.regu
   const [byStatus] = await db.execute<RowDataPacket[]>(
     `SELECT adr.attendance_status s, COUNT(*) n FROM attendance_daily_record adr WHERE ${OUTSIDE} AND NOT ${PROTECTED} GROUP BY s ORDER BY n DESC`);
   console.log("removable by status:", (byStatus as any[]).map((r) => `${r.s}=${r.n}`).join(", "));
+  // Which side of the window: before the salary start / joining date, or after it (after exit or a rejoin gap).
+  const [bySide] = await db.execute<RowDataPacket[]>(
+    `SELECT CASE WHEN adr.record_date < COALESCE(e.salary_start_date, e.date_of_joining) THEN 'before salary start'
+                 ELSE 'after exit / rejoin gap' END side,
+            adr.attendance_status s, COUNT(*) n
+       FROM attendance_daily_record adr JOIN employees e ON e.id = adr.employee_id
+      WHERE ${OUTSIDE} AND NOT ${PROTECTED}
+      GROUP BY side, s ORDER BY side, n DESC`);
+  for (const r of bySide as any[]) console.log(`  ${r.side}: ${r.s}=${r.n}`);
 
   if (!APPLY) { process.exit(0); }
 
