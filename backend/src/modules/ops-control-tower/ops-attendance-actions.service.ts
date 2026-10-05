@@ -164,12 +164,28 @@ export interface JobHealth {
   note: string | null;
 }
 export interface CoverageBranch { branchId: string; branchName: string; activeStaff: number; days: Array<{ date: string; records: number; pct: number; low: boolean }> }
-export interface SyncHealth { generatedAt: string; jobs: JobHealth[]; days: string[]; coverage: CoverageBranch[]; lowDays: number }
+export interface AprFeedDay { date: string; users: number; low: boolean }
+export interface SyncHealth {
+  generatedAt: string; jobs: JobHealth[]; days: string[]; coverage: CoverageBranch[]; lowDays: number;
+  aprFeed: AprFeedDay[]; aprLowDays: number;
+}
+
+/**
+ * A dialler (APR) day is "low" when it carries under half the agents of a normal day in the window (median of
+ * the non-empty weekdays), or none at all. That is what 21-29 Sep 2026 (~14-37 agents vs ~195) and 2 Oct 2026
+ * (no rows) looked like; a quiet Sunday stays well above half.
+ */
+export function flagLowAprDays(days: Array<{ date: string; users: number }>): AprFeedDay[] {
+  const weekday = days.filter((d) => new Date(`${d.date}T00:00:00Z`).getUTCDay() !== 0 && d.users > 0).map((d) => d.users).sort((a, b) => a - b);
+  const median = weekday.length ? weekday[Math.floor(weekday.length / 2)] : 0;
+  return days.map((d) => ({ ...d, low: d.users === 0 || (median > 0 && d.users < median / 2) }));
+}
 
 const WORKERS: Array<{ key: string; label: string; name: string; everyHours: number }> = [
   { key: "engine", label: "Nightly attendance engine", name: "attendance-engine-sweep", everyHours: 24 },
   { key: "heal", label: "Missing-record repair", name: "attendance-engine-heal", everyHours: 6 },
   { key: "reconciliation", label: "Nightly reconciliation", name: "ncosec-attendance-reconciliation", everyHours: 24 },
+  { key: "apr", label: "Dialler APR sync", name: "apr-vicidial-sync", everyHours: 2 },
 ];
 
 async function lastWorkerRun(name: string): Promise<{ at: Date | null; status: string | null; note: string | null }> {
@@ -188,6 +204,7 @@ async function lastWorkerRun(name: string): Promise<{ at: Date | null; status: s
         if (m.found !== undefined) note = `${m.processed ?? 0} filled of ${m.found} missing${m.failed ? `, ${m.failed} failed` : ""}`;
         else if (m.processed !== undefined) note = `${m.processed} processed${m.failed ? `, ${m.failed} failed` : ""}`;
         else if (m.detectedIssues !== undefined) note = `${m.detectedIssues} issues seen, ${m.resolvedIssues ?? 0} resolved`;
+        else if (m.upserted !== undefined) note = `${m.changed ?? 0} agent-days changed, ${m.regraded ?? 0} re-graded${m.skippedPayroll ? `, ${m.skippedPayroll} held (payroll started)` : ""}${Array.isArray(m.failedDates) && m.failedDates.length ? `, failed: ${m.failedDates.join(", ")}` : ""}`;
       }
     } catch { /* metadata is optional */ }
     return { at: r.at ? new Date(r.at as string) : null, status: String(r.status), note };
@@ -258,5 +275,23 @@ export async function getSyncHealth(nowMs = Date.now()): Promise<SyncHealth> {
     });
     coverage.push({ branchId: id, branchName: String(b.branch_name), activeStaff: staff, days: perDay });
   }
-  return { generatedAt: new Date(nowMs).toISOString(), jobs, days, coverage, lowDays };
+
+  // Dialler feed: distinct agents per ReportDate for the 7 complete days up to yesterday. A missing or thin day
+  // here is a feed outage, not absent staff; the APR sync re-pulls the last 7 days every morning.
+  let aprFeed: AprFeedDay[] = [];
+  try {
+    const aprFrom = addDays(today, -AUTO_HEAL_DAYS);
+    const aprTo = addDays(today, -1);
+    const [aprRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(ReportDate, '%Y-%m-%d') AS d, COUNT(DISTINCT UserID) AS n FROM apr WHERE ReportDate BETWEEN ? AND ? GROUP BY ReportDate`,
+      [aprFrom, aprTo],
+    );
+    const byDate = new Map((aprRows as RowDataPacket[]).map((r) => [String(r.d), Number(r.n)]));
+    const aprDays: Array<{ date: string; users: number }> = [];
+    for (let d = aprFrom; d <= aprTo; d = addDays(d, 1)) aprDays.push({ date: d, users: byDate.get(d) ?? 0 });
+    aprFeed = flagLowAprDays(aprDays);
+  } catch { /* apr table missing in this environment: show nothing rather than an error */ }
+  const aprLowDays = aprFeed.filter((d) => d.low).length;
+
+  return { generatedAt: new Date(nowMs).toISOString(), jobs, days, coverage, lowDays, aprFeed, aprLowDays };
 }

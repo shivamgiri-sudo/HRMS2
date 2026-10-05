@@ -132,10 +132,14 @@ describe("getSyncHealth", () => {
       if (sql.includes("FROM attendance_daily_record adr")) return [[
         { branch_id: "b1", d: "2026-09-30", n: 430 }, { branch_id: "b1", d: "2026-10-01", n: 235 },
       ]];
+      if (sql.includes("FROM apr WHERE ReportDate")) return [[
+        { d: "2026-09-26", n: 190 }, { d: "2026-09-27", n: 150 }, { d: "2026-09-28", n: 195 },
+        { d: "2026-09-29", n: 200 }, { d: "2026-09-30", n: 205 }, { d: "2026-10-01", n: 208 }, // 2026-10-02: no rows at all
+      ]];
       return [[]];
     });
     const h = await getSyncHealth(now);
-    expect(h.jobs.map((j) => j.key)).toEqual(["biometric", "engine", "heal", "reconciliation"]);
+    expect(h.jobs.map((j) => j.key)).toEqual(["biometric", "engine", "heal", "reconciliation", "apr"]);
     expect(h.jobs[0]).toMatchObject({ tone: "ok", note: "120 day(s) written" });
     expect(h.jobs.find((j) => j.key === "heal")).toMatchObject({ note: "10 filled of 10 missing" });
     expect(h.coverage.map((b) => b.branchName)).toEqual(["NOIDA"]); // a branch with no active staff is left out
@@ -146,6 +150,10 @@ describe("getSyncHealth", () => {
     expect(days.find((d) => d.date === "2026-10-01")).toMatchObject({ records: 235, pct: 56, low: true });
     expect(days.find((d) => d.date === "2026-09-30")).toMatchObject({ pct: 100, low: false });
     expect(h.lowDays).toBe(5 + 1); // five days with no record at all, plus the 235 one
+    // Dialler feed: 7 complete days up to yesterday; the day with no APR row at all is flagged.
+    expect(h.aprFeed.map((d) => d.date)).toEqual(["2026-09-26", "2026-09-27", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]);
+    expect(h.aprFeed.filter((d) => d.low).map((d) => d.date)).toEqual(["2026-10-02"]);
+    expect(h.aprLowDays).toBe(1);
   });
   it("a job-run table that is missing reads as 'unknown' for that job, while the coverage data itself must load", async () => {
     m.execute.mockImplementation(async (sql: string) => {

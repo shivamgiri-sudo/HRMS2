@@ -8,7 +8,11 @@ import { timeAgo } from "./attendanceGuide";
 interface Job { key: string; label: string; lastRunAt: string | null; status: string | null; tone: "ok" | "warn" | "bad" | "unknown"; note: string | null }
 interface Day { date: string; records: number; pct: number; low: boolean }
 interface CoverageBranch { branchId: string; branchName: string; activeStaff: number; days: Day[] }
-export interface SyncHealthData { generatedAt: string; jobs: Job[]; days: string[]; coverage: CoverageBranch[]; lowDays: number }
+interface AprFeedDay { date: string; users: number; low: boolean }
+export interface SyncHealthData {
+  generatedAt: string; jobs: Job[]; days: string[]; coverage: CoverageBranch[]; lowDays: number;
+  aprFeed?: AprFeedDay[]; aprLowDays?: number;
+}
 
 const DOT: Record<Job["tone"], string> = { ok: "bg-emerald-500", warn: "bg-amber-500", bad: "bg-red-500", unknown: "bg-slate-300" };
 const TONE_TEXT: Record<Job["tone"], string> = { ok: "Healthy", warn: "Running late", bad: "Needs attention", unknown: "No record yet" };
@@ -37,6 +41,22 @@ export function OpsSyncHealthView({ data, nowMs = Date.now() }: { data: SyncHeal
           </li>
         ))}
       </ul>
+      {data.aprFeed && data.aprFeed.length > 0 && (
+        <div className="border-t px-4 py-2 text-xs" aria-label="Dialler APR feed">
+          <span className="font-semibold text-slate-700">Dialler APR agents per day: </span>
+          {data.aprFeed.map((d) => (
+            <span key={d.date} title={d.low ? "Feed missing or far below normal for this day" : undefined}
+              className={`ml-2 font-mono ${d.low ? "rounded bg-red-50 px-1 font-semibold text-red-700" : "text-slate-500"}`}>
+              {short(d.date)} {d.users}
+            </span>
+          ))}
+          {(data.aprLowDays ?? 0) > 0 && (
+            <span className="ml-2 text-red-700">
+              — {data.aprLowDays} day{data.aprLowDays === 1 ? "" : "s"} with the dialler feed missing or far below normal. Attendance for dialler staff on these days is not reliable until the feed is re-pulled (the sync re-pulls the last 7 days every morning).
+            </span>
+          )}
+        </div>
+      )}
       <details className="border-t" open={data.lowDays > 0}>
         <summary className="cursor-pointer px-4 py-2 text-xs font-semibold text-slate-700">
           Records created per branch, 7 days up to the day before yesterday (% of active staff; yesterday is filled overnight){worst ? ` — lowest: ${worst.b} ${short(worst.date)} at ${worst.pct}%` : ""}
