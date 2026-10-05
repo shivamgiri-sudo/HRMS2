@@ -1,6 +1,6 @@
 /**
  * db_bill revenue and salary cost by branch + cost centre + month. READ-ONLY (billQuery = SELECT only).
- * Revenue: tbl_invoice.total (ex-tax), status = 0, grouped by invoiceDate month.
+ * Revenue: tbl_invoice.total plus tax columns (to confirm total is ex-GST), status = 0, grouped by invoiceDate month.
  * Cost: salary_data (Gross / CTC / employer statutory) grouped by SalayDate month.
  * One output line per row so the runner log does not truncate.
  *
@@ -12,7 +12,9 @@ import { billQuery } from "../src/db/billDb.js";
 (async () => {
   const rev = await billQuery<any>(
     `SELECT DATE_FORMAT(invoiceDate,'%Y-%m') p, TRIM(branch_name) branch, TRIM(cost_center) cc, TRIM(cost_process_name) pname,
-            COUNT(*) n, SUM(CAST(total AS DECIMAL(16,2))) rev
+            COUNT(*) n, SUM(CAST(total AS DECIMAL(16,2))) rev,
+            SUM(CAST(grnd AS DECIMAL(16,2))) grnd, SUM(CAST(tax AS DECIMAL(16,2))) tax, SUM(CAST(igst AS DECIMAL(16,2))) igst,
+            SUM(CAST(cgst AS DECIMAL(16,2))) cgst, SUM(CAST(sgst AS DECIMAL(16,2))) sgst, SUM(CAST(sbctax AS DECIMAL(16,2))) sbctax, MAX(invoiceType) itype
        FROM tbl_invoice
       WHERE status = 0 AND invoiceDate >= '2026-04-01' AND invoiceDate < '2026-10-01'
       GROUP BY p, branch, cc, pname ORDER BY p, branch, cc`);
