@@ -29,6 +29,13 @@
     "he_drive",
     "he_match"
   ],
+  "modules/hiring-engine/he-ex-employee.service.ts": [
+    "he_ex_employee"
+  ],
+  "modules/hiring-engine/he-identity.service.ts": [
+    "he_identity_clash",
+    "he_lead_identity"
+  ],
   "modules/hiring-engine/he-ingest.service.ts": [
     "he_call",
     "he_message"

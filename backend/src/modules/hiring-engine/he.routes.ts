@@ -7,7 +7,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { addEvent, backfillLeadPool } from "./he-lead.service.js";
-import { createDrive, setDriveStatus, suggestMatches } from "./he-drive.service.js";
+import { createDrive, setDriveStatus, suggestMatchesDetailed } from "./he-drive.service.js";
 import { runEngineTick } from "./he-engine.service.js";
 import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
@@ -160,7 +160,7 @@ heRouter.post("/drives/:id/status", requireAuth, requireRole(...WRITE_ROLES), as
 });
 
 heRouter.post("/drives/:id/suggest", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
-  try { res.json({ success: true, data: { suggested: await suggestMatches(String(req.params.id)) } }); }
+  try { res.json({ success: true, data: await suggestMatchesDetailed(String(req.params.id)) }); }
   catch (err) { res.status(400).json({ success: false, message: (err as Error).message }); }
 });
 

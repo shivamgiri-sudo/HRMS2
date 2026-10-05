@@ -109,3 +109,22 @@ export function evaluateEligibility(f: EligibilityFacts): Eligibility {
 
   return { eligible: true, priority, blocks: [], warnings };
 }
+
+export interface ExitFacts {
+  exitType: string | null;
+  exitSubType: string | null;
+  reasonCategory: string | null;
+  employmentStatus: string | null;
+  disciplinaryFlag: boolean;
+}
+
+/** Former employee we may message (always last priority): voluntary resignation, nothing adverse on record. */
+export function isCleanVoluntary(x: ExitFacts): boolean {
+  if (x.disciplinaryFlag) return false;
+  if (String(x.exitType ?? "").toLowerCase() !== "voluntary") return false;
+  if (String(x.exitSubType ?? "").toLowerCase() !== "resignation") return false;
+  const adverse = /terminat|misconduct|performance_action|abscond|abandon|did_not_join|disciplin/i;
+  if (adverse.test(String(x.reasonCategory ?? ""))) return false;
+  if (/terminat|abscond|not_joined/i.test(String(x.employmentStatus ?? ""))) return false;
+  return true;
+}

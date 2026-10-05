@@ -4,6 +4,8 @@
  * or voice calls can never be handed the same last seat).
  */
 import { randomBytes } from "node:crypto";
+import { applyEligibilityGate, type LeadFactsRow } from "./he-eligibility.service.js";
+import { refreshHistoryChunk } from "./he-master.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { eduRank } from "../meta-campaign/lead-screener.service.js";
@@ -90,7 +92,14 @@ const slotCfg = (d: DriveRow): SlotConfig => ({ date: String(d.drive_date).slice
  * A lead already booked into another live drive is skipped (no double booking); leads that cleared a round
  * for this process before get a bonus. Returns how many matches were written.
  */
+export interface SuggestResult { suggested: number; blockedByReason: Record<string, number>; considered: number }
+
 export async function suggestMatches(driveId: string, limit?: number): Promise<number> {
+  return (await suggestMatchesDetailed(driveId, limit)).suggested;
+}
+
+/** Same as suggestMatches but also reports why people were not shortlisted (joined, employee, rejected in this process...). */
+export async function suggestMatchesDetailed(driveId: string, limit?: number): Promise<SuggestResult> {
   const [dr] = await db.execute<DriveRow[]>("SELECT * FROM he_drive WHERE id = ? LIMIT 1", [driveId]);
   const drive = dr[0];
   if (!drive) throw new Error("Drive not found");
@@ -109,21 +118,33 @@ export async function suggestMatches(driveId: string, limit?: number): Promise<n
   if (mreq.ageMin != null) { pre.push("(l.age IS NULL OR l.age >= ?)"); preArgs.push(mreq.ageMin); }
   if (mreq.ageMax != null) { pre.push("(l.age IS NULL OR l.age <= ?)"); preArgs.push(mreq.ageMax); }
   if (mreq.nightShift === true) pre.push("(l.night_shift_ok IS NULL OR l.night_shift_ok = 1)");
-  const [leads] = await db.execute<RowDataPacket[]>(
-    `SELECT l.id, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng,
+  const selectCandidates = async () => (await db.execute<RowDataPacket[]>(
+    `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
+            l.history_refreshed_at, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng,
             EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
        FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
+        AND l.is_employee = 0 AND l.final_status <> 'joined'
         AND NOT EXISTS (SELECT 1 FROM he_match m WHERE m.lead_id = l.id AND m.state IN ('invited','confirmed') AND m.slot_at >= NOW())
         AND NOT EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NOT NULL)
         ${pre.map((c) => `AND ${c}`).join("\n        ")}
-      ORDER BY has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`, preArgs);
-  const scored = leads
-    .map((l) => ({ id: l.id as string, consented: Number(l.has_consent) === 1, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng) }, mreq), eng: Number(l.eng) }))
+      ORDER BY has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`, preArgs))[0];
+  let leads = await selectCandidates();
+  // The rollup columns decide who is an employee / already joined. Refresh any prefix whose rollup is missing or a day old
+  // before trusting it, so a never-refreshed lead cannot slip through the gate.
+  const staleCut = Date.now() - 86_400_000;
+  const stalePrefixes = [...new Set(leads.filter((l) => !l.history_refreshed_at || new Date(l.history_refreshed_at).getTime() < staleCut).map((l) => String(l.mobile10).slice(0, 2)))];
+  if (stalePrefixes.length) {
+    for (const prefix of stalePrefixes) await refreshHistoryChunk({ prefix });
+    leads = await selectCandidates();
+  }
+  const gate = await applyEligibilityGate(leads as unknown as LeadFactsRow[], { id: req.id, processName: req.process_name ?? null });
+  const allowed = leads.filter((l) => gate.verdicts.get(l.id)?.eligible);
+  const scored = allowed
+    .map((l) => ({ id: l.id as string, priority: gate.verdicts.get(l.id)!.priority, consented: Number(l.has_consent) === 1, res: scoreLead({ age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng) }, mreq), eng: Number(l.eng) }))
     .filter((x) => x.res.eligible)
-    // Reachable people first: only consented leads can be messaged, so they must not be crowded out of a capped list by
-    // better-fitting people who cannot be contacted. The rest only fill spare room (e.g. for a telecaller to get consent).
-    .sort((a, b) => Number(b.consented) * 1000 + b.res.score + b.eng * 0.2 - (Number(a.consented) * 1000 + a.res.score + a.eng * 0.2))
+    // Reachable people first (only consented leads can be messaged), then eligibility priority (ex-employees always last), then fit.
+    .sort((a, b) => (Number(b.consented) * 1000 - b.priority * 10 + b.res.score + b.eng * 0.2) - (Number(a.consented) * 1000 - a.priority * 10 + a.res.score + a.eng * 0.2))
     .slice(0, want);
   for (const s of scored) {
     await db.execute(
@@ -132,7 +153,7 @@ export async function suggestMatches(driveId: string, limit?: number): Promise<n
        ON DUPLICATE KEY UPDATE drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)`,
       [s.id, drive.requisition_id, driveId, s.res.score, JSON.stringify({ reasons: s.res.reasons, unknown: s.res.unknown }), s.res.distanceKm, randomBytes(16).toString("hex")]);
   }
-  return scored.length;
+  return { suggested: scored.length, blockedByReason: gate.blockedByReason, considered: leads.length };
 }
 
 /** Other open requisitions a declined lead fits (feeds the "other role" offer). Same branch ranked first by score. */

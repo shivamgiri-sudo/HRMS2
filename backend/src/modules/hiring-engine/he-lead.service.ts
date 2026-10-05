@@ -6,6 +6,7 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { normalizeMobile10 } from "./he-phone.js";
+import { recordIdentities } from "./he-identity.service.js";
 import type { Signal } from "./he-signals.js";
 import type { LeadStatus } from "./he-state.js";
 
@@ -45,7 +46,7 @@ async function findMetaLeadId(mobile10: string): Promise<string | null> {
 }
 
 /** Create or enrich a lead. Existing non-null values are never overwritten by nulls; sources accumulate. */
-export async function upsertLead(input: LeadInput): Promise<{ id: string; created: boolean } | null> {
+async function upsertLeadCore(input: LeadInput): Promise<{ id: string; created: boolean } | null> {
   const mobile10 = normalizeMobile10(input.mobile);
   if (!mobile10) return null;
   if (input.linkMeta && !input.metaLeadId) input = { ...input, metaLeadId: await findMetaLeadId(mobile10) };
@@ -83,6 +84,13 @@ export async function upsertLead(input: LeadInput): Promise<{ id: string; create
   );
   const [row] = await db.execute<RowDataPacket[]>("SELECT id FROM he_lead WHERE mobile10 = ? LIMIT 1", [mobile10]);
   return { id: row[0].id as string, created: r.affectedRows === 1 };
+}
+
+/** Create or enrich a lead and record its number/email identities (a clashing email is flagged for HR, never merged). */
+export async function upsertLead(input: LeadInput): Promise<{ id: string; created: boolean } | null> {
+  const r = await upsertLeadCore(input);
+  if (r) await recordIdentities(r.id, { mobile: input.mobile, email: input.email, source: input.source });
+  return r;
 }
 
 export async function findLeadByMobile(mobile: string): Promise<HeLead | null> {

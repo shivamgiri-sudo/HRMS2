@@ -1294,6 +1294,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2106_hiring_engine_bulk_calls.sql", // Registered 2026-10-05. he_call_batch + he_call_job: manual bulk voice-call uploads (phone,name,role,interview_date,interview_time,branch_address,reference_id), per-row state/retry/provider call id. CREATE TABLE IF NOT EXISTS only.
   "migrations/2107_job_requisition_ad_required.sql", // Registered 2026-10-05. job_requisition.ad_required TINYINT(1) NOT NULL DEFAULT 1: persisted "run an ad?" decision read by the marketing brief subject. PREPARE-guarded, safe to re-run.
   "migrations/2108_hiring_engine_master_history.sql", // Registered 2026-10-05. Recruitment master WITHOUT new attempt storage: indexed virtual mobile10 on ats_recruiter_hiring_activity, rollup/effort columns on he_lead, he_attempt_v union view. Guarded, additive, ALGORITHM=INPLACE.
+  "migrations/2109_hiring_engine_identity_profile_exemployee.sql", // Registered 2026-10-05. he_lead_identity (number+email unique), he_identity_clash, he_lead_profile, he_ex_employee side tables; requisition_id/drive_id on he_message/he_call; he_attempt_v carries requisition. Additive, guarded.
 ];
 
 export type MigrationHealth = {

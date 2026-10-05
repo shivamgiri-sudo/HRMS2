@@ -50,3 +50,16 @@ describe("eligibility gate", () => {
     expect(evaluateEligibility(f({ finalStatus: "rejected", walkinCount: 1 })).warnings).toContain("rejected_elsewhere");
   });
 });
+
+import { isCleanVoluntary } from "../he-eligibility.js";
+describe("clean voluntary leaver", () => {
+  const ok = { exitType: "voluntary", exitSubType: "resignation", reasonCategory: "better_opportunity", employmentStatus: "inactive", disciplinaryFlag: false };
+  it("accepts a plain resignation", () => expect(isCleanVoluntary(ok)).toBe(true));
+  it("rejects adverse exits", () => {
+    expect(isCleanVoluntary({ ...ok, exitType: "involuntary" })).toBe(false);
+    expect(isCleanVoluntary({ ...ok, exitSubType: "absconding" })).toBe(false);
+    expect(isCleanVoluntary({ ...ok, reasonCategory: "termination_misconduct" })).toBe(false);
+    expect(isCleanVoluntary({ ...ok, employmentStatus: "absconded" })).toBe(false);
+    expect(isCleanVoluntary({ ...ok, disciplinaryFlag: true })).toBe(false);
+  });
+});
