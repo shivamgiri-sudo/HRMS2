@@ -8,6 +8,7 @@ import { Form16BulkUpload } from "@/components/payroll/Form16BulkUpload";
 import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
 import { downloadMasCallnetPayslipV2Format } from "@/lib/masCallnetPayslipGeneratorV2Format";
 import { numberToWords } from "@/lib/numberToWords";
+import { payslipDays } from "@/lib/payslipDays";
 
 type PayrollRun = { id: string; run_month: string; status: string; total_employees?: number; total_gross?: number; total_net?: number; };
 function runMonth(r: PayrollRun): number { return r.run_month ? parseInt(r.run_month.split("-")[1] ?? "1", 10) : 0; }
@@ -100,7 +101,7 @@ async function downloadPayslipPdf(payslip: Payslip): Promise<void> {
     esiNo: payslip.esi_number || "",
     location: payslip.branch_name || payslip.location_name || "N/A",
     wDays: Number(payslip.working_days ?? 0),
-    earnedDays: Number(payslip.present_days ?? 0),
+    earnedDays: payslipDays(payslip as never).paidDays || Number(payslip.present_days ?? 0),
     lwpDays: Number(payslip.lwp_days ?? 0),
     totalDaysInMonth: Number(payslip.working_days ?? 30),
     basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,

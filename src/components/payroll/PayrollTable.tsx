@@ -28,6 +28,7 @@ import {
 import { Download, Eye, MoreVertical, CheckCircle, Clock, CreditCard, CalendarCheck, Loader2, X } from "lucide-react";
 import { useState } from "react";
 import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
+import { payslipDays } from "@/lib/payslipDays";
 import { numberToWords } from "@/lib/numberToWords";
 import { useToast } from "@/hooks/use-toast";
 
@@ -264,9 +265,9 @@ export function PayrollTable({
         location: full?.branch_name || full?.location_name || record.branch || "N/A",
         esiNo: full?.esi_number || "",
         wDays: Number(full?.working_days ?? record.workingDays ?? 30),
-        earnedDays: Number(full?.present_days ?? record.presentDays ?? full?.working_days ?? 30),
+        earnedDays: payslipDays({ ...(full ?? {}), month: record.monthNum, year: record.year } as never).paidDays || Number(full?.present_days ?? record.presentDays ?? full?.working_days ?? 30),
         lwpDays: Number(full?.lwp_days ?? record.lwpDays ?? 0),
-        totalDaysInMonth: Number(full?.working_days ?? record.workingDays ?? 30),
+        totalDaysInMonth: payslipDays({ ...(full ?? {}), month: record.monthNum, year: record.year } as never).daysInMonth || Number(full?.working_days ?? record.workingDays ?? 30),
         basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
         pf, esic, tds, lwpDeduction: Number(full?.lwp_deduction ?? 0), loan, adDed, otherDed,
         // full?.employer_costs (component_type='employer_cost') carries EPF admin

@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { downloadMasCallnetPayslip } from "@/lib/masCallnetPayslipGeneratorV2";
 import { downloadMasCallnetPayslipV2Format } from "@/lib/masCallnetPayslipGeneratorV2Format";
+import { payslipDays } from "@/lib/payslipDays";
 import { numberToWords } from "@/lib/numberToWords";
 import { RunningMonthCard, getIstRunMonth } from "@/components/payroll/RunningMonthCard";
 import { TaxCertificateCard } from "@/components/profile/TaxCertificateCard";
@@ -491,9 +492,9 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       location: record.branch_name || record.location_name || "N/A",
       esiNo: record.esi_number || "",
       wDays: Number(record.working_days ?? 30),
-      earnedDays: Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
+      earnedDays: payslipDays(record as never).paidDays || Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
       lwpDays: Number(record.lwp_days ?? 0),
-      totalDaysInMonth: Number(record.working_days ?? 30),
+      totalDaysInMonth: payslipDays(record as never).daysInMonth || Number(record.working_days ?? 30),
       basic, hra, bonus, conv, pa, ma, sa, oa: otherEarnings, arrear, incentive,
       pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
       employerPf: Number(record.pf_employer ?? 0),
@@ -643,7 +644,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       employerPf: Number(record.pf_employer ?? 0),
       employerEsic: Number(record.esic_employer ?? 0),
       wDays: Number(record.working_days ?? 30),
-      earnedDays: Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
+      earnedDays: payslipDays({ ...(record as object), ...(detail ?? {}) } as never).paidDays || Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
       weekOffDays, paidHolidays,
       basic, hra, conv, pa, ma, sa, oa: otherEarnings, arrear, bonus, incentive,
       pf, esic, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
