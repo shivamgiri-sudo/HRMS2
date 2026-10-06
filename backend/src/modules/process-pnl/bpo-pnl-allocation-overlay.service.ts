@@ -349,9 +349,12 @@ async function legacyAllocatedGrnRows(period: string) {
        FROM vendor_payment_tracking vpt
        JOIN grn_request g ON g.id = vpt.grn_request_id
        JOIN (
+         -- Only GRNs whose allocations vw_process_pnl_grn_allocation actually adds back: the view INNER JOINs
+         -- finance_budget_line, so an allocation with no budget line is never added. Subtracting such a GRN
+         -- here removed it from the P&L entirely (Mas/5/26/279, 14.6L Fee & Subscription, May 2026).
          SELECT grn_request_id
            FROM grn_cost_allocation
-          WHERE lifecycle_status = 'consumed'
+          WHERE lifecycle_status = 'consumed' AND budget_line_id IS NOT NULL
           GROUP BY grn_request_id
        ) allocated ON allocated.grn_request_id = g.id
        LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
@@ -374,9 +377,12 @@ async function legacyAllocatedGrnRows(period: string) {
         SUM(${grnRequestExGstSql("g")}) AS amount
        FROM grn_request g
        JOIN (
+         -- Only GRNs whose allocations vw_process_pnl_grn_allocation actually adds back: the view INNER JOINs
+         -- finance_budget_line, so an allocation with no budget line is never added. Subtracting such a GRN
+         -- here removed it from the P&L entirely (Mas/5/26/279, 14.6L Fee & Subscription, May 2026).
          SELECT grn_request_id
            FROM grn_cost_allocation
-          WHERE lifecycle_status = 'consumed'
+          WHERE lifecycle_status = 'consumed' AND budget_line_id IS NOT NULL
           GROUP BY grn_request_id
        ) allocated ON allocated.grn_request_id = g.id
        LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
