@@ -251,6 +251,7 @@ const envSchema = z.object({
   // Default off: checkESignStatus / downloadESignDocument may be billed per call,
   // so this stays disabled until per-endpoint billing is confirmed with Luckpay.
   ESIGN_RECONCILIATION_ENABLED: z.string().default("false"),
+  DIGILOCKER_RECONCILIATION_ENABLED: z.string().default("false"),
   // One signing session for all joining documents instead of one per
   // document. Default off: it changes what an employee is asked to sign,
   // so it is switched on deliberately rather than by deploying.
@@ -535,6 +536,8 @@ export const env = {
   JOINING_KIT_ESIGN_ENABLED: parsed.data.JOINING_KIT_ESIGN_ENABLED === "true",
   ESIGN_RECONCILIATION_ENABLED:
     parsed.data.ESIGN_RECONCILIATION_ENABLED === "true",
+  DIGILOCKER_RECONCILIATION_ENABLED:
+    parsed.data.DIGILOCKER_RECONCILIATION_ENABLED === "true",
   NCOSEC_RECONCILIATION_ENABLED:
     parsed.data.NCOSEC_RECONCILIATION_ENABLED !== "false",
   NCOSEC_RECONCILIATION_AUTO_FIX:

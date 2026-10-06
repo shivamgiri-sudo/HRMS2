@@ -197,11 +197,14 @@ async function getProofDocumentsByCandidate(
 
   const placeholders = candidateIds.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT candidate_id, id, doc_type, file_original_name, created_at
+    // The table has uploaded_at, not created_at (a created_at here was a live 500 the moment the
+    // queue had rows, 2026-10-06). Deleted uploads are not proof.
+    `SELECT candidate_id, id, doc_type, file_original_name, uploaded_at
        FROM candidate_onboarding_document
       WHERE candidate_id IN (${placeholders})
+        AND deleted_at IS NULL
         AND (doc_type LIKE '%cheque%' OR doc_type LIKE '%passbook%' OR doc_type LIKE '%Cheque%' OR doc_type LIKE '%Passbook%')
-      ORDER BY created_at DESC`,
+      ORDER BY uploaded_at DESC`,
     candidateIds,
   );
   for (const r of rows as any[]) {
@@ -210,7 +213,7 @@ async function getProofDocumentsByCandidate(
         id: r.id,
         doc_type: r.doc_type,
         file_name: r.file_original_name ?? null,
-        uploaded_at: r.created_at ?? null,
+        uploaded_at: r.uploaded_at ?? null,
       });
     }
   }

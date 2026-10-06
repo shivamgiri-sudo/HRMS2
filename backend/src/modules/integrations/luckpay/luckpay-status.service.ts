@@ -223,6 +223,10 @@ async function syncDigilockerStatusLocked(candidateId: string): Promise<SyncOutc
     return { state: "not_started", clientTransactionId: clientTransactionId || null, message: "No provider transaction id recorded" };
   }
   if (["documents_received", "completed"].includes(String(row.status ?? ""))) {
+    // Already finished on the provider log. The bridge (what the Ops Control Tower and the
+    // onboarding gate read) may still say not_started if an earlier sync stopped part-way, so
+    // bring it level; advancing is idempotent and never moves backwards.
+    await syncBridgeDigilockerStatus(db, candidateId, "completed");
     return { state: "completed", clientTransactionId, transactionId, changed: false };
   }
   // Terminal: stop re-polling a session already known to have failed. A new attempt

@@ -24,6 +24,7 @@ import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vic
 import { startMolecularEmailSyncWorker, stopMolecularEmailSyncWorker } from "./molecular-email-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
 import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
+import { startDigilockerReconciliationWorker, stopDigilockerReconciliationWorker } from "./digilocker-reconciliation.worker.js";
 import { startDeadKitRedispatchWorker, stopDeadKitRedispatchWorker } from "./esign-dead-kit-redispatch.worker.js";
 import { startAddressBgvLinkSweepWorker, stopAddressBgvLinkSweepWorker } from "./address-bgv-link-sweep.worker.js";
 import { startMcnmeetCron, stopMcnmeetCron } from "../modules/mcnmeet/mcnmeet.cron.js";
@@ -402,6 +403,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: startEsignReconciliationWorker,
   },
   {
+    // Asks Luckpay about DigiLocker sessions no page came back to check. Self-disables unless
+    // DIGILOCKER_RECONCILIATION_ENABLED=true.
+    name: "digilocker-reconciliation",
+    start: startDigilockerReconciliationWorker,
+  },
+  {
     // Re-sends a fresh signing link for kits whose eMudhra session has died.
     // Each redispatch is a billed Luckpay session; self-disables unless
     // ESIGN_AUTO_REDISPATCH_ENABLED=true.
@@ -643,6 +650,7 @@ function shutdown(): void {
   // social-feed exports no stop — its timers are unref'd and die with the process.
   stopMcnmeetCron();
   stopEsignReconciliationWorker();
+  stopDigilockerReconciliationWorker();
   stopDeadKitRedispatchWorker();
   stopAddressBgvLinkSweepWorker();
   stopTenureBadgeScheduler();

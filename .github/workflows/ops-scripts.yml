@@ -69,6 +69,7 @@ on:
           - process-scope-diagnose
           - bank-manual-approve
           - digilocker-pending-diagnose
+          - digilocker-sync-pending
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
@@ -352,6 +353,11 @@ jobs:
               # Dry-runs unless given --apply. employee_codes = codes the owner approved.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/bank-manual-approve.ts ${INPUT_EMPLOYEE_CODES} $FLAG
+              ;;
+            digilocker-sync-pending)
+              # Dry-runs unless given --apply. Apply makes one Luckpay status check per open session.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/digilocker-sync-pending.ts $FLAG
               ;;
             digilocker-pending-diagnose)
               # Read-only in both modes: SELECTs only, codes and counts.

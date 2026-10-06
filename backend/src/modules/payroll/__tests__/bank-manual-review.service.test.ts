@@ -221,3 +221,14 @@ describe("getManualReviewBankGaps — what the reviewer sees", () => {
     expect(sql).toContain("account_no_encrypted");
   });
 });
+
+describe("proof document lookup", () => {
+  it("reads candidate_onboarding_document by uploaded_at (the table has no created_at)", async () => {
+    wire({ gaps: [{ employee_id: "emp-1", candidate_id: "cand-1", verification_status: "manual_review", onboarding_account_encrypted: "cipher:1" }] });
+    await svc.getManualReviewBankGaps();
+    const sql = String(execute.mock.calls.find(([s]) => String(s).includes("candidate_onboarding_document"))![0]);
+    expect(sql).toContain("uploaded_at");
+    expect(sql).not.toContain("created_at");
+    expect(sql).toContain("deleted_at IS NULL");
+  });
+});
