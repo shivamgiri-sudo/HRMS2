@@ -3,7 +3,7 @@
  * (and, if Pinbot approved a different name, the name to send). Reads/writes /api/he/templates.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ShieldAlert } from "lucide-react";
+import { Mail, ShieldAlert } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 interface Row { template_key: string; pinbot_name: string | null; language: string; approval_state: string }
@@ -21,6 +21,16 @@ export default function TemplatesTab() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  const [sampling, setSampling] = useState(false);
+  const [sampleMsg, setSampleMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const sendSamples = async () => {
+    setSampling(true); setSampleMsg(null);
+    try {
+      const r = await hrmsApi.post<{ to: string; sent: number; failed: number }>("/api/he/templates/send-samples", {}, 180000);
+      setSampleMsg({ ok: r.failed === 0, text: `${r.sent} sample emails sent to ${r.to}${r.failed ? `, ${r.failed} failed` : ""}. Each one is stamped TEST and nothing was sent to a candidate.` });
+    } catch (e: unknown) { setSampleMsg({ ok: false, text: (e as { message?: string })?.message || "Could not send the samples" }); }
+    finally { setSampling(false); }
+  };
   const update = async (key: string, body: { approvalState?: string; pinbotName?: string; language?: string }) => {
     try { await hrmsApi.patch(`/api/he/templates/${encodeURIComponent(key)}`, body); await load(); }
     catch (e: unknown) { setErr((e as { message?: string })?.message || "Only an admin can change this"); }
@@ -30,6 +40,14 @@ export default function TemplatesTab() {
     <div className="space-y-4">
       {paused && <div role="alert" className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><ShieldAlert className="h-4 w-4" aria-hidden /> Sending is paused by the HE_SENDS_PAUSED switch. Nothing is delivered until it is cleared.</div>}
       {err && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{err}</div>}
+      <section className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Sample emails">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-slate-900">See exactly what candidates receive</p>
+          <p className="text-xs text-slate-600">Emails you one test message for every stage: the email invite, the WhatsApp invite, the bot call script and each follow-up. Sent only to your own address.</p>
+        </div>
+        <button type="button" disabled={sampling} onClick={() => void sendSamples()} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><Mail className="h-4 w-4" aria-hidden /> {sampling ? "Sending 13 emails…" : "Email me a sample of every stage"}</button>
+        {sampleMsg && <p role={sampleMsg.ok ? "status" : "alert"} className={`basis-full text-sm ${sampleMsg.ok ? "text-emerald-700" : "text-rose-700"}`}>{sampleMsg.text}</p>}
+      </section>
       <p className="text-sm text-slate-600">Submit each template to Meta/Pinbot, then record the decision here. Only <b>approved</b> templates can be sent.</p>
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <table className="w-full min-w-[720px] text-left text-sm">

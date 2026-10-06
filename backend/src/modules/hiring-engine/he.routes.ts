@@ -29,6 +29,8 @@ import { refreshExEmployees } from "./he-ex-employee.service.js";
 import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { sendStageSamples } from "./he-samples.service.js";
+import { emailConfigured } from "./he-email.service.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -572,6 +574,20 @@ heRouter.get("/drives/:id/shortlist", requireAuth, requireRole(...VIEW_ROLES), a
 });
 
 // JD as understood by the engine (BMS format): read, or upload a .docx / .pdf / .txt (base64) or pasted text.
+/** Test emails for every outreach stage, to the signed-in user's own address only (the address comes from the login, not the body). */
+heRouter.post("/templates/send-samples", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  const to = String((req as AuthenticatedRequest).authUser?.email ?? "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(to)) return res.status(400).json({ success: false, message: "Your login has no email address on file, so a sample cannot be sent to you." });
+  if (!emailConfigured()) return res.status(409).json({ success: false, message: "Email is not set up on the server." });
+  try {
+    const results = await sendStageSamples(to);
+    res.json({ success: true, to: to.replace(/^(.).*(@.*)$/, "$1***$2"), sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, results });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he] send samples failed");
+    res.status(500).json({ success: false, message: "Could not send the samples" });
+  }
+});
+
 heRouter.get("/requisitions/:id/jd", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
   try {
     const jd = await getRequisitionJd(String(req.params.id));
