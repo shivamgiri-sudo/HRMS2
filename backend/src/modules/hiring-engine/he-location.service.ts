@@ -7,6 +7,8 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { addEvent, grantConsent, hasConsent, revokeConsent } from "./he-lead.service.js";
 import { ARRIVAL_RADIUS_KM, etaMinutes, haversineKm, isValidCoord } from "./he-eta.js";
+import { displayFirstName } from "./he-name.js";
+import { recordInviteAnswer, type InviteAnswer } from "./he-ingest.service.js";
 
 export const LOCATION_TEXT_VERSION = "location_v1";
 const TOKEN_RE = /^[a-f0-9]{32}$/;
@@ -19,13 +21,17 @@ export interface LocationContext {
   waConsent: boolean;
   /** Opt-in is offered while the invitation is live: until 3h after the slot. */
   optInOpen: boolean;
+  role: string | null;
+  /** Yes / No / another time can be answered until the slot starts. */
+  rsvpOpen: boolean;
 }
 
 /** Link is usable from 6h before the slot until 3h after, while the candidate is still expected. */
 export async function getContextByToken(token: string): Promise<LocationContext | null> {
   if (!TOKEN_RE.test(token)) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id, m.lead_id, m.state, m.slot_at, l.full_name, jr.branch_name, bm.address, bm.latitude, bm.longitude,
+    `SELECT m.id, m.lead_id, m.state, m.slot_at, l.full_name, jr.branch_name, jr.designation_name,
+            (m.state IN ('invited','confirmed','declined','slot_released') AND m.slot_at IS NOT NULL AND NOW() < m.slot_at) AS rsvp_open, bm.address, bm.latitude, bm.longitude,
             (m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL
               AND NOW() BETWEEN DATE_SUB(m.slot_at, INTERVAL 6 HOUR) AND DATE_ADD(m.slot_at, INTERVAL 3 HOUR)) AS is_open,
             (m.state IN ('suggested','invited','confirmed') AND (m.slot_at IS NULL OR NOW() < DATE_ADD(m.slot_at, INTERVAL 3 HOUR))) AS optin_open, l.status AS lead_status
@@ -35,13 +41,15 @@ export async function getContextByToken(token: string): Promise<LocationContext 
   const r = rows[0];
   if (!r) return null;
   return {
-    matchId: r.id as string, leadId: r.lead_id as string, firstName: String(r.full_name ?? "").trim().split(/\s+/)[0] || "there",
+    matchId: r.id as string, leadId: r.lead_id as string, firstName: displayFirstName(r.full_name),
     branchName: r.branch_name as string, address: (r.address as string | null) ?? null,
     branchLat: r.latitude == null ? null : Number(r.latitude), branchLng: r.longitude == null ? null : Number(r.longitude),
     slotAt: r.slot_at ? String(r.slot_at) : null, state: r.state as string, open: Number(r.is_open) === 1,
     sharing: await hasConsent(r.lead_id as string, "location"),
     waConsent: await hasConsent(r.lead_id as string, "whatsapp_contact"),
     optInOpen: Number(r.optin_open) === 1 && r.lead_status !== "opted_out",
+    role: (r.designation_name as string | null) ?? null,
+    rsvpOpen: Number(r.rsvp_open) === 1 && r.lead_status !== "opted_out",
   };
 }
 
@@ -92,4 +100,14 @@ export async function optInWhatsApp(token: string): Promise<"granted" | "already
   await grantConsent(c.leadId, "whatsapp_contact", WA_OPTIN_TEXT_VERSION, "web_link");
   await addEvent(c.leadId, "whatsapp_consent_granted", { channel: "web", detail: "invitation page" });
   return "granted";
+}
+
+/** Candidate answered the invitation (Yes / Cannot come / Another time) on their invitation page. */
+export async function answerInvite(token: string, answer: unknown): Promise<{ ok: true; state: string } | { ok: false; reason: "invalid" | "closed" | "bad_answer" }> {
+  if (answer !== "yes" && answer !== "no" && answer !== "later") return { ok: false, reason: "bad_answer" };
+  const c = await getContextByToken(token);
+  if (!c) return { ok: false, reason: "invalid" };
+  if (!c.rsvpOpen) return { ok: false, reason: "closed" };
+  const r = await recordInviteAnswer(c.matchId, answer as InviteAnswer);
+  return r ? { ok: true, state: r.state } : { ok: false, reason: "invalid" };
 }

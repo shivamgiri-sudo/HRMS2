@@ -161,7 +161,11 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
   }
   const expects = lead.salaryExpectation ?? (lead.lastSalary ? Math.round(lead.lastSalary * 1.15) : null);
   if (req.salaryMax && expects) {
-    if (expects > req.salaryMax * 1.15) { score -= 15; reasons.push(`${lead.salaryExpectation ? "expects" : "last salary suggests"} ${expects}, JD max ${req.salaryMax}`); }
+    if (expects > req.salaryMax * 1.15) {
+      score -= 15; reasons.push(`${lead.salaryExpectation ? "expects" : "last salary suggests"} ${expects}, JD max ${req.salaryMax}`);
+      // Drive shortlists: a stated expectation far above the role's pay (25%+) will not convert; an inferred one only lowers rank.
+      if (req.strict && lead.salaryExpectation && lead.salaryExpectation > req.salaryMax * 1.25) eligible = false;
+    }
     else score += 5;
   }
   if (lead.educationStatus === "pursuing" && req.minEducationRank != null && lead.educationRank != null && lead.educationRank <= req.minEducationRank) {
@@ -188,6 +192,8 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
         if (m.length) reasons.push(`skills: ${m.join(", ")}`);
         const miss = req.mandatorySkills.filter((x) => !m.includes(x));
         if (miss.length) reasons.push(`not seen: ${miss.slice(0, 3).join(", ")}`);
+        // Drive shortlists: skills on record but none of the JD's mandatory ones = a different profile. No skills text stays neutral.
+        if (req.strict && !m.length) { eligible = false; reasons.push("none of the mandatory skills"); }
       }
       if (p.length) { score += 5; reasons.push(`preferred: ${p.join(", ")}`); }
     }

@@ -6,7 +6,7 @@
 import rateLimit from "express-rate-limit";
 import { Router } from "express";
 import { logger } from "../../logger.js";
-import { getContextByToken, optInWhatsApp, recordPing, startSharing, stopSharing } from "./he-location.service.js";
+import { answerInvite, getContextByToken, optInWhatsApp, recordPing, startSharing, stopSharing } from "./he-location.service.js";
 
 export const hePublicRouter = Router();
 
@@ -16,7 +16,7 @@ hePublicRouter.get("/loc/:token", async (req, res) => {
   try {
     const c = await getContextByToken(String(req.params.token));
     if (!c) return res.status(404).json({ success: false, message: "This link is not valid." });
-    res.json({ success: true, data: { firstName: c.firstName, branchName: c.branchName, address: c.address, slotAt: c.slotAt, open: c.open, sharing: c.sharing, state: c.state, waConsent: c.waConsent, optInOpen: c.optInOpen } });
+    res.json({ success: true, data: { firstName: c.firstName, branchName: c.branchName, address: c.address, slotAt: c.slotAt, open: c.open, sharing: c.sharing, state: c.state, waConsent: c.waConsent, optInOpen: c.optInOpen, role: c.role, rsvpOpen: c.rsvpOpen } });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-public] context failed");
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
@@ -63,6 +63,17 @@ hePublicRouter.post("/loc/:token/optin", async (req, res) => {
     res.status(status).json({ success: status === 200, result: r });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-public] opt-in failed");
+    res.status(500).json({ success: false });
+  }
+});
+
+hePublicRouter.post("/loc/:token/answer", async (req, res) => {
+  try {
+    const r = await answerInvite(String(req.params.token), (req.body as { answer?: unknown } | undefined)?.answer);
+    if (r.ok) return res.json({ success: true, data: { state: r.state } });
+    res.status(r.reason === "invalid" ? 404 : r.reason === "bad_answer" ? 400 : 403).json({ success: false, reason: r.reason });
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, "[he-public] answer failed");
     res.status(500).json({ success: false });
   }
 });

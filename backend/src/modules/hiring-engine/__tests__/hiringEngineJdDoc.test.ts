@@ -45,3 +45,13 @@ describe("BMS JD format", () => {
     expect(ratingFor(70)).toBe("Strong Match");
   });
 });
+
+describe("skill synonyms", () => {
+  it("matches the words candidates use", async () => {
+    const { matchSkills } = await import("../he-jd-doc.js");
+    expect(matchSkills("recovery calling, DRA", ["Collections"])).toEqual(["Collections"]);
+    expect(matchSkills("Telesales 2 yrs", ["Sale Experience"])).toEqual(["Sale Experience"]);
+    expect(matchSkills("BPO, call center", ["Customer Service"])).toEqual(["Customer Service"]);
+    expect(matchSkills("Data entry", ["Team Handling"])).toEqual([]);
+  });
+});

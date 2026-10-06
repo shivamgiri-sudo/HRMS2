@@ -84,7 +84,8 @@ export async function loadEligibilityFacts(
   const leadIds = leads.map((l) => l.id);
   for (const part of chunks(leadIds)) {
     const [m] = await db.execute<RowDataPacket[]>(
-      `SELECT lead_id, state, slot_at FROM he_match WHERE requisition_id = ? AND lead_id IN (${ph(part.length)})`, [requisition.id, ...part]);
+      `SELECT m.lead_id, m.state, m.slot_at FROM he_match m LEFT JOIN he_drive d ON d.id = m.drive_id
+        WHERE m.requisition_id = ? AND m.lead_id IN (${ph(part.length)}) AND (d.id IS NULL OR d.status <> 'closed' OR m.state = 'selected')`, [requisition.id, ...part]);
     for (const r of m) {
       if (r.state === "selected") selectedHere.add(r.lead_id);
       if ((r.state === "invited" || r.state === "confirmed") && r.slot_at && new Date(r.slot_at) >= now) bookedHere.add(r.lead_id);

@@ -25,3 +25,12 @@ describe("education from JD text", () => {
     expect(parseJdText("Good communication").minEducationRank).toBeNull();
   });
 });
+
+describe("education 'preferred' wording", () => {
+  it("a Preferred Skills heading does not make education optional", async () => {
+    const { parseJdText } = await import("../he-jd-parse.js");
+    expect(parseJdText("Female candidates only. Graduation required.\nPreferred Skills:\n- BPO").minEducationRank).toBe(5);
+    expect(parseJdText("Graduate preferred").minEducationRank).toBeNull();
+    expect(parseJdText("Female candidates only").gender).toBe("female");
+  });
+});

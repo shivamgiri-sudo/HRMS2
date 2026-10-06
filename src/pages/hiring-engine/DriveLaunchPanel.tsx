@@ -130,7 +130,7 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
                   <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
                     {items.filter(([, v]) => v).map(([k, v]) => <div key={k} className="flex gap-2"><dt className="w-32 shrink-0 text-slate-500">{k}</dt><dd className="text-slate-800">{v}</dd></div>)}
                   </dl>
-                  <p className="mt-2 text-[11px] text-slate-500">Hard rules must be confirmed on the candidate's record; skills only change the ranking. {jd?.source === "uploaded" ? "" : "No JD document uploaded yet: the requisition's own text is used."}</p>
+                  <p className="mt-2 text-[11px] text-slate-500">Hard rules must be confirmed on the candidate's record. When a candidate's skills are on record, at least one mandatory skill must match, and a stated salary more than 25% above the JD is left out. {jd?.source === "uploaded" ? "" : "No JD document uploaded yet: the requisition's own text is used."}</p>
                 </section>
               );
             })()}

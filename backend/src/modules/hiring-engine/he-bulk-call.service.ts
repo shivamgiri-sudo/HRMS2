@@ -15,6 +15,7 @@ import { grantConsent, addEvent, upsertLead } from "./he-lead.service.js";
 import { sendsPaused } from "./he-send.service.js";
 import { nowIst } from "./he-slots.js";
 import { startVapiCall } from "./he-voice.service.js";
+import { displayFirstName } from "./he-name.js";
 
 export const BULK_CONSENT_TEXT_VERSION = "bulk_attest_v1";
 
@@ -109,7 +110,7 @@ export async function runBulkCallJobs(o: { batchId?: string; dryRun?: boolean; m
     const [claim] = await db.execute<ResultSetHeader>("UPDATE he_call_job SET status = 'placed', attempts = attempts + 1, last_attempt_at = NOW() WHERE id = ? AND status = 'queued'", [j.id]);
     if (claim.affectedRows === 0) continue; // another runner took it
     const ctx = {
-      candidateName: String(j.candidate_name).split(/\s+/)[0], role: String(j.role),
+      candidateName: displayFirstName(j.candidate_name), role: String(j.role),
       driveDate: dateLabel(String(j.interview_at).slice(0, 10)), slotTime: timeLabel(String(j.interview_at).slice(11, 19)),
       branchAddress: String(j.branch_address), contactName: process.env.HE_HR_CONTACT_NAME?.trim() || "our HR team", contactPhone: process.env.HE_HR_CONTACT_PHONE?.trim() || "",
       referenceId: String(j.reference_id),

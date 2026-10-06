@@ -12,6 +12,7 @@ import { PinbotWhatsAppProvider } from "../communication/providers/whatsapp/pinb
 import { addEvent } from "./he-lead.service.js";
 import { detectFaq, faqAnswer, salaryText } from "./he-faq.js";
 import { dateLabel, langFor, sendsPaused, timeLabel } from "./he-send.service.js";
+import { displayFirstName } from "./he-name.js";
 
 const pinbot = new PinbotWhatsAppProvider();
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
@@ -41,7 +42,7 @@ export async function answerCandidateQuestion(leadId: string, text: string, o: {
   const m = mr[0];
   const slot = m?.slot_at ? String(m.slot_at) : null;
   const answer = faqAnswer(kind, {
-    firstName: String(lead.full_name ?? "").trim().split(/\s+/)[0] || "Hi", role: m?.designation_name ?? null, company: env("HE_COMPANY_NAME", "MAS Callnet"),
+    firstName: displayFirstName(lead.full_name), role: m?.designation_name ?? null, company: env("HE_COMPANY_NAME", "MAS Callnet"),
     branch: m?.branch_name ?? null, address: m?.address ?? null,
     maps: m?.latitude != null && m?.longitude != null ? `https://maps.google.com/?q=${m.latitude},${m.longitude}` : m?.address ? `https://maps.google.com/?q=${encodeURIComponent(String(m.address))}` : null,
     dateLabel: m?.drive_date ? dateLabel(String(m.drive_date)) : slot ? dateLabel(slot) : null, timeLabel: slot ? timeLabel(slot) : null,

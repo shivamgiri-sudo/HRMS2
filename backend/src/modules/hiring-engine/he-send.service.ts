@@ -11,6 +11,7 @@ import { addEvent, hasConsent, setLeadStatus } from "./he-lead.service.js";
 import { checkSendAllowed } from "./he-guardrails.js";
 import { buildParams, getTemplate, renderBody, type Lang, type TemplateKey } from "./he-template-catalog.js";
 import type { LeadStatus } from "./he-state.js";
+import { displayFirstName } from "./he-name.js";
 
 const pinbot = new PinbotWhatsAppProvider();
 
@@ -102,7 +103,7 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   const slot = m?.slot_at ? String(m.slot_at) : null;
   const lat = m?.latitude, lng = m?.longitude;
   const ctx: Record<string, string | number | null | undefined> = {
-    candidate_name: String(lead.full_name ?? "").trim().split(/\s+/)[0] || "Candidate",
+    candidate_name: displayFirstName(lead.full_name),
     role: m?.designation_name, company: env("HE_COMPANY_NAME", "MAS Callnet"),
     branch_name: m?.branch_name, branch_address: m?.address,
     drive_date: m?.drive_date ? dateLabel(String(m.drive_date)) : null, slot_time: slot ? timeLabel(slot) : null,

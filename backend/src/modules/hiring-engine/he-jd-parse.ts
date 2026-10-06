@@ -42,7 +42,9 @@ export function parseJdText(text: string | null | undefined): JdRules {
   else if (/graduat|bachelor|\bdegree\b|\bb\.? ?com\b|\bb\.? ?a\b|\bb\.? ?sc\b|\bbba\b|\bbca\b/.test(t)) r.minEducationRank = 5;
   else if (/12th|hsc|intermediate|higher secondary|\+2\b/.test(t)) r.minEducationRank = 3;
   else if (/10th|ssc|matric/.test(t)) r.minEducationRank = 2;
-  if (/(preferred|preferable|desirable|optional)/.test(t)) r.minEducationRank = null;
+  // "Graduate preferred" makes the level optional; a "Preferred Skills" heading elsewhere in the JD does not.
+  const EDU = "graduat|bachelor|degree|12th|10th|hsc|ssc|qualification|education|post ?graduat|\\bpg\\b";
+  if (new RegExp(`(${EDU})[^.\\n]{0,40}(preferred|preferable|desirable|optional)|(preferred|preferable|desirable)[^.\\n:]{0,25}(${EDU})`).test(t)) r.minEducationRank = null;
   for (const [st, re] of [["commerce", /commerce|b\.? ?com\b/], ["science", /science graduate|b\.? ?sc\b/], ["it_engineering", /\bbca\b|b\.? ?tech|engineering graduate|\bit graduate/], ["management", /\bbba\b|\bmba\b/], ["arts", /arts graduate|\bb\.? ?a\b graduate/]] as const) {
     if (re.test(t)) r.streams.push(st);
   }

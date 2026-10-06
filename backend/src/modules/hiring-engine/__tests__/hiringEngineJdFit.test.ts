@@ -52,3 +52,17 @@ describe("strict drive shortlists", () => {
     expect(scoreLead({ experienceYears: 0.5 }, { minExperienceYears: 1 }).eligible).toBe(true);
   });
 });
+
+describe("strict drive shortlists: skills, salary and JD wording", () => {
+  it("skills on record but none of the mandatory ones -> out; no skills text stays neutral", () => {
+    const req = { mandatorySkills: ["Good Communication", "Sale Experience"], strict: true };
+    expect(scoreLead({ skillsText: "Data entry, MS Excel" }, req).eligible).toBe(false);
+    expect(scoreLead({ skillsText: "telesales, english" }, req).eligible).toBe(true);
+    expect(scoreLead({}, req).eligible).toBe(true);
+  });
+  it("stated salary 25%+ above the JD -> out; inferred salary only lowers rank", () => {
+    expect(scoreLead({ salaryExpectation: 33000 }, { salaryMax: 18000, strict: true }).eligible).toBe(false);
+    expect(scoreLead({ salaryExpectation: 20000 }, { salaryMax: 18000, strict: true }).eligible).toBe(true);
+    expect(scoreLead({ lastSalary: 30000 }, { salaryMax: 18000, strict: true }).eligible).toBe(true);
+  });
+});

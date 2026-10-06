@@ -11,6 +11,7 @@ import { reserveSlot } from "./he-drive.service.js";
 import { istHour } from "./he-guardrails.js";
 import { dateLabel, sendsPaused, timeLabel } from "./he-send.service.js";
 import { buildVoiceSystemPrompt, canPlaceCall, VOICE_FIRST_MESSAGE, VOICE_RESULT_SCHEMA, type VoiceCtx } from "./he-voice.js";
+import { displayFirstName } from "./he-name.js";
 
 const env = (k: string, d = "") => (process.env[k] && process.env[k]!.trim() ? process.env[k]!.trim() : d);
 
@@ -50,7 +51,7 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   if (!gate.ok) return { status: "blocked", reason: gate.reason };
 
   const ctx: VoiceCtx = {
-    candidateName: String(m.full_name ?? "").trim().split(/\s+/)[0] || "Candidate", role: String(m.designation_name),
+    candidateName: displayFirstName(m.full_name), role: String(m.designation_name),
     driveDate: dateLabel(String(m.drive_date)), slotTime: timeLabel(String(m.slot_at)), branchAddress: String(m.address),
     contactName: env("HE_HR_CONTACT_NAME", "our HR team"), contactPhone: env("HE_HR_CONTACT_PHONE", ""),
     referenceId: `HE-${String(m.id).replace(/-/g, "").slice(0, 6).toUpperCase()}`,

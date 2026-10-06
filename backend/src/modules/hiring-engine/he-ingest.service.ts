@@ -203,3 +203,37 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
   await refreshLeadHistoryById(l.id);
   return { leadId: l.id, outcome: outcomeText };
 }
+
+export type InviteAnswer = "yes" | "no" | "later";
+const ANSWER_INTENT = { yes: "confirm", no: "decline", later: "reschedule" } as const;
+const ANSWER_TEXT: Record<InviteAnswer, string> = { yes: "Tapped: Yes, I will come", no: "Tapped: Cannot come", later: "Tapped: Need another time" };
+
+/**
+ * The candidate tapped a button on their invitation page (linked from the email). Recorded like a reply on the
+ * email channel, so the shortlist's Reply / Status columns, the cadence stop rule and the 360 view all see it.
+ * "later" releases the slot and asks a recruiter to call with a new time.
+ */
+export async function recordInviteAnswer(matchId: string, answer: InviteAnswer): Promise<{ state: string } | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT m.id, m.lead_id, m.requisition_id, m.drive_id, l.mobile10, l.status, l.meta_lead_id
+       FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.id = ? LIMIT 1`, [matchId]);
+  const r = rows[0];
+  if (!r) return null;
+  const intent = ANSWER_INTENT[answer];
+  const [msg] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
+  const messageId = msg[0].id as string;
+  await db.execute(
+    "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, body, intent, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?)",
+    [messageId, r.lead_id, r.mobile10, "in", "email", ANSWER_TEXT[answer], intent, r.requisition_id, r.drive_id ?? null]);
+  const [lastOut] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM he_message WHERE lead_id = ? AND direction = 'out' AND channel = 'email' ORDER BY created_at DESC LIMIT 1", [r.lead_id]);
+  if (lastOut[0]) await db.execute("INSERT INTO he_message_event (message_id, lead_id, channel, event_type) VALUES (?,?,?, 'replied')", [lastOut[0].id, r.lead_id, "email"]);
+  const [o] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'slot_offered'", [r.lead_id]);
+  const plan = planFromReply(r.status as LeadStatus, intent, Number(o[0].n));
+  await applyPlan(String(r.lead_id), r.status as LeadStatus, plan, { matchId, channel: "email", detail: ANSWER_TEXT[answer], metaLeadId: r.meta_lead_id ?? null, replyText: null });
+  if (answer === "later" && !plan.humanHandoff) await addEvent(String(r.lead_id), "needs_human_followup", { channel: "email", detail: "asked for another walk-in time", driveId: r.drive_id ?? undefined });
+  await recomputeInsight(String(r.lead_id));
+  await refreshLeadHistoryById(String(r.lead_id));
+  const [s] = await db.execute<RowDataPacket[]>("SELECT state FROM he_match WHERE id = ?", [matchId]);
+  return { state: String(s[0]?.state ?? "") };
+}

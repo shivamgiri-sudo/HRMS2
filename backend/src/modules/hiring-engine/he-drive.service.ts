@@ -72,6 +72,26 @@ export function toMatchRequisition(r: ReqRow): MatchRequisition & { id: string }
   };
 }
 
+/**
+ * The uploaded JD's free text ("Female candidates only", "Graduation required", "night shifts", "DRA certified") fills
+ * whatever the requisition form and screening config left empty. Form values always win.
+ */
+function withJdDocText<T extends ReturnType<typeof toMatchRequisition>>(base: T, text: string | null | undefined): T {
+  if (!text) return base;
+  const jd = parseJdText(text);
+  return {
+    ...base,
+    gender: base.gender ?? jd.gender,
+    languages: base.languages?.length ? base.languages : jd.languages.length ? jd.languages : base.languages,
+    certifications: base.certifications?.length ? base.certifications : jd.certifications.length ? jd.certifications : base.certifications,
+    minTypingWpm: base.minTypingWpm ?? jd.minTypingWpm,
+    englishLevel: base.englishLevel ?? jd.englishLevel,
+    nightShift: base.nightShift ?? (jd.nightShift ? true : base.nightShift),
+    minEducationRank: base.minEducationRank ?? jd.minEducationRank,
+    streams: base.streams?.length ? base.streams : jd.streams.length ? jd.streams : base.streams,
+  };
+}
+
 /** Configured screening wins; anything left empty is filled from the requisition's free-text skills/education. */
 function withJdText(cfg: ReturnType<typeof screeningOf>, r: ReqRow): ReturnType<typeof screeningOf> & Pick<MatchRequisition, "nightShift" | "minExperienceYears" | "streams" | "minEducationRank"> {
   const jd = parseJdText(`${r.skills_required ?? ""}. ${r.education_requirement ?? ""}`);
@@ -149,7 +169,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   if (!req) throw new Error("Requisition not found");
   // JD (uploaded document in BMS format, else the requisition's own text) adds skills and fills gaps in the form fields.
   const jd = await getRequisitionJd(req.id);
-  const base = toMatchRequisition(req);
+  const base = withJdDocText(toMatchRequisition(req), jd?.text);
   const mreq = {
     ...base, strict: true,
     mandatorySkills: jd?.parsed.mandatorySkills.length ? jd.parsed.mandatorySkills : null,
@@ -225,7 +245,12 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
     await db.execute(
       `INSERT INTO he_match (lead_id, requisition_id, drive_id, score, reasons_json, distance_km, state, token)
        VALUES (?,?,?,?,?,?, 'suggested', ?)
-       ON DUPLICATE KEY UPDATE drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)`,
+       ON DUPLICATE KEY UPDATE
+         -- moved to a new drive (the old one was closed, or its slot is past): back to 'suggested' with no slot, so it is invited
+         -- afresh for the new date. Order matters: slot_at and state read the OLD drive_id before it is overwritten.
+         slot_at = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released'), slot_at, NULL),
+         state = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released'), state, 'suggested'),
+         drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)`,
       [s.id, drive.requisition_id, driveId, s.res.score, JSON.stringify({ reasons: s.res.reasons, unknown: s.res.unknown, confidence: s.res.confidence, priority: s.priority }), s.res.distanceKm, randomBytes(16).toString("hex")]);
   }
   // Earlier suggestions that no longer qualify (e.g. before the location rule) are dropped; contacted people are kept.
@@ -242,7 +267,7 @@ export async function loadRequisitionForMatching(requisitionId: string) {
   const req = await loadRequisition(requisitionId);
   if (!req) return null;
   const jd = await getRequisitionJd(requisitionId);
-  const base = toMatchRequisition(req);
+  const base = withJdDocText(toMatchRequisition(req), jd?.text);
   return {
     ...base, branchName: req.branch_name, processName: req.process_name,
     mandatorySkills: jd?.parsed.mandatorySkills ?? [], preferredSkills: jd?.parsed.preferredSkills ?? [],

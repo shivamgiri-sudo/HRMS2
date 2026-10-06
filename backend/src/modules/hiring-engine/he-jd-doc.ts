@@ -104,6 +104,16 @@ export function parseStructuredJd(text: string): StructuredJd {
 }
 
 const norm = (v: string) => v.toLowerCase().replace(/[\s.\-_/]+/g, "");
+/** Same skill in the words candidates and portals actually use (a JD skill matching the left side also matches the right). */
+const SYNONYMS: Array<[RegExp, RegExp]> = [
+  [/collection/, /collection|recovery|debt|npa|dra\b|dunning/],
+  [/\bsales?\b|\bsale experience|selling/, /sale|selling|telecall|tele[\s-]?call|business development|\bbde?\b/],
+  [/communication/, /communication|english|fluent|spoken|presentation/],
+  [/customer (service|support|care)/, /customer (service|support|care|handling)|\bcsr?\b|\bbpo\b|call cent(er|re)|helpdesk/],
+  [/data entry/, /data entry|typing|back office|backoffice/],
+  [/team (handling|management|lead)/, /team (handling|management|lead|leader)|\btl\b|supervis/],
+  [/(ms )?excel/, /excel|spreadsheet|ms office/],
+];
 /** Which skills appear in the candidate's text (substring, tolerant of spaces/punctuation; "sale experience" ~ "sales"). */
 export function matchSkills(text: string, skills: string[]): string[] {
   const lower = text.toLowerCase();
@@ -112,6 +122,7 @@ export function matchSkills(text: string, skills: string[]): string[] {
     if (!skill) return false;
     const sl = skill.toLowerCase();
     if (lower.includes(sl)) return true;
+    if (SYNONYMS.some(([skillRe, textRe]) => skillRe.test(sl) && textRe.test(lower))) return true;
     const ns = norm(skill);
     if (ns.length > 2 && n.includes(ns)) return true;
     // multi-word skills: every meaningful word stem present ("sale experience" matches "sales executive, 2 yrs experience")
