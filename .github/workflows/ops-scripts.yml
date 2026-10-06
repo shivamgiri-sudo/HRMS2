@@ -116,6 +116,7 @@ on:
           - grn-month-basis-audit
           - trace-grn
           - migration-status
+          - view-select-check
           - grn-amount-audit
           - repair-migrated-grn-ex-gst
           - book-nk-to-bluevine
@@ -339,6 +340,10 @@ jobs:
             grn-amount-audit)
               # Read-only in both modes: aggregate SELECTs (HRMS and db_bill).
               npx tsx scripts/grn-amount-audit.ts
+              ;;
+            view-select-check)
+              # Read-only: runs the SELECT of scripts/view-2114.sql, no DDL.
+              npx tsx scripts/view-select-check.ts scripts/view-2114.sql
               ;;
             migration-status)
               # Read-only: schema_migrations rows for the fragment given in employee_codes.
