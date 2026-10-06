@@ -6,6 +6,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { emailService } from "../communication/email.service.js";
 import { buildDashboardExcel, isKnownDashboard } from "./dashboard-export.service.js";
+import { buildMisExcel, getMisCompanies } from "./mis-export.service.js";
 
 /**
  * Scheduled MIS email: a schedule names a process dashboard, who it goes to (To / CC), a
@@ -18,6 +19,11 @@ import { buildDashboardExcel, isKnownDashboard } from "./dashboard-export.servic
  *
  * Not in the attachment: the on-screen KPI slides are computed in the browser and cannot be
  * rebuilt on the server, so the scheduled file carries the raw-data sheets and their notes.
+ *
+ * A dashboard key of "mis:<company>" schedules that company's whole MIS report instead: the
+ * attachment is built by buildMisExcel, the same workbook the MIS tab's "Download MIS Report"
+ * button downloads (KPI summary sheets + raw data), with the schedule's report title as the
+ * company label.
  */
 
 export const FREQUENCIES = ["once", "daily", "weekly"] as const;
@@ -32,6 +38,12 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 const LEASE_MINUTES = 10;
+const MIS_KEY_RE = /^mis:([a-z_]{1,40})$/;
+
+/** The company key of an MIS-report schedule ("mis:bellavita" -> "bellavita"), else null. */
+export function misCompanyOf(dashboardKey: string): string | null {
+  return MIS_KEY_RE.exec(dashboardKey)?.[1] ?? null;
+}
 
 export interface ScheduleInput {
   dashboardKey: string;
@@ -68,7 +80,7 @@ export function parseRecipients(raw: unknown, label: string, required: boolean):
 export function parseScheduleInput(body: unknown): Parsed<ScheduleInput> {
   const b = (body ?? {}) as Record<string, unknown>;
   const dashboardKey = String(b.dashboardKey ?? "").slice(0, 60);
-  if (!isKnownDashboard(dashboardKey)) return { ok: false, error: `Unknown dashboard "${dashboardKey}".` };
+  if (!isKnownDashboard(dashboardKey) && !misCompanyOf(dashboardKey)) return { ok: false, error: `Unknown dashboard "${dashboardKey}".` };
 
   const to = parseRecipients(b.to, "To", true);
   if (!to.ok) return to;
@@ -182,7 +194,7 @@ export function resolvePeriod(mode: RangeMode, now: Date, from: string | null, t
 export function bodyToHtml(text: string, scheduleId: string): string {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1e293b;line-height:1.5">${esc(text).replace(/\r?\n/g, "<br>")}`
-    + `<p style="margin-top:24px;font-size:11px;color:#94a3b8">Sent automatically by MAS Callnet HRMS (schedule ${scheduleId}). The attached Excel holds the raw data for the period stated in the file.</p></div>`;
+    + `<p style="margin-top:24px;font-size:11px;color:#94a3b8">Sent automatically by MAS Callnet HRMS (schedule ${scheduleId}). The attached Excel holds the report for the period stated in the file.</p></div>`;
 }
 
 // ---------- persistence ----------
@@ -251,6 +263,11 @@ export function toApi(r: ScheduleRow) {
 }
 
 export async function createSchedule(input: ScheduleInput, createdBy: string): Promise<{ id: string; nextRunAt: string | null }> {
+  const company = misCompanyOf(input.dashboardKey);
+  if (company) {
+    const companies = await getMisCompanies();
+    if (!companies[company]?.length) throw new Error(`No MIS report is configured for "${company}".`);
+  }
   const now = new Date();
   const nextRunAt = computeFirstRun(now, input.frequency, input.sendTime, input.sendOnDate, input.weekday);
   if (!nextRunAt) throw new Error("That send time is already in the past. Pick a later time or date.");
@@ -337,10 +354,13 @@ export async function sendSchedule(row: ScheduleRow, trigger: "scheduled" | "man
 
   try {
     if (!emailService.isConfigured()) throw new Error("SMTP is not configured on this server.");
-    const { raw } = await buildDashboardExcel({
-      dashboard: row.dashboard_key, reportTitle: row.report_title, slides: [], lob: row.lob ?? undefined,
-      from: period.from, to: period.to,
-    }, tmpPath);
+    const company = misCompanyOf(row.dashboard_key);
+    const { raw } = company
+      ? await buildMisExcel(company, row.report_title, period.from, period.to, tmpPath)
+      : await buildDashboardExcel({
+        dashboard: row.dashboard_key, reportTitle: row.report_title, slides: [], lob: row.lob ?? undefined,
+        from: period.from, to: period.to,
+      }, tmpPath);
     attachmentRows = raw.reduce((s, r) => s + (r.rowsExported ?? 0), 0);
     const attachment = fs.readFileSync(tmpPath);
     const sent = await emailService.send({
@@ -350,7 +370,8 @@ export async function sendSchedule(row: ScheduleRow, trigger: "scheduled" | "man
       html: bodyToHtml(row.body_text, row.id),
       text: `${row.body_text}\n\n(Schedule ${row.id})`,
       attachments: [{
-        filename: `${row.dashboard_key}_${period.from}_to_${period.to}.xlsx`,
+        // MIS reports keep the MIS tab's download name ("<company>_MIS_<to>.xlsx").
+        filename: company ? `${company}_MIS_${period.to}.xlsx` : `${row.dashboard_key}_${period.from}_to_${period.to}.xlsx`,
         content: attachment,
         contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       }],

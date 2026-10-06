@@ -21,7 +21,9 @@ import {
   Mail, Star, ShieldCheck, Repeat, RotateCcw, TrendingUp,
   Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
   Building2, Globe, Settings, Zap, CreditCard, LayoutGrid, UploadCloud, Sparkles, Download,
+  CalendarClock,
 } from "lucide-react";
+import { MisEmailScheduleDrawer } from "@/components/process-performance/MisEmailScheduleDrawer";
 
 type SectionKey = "dashboards" | "uploader" | "mis";
 
@@ -310,6 +312,7 @@ function MisPanel({ companyKey, companyLabel }: { companyKey: CompanyKey; compan
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const download = async () => {
     setBusy(true);
@@ -392,11 +395,25 @@ function MisPanel({ companyKey, companyLabel }: { companyKey: CompanyKey; compan
           >
             <Download className="h-3.5 w-3.5" /> {busy ? "Preparing MIS…" : "Download MIS Report"}
           </button>
+          <button
+            type="button"
+            onClick={() => setScheduleOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-4 py-1.5 text-sm font-semibold text-amber-700 shadow-sm hover:bg-amber-50"
+          >
+            <CalendarClock className="h-3.5 w-3.5" /> Schedule email…
+          </button>
         </div>
 
         {error && <div className="mt-3 rounded-lg border border-red-100 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
         {notice && <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs text-amber-800">{notice}</div>}
       </div>
+      {/* Emails this same MIS workbook on a schedule (mis-schedule.service.ts, key "mis:<company>"). */}
+      <MisEmailScheduleDrawer
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        dashboardKey={`mis:${companyKey}`}
+        reportTitle={companyLabel}
+      />
     </div>
   );
 }

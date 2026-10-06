@@ -8,9 +8,17 @@ vi.mock("../dashboard-export.service.js", () => ({
   isKnownDashboard: (k: string) => ["satya_retail", "gnc_sale"].includes(k),
   buildDashboardExcel: vi.fn(),
 }));
+vi.mock("../mis-export.service.js", () => ({
+  buildMisExcel: vi.fn(),
+  getMisCompanies: vi.fn(async () => ({ bellavita: [{ title: "Overall Dashboard" }], dalmia: [] })),
+}));
 
+import { buildMisExcel } from "../mis-export.service.js";
+import { buildDashboardExcel } from "../dashboard-export.service.js";
+import { emailService } from "../../communication/email.service.js";
+import fs from "fs";
 import {
-  advanceRun, bodyToHtml, computeFirstRun, parseRecipients, parseScheduleInput, resolvePeriod,
+  advanceRun, bodyToHtml, computeFirstRun, createSchedule, misCompanyOf, sendSchedule, type ScheduleRow, parseRecipients, parseScheduleInput, resolvePeriod,
 } from "../mis-schedule.service";
 
 const at = (y: number, mo: number, d: number, h = 0, m = 0) => new Date(y, mo - 1, d, h, m, 0, 0);
@@ -57,6 +65,20 @@ describe("schedule input validation", () => {
 
   it("rejects an unknown dashboard key", () => {
     expect(parseScheduleInput({ ...validBody, dashboardKey: "made_up" }).ok).toBe(false);
+  });
+
+  it("accepts an MIS report key and reads its company", () => {
+    const r = parseScheduleInput({ ...validBody, dashboardKey: "mis:bellavita" });
+    expect(r.ok).toBe(true);
+    expect(misCompanyOf("mis:bellavita")).toBe("bellavita");
+    expect(misCompanyOf("satya_retail")).toBeNull();
+    expect(parseScheduleInput({ ...validBody, dashboardKey: "mis:Bad-Key" }).ok).toBe(false);
+  });
+
+  it("refuses to create an MIS schedule for a company with no MIS sections", async () => {
+    const r = parseScheduleInput({ ...validBody, dashboardKey: "mis:dalmia" });
+    if (!r.ok) throw new Error(r.error);
+    await expect(createSchedule(r.value, "u1")).rejects.toThrow(/No MIS report/);
   });
 
   it("requires a weekday for weekly and a date for once", () => {
@@ -131,5 +153,28 @@ describe("body rendering", () => {
     expect(html).not.toContain("<b>hi</b>");
     expect(html).toContain("&lt;b&gt;hi&lt;/b&gt;<br>line2 &amp; more");
     expect(html).toContain("sched-1");
+  });
+});
+
+describe("MIS report send", () => {
+  it("attaches the exact workbook the MIS tab download builds (same builder, label and MTD period)", async () => {
+    vi.mocked(buildMisExcel).mockImplementation(async (_c, _l, _f, _t, filePath) => {
+      fs.writeFileSync(filePath, "xlsx-bytes");
+      return { raw: [], sections: ["Overall Dashboard"], skipped: [] };
+    });
+    vi.mocked(emailService.send).mockResolvedValue({ messageId: "m1" } as never);
+    const row = {
+      id: "s1", dashboard_key: "mis:bellavita", report_title: "Bellavita", lob: null,
+      to_addresses: "a@x.com", cc_addresses: null, subject: "MIS", body_text: "Hi",
+      range_mode: "mtd", range_from: null, range_to: null, frequency: "daily", send_time: "10:00",
+    } as unknown as ScheduleRow;
+    const r = await sendSchedule(row, "manual", at(2026, 10, 6, 10, 0));
+    expect(r.status).toBe("sent");
+    // Same call the MIS tab's GET /mis/:company/excel makes for This Month.
+    expect(buildMisExcel).toHaveBeenCalledWith("bellavita", "Bellavita", "2026-10-01", "2026-10-06", expect.any(String));
+    expect(buildDashboardExcel).not.toHaveBeenCalled();
+    const mail = vi.mocked(emailService.send).mock.calls[0][0];
+    expect(mail.attachments?.[0].filename).toBe("bellavita_MIS_2026-10-06.xlsx");
+    expect(String(mail.attachments?.[0].content)).toBe("xlsx-bytes");
   });
 });
