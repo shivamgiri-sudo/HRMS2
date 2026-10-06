@@ -56,6 +56,7 @@ on:
           - sbi-card-demo-remove
           - holiday-mapping-audit
           - exception-control-audit
+          - payable-days-check
           - repair-bucket-regrade
           - meta-outreach-audit
           - apr-source-audit
@@ -626,6 +627,10 @@ jobs:
               # Dry-runs unless given --apply. Apply writes only bucketed employees' roster_import rows that pay more.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/repair-bucket-regrade.ts $FLAG
+              ;;
+            payable-days-check)
+              # Read-only in both modes.
+              npx tsx scripts/payable-days-check.ts
               ;;
             exception-control-audit)
               # Read-only in both modes.
