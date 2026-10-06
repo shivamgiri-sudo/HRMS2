@@ -57,15 +57,13 @@ function Approval({ label, state, note }: { label: string; state: ApprovalState 
 }
 
 export function ForecastSheet({
-  open, onOpenChange, mode, row, period, reviewStage,
+  open, onOpenChange, mode, row, period,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: SheetMode;
   row: ForecastListRow | null;
   period: string;
-  /** For a reviewer holding both approver roles (or super_admin): which approval this is. */
-  reviewStage?: "finance_head" | "payroll_head";
 }) {
   const { toast } = useToast();
   const detail = useRevenueForecast(open && row?.forecastId ? row.forecastId : null);
@@ -130,7 +128,7 @@ export function ForecastSheet({
       const saved = await save.mutateAsync({ costCentreId: row.costCentreId, period, notes: notes || null, lines: linePayload() });
       if (andSubmit) {
         await submit.mutateAsync(saved.id);
-        done("Forecast submitted to Finance Head and Payroll Head");
+        done("Forecast submitted to the Finance Head");
       } else done("Draft saved");
     } catch (e) { fail(e); }
   }
@@ -160,9 +158,8 @@ export function ForecastSheet({
         ) : (
           <div className="mt-4 space-y-5">
             {f && f.status !== "draft" ? (
-              <div className="grid gap-3 rounded-lg border bg-slate-50 p-3 sm:grid-cols-2">
+              <div className="rounded-lg border bg-slate-50 p-3">
                 <Approval label="Finance Head" state={f.finance_head_status} note={f.finance_head_note} />
-                <Approval label="Payroll Head" state={f.payroll_head_status} note={f.payroll_head_note} />
               </div>
             ) : null}
 
@@ -326,10 +323,10 @@ export function ForecastSheet({
                 <>
                   <Button variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={busy || !note.trim()}
                     title={!note.trim() ? "Write a comment to reject" : undefined}
-                    onClick={() => review.mutateAsync({ id: f.id, decision: "rejected", note, stage: reviewStage }).then(() => done("Forecast sent back to the Branch Head"), fail)}>
+                    onClick={() => review.mutateAsync({ id: f.id, decision: "rejected", note }).then(() => done("Forecast sent back to the Branch Head"), fail)}>
                     Reject
                   </Button>
-                  <Button disabled={busy} onClick={() => review.mutateAsync({ id: f.id, decision: "approved", note: note || undefined, stage: reviewStage }).then(() => done("Approved"), fail)}>
+                  <Button disabled={busy} onClick={() => review.mutateAsync({ id: f.id, decision: "approved", note: note || undefined }).then(() => done("Approved"), fail)}>
                     Approve
                   </Button>
                 </>

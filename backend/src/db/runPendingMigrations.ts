@@ -1308,6 +1308,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2114_pnl_grn_allocation_view_accounting_month.sql", // Registered 2026-10-06. Owner rule: GRN counts in its accounting month. CREATE OR REPLACE of vw_process_pnl_grn_allocation, sql/1852 body with only period_code changed to grn_request.accounting_period first (multi-month GRNs keep the allocation recognition_period). Columns unchanged. Idempotent.
   "migrations/2117_grn_allocation_budget_draw.sql", // Registered 2026-10-06. grn_allocation_budget_draw: the lines a Smart GRN allocation's reservation actually drew from when spread at Branch Head approval, so consume/release/reverse move money per draw. CREATE TABLE IF NOT EXISTS only.
   "migrations/2118_revenue_forecast.sql", // Registered 2026-10-06. revenue_forecast + revenue_forecast_line (Branch Head monthly forecast, Finance Head + Payroll Head approval, close with actuals), finance_budget_cost_centre_closure, FINANCE_REVENUE_FORECAST page + grants. CREATE TABLE IF NOT EXISTS / upserts only.
+  "migrations/2119_revenue_forecast_payroll_head_view_only.sql", // Registered 2026-10-06. Owner ruling: Payroll Head views revenue forecasts, Finance Head alone approves. UPDATE of the 2118 payroll_head grant + page description. Idempotent.
 ];
 
 export type MigrationHealth = {

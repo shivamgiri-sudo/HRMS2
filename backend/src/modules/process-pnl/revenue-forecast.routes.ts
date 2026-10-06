@@ -13,19 +13,20 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { refuse } from "./finance-error.js";
 import { clearPnlReadCache } from "./pnl-read-cache.js";
-import { revenueForecastService, type ApprovalStage } from "./revenue-forecast.service.js";
+import { revenueForecastService } from "./revenue-forecast.service.js";
 
 /**
  * /api/finance/revenue-forecasts — Branch Head monthly revenue forecast (migration 2118).
  * Role lists match the FINANCE_REVENUE_FORECAST grants in that migration, so the page and its
- * API agree on who may do what.
+ * API agree on who may do what. Only the Finance Head approves; the Payroll Head has read access.
  */
 const READ_ROLES = [
   "super_admin", "branch_head", "branch_admin", "finance_head", "payroll_head",
   "accounts_head", "finance", "ceo", "coo",
 ] as const;
 const WRITE_ROLES = ["super_admin", "branch_head", "branch_admin"] as const;
-const REVIEW_ROLES = ["super_admin", "finance_head", "payroll_head"] as const;
+// Payroll Head reads (READ_ROLES) but does not approve — owner ruling 2026-10-06.
+const REVIEW_ROLES = ["super_admin", "finance_head"] as const;
 const REOPEN_ROLES = ["super_admin", "finance_head"] as const;
 
 export const revenueForecastRouter = Router();
@@ -66,18 +67,6 @@ async function scopedForecast(req: AuthenticatedRequest, id: string) {
   const forecast = await revenueForecastService.get(id);
   await assertBranch(req, String(forecast.branch_id));
   return forecast;
-}
-
-/** Which approval a reviewer gives. A super_admin names the stage; the two heads give their own. */
-function reviewStage(req: AuthenticatedRequest, requested: unknown): ApprovalStage {
-  const roles = new Set([actor(req).role, ...actor(req).roles]);
-  const wanted = requested === "finance_head" || requested === "payroll_head" ? requested : null;
-  if (roles.has("super_admin") && wanted) return wanted;
-  const held: ApprovalStage[] = (["finance_head", "payroll_head"] as const).filter((s) => roles.has(s));
-  if (wanted && held.includes(wanted)) return wanted;
-  if (held.length === 1) return held[0];
-  if (held.length > 1) throw refuse(400, "FORECAST_STAGE_REQUIRED", "You hold both approver roles: say which approval this is (stage)");
-  throw refuse(403, "FORECAST_NOT_APPROVER", "Only the Finance Head or the Payroll Head approves revenue forecasts");
 }
 
 revenueForecastRouter.get(
@@ -141,8 +130,7 @@ revenueForecastRouter.post(
     await scopedForecast(req, req.params.id);
     const decision = req.body?.decision;
     if (decision !== "approved" && decision !== "rejected") throw refuse(400, "FORECAST_DECISION", "decision must be approved or rejected");
-    const stage = reviewStage(req, req.body?.stage);
-    const data = await revenueForecastService.review(req.params.id, stage, decision, req.body?.note ?? null, actor(req).id);
+    const data = await revenueForecastService.review(req.params.id, "finance_head", decision, req.body?.note ?? null, actor(req).id);
     clearPnlReadCache();
     res.json({ success: true, data });
   }),

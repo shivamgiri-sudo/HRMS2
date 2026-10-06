@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 
 /**
  * Revenue forecast lifecycle on real SQL (in-memory SQLite; skipped on Node < 22.5):
- * draft -> submit -> Finance Head + Payroll Head approve (OPEN, counted by the P&L) -> close with
+ * draft -> submit -> Finance Head approves (OPEN, counted by the P&L; the Payroll Head only views) -> close with
  * actuals (CLOSED, closed amount counted) -> Finance Head reopen; and the rejection loop.
  */
 type Sqlite = { exec(sql: string): void; prepare(sql: string): { all(...p: unknown[]): unknown[]; run(...p: unknown[]): { changes: number } } };
@@ -113,17 +113,15 @@ describe.skipIf(!sqlite)("draft -> two approvals -> open -> close -> reopen", ()
     expect(out.rows.map((r) => [r.costCentreId, r.status])).toEqual([["cc1", "draft"], ["cc2", "missing"]]);
   });
 
-  it("submit notifies both heads; one approval is not enough; both make it OPEN", async () => {
+  it("submit notifies the Finance Head only; the Finance Head's approval alone makes it OPEN", async () => {
     const { revenueForecastService, getForecastRevenueByCostCentre } = await import("../revenue-forecast.service.js");
     await revenueForecastService.submit(id, "bh-1");
-    expect(inbox.mock.calls.map((c) => c[0].user_id).sort()).toEqual(["finance_head-user", "payroll_head-user"]);
-    await expect(revenueForecastService.review(id, "finance_head", "approved", null, "bh-1")).rejects.toThrow(/you submitted/);
-    let f = await revenueForecastService.review(id, "finance_head", "approved", null, "fh-1");
-    expect(f.status).toBe("submitted");
+    expect(inbox.mock.calls.map((c) => c[0].user_id)).toEqual(["finance_head-user"]);
     expect((await getForecastRevenueByCostCentre("2026-11")).size).toBe(0);
-    await expect(revenueForecastService.review(id, "finance_head", "approved", null, "fh-1")).rejects.toThrow(/already been given/);
-    f = await revenueForecastService.review(id, "payroll_head", "approved", null, "ph-1");
+    await expect(revenueForecastService.review(id, "finance_head", "approved", null, "bh-1")).rejects.toThrow(/you submitted/);
+    const f = await revenueForecastService.review(id, "finance_head", "approved", null, "fh-1");
     expect(f.status).toBe("approved");
+    await expect(revenueForecastService.review(id, "finance_head", "approved", null, "fh-1")).rejects.toThrow(/not awaiting approval/);
     expect((await getForecastRevenueByCostCentre("2026-11")).get("cc1")).toEqual({ amount: TOTAL, forecastAmount: TOTAL, state: "OPEN" });
   });
 
@@ -156,18 +154,17 @@ describe.skipIf(!sqlite)("draft -> two approvals -> open -> close -> reopen", ()
 });
 
 describe.skipIf(!sqlite)("rejection loop", () => {
-  it("either head rejecting sends it back; resubmission needs both approvals again", async () => {
+  it("a Finance Head rejection sends it back; resubmission needs a fresh approval", async () => {
     const { revenueForecastService } = await import("../revenue-forecast.service.js");
     const f = await revenueForecastService.saveDraft({ costCentreId: "cc2", branchId: "B1", period: "2026-11", lines: [LINES[0]] as any }, "bh-1");
     const id = String(f.id);
     await revenueForecastService.submit(id, "bh-1");
-    await revenueForecastService.review(id, "finance_head", "approved", null, "fh-1");
-    await expect(revenueForecastService.review(id, "payroll_head", "rejected", "", "ph-1")).rejects.toThrow(/reason/);
-    let after = await revenueForecastService.review(id, "payroll_head", "rejected", "Seat count too high", "ph-1");
+    await expect(revenueForecastService.review(id, "finance_head", "rejected", "", "fh-1")).rejects.toThrow(/reason/);
+    let after = await revenueForecastService.review(id, "finance_head", "rejected", "Seat count too high", "fh-1");
     expect(after.status).toBe("rejected");
     after = await revenueForecastService.saveDraft({ costCentreId: "cc2", branchId: "B1", period: "2026-11", lines: [{ ...LINES[0], quantity: 8 }] as any }, "bh-1");
     expect(Number(after.forecast_amount)).toBe(200000);
     after = await revenueForecastService.submit(id, "bh-1");
-    expect([after.status, after.finance_head_status, after.payroll_head_status]).toEqual(["submitted", "pending", "pending"]);
+    expect([after.status, after.finance_head_status]).toEqual(["submitted", "pending"]);
   });
 });

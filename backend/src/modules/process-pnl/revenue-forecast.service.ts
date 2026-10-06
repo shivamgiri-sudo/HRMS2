@@ -11,8 +11,11 @@ import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
 /**
  * Monthly revenue forecast per cost centre (owner requirement 2026-10-06, migration 2118).
  *
- *   draft / rejected --submit--> submitted --Finance Head + Payroll Head approve--> approved (OPEN)
- *                                          \--either rejects--> rejected (Branch Head edits, resubmits)
+ *   draft / rejected --submit--> submitted --Finance Head approves--> approved (OPEN)
+ *                                          \--Finance Head rejects--> rejected (Branch Head edits, resubmits)
+ *
+ * Owner ruling 2026-10-06: the Payroll Head SEES forecasts (read access) but is not an approval
+ * gate. The payroll_head_* columns of migration 2118 are left unused.
  *   approved --Branch Head closes with actuals--> closed --Finance Head reopens--> approved
  *
  * The P&L counts an OPEN forecast's amount as the cost centre's revenue, and a CLOSED one's closed
@@ -22,7 +25,7 @@ import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
 export const LINE_TYPES = ["seat", "metric", "fixed", "reward", "penalty"] as const;
 export type ForecastLineType = (typeof LINE_TYPES)[number];
 export type ForecastStatus = "draft" | "submitted" | "approved" | "rejected" | "closed";
-export type ApprovalStage = "finance_head" | "payroll_head";
+export type ApprovalStage = "finance_head";
 
 export interface ForecastLineInput {
   lineType: ForecastLineType;
@@ -248,13 +251,13 @@ export const revenueForecastService = {
       [actorId, id],
     );
     if (result.affectedRows !== 1) throw refuse(409, "FORECAST_CHANGED", "The forecast changed meanwhile; refresh and retry");
-    await notifyRoles(["finance_head", "payroll_head"],
+    await notifyRoles(["finance_head"],
       `Revenue forecast to approve: ${forecast.cost_centre_code} ${forecast.period_code}`,
       `Forecast ₹${Number(forecast.forecast_amount).toLocaleString("en-IN")} from ${forecast.branch_name ?? "branch"}`, id);
     return loadForecast(id);
   },
 
-  /** Finance Head and Payroll Head each decide once; both approvals make it OPEN, either rejection sends it back. */
+  /** The Finance Head decides once: approval makes it OPEN, rejection sends it back to the Branch Head. */
   async review(id: string, stage: ApprovalStage, decision: "approved" | "rejected", note: string | null, actorId: string) {
     if (decision === "rejected" && !String(note ?? "").trim()) throw refuse(400, "FORECAST_REJECT_REASON", "Give a reason for rejecting");
     const forecast = await loadForecast(id);
@@ -275,7 +278,7 @@ export const revenueForecastService = {
       } else {
         await connection.execute(
           `UPDATE revenue_forecast SET status = 'approved', approved_at = NOW()
-            WHERE id = ? AND finance_head_status = 'approved' AND payroll_head_status = 'approved'`,
+            WHERE id = ? AND finance_head_status = 'approved'`,
           [id],
         );
       }
@@ -287,7 +290,7 @@ export const revenueForecastService = {
       connection.release();
     }
     const after = await loadForecast(id);
-    const who = stage === "finance_head" ? "Finance Head" : "Payroll Head";
+    const who = "Finance Head";
     if (decision === "rejected") {
       await notifyUser(after.submitted_by ? String(after.submitted_by) : null, `Revenue forecast returned: ${after.cost_centre_code} ${after.period_code}`, `${who}: ${note}`, id);
     } else if (String(after.status) === "approved") {

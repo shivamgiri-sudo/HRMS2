@@ -130,8 +130,8 @@ export function useSubmitForecast() {
 }
 
 export function useReviewForecast() {
-  return useForecastMutation((input: { id: string; decision: "approved" | "rejected"; note?: string; stage?: "finance_head" | "payroll_head" }) =>
-    hrmsApi.post(`${BASE}/${input.id}/review`, { decision: input.decision, note: input.note ?? null, stage: input.stage }) as Promise<{ data: ForecastDetail }>);
+  return useForecastMutation((input: { id: string; decision: "approved" | "rejected"; note?: string }) =>
+    hrmsApi.post(`${BASE}/${input.id}/review`, { decision: input.decision, note: input.note ?? null }) as Promise<{ data: ForecastDetail }>);
 }
 
 export function useCloseForecast() {

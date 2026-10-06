@@ -2,7 +2,8 @@
  * Revenue Forecast (/finance/revenue-forecast) — owner requirement 2026-10-06.
  *
  * By the 26th of each month the Branch Head forecasts next month's revenue for every cost centre,
- * line by line. Finance Head AND Payroll Head approve; the approved forecast is OPEN and the P&L
+ * line by line. The Finance Head approves (the Payroll Head has view access only — owner ruling
+ * 2026-10-06); the approved forecast is OPEN and the P&L
  * counts it as revenue. After invoicing the Branch Head closes it with actuals and the P&L switches
  * to the closed amount; the table shows forecast vs closed. Backend: revenue-forecast.routes.ts.
  */
@@ -51,13 +52,12 @@ export default function RevenueForecastPage() {
   const [period, setPeriod] = useState(nextPeriod());
   const [filter, setFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
-  const [sheet, setSheet] = useState<{ row: ForecastListRow; mode: SheetMode; stage?: "finance_head" | "payroll_head" } | null>(null);
+  const [sheet, setSheet] = useState<{ row: ForecastListRow; mode: SheetMode } | null>(null);
   const list = useRevenueForecastList(period);
 
   const isSuperAdmin = useHasRole("super_admin");
   const canWrite = useHasRole("super_admin", "branch_head", "branch_admin");
   const isFinanceHead = useHasRole("finance_head");
-  const isPayrollHead = useHasRole("payroll_head");
   const canReopen = useHasRole("super_admin", "finance_head");
 
   const rows = list.data?.rows ?? [];
@@ -81,19 +81,14 @@ export default function RevenueForecastPage() {
   const closedVariance = closedRows.reduce((t, r) => t + (r.variance ?? 0), 0);
   const inPnl = openTotal + closedTotal;
 
-  /** The approval this user owes on a row, if any. */
-  function myStage(r: ForecastListRow): "finance_head" | "payroll_head" | null {
-    if (r.status !== "submitted") return null;
-    if ((isFinanceHead || isSuperAdmin) && r.financeHeadStatus === "pending") return "finance_head";
-    if ((isPayrollHead || isSuperAdmin) && r.payrollHeadStatus === "pending") return "payroll_head";
-    return null;
-  }
-  const awaitingMe = rows.filter((r) => myStage(r)).length;
+  /** Only the Finance Head (or super_admin) approves; everyone else on this page reads. */
+  const awaitsMe = (r: ForecastListRow) => r.status === "submitted" && (isFinanceHead || isSuperAdmin) && r.financeHeadStatus === "pending";
+  const awaitingMe = rows.filter(awaitsMe).length;
 
   function actionsFor(r: ForecastListRow) {
-    const out: Array<{ label: string; mode: SheetMode; primary?: boolean; stage?: "finance_head" | "payroll_head" }> = [];
-    const stage = myStage(r);
-    if (stage) out.push({ label: isSuperAdmin && !isFinanceHead && !isPayrollHead ? `Review (${stage === "finance_head" ? "FH" : "PH"})` : "Review", mode: "review", primary: true, stage });
+    const out: Array<{ label: string; mode: SheetMode; primary?: boolean }> = [];
+    const stage = awaitsMe(r);
+    if (stage) out.push({ label: "Review", mode: "review", primary: true });
     if (canWrite && (r.status === "missing" || r.status === "draft" || r.status === "rejected")) out.push({ label: r.status === "missing" ? "Forecast" : "Edit", mode: "edit", primary: !stage });
     if (canWrite && r.status === "approved") out.push({ label: "Close with actuals", mode: "close", primary: true });
     if (canReopen && r.status === "closed") out.push({ label: "Reopen", mode: "reopen" });
@@ -110,7 +105,7 @@ export default function RevenueForecastPage() {
             <h1 className="text-lg font-semibold text-slate-900">Revenue Forecast</h1>
             <p className="max-w-3xl text-xs text-slate-600">
               Forecast each cost centre&apos;s revenue for the month — seats at each rate, metric-based lines, fixed amounts, rewards and penalties.
-              Finance Head and Payroll Head approve; the P&amp;L counts the open forecast until you close it with actuals.
+              The Finance Head approves; the P&amp;L counts the open forecast until you close it with actuals.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -163,7 +158,6 @@ export default function RevenueForecastPage() {
                   <TableHead>Branch</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Finance Head</TableHead>
-                  <TableHead>Payroll Head</TableHead>
                   <TableHead className="text-right">Forecast</TableHead>
                   <TableHead className="text-right">Closed</TableHead>
                   <TableHead className="text-right">Variance</TableHead>
@@ -185,7 +179,6 @@ export default function RevenueForecastPage() {
                       </div>
                     </TableCell>
                     <TableCell className={`text-xs ${approvalTone(r.financeHeadStatus)}`}>{r.status === "missing" || r.status === "draft" ? "—" : approvalMark(r.financeHeadStatus)}</TableCell>
-                    <TableCell className={`text-xs ${approvalTone(r.payrollHeadStatus)}`}>{r.status === "missing" || r.status === "draft" ? "—" : approvalMark(r.payrollHeadStatus)}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.forecastAmount === null ? "—" : money(r.forecastAmount)}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.closedAmount === null ? "—" : money(r.closedAmount)}</TableCell>
                     <TableCell className={`text-right tabular-nums ${r.variance === null ? "" : r.variance < 0 ? "text-rose-700" : "text-emerald-700"}`}>
@@ -195,7 +188,7 @@ export default function RevenueForecastPage() {
                       <div className="flex justify-end gap-1.5">
                         {actionsFor(r).map((a) => (
                           <Button key={a.label} size="sm" variant={a.primary ? "default" : "outline"} className="h-8 text-xs"
-                            onClick={() => setSheet({ row: r, mode: a.mode, stage: a.stage })}>
+                            onClick={() => setSheet({ row: r, mode: a.mode })}>
                             {a.label}
                           </Button>
                         ))}
@@ -208,7 +201,7 @@ export default function RevenueForecastPage() {
           )}
         </div>
       </div>
-      <ForecastSheet open={Boolean(sheet)} onOpenChange={(o) => !o && setSheet(null)} mode={sheet?.mode ?? "view"} row={sheet?.row ?? null} period={period} reviewStage={sheet?.stage} />
+      <ForecastSheet open={Boolean(sheet)} onOpenChange={(o) => !o && setSheet(null)} mode={sheet?.mode ?? "view"} row={sheet?.row ?? null} period={period} />
     </DashboardLayout>
   );
 }
