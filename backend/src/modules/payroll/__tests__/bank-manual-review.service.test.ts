@@ -147,6 +147,12 @@ describe("approveManualReviewBankDetail — a person accepts an exception", () =
     expect((await svc.approveManualReviewBankDetail({ employeeId: "emp-1" })).status).toBe("already_has_primary");
   });
 
+  it("refuses an account number the bank never checked (re-entered since)", async () => {
+    wire({ candidateId: "cand-1", latest: { ...VERIFIED, verification_status: "verified", onboarding_account_encrypted: "cipher:5555555555" } });
+    expect((await svc.approveManualReviewBankDetail({ employeeId: "emp-1" })).status).toBe("account_changed");
+    expect(insertCalls()).toHaveLength(0);
+  });
+
   it("404s when there is no verification for the employee", async () => {
     wire({ candidateId: null });
     expect((await svc.approveManualReviewBankDetail({ employeeId: "emp-1" })).status).toBe("no_manual_review_row");
@@ -196,6 +202,14 @@ describe("getManualReviewBankGaps — what the reviewer sees", () => {
     expect(row.review_reason).toContain("matches neither");
     expect(row.risk_flags).toEqual(["BANK_HOLDER_NAME_DIVERGENCE"]);
     expect(row.account_masked).toBe("XXXX6789");
+    expect(row.account_changed).toBe(false);
+  });
+
+  it("flags a row whose number on file is not the verified one", async () => {
+    wire({ gaps: [{ employee_id: "emp-2", candidate_id: "cand-2", verification_status: "verified",
+      onboarding_account_encrypted: "cipher:111", account_no_hash: "h(222)" }] });
+    const [row] = await svc.getManualReviewBankGaps();
+    expect(row.account_changed).toBe(true);
   });
 
   it("lists only exceptions: excludes HR-rejected attempts and employees who already have an account", async () => {

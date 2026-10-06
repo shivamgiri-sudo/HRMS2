@@ -424,6 +424,7 @@ export default function PaymentDisbursalCenter() {
     account_holder_name: string | null;
     bank_registered_name: string | null;
     recorded_names: string[];
+    account_changed: boolean;
     review_reason: string | null;
     risk_flags: string[];
     name_match_score: number | null;
@@ -1675,7 +1676,9 @@ export default function PaymentDisbursalCenter() {
                             <td className="px-3 py-2">{r.employee_name}</td>
                             <td className="px-3 py-2 text-muted-foreground">{r.branch_name ?? "—"}</td>
                             <td className="px-3 py-2">
-                              {r.verification_status === "verified" ? (
+                              {r.account_changed ? (
+                                <Badge variant="destructive">Account changed since verification</Badge>
+                              ) : r.verification_status === "verified" ? (
                                 <Badge className="bg-green-600 hover:bg-green-600">Penny drop verified</Badge>
                               ) : (
                                 <Badge variant="secondary">Manual review</Badge>
@@ -1689,7 +1692,8 @@ export default function PaymentDisbursalCenter() {
                             <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                               <Button
                                 size="sm"
-                                disabled={approveManualReviewMutation.isPending}
+                                disabled={approveManualReviewMutation.isPending || r.account_changed}
+                                title={r.account_changed ? "Re-run the bank check on the current number first" : undefined}
                                 onClick={() => {
                                   if (!window.confirm(`Approve ${r.employee_code}'s onboarding bank account (${r.account_masked}) for payment?`)) return;
                                   approveManualReviewMutation.mutate(r.employee_id);
@@ -1728,6 +1732,16 @@ export default function PaymentDisbursalCenter() {
                       </SheetHeader>
 
                       <div className="mt-4 space-y-5 text-sm">
+                        {manualReviewDrawerRow.account_changed && (
+                          <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900 text-xs">
+                            <p className="font-semibold">The account number on file is not the one the bank verified.</p>
+                            <p className="mt-1">
+                              It was re-entered after the bank check, so nobody has confirmed the current number belongs to
+                              this person. Re-run the bank check from the candidate's BGV page; if it passes, the account is
+                              copied automatically. Approve stays disabled until then.
+                            </p>
+                          </div>
+                        )}
                         {manualReviewDrawerRow.verification_status !== "verified" && (
                           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950">
                             <div className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-2">Why this needs a decision</div>
@@ -1819,7 +1833,7 @@ export default function PaymentDisbursalCenter() {
 
                         <Button
                           className="w-full"
-                          disabled={approveManualReviewMutation.isPending}
+                          disabled={approveManualReviewMutation.isPending || manualReviewDrawerRow.account_changed}
                           onClick={() => {
                             const row = manualReviewDrawerRow;
                             if (!row) return;

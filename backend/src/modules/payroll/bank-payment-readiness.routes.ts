@@ -1361,6 +1361,12 @@ bankPaymentReadinessRouter.patch(
     if (result.status === "already_has_primary") {
       return res.status(409).json({ success: false, message: "This employee already has an active primary bank record — nothing to approve." });
     }
+    if (result.status === "account_changed") {
+      return res.status(409).json({
+        success: false,
+        message: "The account number on file is not the one the bank verified. Re-run the bank check on the current number before approving.",
+      });
+    }
 
     void logSensitiveAction({
       actor_user_id: req.authUser!.id,

@@ -47,6 +47,9 @@ export interface ManualReviewGapRow {
   bank_registered_name: string | null;
   // Every name the joiner is recorded under: ATS record, onboarding profile, employee master.
   recorded_names: string[];
+  // The number on file is not the one the bank checked (re-entered since). Approve is refused
+  // until the bank check is re-run on the current number.
+  account_changed: boolean;
   // Why the check did not pass on its own, and its risk flags.
   review_reason: string | null;
   risk_flags: string[];
@@ -114,7 +117,7 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
               e.full_name AS employee_record_name,
               b.branch_name,
               v.candidate_id, v.verification_status, v.ifsc_code, v.input_account_holder_name AS account_holder_name,
-              v.provider_account_holder_name, v.name_match_score, v.verified_at,
+              v.provider_account_holder_name, v.name_match_score, v.verified_at, v.account_no_hash,
               c.full_name AS candidate_name, p.employee_name AS profile_name,
               ${ACCOUNT_SOURCE_COLUMNS},
               obd.bank_name AS ob_bank_name, obd.branch_name AS ob_branch_name,
@@ -172,6 +175,7 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
       account_holder_name: r.account_holder_name ?? null,
       bank_registered_name: r.provider_account_holder_name ?? null,
       recorded_names: [...new Set(names)],
+      account_changed: !!(accountNo && r.account_no_hash && hashPiiForMatch(accountNo) !== r.account_no_hash),
       review_reason: r.review_reason ?? null,
       risk_flags: parseFlags(r.risk_flags_json),
       name_match_score: r.name_match_score == null ? null : Number(r.name_match_score),
@@ -316,7 +320,7 @@ async function candidateForEmployee(employeeId: string): Promise<string | null> 
  */
 export async function approveManualReviewBankDetail(params: {
   employeeId: string;
-}): Promise<{ status: "inserted" | "already_has_primary" | "no_manual_review_row" }> {
+}): Promise<{ status: "inserted" | "already_has_primary" | "no_manual_review_row" | "account_changed" }> {
   const candidateId = await candidateForEmployee(params.employeeId);
   if (!candidateId) return { status: "no_manual_review_row" };
   const row = await loadLatestForCandidate(candidateId);
@@ -329,6 +333,8 @@ export async function approveManualReviewBankDetail(params: {
     candidateEncrypted: row.candidate_account_encrypted,
   });
   if (!accountNo) return { status: "no_manual_review_row" };
+  // A person may accept a name variance, but not an account number nobody checked.
+  if (row.account_no_hash && hashPiiForMatch(accountNo) !== row.account_no_hash) return { status: "account_changed" };
   if (await hasPrimaryBankRow(params.employeeId)) return { status: "already_has_primary" };
 
   await insertPrimaryBankRow(params.employeeId, row, accountNo);
