@@ -1048,7 +1048,11 @@ function vendorPayableAmountExpr(columns: Set<string>): string {
 const GRN_EX_GST_AMOUNT = grnRequestExGstSql("g");
 
 function actualGrnStatusExpr(alias: string) {
-  return `LOWER(COALESCE(${alias}.status, '')) IN ('approved','posted','paid')`;
+  // Same approved set as bpo-pnl.service.ts getGrnVendorActuals: a finance-head-approved GRN awaiting payment is an
+  // accrued cost (migrated db_bill GRNs approved but not yet booked land in finance_head_approved).
+  return `LOWER(REPLACE(COALESCE(${alias}.status, ''), '_', ' ')) IN (
+    'approved','finance head approved','pending accounts payment','payment scheduled','partially paid','paid','posted'
+  )`;
 }
 
 /**
@@ -1187,8 +1191,14 @@ async function getIndirectAllocationMap(
     for (const row of rows) {
       poolByBranch.set(String(row.branch_id), toNumber(row.pool_amount));
     }
-  } else if (branchIds.length > 0 && await tableExists("grn_request")) {
+  }
+  // Approved GRNs that have no vendor payable yet (accrual: approved, not yet booked for payment) count in
+  // their accounting month too - the direct-cost map above already does this (vpt.id IS NULL leg). This used
+  // to run only when vendor_payment_tracking did not exist at all, so an approved indirect GRN without a payable
+  // was invisible to the pool (FY 2026-27: 64 approved db_bill GRNs, Aug 2.4L + Sep 18.1L).
+  if (branchIds.length > 0 && await tableExists("grn_request")) {
     const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
+    const hasVpt = await tableExists("vendor_payment_tracking");
     const rows = await queryRows<RowDataPacket>(
       `SELECT g.branch_id, SUM(${GRN_EX_GST_AMOUNT}) AS pool_amount
         FROM grn_request g
@@ -1197,11 +1207,13 @@ async function getIndirectAllocationMap(
           AND ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
           AND ${actualGrnStatusExpr("g")}
           AND g.accounting_period = ?
+          ${hasVpt ? "AND NOT EXISTS (SELECT 1 FROM vendor_payment_tracking vx WHERE vx.grn_request_id = g.id)" : ""}
         GROUP BY g.branch_id`,
       [...branchIds, period]
     );
     for (const row of rows) {
-      poolByBranch.set(String(row.branch_id), toNumber(row.pool_amount));
+      const key = String(row.branch_id);
+      poolByBranch.set(key, (poolByBranch.get(key) ?? 0) + toNumber(row.pool_amount));
     }
   }
 
