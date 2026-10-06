@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Response } from "express";
 import multer from "multer";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { requireTpzCompanyInScope } from "../dashboards/process-scope-guards.js";
+import { requireProcessCodesInScope } from "../dashboards/process-scope-guards.js";
 import * as svc from "./bla-bli-blu-dashboard.service.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -27,8 +27,10 @@ const hu = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) 
   };
 
 blaBliBluDashboardRouter.use(requireAuth);
-// Owner ruling 2026-10-01: Bellavita data is only for callers whose scope includes that process (org-wide roles pass).
-blaBliBluDashboardRouter.use(requireTpzCompanyInScope("bellavita"));
+// Owner ruling 2026-10-01: dashboard data only for callers whose scope includes the process (org-wide roles pass).
+// BLA BLI BLU is its own process (BLA_BLI_BLU, NOIDA-2), not Bellavita (BELLA_VITA, NOIDA): checking Bellavita
+// refused the BLA BLI BLU process managers themselves (Bhavesh Dayal, 2026-10-06).
+blaBliBluDashboardRouter.use(requireProcessCodesInScope(["BLA_BLI_BLU"]));
 
 const q = (req: AuthenticatedRequest, k: string) => (typeof req.query[k] === "string" ? (req.query[k] as string) : undefined);
 

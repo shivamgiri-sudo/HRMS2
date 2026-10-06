@@ -101,3 +101,22 @@ export function requireTpzCompanyInScope(companyKey: string) {
     }
   };
 }
+
+/**
+ * Same rule for a dashboard that belongs to a process the TPZ catalogue does not list (BLA BLI BLU): GET requests
+ * from a caller who is not org-wide need one of these process codes inside their branch / assigned scope.
+ */
+export function requireProcessCodesInScope(processCodes: readonly string[]) {
+  return async (req: any, res: any, next: (e?: unknown) => void) => {
+    try {
+      if (req.method !== "GET") return next();
+      const userId = req.authUser?.id as string | undefined;
+      if (!userId) return res.status(403).json({ success: false, message: "Forbidden: no resolvable scope" });
+      const scope = await resolveProcessScope(userId);
+      if (scope.orgWide || processCodes.some((c) => scope.processCodes.has(c))) return next();
+      return res.status(403).json({ success: false, message: "Forbidden: this process is outside your branch / assigned scope" });
+    } catch (err) {
+      return next(err);
+    }
+  };
+}
