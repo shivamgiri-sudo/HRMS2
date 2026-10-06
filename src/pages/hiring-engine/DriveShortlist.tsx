@@ -13,7 +13,7 @@ interface Touch { status: string; at: string | null }
 interface Row {
   matchId: string; leadId: string; name: string | null; mobile: string; hasEmail: boolean; waConsent: boolean; source: string; effort: string | null; walkins: number;
   state: string; leadStatus: string; slotAt: string | null;
-  fit: { score: number; confidence: number | null; reasons: string[]; unknown: string[]; priority: number | null };
+  fit: { score: number; rating?: string; confidence: number | null; reasons: string[]; unknown: string[]; priority: number | null };
   email: Touch | null; whatsapp: Touch | null; call: Touch | null; reply: Touch | null;
   alsoFits: Array<{ code: string; role: string; process: string | null; branch: string; score: number }>;
 }
@@ -77,7 +77,7 @@ export default function DriveShortlist({ driveId }: { driveId: string }) {
                     <div className="text-[11px] text-slate-500">{r.hasEmail ? "email" : "no email"} · {r.waConsent ? "WA opt-in" : "no WA opt-in"}{r.walkins ? ` · walked in ${r.walkins}x` : ""}</div>
                   </td>
                   <td className="max-w-[240px] px-2 py-2">
-                    <div className="flex items-center gap-2"><span className="font-semibold tabular-nums">{r.fit.score}</span>
+                    <div className="flex items-center gap-2"><span className="font-semibold tabular-nums">{r.fit.score}</span>{r.fit.rating && <span className="text-[11px] text-slate-500">{r.fit.rating}</span>}
                       {r.fit.confidence != null && <span className="h-1.5 w-12 overflow-hidden rounded-full bg-slate-100" title={`${Math.round(r.fit.confidence * 100)}% of the requirements known`}><span className="block h-full rounded-full bg-blue-500" style={{ width: `${Math.round(r.fit.confidence * 100)}%` }} /></span>}
                     </div>
                     <button type="button" onClick={() => setExpanded(expanded === r.matchId ? null : r.matchId)} className="cursor-pointer text-left text-[11px] text-slate-600 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">

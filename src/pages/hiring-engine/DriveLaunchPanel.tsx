@@ -19,12 +19,17 @@ interface Readiness {
   sent: Record<string, number>;
   canSendEmailNow: boolean;
   gapMinutes: number;
+  requirements: { jd: Jd | null; rules: Rules | null };
 }
+interface Rules { minEducationRank: number | null; minExperienceYears: number | null; ageMin: number | null; ageMax: number | null; gender: string | null; nightShift: boolean | null; certifications: string[] | null; languages: string[] | null; salaryMax: number | null; mandatorySkills: string[]; preferredSkills: string[]; locationTokens: string[]; branchName: string; processName: string | null }
+interface Jd { source: "uploaded" | "requisition"; sourceName: string | null; parsed: { title: string | null; minExperience: number | null; salaryMonthly: number | null; mandatorySkills: string[]; preferredSkills: string[]; location: string | null } }
+const EDU: Record<number, string> = { 1: "below 10th", 2: "10th pass", 3: "12th pass", 4: "diploma", 5: "graduate", 6: "post-graduate" };
 interface Planned { matchId: string; name: string | null; mobile: string; channel: "email" | "whatsapp" | null; reason: string }
 interface Launch { sent: number; failed: number; dryRun: number; blocked: Record<string, number>; planned: Planned[]; considered: number }
 interface Cnt { sent: number; failed: number; dryRun: number; blocked: Record<string, number> }
 
 const BATCHES = [25, 50, 100, 200];
+const reqIdOf = (r: Readiness) => (r as unknown as { drive: { requisitionId?: string } }).drive.requisitionId ?? "";
 
 export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driveId: string | null; onClose: () => void; onChanged: () => void }) {
   const [r, setR] = useState<Readiness | null>(null);
@@ -72,6 +77,16 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
 
   const willEmail = plan?.planned.filter((p) => p.channel === "email").length ?? 0;
   const willWa = plan?.planned.filter((p) => p.channel === "whatsapp").length ?? 0;
+  const uploadJd = async (f: File | undefined) => {
+    if (!f || !r) return;
+    setBusy("jd"); setMsg(null);
+    try {
+      const buf = new Uint8Array(await f.arrayBuffer()); let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      await hrmsApi.post(`/api/he/requisitions/${reqIdOf(r)}/jd`, { fileName: f.name, base64: btoa(bin) }, 60000);
+      setMsg({ ok: true, text: `JD "${f.name}" read. Click Find leads on the drive to re-shortlist against it.` }); await load();
+    } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Could not read that JD" }); }
+    finally { setBusy(null); }
+  };
   const followNeeded = r?.checks.find((c) => c.key === "engine")?.ok === false;
 
   return (
@@ -90,6 +105,35 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
               <li className="rounded-lg border border-emerald-200 bg-emerald-50 p-2"><MessageCircle className="mx-auto h-4 w-4 text-emerald-600" aria-hidden /><div className="mt-1 font-semibold text-slate-900">2. WhatsApp</div><div className="text-slate-500">+{r.gapMinutes} min</div></li>
               <li className="rounded-lg border border-violet-200 bg-violet-50 p-2"><PhoneCall className="mx-auto h-4 w-4 text-violet-600" aria-hidden /><div className="mt-1 font-semibold text-slate-900">3. Bot call</div><div className="text-slate-500">+{r.gapMinutes} min</div></li>
             </ol>
+
+            {r.requirements?.rules && (() => {
+              const ru = r.requirements.rules!; const jd = r.requirements.jd;
+              const items: Array<[string, string | null]> = [
+                ["Location", ru.locationTokens.length ? `${ru.branchName} area (${ru.locationTokens.slice(0, 4).join(", ")})` : null],
+                ["Qualification", ru.minEducationRank ? `${EDU[ru.minEducationRank] ?? ru.minEducationRank} or higher` : null],
+                ["Experience", ru.minExperienceYears ? `${ru.minExperienceYears}+ years` : null],
+                ["Age", ru.ageMin || ru.ageMax ? `${ru.ageMin ?? "-"} to ${ru.ageMax ?? "-"}` : null],
+                ["Gender", ru.gender], ["Certification", ru.certifications?.length ? ru.certifications.join(", ") + " (must hold)" : null],
+                ["Languages", ru.languages?.length ? ru.languages.join(", ") : null], ["Night shift", ru.nightShift ? "required" : null],
+                ["Salary", ru.salaryMax ? `up to Rs ${ru.salaryMax.toLocaleString("en-IN")}/month` : null],
+                ["Mandatory skills", ru.mandatorySkills.length ? ru.mandatorySkills.join(", ") : null], ["Preferred skills", ru.preferredSkills.length ? ru.preferredSkills.join(", ") : null],
+              ];
+              return (
+                <section aria-label="Requirements" className="rounded-xl border border-slate-200 p-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Who gets shortlisted (from the JD)</h3>
+                    <label className={`inline-flex cursor-pointer items-center rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 focus-within:ring-2 focus-within:ring-blue-500 ${busy ? "pointer-events-none opacity-60" : ""}`}>
+                      {busy === "jd" ? "Reading JD…" : jd?.source === "uploaded" ? `JD: ${jd.sourceName ?? "uploaded"} · replace` : "Upload JD (.docx / .pdf)"}
+                      <input type="file" accept=".docx,.pdf,.txt" aria-label="JD document" className="sr-only" onChange={(e) => void uploadJd(e.target.files?.[0])} />
+                    </label>
+                  </div>
+                  <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
+                    {items.filter(([, v]) => v).map(([k, v]) => <div key={k} className="flex gap-2"><dt className="w-32 shrink-0 text-slate-500">{k}</dt><dd className="text-slate-800">{v}</dd></div>)}
+                  </dl>
+                  <p className="mt-2 text-[11px] text-slate-500">Hard rules must be confirmed on the candidate's record; skills only change the ranking. {jd?.source === "uploaded" ? "" : "No JD document uploaded yet: the requisition's own text is used."}</p>
+                </section>
+              );
+            })()}
 
             <section aria-label="Readiness">
               <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">Ready to send?</h3>

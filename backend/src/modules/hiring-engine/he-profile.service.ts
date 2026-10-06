@@ -38,20 +38,23 @@ export async function refreshProfilesChunk(prefix: string): Promise<{ profiles: 
   const out: unknown[][] = [];
   for (const r of rows) {
     if (r.aadhaar_hash || r.pan_hash) await recordIdentities(r.id, { aadhaarHash: r.aadhaar_hash, panHash: r.pan_hash, source: "ats" });
-    const p = extractProfile(answersFromPayload(r.raw_payload));
+    const answers = answersFromPayload(r.raw_payload);
+    const p = extractProfile(answers);
+    const skillsText = Object.entries(answers).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join('; ').slice(0, 1000) || null;
     const g = p.gender ?? gender(r.ats_gender);
     const wpm = p.typingWpm;
-    if (!g && !wpm && p.languages == null && p.certifications == null && !p.englishLevel && !p.salaryExpectation) continue;
-    out.push([r.id, g, p.languages ? JSON.stringify(p.languages) : null, p.certifications ? JSON.stringify(p.certifications) : null, wpm, p.englishLevel, p.salaryExpectation]);
+    if (!g && !wpm && p.languages == null && p.certifications == null && !p.englishLevel && !p.salaryExpectation && !skillsText) continue;
+    out.push([r.id, g, p.languages ? JSON.stringify(p.languages) : null, p.certifications ? JSON.stringify(p.certifications) : null, wpm, p.englishLevel, p.salaryExpectation, skillsText]);
   }
   for (let i = 0; i < out.length; i += BATCH) {
     const slice = out.slice(i, i + BATCH);
     await db.execute(
-      `INSERT INTO he_lead_profile (lead_id, gender, languages, certifications, typing_wpm, english_level, salary_expectation)
-       VALUES ${slice.map(() => "(?,?,?,?,?,?,?)").join(",")}
+      `INSERT INTO he_lead_profile (lead_id, gender, languages, certifications, typing_wpm, english_level, salary_expectation, skills_text)
+       VALUES ${slice.map(() => "(?,?,?,?,?,?,?,?)").join(",")}
        ON DUPLICATE KEY UPDATE gender = COALESCE(VALUES(gender), gender), languages = COALESCE(VALUES(languages), languages),
          certifications = COALESCE(VALUES(certifications), certifications), typing_wpm = COALESCE(VALUES(typing_wpm), typing_wpm),
-         english_level = COALESCE(VALUES(english_level), english_level), salary_expectation = COALESCE(VALUES(salary_expectation), salary_expectation)`,
+         english_level = COALESCE(VALUES(english_level), english_level), salary_expectation = COALESCE(VALUES(salary_expectation), salary_expectation),
+         skills_text = COALESCE(VALUES(skills_text), skills_text)`,
       slice.flat() as never[]);
   }
   return { profiles: out.length };
@@ -63,18 +66,18 @@ const parseList = (v: unknown): string[] | null => {
 };
 
 /** Profile facts in matcher shape, keyed by lead id. */
-export type MatchProfile = Partial<LeadProfile> & { educationStatus?: "completed" | "pursuing" | "dropped" | null; stream?: string | null; lastSalary?: number | null; prevIndustry?: string | null; state?: string | null };
+export type MatchProfile = Partial<LeadProfile> & { skillsText?: string | null; educationStatus?: "completed" | "pursuing" | "dropped" | null; stream?: string | null; lastSalary?: number | null; prevIndustry?: string | null; state?: string | null };
 export async function loadProfiles(leadIds: string[]): Promise<Map<string, MatchProfile>> {
   const out = new Map<string, MatchProfile>();
   for (let i = 0; i < leadIds.length; i += 1000) {
     const part = leadIds.slice(i, i + 1000);
     if (!part.length) continue;
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT lead_id, gender, languages, certifications, typing_wpm, english_level, salary_expectation, education_status, stream, last_salary, prev_industry, state FROM he_lead_profile WHERE lead_id IN (${part.map(() => "?").join(",")})`, part);
+      `SELECT lead_id, gender, languages, certifications, typing_wpm, english_level, salary_expectation, education_status, stream, last_salary, prev_industry, state, skills_text FROM he_lead_profile WHERE lead_id IN (${part.map(() => "?").join(",")})`, part);
     for (const r of rows) out.set(r.lead_id, {
       gender: r.gender ?? null, languages: parseList(r.languages), certifications: parseList(r.certifications),
       typingWpm: r.typing_wpm ?? null, englishLevel: r.english_level ?? null, salaryExpectation: r.salary_expectation ?? null,
-      educationStatus: r.education_status ?? null, stream: r.stream ?? null, lastSalary: r.last_salary ?? null, prevIndustry: r.prev_industry ?? null, state: r.state ?? null,
+      educationStatus: r.education_status ?? null, stream: r.stream ?? null, lastSalary: r.last_salary ?? null, prevIndustry: r.prev_industry ?? null, state: r.state ?? null, skillsText: r.skills_text ?? null,
     });
   }
   return out;

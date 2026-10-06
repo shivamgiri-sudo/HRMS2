@@ -1302,6 +1302,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2111_hiring_engine_lead_list_index.sql", // Registered 2026-10-05. he_lead(updated_at) index: the lead pool list sorted all 38k leads per page (8 s live). Guarded, INPLACE.
   "migrations/2112_hiring_engine_import_mapping.sql", // Registered 2026-10-05. he_import_mapping: remembered upload column mappings per header layout (WorkIndia/Naukri/Apna/...). CREATE TABLE IF NOT EXISTS only.
   "migrations/2113_hiring_engine_profile_screening_fields.sql", // Registered 2026-10-06. he_lead_profile: education_status, stream, last_salary, prev_industry, state, address, dob (portal screening facts). Guarded, additive.
+  "migrations/2115_hiring_engine_requisition_jd.sql", // Registered 2026-10-06. he_requisition_jd (uploaded/parsed JD per requisition, BMS format) + he_lead_profile.skills_text. Additive.
   "migrations/2114_pnl_grn_allocation_view_accounting_month.sql", // Registered 2026-10-06. Owner rule: GRN counts in its accounting month. CREATE OR REPLACE of vw_process_pnl_grn_allocation, sql/1852 body with only period_code changed to grn_request.accounting_period first (multi-month GRNs keep the allocation recognition_period). Columns unchanged. Idempotent.
 ];
 

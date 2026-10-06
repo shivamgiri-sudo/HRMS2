@@ -51,6 +51,9 @@
     "he_import_mapping",
     "he_lead_profile"
   ],
+  "modules/hiring-engine/he-jd.service.ts": [
+    "he_requisition_jd"
+  ],
   "modules/hiring-engine/he-lead.service.ts": [
     "he_consent",
     "he_lead"

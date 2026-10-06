@@ -9,12 +9,14 @@ import { emailConfigured } from "./he-email.service.js";
 import { istHour } from "./he-guardrails.js";
 import { cadenceGapMin } from "./he-cadence.js";
 import { sendsPaused } from "./he-send.service.js";
+import { getRequisitionJd } from "./he-jd.service.js";
+import { loadRequisitionForMatching } from "./he-drive.service.js";
 
 export interface Check { key: string; ok: boolean; label: string; detail: string; blocks: "email" | "whatsapp" | "voice" | "followups" | "all" | null }
 
 export async function getDriveReadiness(driveId: string) {
   const [dr] = await db.execute<RowDataPacket[]>(
-    `SELECT d.id, d.status, d.auto_send, d.drive_date, d.target_shows, jr.requisition_code, jr.designation_name, jr.approval_status, jr.active_status,
+    `SELECT d.id, d.requisition_id, d.status, d.auto_send, d.drive_date, d.target_shows, jr.requisition_code, jr.designation_name, jr.approval_status, jr.active_status,
             jr.requested_headcount, jr.fulfilled_headcount, bm.address
        FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE d.id = ? LIMIT 1`, [driveId]);
@@ -47,8 +49,11 @@ export async function getDriveReadiness(driveId: string) {
     { key: "voice", ok: vapiOk, label: "Voice bot set up", detail: vapiOk ? "ok" : "voice provider keys not configured", blocks: vapiOk ? null : "voice" },
     { key: "engine", ok: engineOn && engineLive, label: "Automatic follow-ups on", detail: engineOn && engineLive ? `WhatsApp ${cadenceGapMin()} min after the email, call after another ${cadenceGapMin()} min` : "scheduler off: use 'Run follow-ups now' (or set HE_ENGINE_ENABLED and HE_ENGINE_LIVE on the server)", blocks: engineOn && engineLive ? null : "followups" },
   ];
+  const jd = await getRequisitionJd(String(d.requisition_id));
+  const rules = await loadRequisitionForMatching(String(d.requisition_id));
   return {
-    drive: { id: d.id, status: d.status, autoSend: Boolean(d.auto_send), date: String(d.drive_date).slice(0, 10), targetShows: Number(d.target_shows), requisition: d.requisition_code, role: d.designation_name },
+    requirements: { jd, rules },
+    drive: { id: d.id, requisitionId: d.requisition_id, status: d.status, autoSend: Boolean(d.auto_send), date: String(d.drive_date).slice(0, 10), targetShows: Number(d.target_shows), requisition: d.requisition_code, role: d.designation_name },
     checks,
     pool: {
       suggested: Number(sug?.n ?? 0), suggestedWithEmail: Number(sug?.with_email ?? 0), suggestedWithConsent: Number(sug?.with_consent ?? 0),

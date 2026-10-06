@@ -10,6 +10,7 @@ import { addEvent, backfillLeadPool } from "./he-lead.service.js";
 import { createDrive, setDriveStatus, suggestMatchesDetailed } from "./he-drive.service.js";
 import { inviteForDrive, runEngineTick, runFollowUps } from "./he-engine.service.js";
 import { getDriveReadiness } from "./he-readiness.service.js";
+import { getRequisitionJd, saveRequisitionJd } from "./he-jd.service.js";
 import { getDriveShortlist, SHORTLIST_FILTERS, type ShortlistFilter } from "./he-shortlist.service.js";
 import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
@@ -562,4 +563,29 @@ heRouter.get("/drives/:id/shortlist", requireAuth, requireRole(...VIEW_ROLES), a
     if (!r) return res.status(404).json({ message: "Drive not found" });
     res.json({ success: true, data: r });
   } catch (err) { logger.error({ err: (err as Error).message }, "[he] shortlist failed"); res.status(500).json({ message: "Could not load the shortlist" }); }
+});
+
+// JD as understood by the engine (BMS format): read, or upload a .docx / .pdf / .txt (base64) or pasted text.
+heRouter.get("/requisitions/:id/jd", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try {
+    const jd = await getRequisitionJd(String(req.params.id));
+    if (!jd) return res.status(404).json({ message: "Requisition not found" });
+    res.json({ success: true, data: jd });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] jd read failed"); res.status(500).json({ message: "Could not read the JD" }); }
+});
+
+heRouter.post("/requisitions/:id/jd", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const b = (req.body ?? {}) as { fileName?: unknown; base64?: unknown; text?: unknown };
+    const [r] = await db.execute<RowDataPacket[]>("SELECT id FROM job_requisition WHERE id = ? LIMIT 1", [String(req.params.id)]);
+    if (!r[0]) return res.status(404).json({ message: "Requisition not found" });
+    const jd = await saveRequisitionJd(String(req.params.id), {
+      fileName: typeof b.fileName === "string" ? b.fileName : null, base64: typeof b.base64 === "string" ? b.base64 : null, text: typeof b.text === "string" ? b.text : null,
+    }, (req as AuthenticatedRequest).authUser?.id ?? null);
+    res.json({ success: true, data: jd });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    if (e.statusCode === 400) return res.status(400).json({ message: e.message });
+    logger.error({ err: e.message }, "[he] jd save failed"); res.status(500).json({ message: "Could not save the JD" });
+  }
 });

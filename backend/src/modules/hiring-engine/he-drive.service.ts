@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { applyEligibilityGate, type LeadFactsRow } from "./he-eligibility.service.js";
 import { refreshHistoryChunk } from "./he-master.service.js";
 import { loadProfiles } from "./he-profile.service.js";
+import { getRequisitionJd } from "./he-jd.service.js";
 import { parseJdText } from "./he-jd-parse.js";
 import { learnedBonus } from "./he-learn.js";
 import { branchLocationTokens, locationRegex } from "./he-location-match.js";
@@ -146,7 +147,16 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   if (!drive) throw new Error("Drive not found");
   const req = await loadRequisition(drive.requisition_id);
   if (!req) throw new Error("Requisition not found");
-  const mreq = { ...toMatchRequisition(req), strict: true };
+  // JD (uploaded document in BMS format, else the requisition's own text) adds skills and fills gaps in the form fields.
+  const jd = await getRequisitionJd(req.id);
+  const base = toMatchRequisition(req);
+  const mreq = {
+    ...base, strict: true,
+    mandatorySkills: jd?.parsed.mandatorySkills.length ? jd.parsed.mandatorySkills : null,
+    preferredSkills: jd?.parsed.preferredSkills.length ? jd.parsed.preferredSkills : null,
+    minExperienceYears: base.minExperienceYears ?? jd?.parsed.minExperience ?? null,
+    salaryMax: base.salaryMax ?? jd?.parsed.salaryMonthly ?? null,
+  };
   const cfg = slotCfg(drive);
   const { invites } = inviteTarget({ openPositions: Math.max(1, req.requested_headcount - req.fulfilled_headcount), showRatePct: drive.show_rate_pct, capacity: driveCapacity(cfg) });
   const want = limit ?? invites;
@@ -227,6 +237,20 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
 }
 
 /** Other open requisitions a declined lead fits (feeds the "other role" offer). Same branch ranked first by score. */
+/** The rules a drive for this requisition applies (form fields + screening config + JD text/document), for display. */
+export async function loadRequisitionForMatching(requisitionId: string) {
+  const req = await loadRequisition(requisitionId);
+  if (!req) return null;
+  const jd = await getRequisitionJd(requisitionId);
+  const base = toMatchRequisition(req);
+  return {
+    ...base, branchName: req.branch_name, processName: req.process_name,
+    mandatorySkills: jd?.parsed.mandatorySkills ?? [], preferredSkills: jd?.parsed.preferredSkills ?? [],
+    minExperienceYears: base.minExperienceYears ?? jd?.parsed.minExperience ?? null, salaryMax: base.salaryMax ?? jd?.parsed.salaryMonthly ?? null,
+    locationTokens: branchLocationTokens(req.branch_name, req.bcity ?? null).slice(0, 8),
+  };
+}
+
 /** All open requisitions in matcher shape (with code/process/branch for display). One query, reused across many leads. */
 export async function loadOpenRequisitionsForMatching(): Promise<Array<ReturnType<typeof toMatchRequisition> & { code: string; process: string | null; branch: string; role: string }>> {
   const [reqs] = await db.execute<ReqRow[]>(

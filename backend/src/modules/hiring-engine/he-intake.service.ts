@@ -85,18 +85,19 @@ export async function ingestCandidates(raw: Array<Record<string, unknown>>, sour
     if (lead.created) out.created++; else out.updated++;
     if (r.altMobile10) await recordIdentities(lead.id, { altMobiles: [r.altMobile10], source });
     const certs = r.skills ? parseJdText(r.skills).certifications : [];
-    if (r.gender || r.languages || r.expectedSalary || certs.length || r.educationStatus || r.stream || r.lastSalary || r.prevIndustry || r.state || r.address || r.dob || r.lastEmployer) {
+    const skillsText = [r.skills, r.prevIndustry, r.lastEmployer, r.education, r.process].filter(Boolean).join('; ').slice(0, 1000) || null;
+    if (skillsText || r.gender || r.languages || r.expectedSalary || certs.length || r.educationStatus || r.stream || r.lastSalary || r.prevIndustry || r.state || r.address || r.dob || r.lastEmployer) {
       await db.execute(
-        `INSERT INTO he_lead_profile (lead_id, gender, languages, certifications, salary_expectation, education_status, stream, last_salary, prev_industry, last_employer, state, address, dob)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO he_lead_profile (lead_id, gender, languages, certifications, salary_expectation, education_status, stream, last_salary, prev_industry, last_employer, state, address, dob, skills_text)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON DUPLICATE KEY UPDATE gender = COALESCE(VALUES(gender), gender), languages = COALESCE(VALUES(languages), languages),
            certifications = COALESCE(VALUES(certifications), certifications), salary_expectation = COALESCE(VALUES(salary_expectation), salary_expectation),
            education_status = COALESCE(VALUES(education_status), education_status), stream = COALESCE(VALUES(stream), stream),
            last_salary = COALESCE(VALUES(last_salary), last_salary), prev_industry = COALESCE(VALUES(prev_industry), prev_industry),
            last_employer = COALESCE(VALUES(last_employer), last_employer), state = COALESCE(VALUES(state), state),
-           address = COALESCE(VALUES(address), address), dob = COALESCE(VALUES(dob), dob)`,
+           address = COALESCE(VALUES(address), address), dob = COALESCE(VALUES(dob), dob), skills_text = COALESCE(VALUES(skills_text), skills_text)`,
         [lead.id, r.gender ?? null, r.languages ? JSON.stringify(r.languages) : null, certs.length ? JSON.stringify(certs) : null, r.expectedSalary ?? null,
-          r.educationStatus ?? null, r.stream ?? null, r.lastSalary ?? null, r.prevIndustry ?? null, r.lastEmployer ?? null, r.state ?? null, r.address ?? null, r.dob ?? null]);
+          r.educationStatus ?? null, r.stream ?? null, r.lastSalary ?? null, r.prevIndustry ?? null, r.lastEmployer ?? null, r.state ?? null, r.address ?? null, r.dob ?? null, skillsText]);
     }
     if (r.consent) { await grantConsent(lead.id, "whatsapp_contact", "intake_attested_v1", `intake_${source}`); out.consentRecorded++; }
     await refreshLeadHistory(r.mobile10!);

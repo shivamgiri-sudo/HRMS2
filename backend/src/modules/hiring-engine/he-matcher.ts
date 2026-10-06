@@ -5,6 +5,7 @@
  * the score so a lead rejected for ABC is only re-offered where it actually fits.
  */
 import { haversineKm } from "./he-eta.js";
+import { matchSkills } from "./he-jd-doc.js";
 
 export interface MatchLead {
   age?: number | null;
@@ -26,6 +27,8 @@ export interface MatchLead {
   prevIndustry?: string | null;
   city?: string | null;
   state?: string | null;
+  /** Free text describing skills/roles (portal skills, designation, employer, education, form answers). */
+  skillsText?: string | null;
 }
 
 export interface MatchRequisition {
@@ -49,6 +52,9 @@ export interface MatchRequisition {
   /** Industries whose experience helps for this process (derived from the process name). */
   goodIndustries?: string[] | null;
   streams?: string[] | null;
+  /** From the JD (BMS format): skills that score the candidate's skills text. Never a hard filter (text is sparse). */
+  mandatorySkills?: string[] | null;
+  preferredSkills?: string[] | null;
   /** Drive shortlists: every hard JD requirement must be CONFIRMED on the candidate (unknown = not shortlisted). */
   strict?: boolean;
 }
@@ -171,13 +177,28 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
     if (req.streams.includes(lead.stream)) score += 5; else { score -= 5; reasons.push(`${lead.stream.replace(/_/g, " ")} stream, JD prefers ${req.streams.join("/")}`); }
   }
 
+  if (req.mandatorySkills?.length || req.preferredSkills?.length) {
+    if (!lead.skillsText) unknown.push("skills");
+    else {
+      const m = matchSkills(lead.skillsText, req.mandatorySkills ?? []);
+      const p = matchSkills(lead.skillsText, req.preferredSkills ?? []);
+      if (req.mandatorySkills?.length) {
+        const frac = m.length / req.mandatorySkills.length;
+        score += Math.round((frac - 0.5) * 20);
+        if (m.length) reasons.push(`skills: ${m.join(", ")}`);
+        const miss = req.mandatorySkills.filter((x) => !m.includes(x));
+        if (miss.length) reasons.push(`not seen: ${miss.slice(0, 3).join(", ")}`);
+      }
+      if (p.length) { score += 5; reasons.push(`preferred: ${p.join(", ")}`); }
+    }
+  }
   if (req.strict) {
     const hard = new Set(["age", "education", "experience", "night_shift", "gender", "languages", "certifications"]);
     const missingFacts = unknown.filter((u) => hard.has(u));
     if (missingFacts.length) { eligible = false; reasons.push(`not confirmed: ${missingFacts.map((u) => u.replace(/_/g, " ")).join(", ")}`); }
   }
   const asked = [req.ageMin != null || req.ageMax != null, req.minEducationRank != null, (req.minExperienceYears ?? 0) > 0, req.nightShift === true,
-    true /* distance */, !!req.gender, !!req.languages?.length, !!req.certifications?.length, !!req.minTypingWpm, !!req.englishLevel].filter(Boolean).length;
+    true /* distance */, !!(req.mandatorySkills?.length || req.preferredSkills?.length), !!req.gender, !!req.languages?.length, !!req.certifications?.length, !!req.minTypingWpm, !!req.englishLevel].filter(Boolean).length;
   const confidence = asked ? Math.max(0, Math.round(((asked - unknown.length) / asked) * 100) / 100) : 1;
   if (!eligible) score = 0;
   const finalScore = Math.max(0, Math.min(100, score));
