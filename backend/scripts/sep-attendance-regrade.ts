@@ -18,14 +18,16 @@ import { attendanceEngineService } from "../src/modules/wfm/attendance-engine.se
 import { partitionByEmployment } from "../src/shared/employmentWindow.js";
 
 const APPLY = process.argv.includes("--apply");
-const MONTH_FROM = "2026-09-01", MONTH_TO = "2026-09-30", GAP_FROM = "2026-09-21", GAP_TO = "2026-09-29";
+// Optional: FROM TO GAP_FROM GAP_TO (defaults: September 2026, APR gap 21-29 Sep).
+const argDates = process.argv.slice(2).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x));
+const [MONTH_FROM, MONTH_TO, GAP_FROM, GAP_TO] = argDates.length === 4 ? argDates : ["2026-09-01", "2026-09-30", "2026-09-21", "2026-09-29"];
 const credit = (s: string) => (s === "present" || s === "leave_approved" || s === "holiday" || s === "week_off" ? 1 : s === "half_day" ? 0.5 : 0);
 
 (async () => {
   console.log(`mode: ${APPLY ? "APPLY" : "dry-run (nothing written)"}`);
   const [runs] = await db.execute<RowDataPacket[]>(
-    `SELECT status, COUNT(*) n FROM salary_prep_run WHERE LEFT(CAST(run_month AS CHAR), 7) = '2026-09' GROUP BY status`);
-  console.log("Sep 2026 payroll runs:", (runs as any[]).length ? (runs as any[]).map((r) => `${r.status}=${r.n}`).join(", ") : "none");
+    `SELECT status, COUNT(*) n FROM salary_prep_run WHERE LEFT(CAST(run_month AS CHAR), 7) = ? GROUP BY status`, [MONTH_FROM.slice(0, 7)]);
+  console.log(`${MONTH_FROM}..${MONTH_TO} (APR gap ${GAP_FROM}..${GAP_TO}) payroll runs for the month:`, (runs as any[]).length ? (runs as any[]).map((r) => `${r.status}=${r.n}`).join(", ") : "none");
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT adr.employee_id, DATE_FORMAT(adr.record_date, '%Y-%m-%d') d, adr.attendance_status st,

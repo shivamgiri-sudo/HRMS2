@@ -44,6 +44,9 @@ on:
         options:
           - statutory-identifier-encrypt-backfill
           - apr-resync-sep-gap
+          - oct-attendance-verify
+          - oct-attendance-regrade
+          - oct-outside-employment-cleanup
           - sep-attendance-regrade
           - attendance-outside-employment-cleanup
           - backup-table-pii-scrub
@@ -219,6 +222,20 @@ jobs:
           MODE="${{ inputs.mode }}"
 
           case "${{ inputs.script }}" in
+            oct-attendance-verify)
+              # Read-only in both modes. Counts only.
+              npx tsx scripts/oct-attendance-verify.ts
+              ;;
+            oct-attendance-regrade)
+              # Dry-runs unless given --apply. Re-grades unlocked Oct 2026 old-night-window rows and dialler staff on 2 Oct.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/sep-attendance-regrade.ts 2026-10-01 2026-10-31 2026-10-02 2026-10-02 $FLAG
+              ;;
+            oct-outside-employment-cleanup)
+              # Dry-runs unless given --apply. Backs up then removes unprotected Oct 2026 rows outside salary start .. exit.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/attendance-outside-employment-cleanup.ts 2026-10-01 2026-10-31 $FLAG
+              ;;
             apr-resync-sep-gap)
               # Dry-runs unless given --apply. Apply upserts APR re-pulled from the dialler for 21-29 Sep 2026
               # (users already bulk-uploaded that day are left out so no day counts twice). Counts only.
