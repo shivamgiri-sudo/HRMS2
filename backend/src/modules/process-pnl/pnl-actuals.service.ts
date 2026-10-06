@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { grnAllocationExGstSql, grnRequestExGstSql } from "./pnl-ex-gst.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 /**
  * The two P&L lines that already exist as data but were never read by the statement.
@@ -787,7 +788,7 @@ export async function getSeatRevenueActuals(
             LEAST(1, GREATEST(0, COALESCE(l.final_payable_days, 0)
                                  / NULLIF(l.active_calendar_days, 0))) AS proration
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+       JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ? AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
        LEFT JOIN pnl_running_salary_snapshot snap
               ON snap.employee_id = e.id AND snap.period_code = ?

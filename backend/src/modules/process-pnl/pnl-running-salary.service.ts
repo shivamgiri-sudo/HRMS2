@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { computeRunningSalary } from "../payroll/running-salary.service.js";
 import { getCostCentrePeriods } from "./cost-centre-history.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 /**
  * Snapshots each employee's running-month salary so the P&L can show a live Operating Profit %
@@ -137,7 +138,7 @@ async function loadEmployees(
              OR EXISTS (SELECT 1
                           FROM salary_prep_line spl
                           JOIN salary_prep_run spr ON spr.id = spl.run_id
-                         WHERE spl.employee_id = e.id AND spr.run_month = ?))
+                         WHERE spl.employee_id = e.id AND spr.run_month = ? AND ${nonVoidRunSql("spr")}))
         ${branchClause}`,
     [periodCode, ...params]
   );

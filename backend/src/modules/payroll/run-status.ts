@@ -91,6 +91,11 @@ export const VOID_RUN_STATUSES: ReadonlySet<string> = new Set(["cancelled", "rej
 /** SQL form of VOID_RUN_STATUSES, for statements that filter in the database. */
 export const VOID_RUN_STATUSES_SQL = "'cancelled','rejected'";
 
+/** SQL predicate: the run aliased `alias` (or the bare table when omitted) is not void. Every P&L
+ *  read of salary_prep_run must carry it, or a cancelled run's lines are counted as people cost. */
+export const nonVoidRunSql = (alias?: string) =>
+  `LOWER(TRIM(COALESCE(${alias ? `${alias}.` : ""}status, ''))) NOT IN (${VOID_RUN_STATUSES_SQL})`;
+
 /**
  * Ordering that picks the canonical run when a month holds more than one.
  *

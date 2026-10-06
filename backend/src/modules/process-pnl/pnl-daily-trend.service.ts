@@ -5,6 +5,7 @@ import { getSeatRevenueForecast } from "./pnl-seat-revenue-forecast.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 /**
  * Revenue, cost and operating margin day by day through a month.
@@ -147,7 +148,7 @@ async function monthlyPeopleCost(period: string, branchId?: string): Promise<num
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT SUM(${peopleCostSql("l")}) AS amount
          FROM salary_prep_line l
-         JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+         JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ? AND ${nonVoidRunSql("r")}
          JOIN employees e ON e.id = l.employee_id
          ${attr ? attr.join : ""}
         WHERE 1=1 ${attr ? `AND ${attr.effectiveBranchExpr} = ?` : ""}`,

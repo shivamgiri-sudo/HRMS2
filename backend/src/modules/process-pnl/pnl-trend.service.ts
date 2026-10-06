@@ -4,6 +4,7 @@ import { getDbBillHistory, getDbBillHistoryByProcess } from "./pnl-trend-history
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
 import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 /**
  * Revenue / cost / margin trend, and headcount-vs-revenue trend, per process across the months
@@ -234,7 +235,7 @@ export async function getPnlTrend(
             SUM(${peopleCostSql("spl")}) AS cost,
             COUNT(DISTINCT spl.employee_id) AS headcount
        FROM salary_prep_run sr
-       JOIN salary_prep_line spl ON spl.run_id = sr.id
+       JOIN salary_prep_line spl ON spl.run_id = sr.id AND ${nonVoidRunSql("sr")}
        JOIN employees e ON e.id = spl.employee_id
        ${costAttr.join}
        JOIN process_master pm ON pm.id = ${costAttr.effectiveProcessExpr}

@@ -9,6 +9,7 @@ import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 import { budgetByBranchId, budgetByCostCentreId, readBudgetEntries } from "./pnl-budget-source.js";
 import { cachedPnlRead } from "./pnl-read-cache.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
@@ -466,7 +467,7 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
             COUNT(*) AS staff,
             SUM(${peopleCostSql("l")}) AS amount
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
        ${ov.join}
       WHERE r.run_month = ?
@@ -533,7 +534,7 @@ async function readUnallocatedPayroll(
   const [posted] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS line_count
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
       WHERE r.run_month = ?`,
     [period],
   );
@@ -548,7 +549,7 @@ async function readUnallocatedPayroll(
             COUNT(*) AS staff,
             SUM(${peopleCostSql("l")}) AS amount
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
        LEFT JOIN branch_master bm ON bm.id = e.branch_id
        ${ov.join}
@@ -613,7 +614,7 @@ async function payrollFreshness(period: string): Promise<PnlSourceFreshness> {
     `SELECT COUNT(l.id) AS \`rows\`, MAX(r.created_at) AS latest_synced_at
        FROM salary_prep_run r
        LEFT JOIN salary_prep_line l ON l.run_id = r.id
-      WHERE r.run_month = ?`,
+      WHERE r.run_month = ? AND ${nonVoidRunSql("r")}`,
     [period],
   );
   const first = rows[0] ?? {};
@@ -656,7 +657,7 @@ async function exceptions(period: string): Promise<PnlReconciliationException[]>
       `SELECT COUNT(*) AS count,
               SUM(${peopleCostSql("l")}) AS amount
          FROM salary_prep_line l
-         JOIN salary_prep_run r ON r.id = l.run_id
+         JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
          JOIN employees e ON e.id = l.employee_id
          ${ov.join}
         WHERE r.run_month = ? AND ${ov.effectiveCostCentreExpr} IS NULL`,

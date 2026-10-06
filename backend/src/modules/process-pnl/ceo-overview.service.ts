@@ -10,6 +10,7 @@ import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-
 import { budgetByBranchId, entriesForCodes, readBudgetEntries as readBudgetEntriesUncached, sumAmount, topUpsForCodes } from "./pnl-budget-source.js";
 import { cachedPnlRead } from "./pnl-read-cache.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 /*
  * PER-REQUEST DEDUP (2026-09-24). One overview asks for the same month's revenue / people / spend /
@@ -432,7 +433,7 @@ async function readIdcContamination(period: string): Promise<{ count: number; am
     `SELECT COUNT(*) AS cnt,
             SUM(${peopleCostSql("l")}) AS amt
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
       WHERE r.run_month = ? AND e.employee_code LIKE 'IDC%'`,
     [period],
@@ -479,7 +480,7 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
             COUNT(*) AS staff,
             SUM(${peopleCostSql("l")}) AS cost
        FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
        JOIN employees e ON e.id = l.employee_id
        ${ov.join}
       WHERE ${where.join(" AND ")}
@@ -1057,7 +1058,7 @@ async function filterOptions(period: string, scope: CeoScope) {
     ? (await db.execute<RowDataPacket[]>(
         `SELECT DISTINCT pm.id AS id, pm.process_name AS name
            FROM salary_prep_line l
-           JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+           JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ? AND ${nonVoidRunSql("r")}
            JOIN employees e ON e.id = l.employee_id
            JOIN process_master pm ON pm.id = e.process_id
           WHERE pm.active_status = 1
@@ -1132,7 +1133,7 @@ async function buildFocus(
     const [paid] = await db.execute<RowDataPacket[]>(
       `SELECT SUM(CASE WHEN COALESCE(l.gross_salary, 0) = 0 THEN 1 ELSE 0 END) AS zero_paid
          FROM salary_prep_line l
-         JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+         JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ? AND ${nonVoidRunSql("r")}
          JOIN employees e ON e.id = l.employee_id
         WHERE e.process_id = ?`,
       [period, processId],

@@ -4,6 +4,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 /**
  * Whether a cost centre is actually working, on one definition, in one place.
@@ -112,7 +113,7 @@ export async function getCostCentreActivity(
             COUNT(DISTINCT l.employee_id) AS people_paid,
             SUM(${peopleCostSql("l")}) AS salary_cost
        FROM salary_prep_line l
-       JOIN salary_prep_run run ON run.id = l.run_id
+       JOIN salary_prep_run run ON run.id = l.run_id AND ${nonVoidRunSql("run")}
        JOIN employees e ON e.id = l.employee_id
        ${ov.join}
       WHERE run.run_month IN (${placeholders}) AND ${ov.effectiveCostCentreExpr} IS NOT NULL

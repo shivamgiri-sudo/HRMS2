@@ -8,6 +8,7 @@ import { getSeatBillingEstimate, isEstimateWindow } from "./pnl-seat-billing.ser
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 /**
  * The row-level detail behind every clickable P&L cell — "what actually makes up this number".
@@ -395,7 +396,7 @@ async function peopleDrilldownRowsAggregated(period: string, scope: PnlDrilldown
               COUNT(*) AS headcount,
               SUM(${peopleCostSql("l")}) AS amount
          FROM salary_prep_line l
-         JOIN salary_prep_run r ON r.id = l.run_id
+         JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
          JOIN employees e ON e.id = l.employee_id
          LEFT JOIN designation_master des ON des.id = e.designation_id
          ${emp.join}
@@ -433,7 +434,7 @@ async function peopleDrilldownRows(period: string, scope: PnlDrilldownScope): Pr
       `SELECT l.id, e.employee_code, e.full_name, e.cost_center_code,
               ${peopleCostSql("l")} AS amount
          FROM salary_prep_line l
-         JOIN salary_prep_run r ON r.id = l.run_id
+         JOIN salary_prep_run r ON r.id = l.run_id AND ${nonVoidRunSql("r")}
          JOIN employees e ON e.id = l.employee_id
          ${emp.join}
         WHERE r.run_month = ? AND ${emp.sql}

@@ -27,6 +27,7 @@ import { grnAccountingMonthSql, vendorAccountingMonthSql } from "./pnl-grn-month
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 type NumericMap = Map<string, number>;
 type AllocationDriver =
@@ -608,7 +609,7 @@ async function getPayrollRunAsOfDate(period: string): Promise<string | null> {
   const rows = await safeRows<RowDataPacket>(
     `SELECT MAX(COALESCE(disbursed_at, auto_closed_at, finance_approved_at, updated_at, created_at)) AS as_of
        FROM salary_prep_run
-      WHERE run_month = ?`,
+      WHERE run_month = ? AND ${nonVoidRunSql()}`,
     [period]
   );
   const asOf = rows[0]?.as_of;
@@ -664,7 +665,7 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
   const runs = await safeRows<RowDataPacket>(
     `SELECT id
        FROM salary_prep_run
-      WHERE run_month = ?`,
+      WHERE run_month = ? AND ${nonVoidRunSql()}`,
     [period]
   );
   if (!runs.length) return [];
@@ -2144,7 +2145,7 @@ export const bpoPnlService = {
     const period = bundle.filters.period ?? "";
     if (period >= "2026-08") {
       const [payrollRuns] = await db.execute<RowDataPacket[]>(
-        `SELECT status FROM salary_prep_run WHERE run_month = ?`,
+        `SELECT status FROM salary_prep_run WHERE run_month = ? AND ${nonVoidRunSql()}`,
         [period],
       );
       if (payrollRuns.length > 0) {

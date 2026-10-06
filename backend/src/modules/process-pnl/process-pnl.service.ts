@@ -15,6 +15,7 @@ import type {
   ProcessPnlDetailBundle,
   ProcessPnlRecord,
 } from "./process-pnl.types.js";
+import { nonVoidRunSql } from "../payroll/run-status.js";
 
 type NumericMap = Map<string, number>;
 type TextMap = Map<string, string>;
@@ -797,7 +798,7 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
   const runRows = await queryRows<RowDataPacket>(
     `SELECT id, run_month, status, created_at
        FROM salary_prep_run
-      WHERE run_month = ?
+      WHERE run_month = ? AND ${nonVoidRunSql()}
       ORDER BY created_at DESC`,
     [period]
   );
@@ -1656,7 +1657,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     const payrollRows = await queryRows<RowDataPacket>(
       `SELECT ms.month_key, SUM(${peopleCostExpr}) AS total
          FROM (${seriesSql}) ms
-         LEFT JOIN salary_prep_run spr ON spr.run_month = ms.month_key
+         LEFT JOIN salary_prep_run spr ON spr.run_month = ms.month_key AND ${nonVoidRunSql("spr")}
          LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
          LEFT JOIN employees e ON e.id = spl.employee_id
         GROUP BY ms.month_key`,
@@ -1745,7 +1746,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     const payrollRows = await queryRows<RowDataPacket>(
       `SELECT SUM(${peopleCostExpr}) AS total
          FROM salary_prep_line spl
-         JOIN salary_prep_run spr ON spr.id = spl.run_id
+         JOIN salary_prep_run spr ON spr.id = spl.run_id AND ${nonVoidRunSql("spr")}
          JOIN employees e ON e.id = spl.employee_id
         WHERE spr.run_month = ? ${processJoinClause}`,
       processId ? [month, processId] : [month]
@@ -2156,7 +2157,7 @@ export const processPnlService = {
       rows = await queryRows<RowDataPacket>(
         `SELECT id
            FROM salary_prep_run
-          WHERE run_month = ?
+          WHERE run_month = ? AND ${nonVoidRunSql()}
           ORDER BY created_at DESC`,
         [context.filters.period]
       );
