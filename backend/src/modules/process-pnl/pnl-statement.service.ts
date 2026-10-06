@@ -322,15 +322,18 @@ function enrichColumn(
   /*
    * Revenue forecast (owner rule 2026-10-06, same as Live P&L): a cost centre with an approved
    * forecast earns the forecast (open) or the closed amount, nothing else. Its old planned /
-   * invoiced / estimate revenue was already taken out of those maps (getStatement), and the
-   * canonical row's own figure still contains it — so a column holding any forecast cost centre
-   * does not fall back to that row figure; it adds the forecast to the remaining sources instead.
+   * invoiced / estimate revenue was already taken out of those maps (getStatement), so the
+   * forecast is added back on top of them. The canonical row's own figure comes from the process
+   * engine (bpo-pnl computeBranchRows), which applies the same forecast rule per process — it
+   * already contains the forecast, so it is used as-is, never with the forecast added again.
+   * (Zeroing it instead dropped every OTHER cost centre's engine revenue in the column: NOIDA-2,
+   * 2026-11, went from Rs 20.9 L to only the one forecast's Rs 3.73 L on live.)
    */
   const forecastAmount = forecast
     ? (key.processId ? forecast.byProcess.get(key.processId) : key.branchId ? forecast.byBranch.get(key.branchId) : undefined)
     : undefined;
   const hasForecast = forecastAmount !== undefined;
-  const existingRevenue = hasForecast ? 0 : n(out.recognizedRevenue);
+  const existingRevenue = n(out.recognizedRevenue);
   /*
    * Priority for a CLOSED period: actual invoiced amount.
    *
@@ -367,10 +370,11 @@ function enrichColumn(
    */
   const estimated = periodOpen || !estimate ? 0 : (pickOwnRevenue(estimate) ?? 0);
   const billedPlusEstimate = invoiced + estimated;
-  const baseRevenue = (!periodOpen && billedPlusEstimate > 0)
-    ? billedPlusEstimate
-    : (existingRevenue > 0 ? existingRevenue : plannedRevenue);
-  const recognizedRevenue = baseRevenue + (forecastAmount ?? 0);
+  const useBilled = !periodOpen && billedPlusEstimate > 0;
+  const useCanonical = !useBilled && existingRevenue > 0;
+  const baseRevenue = useBilled ? billedPlusEstimate : useCanonical ? existingRevenue : plannedRevenue;
+  // The canonical figure already carries the forecast (see above); the billed and planned maps do not.
+  const recognizedRevenue = baseRevenue + (useCanonical ? 0 : (forecastAmount ?? 0));
   out.recognizedRevenue = recognizedRevenue;
   out.revenueForecast = forecastAmount ?? 0;
   out.plannedRevenue = plannedRevenue;
@@ -383,7 +387,7 @@ function enrichColumn(
    * "accounting_fallback") via the `...data` spread below reads from the source row; passed through
    * unchanged here for a process column so both surfaces agree on WHY a revenue figure is what it is.
    */
-  out.revenueBasis = hasForecast && baseRevenue === 0
+  out.revenueBasis = hasForecast && baseRevenue === 0 && !useCanonical
     ? "forecast"
     : (!periodOpen && billedPlusEstimate > 0)
       ? (hasForecast ? "invoiced+forecast" : "invoiced")

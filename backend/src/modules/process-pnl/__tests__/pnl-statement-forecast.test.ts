@@ -98,9 +98,14 @@ describe("statement revenue with approved forecasts", () => {
     expect(s.forecastRevenue).toEqual({ costCentres: 1, amount: 80, closed: 1 });
   });
 
-  it("open month: planned of the others + the open forecast, never the canonical row's figure", async () => {
-    const s = await statementFor(OPEN, "process", { planned: [100, 40], invoiced: [0, 0], rowRevenue: 999, forecast: forecastOf(120, "OPEN") });
+  it("open month, no engine figure: planned of the others + the open forecast", async () => {
+    const s = await statementFor(OPEN, "process", { planned: [100, 40], invoiced: [0, 0], forecast: forecastOf(120, "OPEN") });
     expect(revenueOf(s, PROCESS_ID)).toBe(160);
+  });
+
+  it("open month with an engine figure: used as-is — the engine already applies the forecast, never added twice", async () => {
+    const s = await statementFor(OPEN, "process", { planned: [100, 40], invoiced: [0, 0], rowRevenue: 999, forecast: forecastOf(120, "OPEN") });
+    expect(revenueOf(s, PROCESS_ID)).toBe(999);
   });
 
   it("branch view agrees with the process view", async () => {
