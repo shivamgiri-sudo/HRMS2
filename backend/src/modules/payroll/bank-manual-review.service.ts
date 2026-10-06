@@ -64,23 +64,37 @@ export interface ManualReviewGapRow {
   proof_document: { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null } | null;
 }
 
-/** The account number in plaintext, from the first source that holds one. */
-export function resolveAccountNumber(sources: {
-  plain?: unknown; onboardingEncrypted?: unknown; candidateEncrypted?: unknown;
-}): string | null {
-  const plain = String(sources.plain ?? "").replace(/\s/g, "");
-  if (plain) return plain;
-  for (const cipher of [sources.onboardingEncrypted, sources.candidateEncrypted]) {
+/**
+ * The account number in plaintext. The joiner's number can sit in three places that are not kept
+ * in step: the onboarding bank row (encrypted; what the bank check itself reads), the plaintext
+ * ats_candidate column and its encrypted twin, and the latter two can hold an older number. When
+ * the hash of the verified account is known, the copy that matches it wins; otherwise the
+ * onboarding row is preferred. Reading the plaintext column first marked Hemkala Negi (MAS63527)
+ * as "account changed" on 2026-10-06 although her onboarding number was the verified one.
+ */
+export function resolveAccountNumber(
+  sources: { plain?: unknown; onboardingEncrypted?: unknown; candidateEncrypted?: unknown },
+  verifiedHash?: string | null,
+): string | null {
+  const decrypt = (cipher: unknown): string | null => {
     const value = String(cipher ?? "").trim();
-    if (!value) continue;
+    if (!value) return null;
     try {
-      const decrypted = decryptPii(value).replace(/\s/g, "");
-      if (decrypted) return decrypted;
+      return decryptPii(value).replace(/\s/g, "") || null;
     } catch {
-      // Unreadable under this key; try the next source.
+      return null; // unreadable under this key
     }
+  };
+  const ordered = [
+    decrypt(sources.onboardingEncrypted),
+    String(sources.plain ?? "").replace(/\s/g, "") || null,
+    decrypt(sources.candidateEncrypted),
+  ].filter((n): n is string => !!n);
+  if (verifiedHash) {
+    const match = ordered.find((n) => hashPiiForMatch(n) === verifiedHash);
+    if (match) return match;
   }
-  return null;
+  return ordered[0] ?? null;
 }
 
 function parseFlags(raw: unknown): string[] {
@@ -159,7 +173,7 @@ export async function getManualReviewBankGaps(): Promise<ManualReviewGapRow[]> {
       plain: r.plain_account_no,
       onboardingEncrypted: r.onboarding_account_encrypted,
       candidateEncrypted: r.candidate_account_encrypted,
-    });
+    }, r.account_no_hash);
     const names = [r.candidate_name, r.profile_name, r.employee_record_name]
       .map((n) => String(n ?? "").trim())
       .filter(Boolean);
@@ -292,7 +306,7 @@ export async function copyVerifiedBankToEmployee(
     plain: row.plain_account_no,
     onboardingEncrypted: row.onboarding_account_encrypted,
     candidateEncrypted: row.candidate_account_encrypted,
-  });
+  }, row.account_no_hash);
   if (!accountNo) return { status: "no_account_number", employeeId };
   if (row.account_no_hash && hashPiiForMatch(accountNo) !== row.account_no_hash) {
     return { status: "account_changed", employeeId };
@@ -334,7 +348,7 @@ export async function approveManualReviewBankDetail(params: {
     plain: row.plain_account_no,
     onboardingEncrypted: row.onboarding_account_encrypted,
     candidateEncrypted: row.candidate_account_encrypted,
-  });
+  }, row.account_no_hash);
   if (!accountNo) return { status: "no_manual_review_row" };
   // A person may accept a name variance, but not an account number nobody checked.
   if (row.account_no_hash && hashPiiForMatch(accountNo) !== row.account_no_hash) return { status: "account_changed" };

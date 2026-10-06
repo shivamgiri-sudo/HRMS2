@@ -73,11 +73,17 @@ beforeEach(() => {
 });
 
 describe("resolveAccountNumber", () => {
-  it("prefers plaintext, then the onboarding ciphertext, then the candidate ciphertext", () => {
-    expect(svc.resolveAccountNumber({ plain: " 12 34 ", onboardingEncrypted: "cipher:9" })).toBe("1234");
-    expect(svc.resolveAccountNumber({ plain: "", onboardingEncrypted: "cipher:555", candidateEncrypted: "cipher:9" })).toBe("555");
+  it("prefers the onboarding number, then plaintext, then the candidate ciphertext", () => {
+    expect(svc.resolveAccountNumber({ plain: " 12 34 ", onboardingEncrypted: "cipher:9" })).toBe("9");
+    expect(svc.resolveAccountNumber({ plain: "1234", onboardingEncrypted: "garbage" })).toBe("1234");
     expect(svc.resolveAccountNumber({ onboardingEncrypted: "garbage", candidateEncrypted: "cipher:777" })).toBe("777");
     expect(svc.resolveAccountNumber({})).toBeNull();
+  });
+
+  it("returns whichever stored copy is the verified account (Hemkala: stale plaintext, current onboarding)", () => {
+    expect(svc.resolveAccountNumber({ plain: "1111", onboardingEncrypted: "cipher:2222" }, "h(2222)")).toBe("2222");
+    expect(svc.resolveAccountNumber({ plain: "1111", onboardingEncrypted: "cipher:2222" }, "h(1111)")).toBe("1111");
+    expect(svc.resolveAccountNumber({ plain: "1111", onboardingEncrypted: "cipher:2222" }, "h(3333)")).toBe("2222");
   });
 });
 
