@@ -29,7 +29,7 @@ export interface DriveInput {
   createdBy?: string | null;
 }
 
-interface ReqRow extends RowDataPacket {
+export interface ReqRow extends RowDataPacket {
   id: string; branch_name: string; process_name: string | null; designation_name: string;
   requested_headcount: number; fulfilled_headcount: number; approval_status: string; active_status: number;
   meta_target_age_min: number | null; meta_target_age_max: number | null; meta_target_radius_km: number | null;
@@ -207,6 +207,17 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
 }
 
 /** Other open requisitions a declined lead fits (feeds the "other role" offer). Same branch ranked first by score. */
+/** All open requisitions in matcher shape (with code/process/branch for display). One query, reused across many leads. */
+export async function loadOpenRequisitionsForMatching(): Promise<Array<ReturnType<typeof toMatchRequisition> & { code: string; process: string | null; branch: string; role: string }>> {
+  const [reqs] = await db.execute<ReqRow[]>(
+    `SELECT jr.id, jr.requisition_code, jr.branch_name, jr.process_name, jr.designation_name, jr.requested_headcount, jr.fulfilled_headcount, jr.approval_status, jr.active_status,
+            jr.meta_target_age_min, jr.meta_target_age_max, jr.meta_target_radius_km, jr.education_requirement, jr.experience_min_years, jr.night_shift_required, jr.salary_max, jr.meta_screening_config, jr.skills_required,
+            bm.latitude AS blat, bm.longitude AS blng, bm.city AS bcity, bm.state AS bstate
+       FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
+      WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount LIMIT 300`);
+  return reqs.map((r) => ({ ...toMatchRequisition(r), code: String(r.requisition_code ?? ""), process: r.process_name, branch: r.branch_name, role: r.designation_name }));
+}
+
 export async function alternativeRequisitions(leadId: string, excludeRequisitionId: string, limit = 3): Promise<Array<{ requisitionId: string; score: number; reasons: string[] }>> {
   const [lr] = await db.execute<RowDataPacket[]>("SELECT age, education_rank, experience_years, night_shift_ok, lat, lng FROM he_lead WHERE id = ? LIMIT 1", [leadId]);
   const l = lr[0];

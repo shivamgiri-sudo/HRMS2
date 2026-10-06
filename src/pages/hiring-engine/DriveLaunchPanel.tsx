@@ -9,6 +9,7 @@ import { CheckCircle2, Mail, MessageCircle, PhoneCall, Send, XCircle, Eye, Refre
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { num } from "@/components/analytics/analytics-kit";
+import DriveShortlist from "./DriveShortlist";
 
 interface Check { key: string; ok: boolean; label: string; detail: string; blocks: string | null }
 interface Readiness {
@@ -32,13 +33,14 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [view, setView] = useState<"outreach" | "shortlist">("outreach");
 
   const load = useCallback(async () => {
     if (!driveId) return;
     try { const x = await hrmsApi.get<{ data: Readiness }>(`/api/he/drives/${driveId}/readiness`); setR(x.data); }
     catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Could not load the drive" }); }
   }, [driveId]);
-  useEffect(() => { setR(null); setPlan(null); setMsg(null); setConfirm(false); void load(); }, [load]);
+  useEffect(() => { setR(null); setPlan(null); setMsg(null); setConfirm(false); setView("outreach"); void load(); }, [load]);
 
   const preview = async () => {
     setBusy("preview"); setMsg(null); setConfirm(false);
@@ -74,9 +76,14 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
 
   return (
     <Sheet open={driveId != null} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
+      <SheetContent className={`w-full overflow-y-auto ${view === "shortlist" ? "sm:max-w-6xl" : "sm:max-w-2xl"}`}>
         <SheetHeader><SheetTitle>{r ? `Start outreach · ${r.drive.role} · ${r.drive.date}` : "Start outreach"}</SheetTitle></SheetHeader>
-        {!r ? <div className="mt-6 h-40 animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none" aria-hidden /> : (
+        <div role="tablist" aria-label="Panel sections" className="mt-2 flex gap-1 border-b border-slate-200">
+          {([["outreach", "Outreach"], ["shortlist", "Shortlist & status"]] as const).map(([k, l]) => (
+            <button key={k} role="tab" type="button" aria-selected={view === k} onClick={() => setView(k)} className={`-mb-px cursor-pointer border-b-2 px-3 py-2 text-sm font-semibold transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${view === k ? "border-blue-600 text-blue-700" : "border-transparent text-slate-500 hover:text-slate-800"}`}>{l}</button>
+          ))}
+        </div>
+        {view === "shortlist" && driveId ? <div className="pt-3 pb-8"><DriveShortlist driveId={driveId} /></div> : !r ? <div className="mt-6 h-40 animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none" aria-hidden /> : (
           <div className="space-y-5 pb-8">
             <ol className="mt-3 grid grid-cols-3 gap-2 text-center text-xs" aria-label="Outreach order">
               <li className="rounded-lg border border-blue-200 bg-blue-50 p-2"><Mail className="mx-auto h-4 w-4 text-blue-600" aria-hidden /><div className="mt-1 font-semibold text-slate-900">1. Email</div><div className="text-slate-500">now</div></li>

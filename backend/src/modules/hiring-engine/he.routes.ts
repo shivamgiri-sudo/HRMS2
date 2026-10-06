@@ -10,6 +10,7 @@ import { addEvent, backfillLeadPool } from "./he-lead.service.js";
 import { createDrive, setDriveStatus, suggestMatchesDetailed } from "./he-drive.service.js";
 import { inviteForDrive, runEngineTick, runFollowUps } from "./he-engine.service.js";
 import { getDriveReadiness } from "./he-readiness.service.js";
+import { getDriveShortlist, SHORTLIST_FILTERS, type ShortlistFilter } from "./he-shortlist.service.js";
 import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches, previewBulkCalls, runBulkCallJobs, startBulkBatch } from "./he-bulk-call.service.js";
@@ -550,4 +551,15 @@ heRouter.post("/drives/:id/launch", requireAuth, requireRole(...WRITE_ROLES), as
 heRouter.post("/engine/follow-ups", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
   try { res.json({ success: true, data: await runFollowUps({ dryRun: (req.body ?? {}).dryRun !== false }) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] follow-ups failed"); res.status(500).json({ message: "Could not run follow-ups" }); }
+});
+
+// Shortlist for a drive: fit + reasons, outreach status per channel, and other requisitions each candidate also fits.
+heRouter.get("/drives/:id/shortlist", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+    const filter = (SHORTLIST_FILTERS as readonly string[]).includes(q.filter ?? "") ? (q.filter as ShortlistFilter) : "all";
+    const r = await getDriveShortlist(String(req.params.id), { filter, page: Number(q.page) || 1, size: Number(q.size) || 50, q: q.q });
+    if (!r) return res.status(404).json({ message: "Drive not found" });
+    res.json({ success: true, data: r });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] shortlist failed"); res.status(500).json({ message: "Could not load the shortlist" }); }
 });
