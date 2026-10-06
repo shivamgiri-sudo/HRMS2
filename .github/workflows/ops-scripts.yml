@@ -85,6 +85,7 @@ on:
           - recode-63388c-phase5
           - code-lookup-verify
           - code-free-scan-verify
+          - code-free-detail-verify
           - dbbill-find-verify
           - hrms-find-verify
           - reconcile-aug-incentives
@@ -247,6 +248,14 @@ jobs:
                 exit 1
               fi
               npx tsx scripts/dbbill-find-verify.ts
+              ;;
+            code-free-detail-verify)
+              # Read-only: dates/statuses of the rows holding MAS63449 in the tables the scan hit. No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::code-free-detail-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/code-free-detail-verify.ts
               ;;
             code-free-scan-verify)
               # Read-only: scan every code-like column in HRMS and db_bill for one employee code. No apply mode.
