@@ -266,6 +266,13 @@ function grnScope(opts: GrnSpendOptions): { sql: string; params: unknown[] } {
  */
 const HRMS_RAISED_GRN_SQL = `gr.bill_source_id IS NULL AND COALESCE(gr.created_by, '') NOT LIKE '00000000-%'`;
 
+/** grn_request statuses at which an ordinary (allocation-less) GRN's budget is consumed —
+ *  Finance Head approval and everything after it (same set as grn-report's fully_approved). */
+const ORDINARY_GRN_CONSUMED_SQL =
+  "'finance_head_approved','approved','pending_accounts_payment','payment_scheduled','partially_paid','paid'";
+/** …and at which it still holds a reservation (approved by Branch/Accounts Head, not yet Finance Head). */
+const ORDINARY_GRN_RESERVED_SQL = "'branch_head_approved','accounts_head_approved'";
+
 export async function readGrnSpend(
   periodCode: string,
   kind: GrnSpendKind,
@@ -320,25 +327,26 @@ export async function readGrnSpend(
   );
   params.push(periodCode, ...scope.params);
 
-  if (kind === "consumed") {
-    // Leg 2 — ordinary GRN: amount on grn_request itself, no allocation rows (so a Smart GRN is
-    // never counted twice).
-    legs.push(
-      `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
-              ${processCol("gr.process_id", "pc2")} AS process_id, ${grnRequestExGstSql("gr")} AS amount,
-              ${detailCols("app_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
-         FROM grn_request gr
-         LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
-         ${processJoin("pc2")}
-        WHERE gr.budget_line_id IS NOT NULL
-          AND gr.status NOT IN ('draft', 'rejected', 'cancelled')
-          AND gr.accounting_period = ?
-          AND ${HRMS_RAISED_GRN_SQL}
-          AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
-          AND ${scope.sql}`,
-    );
-    params.push(periodCode, ...scope.params);
-  }
+  // Leg 2 — ordinary GRN: amount on grn_request itself, no allocation rows (so a Smart GRN is
+  // never counted twice). Its status says where the money sits: only Branch/Accounts Head approval
+  // holds a reservation and only Finance Head approval consumes it. "Anything but draft" used to
+  // book submitted, returned and consumption_reversed GRNs as consumed.
+  const ordinaryStatuses = kind === "reserved" ? ORDINARY_GRN_RESERVED_SQL : ORDINARY_GRN_CONSUMED_SQL;
+  legs.push(
+    `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
+            ${processCol("gr.process_id", "pc2")} AS process_id, ${grnRequestExGstSql("gr")} AS amount,
+            ${detailCols("app_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
+       FROM grn_request gr
+       LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
+       ${processJoin("pc2")}
+      WHERE gr.budget_line_id IS NOT NULL
+        AND gr.status IN (${ordinaryStatuses})
+        AND gr.accounting_period = ?
+        AND ${HRMS_RAISED_GRN_SQL}
+        AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
+        AND ${scope.sql}`,
+  );
+  params.push(periodCode, ...scope.params);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date, SUM(amount) AS amount
