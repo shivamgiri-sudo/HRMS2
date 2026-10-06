@@ -47,6 +47,8 @@ on:
           - oct-attendance-verify
           - attendance-rules-audit
           - oct-attendance-deep-audit
+          - oct-attendance-full-regrade
+          - biometric-halfday-rule-align
           - oct-attendance-regrade
           - oct-outside-employment-cleanup
           - sep-attendance-regrade
@@ -224,6 +226,16 @@ jobs:
           MODE="${{ inputs.mode }}"
 
           case "${{ inputs.script }}" in
+            oct-attendance-full-regrade)
+              # Dry-runs unless given --apply. Re-grades EVERY unprotected Oct 1-5 2026 day; writes only changed days.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/sep-attendance-regrade.ts 2026-10-01 2026-10-05 2026-10-02 2026-10-02 --all $FLAG
+              ;;
+            biometric-halfday-rule-align)
+              # Dry-runs unless given --apply. Sets active biometric rules' half_day_minutes to the live floor (270).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/biometric-halfday-rule-align.ts $FLAG
+              ;;
             oct-attendance-deep-audit)
               # Read-only in both modes (engine computes only). Counts only.
               npx tsx scripts/attendance-deep-audit.ts 2026-10-01 2026-10-05
