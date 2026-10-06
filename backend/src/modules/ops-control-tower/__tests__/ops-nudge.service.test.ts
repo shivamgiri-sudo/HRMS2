@@ -33,15 +33,18 @@ let escalated = false;
 let workItems: unknown[][] = [];
 let bridgeAffected: number;
 
+let joinersMove = true;
+
 beforeEach(() => {
   dbExecute.mockReset(); send.mockReset(); isConfigured.mockReset();
   inserts = []; updates = []; bridgeAffected = 1; sentCount = 1; escalated = false; workItems = [];
   recipient = { full_name: 'Asha Rao', branch_id: 'b1', emp_mobile: '9999999999', candidate_id: 'c1',
     cand_mobile: '8888888888', candidate_status: null, onboarding_token: 'tok', onboarding_token_expires_at: null, days_open: 4 };
-  lastSent = null;
+  lastSent = null; joinersMove = true;
   isConfigured.mockReturnValue(true);
   send.mockResolvedValue({ success: true });
   dbExecute.mockImplementation(async (sql: string, params: unknown[]) => {
+    if (sql.includes(' AS ok')) return [[{ ok: joinersMove ? 1 : 0 }]];
     if (sql.includes('FROM employees e')) return [recipient ? [recipient] : []];
     if (sql.includes('MAX(created_at) AS last_sent')) return [[{ last_sent: lastSent }]];
     if (sql.includes('INSERT INTO ops_nudge_log')) { inserts.push(params); return [{}]; }
@@ -191,6 +194,13 @@ describe('runAutoNudgeSweep', () => {
     expect(inserts.every((p) => p[4] === 'auto')).toBe(true);
   });
 
+  it('holds back items whose next step is HR\'s, without logging or sending', async () => {
+    joinersMove = false;
+    const s = await runAutoNudgeSweep(NOW);
+    // penny-drop (e1) is checked and held back; account-details has no condition and still goes out.
+    expect(s).toMatchObject({ attempted: 2, sent: 2, notJoinersMove: 1 });
+  });
+
   it('does not count cooled-down pairs as attempts', async () => {
     lastSent = new Date(NOW - 3600_000).toISOString();
     const s = await runAutoNudgeSweep(NOW);
@@ -337,5 +347,30 @@ describe('escalation after repeated nudges', () => {
       return base(sql, params);
     });
     expect((await call()).status).toBe('sent');
+  });
+});
+
+import { isJoinersMove, JOINER_ACTION_SQL } from '../ops-nudge.service.js';
+
+describe('isJoinersMove', () => {
+  it('never auto-reminds for BGV (run and reviewed by HR and the provider)', async () => {
+    expect(await isJoinersMove('e1', 'bgv-pending')).toBe(false);
+    expect(dbExecute.mock.calls.some((c) => String(c[0]).includes(' AS ok'))).toBe(false);
+  });
+
+  it('asks the database for items that depend on what HR has sent, binding the employee id', async () => {
+    joinersMove = false;
+    expect(await isJoinersMove('e9', 'esign-pending')).toBe(false);
+    const [sql, params] = dbExecute.mock.calls.find((c) => String(c[0]).includes(' AS ok'))!;
+    expect(String(sql)).toContain("k.status = 'sent'");
+    expect(params).toEqual(['e9']);
+  });
+
+  it('pins which statuses count as the joiner\'s move', () => {
+    expect(JOINER_ACTION_SQL['appointment-letter']).toContain("'sent', 'opened'");
+    expect(JOINER_ACTION_SQL['docs-pending']).toContain("'draft_generated'");
+    expect(JOINER_ACTION_SQL['penny-drop-missing']).toContain("'manual_review'");
+    expect(JOINER_ACTION_SQL['digilocker-pending']).toBeNull();
+    expect(JOINER_ACTION_SQL['account-details-missing']).toBeNull();
   });
 });

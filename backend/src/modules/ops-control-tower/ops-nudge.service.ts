@@ -419,11 +419,51 @@ export interface SweepSummary {
   sent: number;
   failed: number;
   skipped: number;
+  /** Open items whose next step is HR's or the provider's, so the joiner was not messaged. */
+  notJoinersMove: number;
+}
+
+/**
+ * Whether an open item's next step is the joiner's, which is the only time the automatic reminder messages them.
+ * The control-tower lists stay as they are (the item is open); only the WhatsApp is held back. Measured live
+ * 2026-10-06: BGV was waiting on HR/provider review for all 159 not-clear joiners (offline Aadhaar and photo match
+ * in manual review), 204 joiners had no appointment letter issued, 31 eSign kits were blocked and 18 abandoned,
+ * and 34 joiners' documents were still draft_generated (not yet sent by HR). HR's manual Nudge is not filtered.
+ */
+export const JOINER_ACTION_SQL: Record<NudgeableIssue, string | null> = {
+  "account-details-missing": null,
+  "digilocker-pending": null,
+  // A check sitting in Payroll HR's manual-review queue is HR's decision, not something the joiner can redo.
+  "penny-drop-missing": `NOT EXISTS (SELECT 1 FROM ats_onboarding_bridge pb
+                           JOIN candidate_bank_verification v ON v.candidate_id = pb.candidate_id
+                          WHERE pb.employee_id = ? AND v.verification_status = 'manual_review'
+                            AND v.created_at = (SELECT MAX(v2.created_at) FROM candidate_bank_verification v2 WHERE v2.candidate_id = v.candidate_id))`,
+  // Only a kit actually out for signing; blocked / abandoned / cancelled kits need HR to re-send first.
+  "esign-pending": `EXISTS (SELECT 1 FROM employee_joining_esign_kit k WHERE k.employee_id = ? AND k.status = 'sent')`,
+  // Only once the letter has been sent to the joiner.
+  "appointment-letter": `EXISTS (SELECT 1 FROM appointment_letter_issue al WHERE al.employee_id = ?
+                            AND LOWER(COALESCE(al.employee_esign_status, '')) IN ('sent', 'opened', 'viewed', 'delivered'))`,
+  // Something must be waiting on the joiner; draft_generated rows have not been sent to them yet.
+  "docs-pending": `EXISTS (SELECT 1 FROM employee_joining_document_checklist c WHERE c.employee_id = ? AND c.mandatory = 1
+                      AND UPPER(COALESCE(c.document_code, '')) NOT IN ('EPF_DECLARATION', 'EPF_NOMINATION_FORM2')
+                      AND LOWER(COALESCE(c.status, '')) NOT IN ('verified', 'signed_verified', 'completed', 'esign_completed',
+                                                                'wet_signed_uploaded', 'waived', 'not_applicable', 'draft_generated'))`,
+  // BGV checks are run and reviewed by HR and the provider; there is nothing for the joiner to do from a reminder.
+  "bgv-pending": "FALSE",
+};
+
+export async function isJoinersMove(employeeId: string, issue: NudgeableIssue): Promise<boolean> {
+  const cond = JOINER_ACTION_SQL[issue];
+  if (cond === null) return true;
+  if (cond === "FALSE") return false;
+  const params = cond.split("?").length - 1;
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT ${cond} AS ok`, Array(params).fill(employeeId));
+  return Number((rows as RowDataPacket[])[0]?.ok) === 1;
 }
 
 /** 24h auto sweep: every pending joiner on every nudgeable issue whose cooldown has lapsed. */
 export async function runAutoNudgeSweep(nowMs = Date.now()): Promise<SweepSummary> {
-  const summary: SweepSummary = { skippedUnconfigured: false, attempted: 0, sent: 0, failed: 0, skipped: 0 };
+  const summary: SweepSummary = { skippedUnconfigured: false, attempted: 0, sent: 0, failed: 0, skipped: 0, notJoinersMove: 0 };
   if (!whatsappConfigured()) {
     summary.skippedUnconfigured = true;
     logger.info("[ops-nudge] auto sweep skipped — WhatsApp not configured / paused");
@@ -441,6 +481,7 @@ export async function runAutoNudgeSweep(nowMs = Date.now()): Promise<SweepSummar
         if (seen.has(key)) continue;
         seen.add(key);
         if (summary.sent >= AUTO_SWEEP_MAX_SENDS) return summary;
+        if (!(await isJoinersMove(row.employeeId, issue))) { summary.notJoinersMove++; continue; }
         const res = await nudgeEmployee({ employeeId: row.employeeId, issue, trigger: "auto", actorId: null, nowMs });
         if (res.status === "skipped_cooldown") continue;
         summary.attempted++;
