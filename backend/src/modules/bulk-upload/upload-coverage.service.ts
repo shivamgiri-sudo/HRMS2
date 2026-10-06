@@ -34,6 +34,8 @@ export const COVERAGE_SOURCES: Record<string, Source | null> = {
   NEEMANS_CHAT_MASMIS: M("neemans_chat", "report_date"), NEEMANS_MONTH_TARGET_MASMIS: null, NEEMANS_SALE_RAW_MASMIS: M("neemans_sale_raw", "date"),
   OWNER_AGENT_DETAILS_MASMIS: null, OWNER_CDR_MASMIS: M("Owner_cdr", "report_date"), OWNER_SALE_MASMIS: M("owner_sale", "report_date"),
   PRE_AGENT_DETAILS_MASMIS: null, PRE_CDR_MASMIS: M("Pre_cdr", "report_date", "text", "mdy"), PRE_SALE_MASMIS: M("pre_sale", "report_date"),
+  // One Dump replaces the last, and db_masmis.altdump may not exist yet (sql/2117 needs a DBA): no date coverage.
+  ALT_RX_DUMP_MASMIS: null,
   SATYA_ALLOCATION_MASMIS: M("satya_allocation", "report_date"), SATYA_CDR_MASMIS: M("satya_cdr", "report_date"),
   DALMIA_DD_RAW: H("dalmia_dd_raw"), DALMIA_OUTBOUND_RAW: H("dalmia_outbound_raw"), DALMIA_AFTER_HOUR: H("dalmia_after_hour_raw"),
   DALMIA_APR: M("dalmia_apr_raw", "report_date", "date"),

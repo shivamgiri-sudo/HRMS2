@@ -13,7 +13,7 @@ describe("Process Performance V2 <-> Process Operations dashboard sync", () => {
   });
 
   it("every V2 company with dashboards belongs to a Process Operations process", () => {
-    const codes = ["BELLA_VITA", "NEEMANS", "GNC", "APPRICIATE_WEALTH", "CLOVIA", "DALMIA_CEMENT", "DU_DIGITAL", "SBI_CARD", "ERESOLUTION", "HOUSING_OWNER", "HOUSING_PREMIUM", "SATYA_RETAIL", "BIRLANU", "VIEGA", "EXICOM", "DU_BANGLADESH"];
+    const codes = ["BELLA_VITA", "NEEMANS", "GNC", "APPRICIATE_WEALTH", "CLOVIA", "DALMIA_CEMENT", "DU_DIGITAL", "SBI_CARD", "ERESOLUTION", "HOUSING_OWNER", "HOUSING_PREMIUM", "SATYA_RETAIL", "ALT_RX", "BIRLANU", "VIEGA", "EXICOM", "DU_BANGLADESH"];
     const covered = new Set(codes.flatMap((c) => v2DashboardsForProcess(c, "", V2_COMPANY_LABELS).map((t) => t.company)));
     const orphans = COMPANIES.map((c) => c.key).filter((k) => (DASHBOARDS_BY_COMPANY[k]?.length ?? 0) > 0 && !covered.has(k));
     expect(orphans).toEqual([]);

@@ -298,6 +298,7 @@ const V2_COMPANIES_BY_PROCESS_CODE: Record<string, CompanyKey[]> = {
   HOUSING_PREMIUM: ["housing_premium"],
   HOUSING_COM: ["housing_owner", "housing_premium"],
   SATYA_RETAIL: ["satya_retail"],
+  ALT_RX: ["alt_rx"],
   BIRLANU: ["birlanu"],
   VIEGA: ["viega"],
   EXICOM: ["exicom"],

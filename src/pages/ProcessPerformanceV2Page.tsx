@@ -42,7 +42,6 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
   birlanu: { icon: FileText, tone: "indigo" },
   satya_retail: { icon: Tag, tone: "yellow" },
   alt_rx: { icon: Tag, tone: "emerald" },
-  alt_rx: { icon: Tag, tone: "emerald" },
   lp_feedback: { icon: MessageSquare, tone: "blue" },
   lp_onboarding: { icon: Users, tone: "pink" },
   puresta: { icon: Sparkles, tone: "slate" },
@@ -170,10 +169,6 @@ const ALT_RX_UPLOADERS = [
   { code: "ALT_RX_DUMP_MASMIS", label: "Dump", description: "Upload the ALT RX ticket Dump. Each upload replaces the previous Dump.", icon: Upload },
 ];
 
-const ALT_RX_UPLOADERS = [
-  { code: "ALT_RX_DUMP_MASMIS", label: "Dump", description: "Upload the ALT RX ticket Dump. Each upload replaces the previous Dump.", icon: Upload },
-];
-
 const SATYA_RETAIL_UPLOADERS = [
   { code: "SATYA_ALLOCATION_MASMIS", label: "Allocation", description: "Upload Satya Retail beat/shop allocation data", icon: Target },
   { code: "SATYA_CDR_MASMIS",        label: "CDR",         description: "Upload Satya Retail call detail records",      icon: PhoneOutgoing },
@@ -246,7 +241,6 @@ const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   sbi_card: SBI_CARD_UPLOADERS,
   birlanu: BIRLANU_UPLOADERS,
   satya_retail: SATYA_RETAIL_UPLOADERS,
-  alt_rx: ALT_RX_UPLOADERS,
   alt_rx: ALT_RX_UPLOADERS,
   lp_feedback: LP_FEEDBACK_UPLOADERS,
   lp_onboarding: LP_ONBOARDING_UPLOADERS,

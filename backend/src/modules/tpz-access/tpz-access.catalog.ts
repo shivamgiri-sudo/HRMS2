@@ -87,7 +87,9 @@ export const TPZ_COMPANIES: TpzCompany[] = [
     uploads: { BIRLANU_SALE_MASMIS: "import_birlanu_sale_batch", BIRLANU_APR_MASMIS: "import_birlanu_apr_batch" },
   },
   {
-    key: "alt_rx", label: "ALT RX", processCodes: [],
+    // No ALT RX row in process_master yet (searched prod 2026-10-06): org-wide roles see it; branch-scoped
+    // users are refused until HR creates the ALT_RX process and assigns its staff, per the scoping ruling.
+    key: "alt_rx", label: "ALT RX", processCodes: ["ALT_RX"],
     perfPrefixes: ["/alt-rx"], inboundKeys: [],
     uploads: { ALT_RX_DUMP_MASMIS: "import_alt_rx_dump_batch" },
   },

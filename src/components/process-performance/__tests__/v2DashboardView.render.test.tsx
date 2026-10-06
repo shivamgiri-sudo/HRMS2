@@ -29,6 +29,7 @@ vi.mock("@/components/process-performance/LpOnboardingDashboard", () => ({ LpOnb
 vi.mock("@/components/process-performance/SatyaRetailDashboard", () => ({ SatyaRetailDashboard: stub("SatyaRetailDashboard") }));
 vi.mock("@/components/process-performance/CloviaDashboard", () => ({ CloviaDashboard: stub("CloviaDashboard") }));
 vi.mock("@/components/process-performance/DuDigitalDashboard", () => ({ DuDigitalDashboard: stub("DuDigitalDashboard") }));
+vi.mock("@/components/process-performance/AltRxDashboard", () => ({ AltRxDashboard: stub("AltRxDashboard") }));
 vi.mock("@/components/process-performance/BirlanuDashboard", () => ({ BirlanuDashboard: stub("BirlanuDashboard") }));
 vi.mock("@/components/process-performance/AppreciateWealthDashboard", () => ({ AppreciateWealthDashboard: stub("AppreciateWealthDashboard") }));
 vi.mock("@/components/process-performance/UploaderHub", () => ({ UploaderHub: stub("UploaderHub") }));
