@@ -418,10 +418,14 @@ export default function PaymentDisbursalCenter() {
     employee_code: string;
     employee_name: string;
     branch_name: string | null;
-    verification_status: "verified" | "manual_review";
+    verification_status: "verified" | "manual_review" | "mismatch";
     account_masked: string;
     ifsc_code: string | null;
     account_holder_name: string | null;
+    bank_registered_name: string | null;
+    recorded_names: string[];
+    review_reason: string | null;
+    risk_flags: string[];
     name_match_score: number | null;
     verified_at: string | null;
     bank_name: string | null;
@@ -445,6 +449,17 @@ export default function PaymentDisbursalCenter() {
       void qc.invalidateQueries({ queryKey: ["bank-readiness-exceptions"] });
     },
     onError: (e: any) => toast.error(e?.message ?? "Approval failed"),
+  });
+  const [manualReviewRejectReason, setManualReviewRejectReason] = useState("");
+  const rejectManualReviewMutation = useMutation({
+    mutationFn: (p: { employeeId: string; reason: string }) =>
+      hrmsApi.patch(`/api/payroll/bank-readiness/manual-review-queue/${p.employeeId}/reject`, { reason: p.reason }),
+    onSuccess: (res: any) => {
+      toast.success(res?.message ?? "Rejected; the joiner has been asked for their own account");
+      setManualReviewRejectReason("");
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-manual-review"] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Rejection failed"),
   });
 
   // Row drill-down drawer: full onboarding-typed fields + the uploaded passbook/cheque proof
@@ -1625,21 +1640,21 @@ export default function PaymentDisbursalCenter() {
                     at onboarding but never got a live bank record
                   </p>
                   <p className="text-sky-900 mt-1">
-                    <strong>Manual review</strong> — penny-drop couldn't confirm the account
-                    automatically. Click a row to see the uploaded passbook/cheque proof and the
-                    exact details the candidate typed, and judge it yourself before approving.{" "}
-                    <strong>Penny drop verified</strong> — the bank already confirmed this
-                    account on a later attempt; it was simply never copied over. Click a row to
-                    see the full confirmed details — there is nothing to judge, only to approve.
-                    Either way, approving copies the account exactly as captured; it does not
-                    change or re-verify it.
+                    Accounts the bank verified are copied to the employee record automatically.
+                    Only exceptions land here: the name the bank holds matches none of the
+                    joiner's recorded names, the bank returned no name, or the check could not
+                    complete. Click a row to compare the bank's name with the recorded names and
+                    the cheque, then <strong>Approve</strong> (copies the account exactly as
+                    captured) or <strong>Reject</strong> (the joiner is emailed a link to submit
+                    their own account). <strong>Penny drop verified</strong> rows are ones the
+                    automatic copy could not finish; approving them is a formality.
                   </p>
                 </div>
                 <div className="rounded-md border overflow-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-muted">
                       <tr>
-                        {["Code", "Name", "Branch", "Verification", "Account", "IFSC", "Account holder (onboarding)", "Name match", "Verified at", ""].map((hd) => (
+                        {["Code", "Name", "Branch", "Verification", "Account", "IFSC", "Name at bank", "Name match", "Verified at", ""].map((hd) => (
                           <th key={hd} className="px-3 py-2 text-left font-medium whitespace-nowrap">{hd}</th>
                         ))}
                       </tr>
@@ -1668,7 +1683,7 @@ export default function PaymentDisbursalCenter() {
                             </td>
                             <td className="px-3 py-2 font-mono text-xs">{r.account_masked}</td>
                             <td className="px-3 py-2 font-mono text-xs">{r.ifsc_code ?? "—"}</td>
-                            <td className="px-3 py-2">{r.account_holder_name ?? "—"}</td>
+                            <td className="px-3 py-2">{r.bank_registered_name ?? <span className="text-amber-700">Not returned by bank</span>}</td>
                             <td className="px-3 py-2">{r.name_match_score == null ? "—" : `${Math.round(r.name_match_score)}%`}</td>
                             <td className="px-3 py-2 text-xs text-muted-foreground">{fmtDateTime(r.verified_at)}</td>
                             <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
@@ -1713,6 +1728,28 @@ export default function PaymentDisbursalCenter() {
                       </SheetHeader>
 
                       <div className="mt-4 space-y-5 text-sm">
+                        {manualReviewDrawerRow.verification_status !== "verified" && (
+                          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950">
+                            <div className="text-xs font-bold uppercase tracking-wide text-amber-700 mb-2">Why this needs a decision</div>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                              <div>
+                                <span className="text-muted-foreground">Name the bank holds</span>
+                                <div className="font-semibold">{manualReviewDrawerRow.bank_registered_name ?? "Not returned by the bank"}</div>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground">Recorded as</span>
+                                <div>{manualReviewDrawerRow.recorded_names.length ? manualReviewDrawerRow.recorded_names.join(" · ") : "—"}</div>
+                              </div>
+                            </div>
+                            {manualReviewDrawerRow.review_reason && (
+                              <p className="mt-2 text-xs">{manualReviewDrawerRow.review_reason}</p>
+                            )}
+                            <p className="mt-2 text-xs">
+                              Approve if the bank's name is this person written differently. Reject if the
+                              account belongs to someone else — salary is not paid into a third party's account.
+                            </p>
+                          </div>
+                        )}
                         <div>
                           <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
                             {manualReviewDrawerRow.verification_status === "verified"
@@ -1794,6 +1831,34 @@ export default function PaymentDisbursalCenter() {
                         >
                           Approve for payment
                         </Button>
+
+                        {manualReviewDrawerRow.verification_status !== "verified" && (
+                          <div className="space-y-2 rounded-md border border-red-200 p-3">
+                            <div className="text-xs font-bold uppercase tracking-wide text-red-700">Reject this account</div>
+                            <Textarea
+                              value={manualReviewRejectReason}
+                              onChange={(e) => setManualReviewRejectReason(e.target.value)}
+                              placeholder="Reason, e.g. account is in the father's name"
+                              rows={2}
+                            />
+                            <Button
+                              variant="destructive"
+                              className="w-full"
+                              disabled={rejectManualReviewMutation.isPending || manualReviewRejectReason.trim().length < 5}
+                              onClick={() => {
+                                const row = manualReviewDrawerRow;
+                                if (!row) return;
+                                if (!window.confirm(`Reject ${row.employee_code}'s bank account? They will be asked to submit their own account.`)) return;
+                                rejectManualReviewMutation.mutate(
+                                  { employeeId: row.employee_id, reason: manualReviewRejectReason.trim() },
+                                  { onSuccess: () => setManualReviewDrawerRow(null) },
+                                );
+                              }}
+                            >
+                              Reject and ask for their own account
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </>
                   )}

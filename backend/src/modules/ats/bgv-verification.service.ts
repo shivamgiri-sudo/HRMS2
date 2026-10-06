@@ -981,6 +981,20 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
   // candidates had a verified penny drop while all 304 bridge rows still read
   // 'not_started'.
   await syncBridgePennyDropStatus(db, candidateId, result.status, result.riskFlags);
+  // A joiner who is already an employee gets the verified account on their employee record now.
+  // Conversion copies it once; a verification landing after conversion used to wait for a
+  // manual Approve. Never fails the verification itself.
+  if (result.status === "verified") {
+    try {
+      const { copyVerifiedBankToEmployee } = await import("../payroll/bank-manual-review.service.js");
+      const copied = await copyVerifiedBankToEmployee(candidateId);
+      if (copied.status === "inserted") {
+        await logEvent(candidateId, "BANK_COPIED_TO_EMPLOYEE", { employee_id: copied.employeeId }, checkId, { actorType: "system" });
+      }
+    } catch (err) {
+      console.error(`[BGV] verified bank account not copied to employee for ${candidateId}:`, (err as Error).message);
+    }
+  }
   // A completed identity check is the moment there is something new to
   // reconcile across sources, so the cross-source name comparison runs here
   // rather than waiting for an HR user to press it.

@@ -65,6 +65,7 @@ on:
           - kit-esign-diagnose
           - bank-verify-diagnose
           - bank-verify-rejudge
+          - bank-verified-copy
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
@@ -343,6 +344,11 @@ jobs:
             holiday-mapping-audit)
               # Read-only in both modes.
               npx tsx scripts/holiday-mapping-audit.ts 2026-10-02
+              ;;
+            bank-verified-copy)
+              # Dry-runs unless given --apply. Apply copies verified onboarding accounts to employee_bank_detail.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/bank-verified-copy.ts $FLAG
               ;;
             bank-verify-rejudge)
               # Dry-runs unless given --apply. Apply replays stored bank answers (no new penny drop).

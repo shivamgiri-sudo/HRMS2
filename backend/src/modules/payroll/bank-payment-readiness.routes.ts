@@ -58,6 +58,7 @@ import {
 import {
   getManualReviewBankGaps,
   approveManualReviewBankDetail,
+  rejectManualReviewBankDetail,
 } from "./bank-manual-review.service.js";
 import {
   generateSalaryTransferBatch,
@@ -1372,6 +1373,50 @@ bankPaymentReadinessRouter.patch(
     });
 
     return res.json({ success: true, message: "Bank account approved and copied to the employee record." });
+  }),
+);
+
+/**
+ * PATCH /manual-review-queue/:employeeId/reject — refuses the account (e.g. it is in someone
+ * else's name). Nothing reaches employee_bank_detail; the joiner is sent the bank-resubmit link.
+ * Same roles and branch scope as approve.
+ */
+bankPaymentReadinessRouter.patch(
+  "/manual-review-queue/:employeeId/reject",
+  requireRole(...MANAGE_ROLES),
+  h(async (req, res) => {
+    const { employeeId } = req.params;
+    const reason = String((req.body as { reason?: unknown } | undefined)?.reason ?? "").trim();
+    if (reason.length < 5) {
+      return res.status(400).json({ success: false, message: "A reason of at least 5 characters is required to reject." });
+    }
+    if (!(await employeeIdsInScope([employeeId], await resolveVisibleBranchIds(req.authUser!.id))).has(employeeId)) {
+      return res.status(403).json(OUT_OF_BRANCH);
+    }
+    const result = await rejectManualReviewBankDetail({
+      employeeId, reason: reason.slice(0, 500), actorUserId: req.authUser!.id,
+    });
+    if (result.status === "no_manual_review_row") {
+      return res.status(404).json({ success: false, message: "No bank verification awaiting review for this employee." });
+    }
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "BANK_MANUAL_REVIEW_REJECTED",
+      module_key: "payroll",
+      entity_type: "candidate_bank_verification",
+      entity_id: employeeId,
+      change_summary: { reason, candidate_id: result.candidateId, resubmit_email_sent: result.resubmitEmailSent },
+      req: req as never,
+    });
+
+    return res.json({
+      success: true,
+      message: result.resubmitEmailSent
+        ? "Rejected. The joiner has been emailed a link to submit their own bank account."
+        : `Rejected. The resubmit email could not be sent${result.resubmitError ? ` (${result.resubmitError})` : ""}; ask the joiner to update their bank details.`,
+      data: { resubmit_email_sent: !!result.resubmitEmailSent },
+    });
   }),
 );
 
