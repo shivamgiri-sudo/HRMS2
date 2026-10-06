@@ -21,7 +21,7 @@ const BATCH_SIZE = 25;
 const LOOKBACK_DAYS = 15;
 
 /** Candidates whose latest Luckpay DigiLocker session is still open and was not touched recently. */
-export async function findOpenDigilockerSessions(limit = BATCH_SIZE): Promise<string[]> {
+export async function findOpenDigilockerSessions(limit = BATCH_SIZE, lookbackDays = LOOKBACK_DAYS): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT t.candidate_id
        FROM ats_provider_transaction_log t
@@ -29,7 +29,7 @@ export async function findOpenDigilockerSessions(limit = BATCH_SIZE): Promise<st
          SELECT candidate_id, MAX(created_at) AS latest
            FROM ats_provider_transaction_log
           WHERE provider = 'luckpay' AND service_type = 'digilocker'
-            AND created_at >= NOW() - INTERVAL ${LOOKBACK_DAYS} DAY
+            AND created_at >= NOW() - INTERVAL ${Number(lookbackDays)} DAY
           GROUP BY candidate_id
        ) l ON l.candidate_id = t.candidate_id AND l.latest = t.created_at
       WHERE t.provider = 'luckpay' AND t.service_type = 'digilocker'
@@ -42,10 +42,10 @@ export async function findOpenDigilockerSessions(limit = BATCH_SIZE): Promise<st
   return [...new Set((rows as RowDataPacket[]).map((r) => String(r.candidate_id)))];
 }
 
-export async function runDigilockerReconciliationOnce(limit = BATCH_SIZE): Promise<{
+export async function runDigilockerReconciliationOnce(limit = BATCH_SIZE, lookbackDays = LOOKBACK_DAYS): Promise<{
   examined: number; completed: number; stillPending: number; failed: number; errors: number;
 }> {
-  const candidateIds = await findOpenDigilockerSessions(limit);
+  const candidateIds = await findOpenDigilockerSessions(limit, lookbackDays);
   let completed = 0, stillPending = 0, failed = 0, errors = 0;
   for (const candidateId of candidateIds) {
     try {

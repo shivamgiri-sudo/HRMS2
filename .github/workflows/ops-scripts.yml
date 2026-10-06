@@ -357,7 +357,8 @@ jobs:
             digilocker-sync-pending)
               # Dry-runs unless given --apply. Apply makes one Luckpay status check per open session.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
-              npx tsx scripts/digilocker-sync-pending.ts $FLAG
+              # employee_codes may carry --days=N to reach older sessions (default 15).
+              npx tsx scripts/digilocker-sync-pending.ts $FLAG ${INPUT_EMPLOYEE_CODES}
               ;;
             digilocker-pending-diagnose)
               # Read-only in both modes: SELECTs only, codes and counts.
