@@ -81,7 +81,7 @@ describe("consent precedes verification", () => {
   });
 
   it("bank verification specifically is still consent-checked server-side", () => {
-    const fn = BGV_SERVICE.slice(BGV_SERVICE.indexOf("verifyBankForCandidate"));
+    const fn = BGV_SERVICE.slice(BGV_SERVICE.indexOf("export async function verifyBankForCandidate"));
     expect(fn.slice(0, 1200)).toContain("ensureConsent");
   });
 });
