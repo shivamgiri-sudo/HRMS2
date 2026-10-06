@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1231,
-  "columnCount": 17895,
+  "tableCount": 1232,
+  "columnCount": 17903,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -9781,6 +9781,16 @@
       "due_date",
       "closed_at",
       "investigation_notes"
+    ],
+    "grn_allocation_budget_draw": [
+      "id",
+      "allocation_id",
+      "grn_request_id",
+      "budget_line_id",
+      "amount_with_tax",
+      "amount_without_tax",
+      "quantity",
+      "created_at"
     ],
     "grn_cost_allocation": [
       "id",
