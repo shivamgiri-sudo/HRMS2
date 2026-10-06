@@ -26,7 +26,7 @@
  * Not touched: bills db_bill never paid whose tracking says Paid, and the ~6,000 old reclassified GRNs
  * with no tracking row (a Finance decision). Run this BEFORE backfill-grn-journal.
  *
- *   npx tsx scripts/fix-legacy-false-paid-grns.ts [--apply] [--actor <user_id>]
+ *   npx tsx scripts/fix-legacy-false-paid-grns.ts [--apply] [--status-only] [--actor <user_id>]
  */
 import "dotenv/config";
 import { randomUUID } from "crypto";
@@ -35,6 +35,8 @@ import { db } from "../src/db/mysql.js";
 import { billQuery, closeBillPool } from "../src/db/billDb.js";
 
 const APPLY = process.argv.includes("--apply");
+/** --status-only: apply A and B2 (status/payment corrections) and leave the duplicate reversals (D1, B1) for later. */
+const STATUS_ONLY = process.argv.includes("--status-only");
 const actorArg = process.argv.indexOf("--actor");
 const ACTOR = actorArg !== -1 ? String(process.argv[actorArg + 1]) : "00000000-0000-0000-0000-migrat000002";
 const SINCE = "2026-08-01";
@@ -184,6 +186,7 @@ async function main() {
     console.log(`\nA ${A.length} and B2 ${B2.length} applied (before-images in grn_false_paid_fix_bak_grn / _trk).`);
   } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
 
+  if (STATUS_ONLY) { console.log("\n--status-only: duplicate reversals (D1, B1) left for a later run."); await closeBillPool(); return; }
   // ── D1 and B1: duplicates go through the supported reversal (budget released, journal reversed) ──
   const { grnService } = await import("../src/modules/finance/grn.service.js");
   const bak2 = async (b: Bill) => {
