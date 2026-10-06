@@ -2040,16 +2040,20 @@ export const grnService = {
       params.push(filters.costClass);
     }
     if (filters.status) {
-      conditions.push("g.status = ?");
-      params.push(filters.status);
+      // One status, or a comma-separated set (an approval queue asks for every pending stage at
+      // once, so it can page on the server instead of filtering one page of everything).
+      const statuses = [...new Set(filters.status.split(",").map((v) => v.trim()).filter(Boolean))];
+      conditions.push(`g.status IN (${statuses.map(() => "?").join(", ")})`);
+      params.push(...statuses);
       // Migrated GRNs (bill_source_id IS NOT NULL) were fully approved in DB_Bill before
       // being imported into HRMS. They must never appear in HRMS approval queue views.
       const APPROVAL_QUEUE_STATUSES = new Set([
         "submitted",
         "branch_head_approved",
         "accounts_head_approved",
+        "returned_to_branch_head",
       ]);
-      if (APPROVAL_QUEUE_STATUSES.has(filters.status)) {
+      if (statuses.some((status) => APPROVAL_QUEUE_STATUSES.has(status))) {
         conditions.push("g.bill_source_id IS NULL");
       }
     }

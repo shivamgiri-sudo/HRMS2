@@ -242,6 +242,12 @@ export function SmartGrnApprovalQueue({
   // true total rather than however many of that status happened to fit in the 100-row list.
   const summary = useGrnSummary().data;
 
+  // Any filter change starts again from page 1 — otherwise a page 2 kept from before the change
+  // queries a filtered list that may not have a page 2 and reads as "no GRNs".
+  useEffect(() => {
+    setPage(1);
+  }, [status, grnType, search, filterBranch, filterPeriod, myGrnsOnly, billDateFrom, billDateTo, filterVendor]);
+
   const listQuery = useQuery({
     queryKey: [
       "grn-list",
@@ -1145,20 +1151,31 @@ export function SmartGrnApprovalQueue({
             </tbody>
           </GrnTable>
         )}
-        {displayRows.length > 0 && (
+        {(displayRows.length > 0 || page > 1) && (
           <div className="flex items-center justify-between px-4 py-3 text-xs text-grn-ink-soft">
             <span>
-              Showing {displayRows.length} result
+              Page {page} · showing {displayRows.length} result
               {displayRows.length !== 1 ? "s" : ""}
             </span>
-            {rows.length === PAGE_SIZE && (
-              <GrnButton
-                variant="default"
-                size="sm"
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Load more
-              </GrnButton>
+            {(page > 1 || rows.length === PAGE_SIZE) && (
+              <div className="flex items-center gap-2">
+                <GrnButton
+                  variant="default"
+                  size="sm"
+                  disabled={page === 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  Previous
+                </GrnButton>
+                <GrnButton
+                  variant="default"
+                  size="sm"
+                  disabled={rows.length < PAGE_SIZE}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                </GrnButton>
+              </div>
             )}
           </div>
         )}

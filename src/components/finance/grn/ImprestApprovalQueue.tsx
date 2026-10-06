@@ -75,6 +75,9 @@ function ageTone(bucket?: string | null) {
   return bucket === "7+" ? "crit" : bucket === "3-7" ? "warn" : "neutral";
 }
 
+/** Every status at which an imprest voucher is waiting on a reviewer (resolvePendingWith). */
+const PENDING_IMPREST_STATUSES = "submitted,branch_head_approved,accounts_head_approved,returned_to_branch_head";
+
 export function ImprestApprovalQueue() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -107,18 +110,22 @@ export function ImprestApprovalQueue() {
   const query = useQuery({
     queryKey: ["imprest-approval-queue", billDateFrom, billDateTo],
     queryFn: async () => {
-      const params = new URLSearchParams({ grnType: "imprest", limit: "100" });
+      // Pending stages are filtered on the server. Fetching the newest 100 of every status and
+      // filtering here dropped older vouchers still waiting once more than 100 imprest GRNs existed.
+      const params = new URLSearchParams({ grnType: "imprest", limit: "100", status: PENDING_IMPREST_STATUSES });
       if (billDateFrom) params.set("billDateFrom", billDateFrom);
       if (billDateTo) params.set("billDateTo", billDateTo);
       const r = await hrmsApi.get<any>(`/api/finance/grns?${params}`);
       const body = (r as any)?.data ?? r;
-      return ((body?.data ?? body?.rows ?? body ?? []) as ImprestRow[]);
+      const list = (body?.data ?? body?.rows ?? body ?? []) as ImprestRow[];
+      return { rows: Array.isArray(list) ? list : [], total: Number(body?.total ?? (Array.isArray(list) ? list.length : 0)) };
     },
   });
 
-  const all = Array.isArray(query.data) ? query.data : [];
+  const all = query.data?.rows ?? [];
   // Only what is actually waiting on somebody. A queue showing settled vouchers is a report.
   const rows = all.filter((r) => r.pending_with_role);
+  const hiddenCount = Math.max(0, (query.data?.total ?? 0) - all.length);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["imprest-approval-queue"] });
 
@@ -164,7 +171,7 @@ export function ImprestApprovalQueue() {
         title="Imprest approvals"
         description={
           rows.length
-            ? `${rows.length} voucher${rows.length === 1 ? "" : "s"} waiting`
+            ? `${rows.length} voucher${rows.length === 1 ? "" : "s"} waiting${hiddenCount ? ` — oldest ${hiddenCount} not shown, narrow the bill dates` : ""}`
             : undefined
         }
         action={
