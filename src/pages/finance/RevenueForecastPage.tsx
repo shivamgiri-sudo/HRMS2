@@ -7,8 +7,8 @@
  * counts it as revenue. After invoicing the Branch Head closes it with actuals and the P&L switches
  * to the closed amount; the table shows forecast vs closed. Backend: revenue-forecast.routes.ts.
  */
-import { useMemo, useState } from "react";
-import { AlertTriangle, Loader2, RefreshCw, Search } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
+import { AlertTriangle, ChevronDown, ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,44 @@ const uniqueSorted = (values: Array<string | null | undefined>) =>
   [...new Set(values.filter((v): v is string => Boolean(v)))].sort((a, b) => a.localeCompare(b));
 const selectClass = "h-8 rounded-md border border-input bg-background px-2 text-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
+/** What the P&L counts for a cost centre: the open forecast, or the closed actual; nothing otherwise. */
+const inPnlOf = (r: ForecastListRow) => (r.status === "approved" ? r.forecastAmount : r.status === "closed" ? r.closedAmount : null);
+
+interface BranchGroup {
+  key: string;
+  branchName: string;
+  rows: ForecastListRow[];
+  processes: number;
+  forecast: number;
+  closed: number;
+  inPnl: number;
+  variance: number;
+  counts: Record<string, number>;
+  overdue: number;
+}
+
+function groupByBranch(rows: ForecastListRow[]): BranchGroup[] {
+  const map = new Map<string, BranchGroup>();
+  for (const r of rows) {
+    const key = r.branchId ?? r.branchName ?? "—";
+    const g = map.get(key) ?? { key, branchName: r.branchName ?? "Unassigned", rows: [], processes: 0, forecast: 0, closed: 0, inPnl: 0, variance: 0, counts: {}, overdue: 0 };
+    g.rows.push(r);
+    g.forecast += r.forecastAmount ?? 0;
+    g.closed += r.closedAmount ?? 0;
+    g.inPnl += inPnlOf(r) ?? 0;
+    g.variance += r.variance ?? 0;
+    g.counts[r.status] = (g.counts[r.status] ?? 0) + 1;
+    if (r.overdue) g.overdue += 1;
+    map.set(key, g);
+  }
+  for (const g of map.values()) g.processes = new Set(g.rows.map((r) => r.processName ?? "")).size;
+  return [...map.values()].sort((a, b) => a.branchName.localeCompare(b.branchName));
+}
+
+const STATUS_SHORT: Array<[string, string]> = [
+  ["missing", "not started"], ["draft", "draft"], ["submitted", "awaiting"], ["rejected", "returned"], ["approved", "open"], ["closed", "closed"],
+];
+
 const approvalMark = (s: ApprovalState | null) => (s === "approved" ? "Approved" : s === "rejected" ? "Rejected" : s === "pending" ? "Pending" : "—");
 const approvalTone = (s: ApprovalState | null) => (s === "approved" ? "text-emerald-700" : s === "rejected" ? "text-rose-700" : "text-slate-600");
 
@@ -60,6 +98,8 @@ export default function RevenueForecastPage() {
   const [branchFilter, setBranchFilter] = useState("");
   const [costCentreFilter, setCostCentreFilter] = useState("");
   const [processFilter, setProcessFilter] = useState("");
+  /** Expanded branch rows; null = default (expanded only when a single branch is in view). */
+  const [expanded, setExpanded] = useState<Set<string> | null>(null);
   const [sheet, setSheet] = useState<{ row: ForecastListRow; mode: SheetMode } | null>(null);
   const list = useRevenueForecastList(period);
 
@@ -112,6 +152,14 @@ export default function RevenueForecastPage() {
     if (r.forecastId && !out.some((a) => a.mode === "review")) out.push({ label: "View", mode: "view" });
     return out;
   }
+
+  const groups = useMemo(() => groupByBranch(visible), [visible]);
+  const isExpanded = (key: string) => (expanded ? expanded.has(key) : groups.length === 1);
+  const toggle = (key: string) => setExpanded((cur) => {
+    const next = new Set(cur ?? (groups.length === 1 ? groups.map((g) => g.key) : []));
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   const due = list.data?.dueDate;
   return (
@@ -166,6 +214,12 @@ export default function RevenueForecastPage() {
               <option value="">All cost centres</option>
               {costCentreOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
+            {groups.length > 1 ? (
+              <>
+                <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setExpanded(new Set(groups.map((g) => g.key)))}>Expand all</Button>
+                <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setExpanded(new Set())}>Collapse all</Button>
+              </>
+            ) : null}
             {(branchFilter || processFilter || costCentreFilter) ? (
               <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => { setBranchFilter(""); setProcessFilter(""); setCostCentreFilter(""); }}>Clear</Button>
             ) : null}
@@ -197,44 +251,77 @@ export default function RevenueForecastPage() {
                   <TableHead>Finance Head</TableHead>
                   <TableHead className="text-right">Forecast</TableHead>
                   <TableHead className="text-right">Closed</TableHead>
+                  <TableHead className="text-right">In P&amp;L</TableHead>
                   <TableHead className="text-right">Variance</TableHead>
                   <TableHead className="text-right"><span className="sr-only">Actions</span></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visible.map((r) => (
-                  <TableRow key={r.costCentreId} className="hover:bg-slate-50">
-                    <TableCell className="text-xs">{r.branchName ?? "—"}</TableCell>
-                    <TableCell>
-                      <p className="font-medium text-slate-900">{r.costCentreCode}</p>
-                      {r.costCentreName && r.costCentreName !== r.costCentreCode ? <p className="text-xs text-slate-600">{r.costCentreName}</p> : null}
-                      {r.lineCount ? <p className="text-[11px] text-slate-500">{r.lineCount} line{r.lineCount === 1 ? "" : "s"}</p> : null}
-                    </TableCell>
-                    <TableCell className="text-xs text-slate-800">{r.processName ?? <span className="text-slate-500">—</span>}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-col items-start gap-1">
-                        <ForecastStatusBadge status={r.status} />
-                        {r.overdue ? <span className="text-[11px] font-semibold text-rose-700">Overdue</span> : null}
-                      </div>
-                    </TableCell>
-                    <TableCell className={`text-xs ${approvalTone(r.financeHeadStatus)}`}>{r.status === "missing" || r.status === "draft" ? "—" : approvalMark(r.financeHeadStatus)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.forecastAmount === null ? "—" : money(r.forecastAmount)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.closedAmount === null ? "—" : money(r.closedAmount)}</TableCell>
-                    <TableCell className={`text-right tabular-nums ${r.variance === null ? "" : r.variance < 0 ? "text-rose-700" : "text-emerald-700"}`}>
-                      {r.variance === null ? "—" : `${r.variance >= 0 ? "+" : ""}${money(r.variance)}`}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1.5">
-                        {actionsFor(r).map((a) => (
-                          <Button key={a.label} size="sm" variant={a.primary ? "default" : "outline"} className="h-8 text-xs"
-                            onClick={() => setSheet({ row: r, mode: a.mode })}>
-                            {a.label}
-                          </Button>
-                        ))}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {groups.map((g) => {
+                  const open = isExpanded(g.key);
+                  return (
+                    <Fragment key={g.key}>
+                      <TableRow className="cursor-pointer bg-slate-50/80 hover:bg-slate-100" onClick={() => toggle(g.key)}>
+                        <TableCell>
+                          <button type="button" aria-expanded={open} aria-label={`${open ? "Collapse" : "Expand"} ${g.branchName}`}
+                            className="flex items-center gap-1.5 font-semibold text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                            onClick={(e) => { e.stopPropagation(); toggle(g.key); }}>
+                            {open ? <ChevronDown className="h-4 w-4" aria-hidden /> : <ChevronRight className="h-4 w-4" aria-hidden />}
+                            {g.branchName}
+                          </button>
+                        </TableCell>
+                        <TableCell className="text-xs font-medium text-slate-700">{g.rows.length} cost centre{g.rows.length === 1 ? "" : "s"}</TableCell>
+                        <TableCell className="text-xs text-slate-700">{g.processes} process{g.processes === 1 ? "" : "es"}</TableCell>
+                        <TableCell className="text-[11px] text-slate-700">
+                          {STATUS_SHORT.filter(([k]) => g.counts[k]).map(([k, label]) => `${g.counts[k]} ${label}`).join(" · ")}
+                          {g.overdue ? <span className="ml-1 font-semibold text-rose-700">· {g.overdue} overdue</span> : null}
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-700">{g.counts.submitted ? `${g.counts.submitted} pending` : "—"}</TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums">{money(g.forecast)}</TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums">{g.counts.closed ? money(g.closed) : "—"}</TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums text-blue-900">{money(g.inPnl)}</TableCell>
+                        <TableCell className={`text-right font-semibold tabular-nums ${!g.counts.closed ? "" : g.variance < 0 ? "text-rose-700" : "text-emerald-700"}`}>
+                          {g.counts.closed ? `${g.variance >= 0 ? "+" : ""}${money(g.variance)}` : "—"}
+                        </TableCell>
+                        <TableCell className="text-right text-xs text-blue-700">{open ? "Hide" : "Show"} cost centres</TableCell>
+                      </TableRow>
+                      {open && g.rows.map((r) => (
+                      <TableRow key={r.costCentreId} className="hover:bg-slate-50">
+                        <TableCell className="pl-10 text-xs text-slate-600">{r.branchName ?? "—"}</TableCell>
+                        <TableCell>
+                          <p className="font-medium text-slate-900">{r.costCentreCode}</p>
+                          {r.costCentreName && r.costCentreName !== r.costCentreCode ? <p className="text-xs text-slate-600">{r.costCentreName}</p> : null}
+                          {r.lineCount ? <p className="text-[11px] text-slate-500">{r.lineCount} line{r.lineCount === 1 ? "" : "s"}</p> : null}
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-800">{r.processName ?? <span className="text-slate-500">—</span>}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1">
+                            <ForecastStatusBadge status={r.status} />
+                            {r.overdue ? <span className="text-[11px] font-semibold text-rose-700">Overdue</span> : null}
+                          </div>
+                        </TableCell>
+                        <TableCell className={`text-xs ${approvalTone(r.financeHeadStatus)}`}>{r.status === "missing" || r.status === "draft" ? "—" : approvalMark(r.financeHeadStatus)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{r.forecastAmount === null ? "—" : money(r.forecastAmount)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{r.closedAmount === null ? "—" : money(r.closedAmount)}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">{inPnlOf(r) === null ? "—" : money(inPnlOf(r)!)}</TableCell>
+                        <TableCell className={`text-right tabular-nums ${r.variance === null ? "" : r.variance < 0 ? "text-rose-700" : "text-emerald-700"}`}>
+                          {r.variance === null ? "—" : `${r.variance >= 0 ? "+" : ""}${money(r.variance)}`}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1.5">
+                            {actionsFor(r).map((a) => (
+                              <Button key={a.label} size="sm" variant={a.primary ? "default" : "outline"} className="h-8 text-xs"
+                                onClick={() => setSheet({ row: r, mode: a.mode })}>
+                                {a.label}
+                              </Button>
+                            ))}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      ))}
+                    </Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
