@@ -86,6 +86,7 @@ on:
           - code-lookup-verify
           - code-free-scan-verify
           - code-free-detail-verify
+          - code-free-candidate-verify
           - dbbill-find-verify
           - hrms-find-verify
           - reconcile-aug-incentives
@@ -248,6 +249,14 @@ jobs:
                 exit 1
               fi
               npx tsx scripts/dbbill-find-verify.ts
+              ;;
+            code-free-candidate-verify)
+              # Read-only: the ATS candidate behind MAS63449 compared with employee MAS63401 (match flags only). No apply mode.
+              if [ "$MODE" = "apply" ]; then
+                echo "::error::code-free-candidate-verify is read-only; run it with mode=dry-run."
+                exit 1
+              fi
+              npx tsx scripts/code-free-candidate-verify.ts
               ;;
             code-free-detail-verify)
               # Read-only: dates/statuses of the rows holding MAS63449 in the tables the scan hit. No apply mode.
