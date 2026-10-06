@@ -405,6 +405,10 @@ export const leaveService = {
         input.employeeId, input.fromDate, input.toDate, storedDays
       );
       if (capCheck.exceeded) {
+        console.warn(
+          `[leave-cap] refused employee=${input.employeeId} type=${leaveCode} ${input.fromDate}..${input.toDate} ` +
+          `requested=${storedDays} month=${capCheck.monthBreached} used=${capCheck.usedDays} cap=${capCheck.cap}`
+        );
         throw Object.assign(
           new Error(
             `Monthly leave limit reached for ${capCheck.monthBreached}. ` +
