@@ -10,7 +10,7 @@ import {
   ChevronRight, Eye, Edit, Send, ThumbsUp, ThumbsDown,
   GraduationCap, FileText, TrendingUp, X,
   Trash2, Download, Mail, Bell, UserPlus, Phone, ArrowUpDown,
-  UserCheck
+  UserCheck, RotateCcw
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -260,11 +260,13 @@ export default function NativeJobRequisition() {
 
   // Inline confirmation state
   const [confirmAction, setConfirmAction] = useState<{
-    type: 'submit' | 'approve' | 'reject' | 'handover' | 'delete' | 'close' | 'request-close';
+    type: 'submit' | 'approve' | 'reject' | 'handover' | 'delete' | 'close' | 'request-close' | 'reopen';
     id: string;
     code: string;
   } | null>(null);
   const [confirmInput, setConfirmInput] = useState('');
+  const [reopenCount, setReopenCount] = useState('');
+  const [reopenValidity, setReopenValidity] = useState('');
 
   // View detail and funnel
   const [selectedRequisition, setSelectedRequisition] = useState<JobRequisition | null>(null);
@@ -508,6 +510,12 @@ export default function NativeJobRequisition() {
           return;
         }
         await hrmsApi.post(`/api/job-requisition/${id}/close`, { reason: confirmInput.trim() });
+      } else if (type === 'reopen') {
+        if (!confirmInput || confirmInput.trim().length < 5) {
+          alert('Reopen reason must be at least 5 characters');
+          return;
+        }
+        await hrmsApi.post(`/api/job-requisition/${id}/reopen`, { requestedHeadcount: Number(reopenCount), validity: reopenValidity, reason: confirmInput.trim() });
       } else if (type === 'request-close') {
         if (!confirmInput || confirmInput.trim().length < 5) {
           alert('Close request reason must be at least 5 characters');
@@ -1124,6 +1132,19 @@ export default function NativeJobRequisition() {
                                 <Download className="w-4 h-4" />
                               </button>
                             )}
+                            {(currentUserRole === 'super_admin' || currentUserRole === 'branch_head')
+                              && (req.approval_status === 'closed' || (req.approval_status === 'approved' && Number(req.fulfilled_headcount ?? 0) >= Number(req.requested_headcount))) && (
+                              <button
+                                onClick={() => {
+                                  setReopenCount(String(Math.max(Number(req.requested_headcount) + 1, Number(req.fulfilled_headcount ?? 0) + 1)));
+                                  setReopenValidity(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+                                  setConfirmAction({ type: 'reopen', id: req.id, code: req.requisition_code });
+                                }}
+                                className="p-1.5 text-gray-500 hover:text-green-700 hover:bg-green-50 rounded" title="Reopen Requisition" aria-label="Reopen Requisition"
+                              >
+                                <RotateCcw className="w-4 h-4" />
+                              </button>
+                            )}
                             {req.approval_status !== 'closed' && (
                               canDirectlyClose(req) ? (
                                 <button
@@ -1164,8 +1185,19 @@ export default function NativeJobRequisition() {
                                 {confirmAction.type === 'delete' && `Permanently delete ${confirmAction.code}? This cannot be undone.`}
                                 {confirmAction.type === 'close' && `Close ${confirmAction.code}? This ends the requisition.`}
                                 {confirmAction.type === 'request-close' && `Ask the creator/branch head/super admin to close ${confirmAction.code}?`}
+                                {confirmAction.type === 'reopen' && `Reopen ${confirmAction.code}:`}
                               </span>
-                              {(confirmAction.type === 'approve' || confirmAction.type === 'reject' || confirmAction.type === 'close' || confirmAction.type === 'request-close') && (
+                              {confirmAction.type === 'reopen' && (
+                                <>
+                                  <label className="flex items-center gap-1 text-sm text-gray-700">Required count
+                                    <input type="number" min={1} value={reopenCount} onChange={e => setReopenCount(e.target.value)} aria-label="New required count" className="w-20 px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-yellow-400" />
+                                  </label>
+                                  <label className="flex items-center gap-1 text-sm text-gray-700">Valid till
+                                    <input type="date" value={reopenValidity} onChange={e => setReopenValidity(e.target.value)} aria-label="Valid till" className="px-2 py-1.5 text-sm border rounded focus:ring-2 focus:ring-yellow-400" />
+                                  </label>
+                                </>
+                              )}
+                              {(confirmAction.type === 'approve' || confirmAction.type === 'reject' || confirmAction.type === 'close' || confirmAction.type === 'request-close' || confirmAction.type === 'reopen') && (
                                 <input
                                   autoFocus
                                   type="text"
@@ -1175,6 +1207,7 @@ export default function NativeJobRequisition() {
                                     confirmAction.type === 'reject' ? 'Rejection reason (required, min 5 chars)' :
                                     confirmAction.type === 'close' ? 'Close reason (required, min 5 chars)' :
                                     confirmAction.type === 'request-close' ? 'Reason for requesting close (required, min 5 chars)' :
+                                    confirmAction.type === 'reopen' ? 'Reason for reopening (required, min 5 chars)' :
                                     'Remarks (optional)'
                                   }
                                   className="flex-1 min-w-[240px] px-3 py-1.5 text-sm border rounded focus:ring-2 focus:ring-yellow-400"
@@ -1189,6 +1222,7 @@ export default function NativeJobRequisition() {
                                  confirmAction.type === 'delete' ? 'Yes, Delete' :
                                  confirmAction.type === 'close' ? 'Confirm Close' :
                                  confirmAction.type === 'request-close' ? 'Send Request' :
+                                 confirmAction.type === 'reopen' ? 'Confirm Reopen' :
                                  'Confirm Reject'}
                               </button>
                               <button onClick={() => { setConfirmAction(null); setConfirmInput(''); }} className="px-3 py-1.5 text-sm text-gray-600 border rounded hover:bg-gray-100">

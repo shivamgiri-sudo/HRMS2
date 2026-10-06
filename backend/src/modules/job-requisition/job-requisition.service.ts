@@ -965,6 +965,45 @@ export const jobRequisitionService = {
   },
 
   /**
+   * Reopen a closed (or filled) requisition with a new required headcount and validity. Branch head or super admin
+   * only, reason required. Logged in the approval history as a re-approval ('approved' with a "Reopened" remark) so the
+   * entry fits every database's action list. Fulfilled count is kept; the new requested count must exceed it.
+   */
+  async reopenRequisition(
+    id: string,
+    actorId: string,
+    input: { requestedHeadcount: number; validity: string; reason: string }
+  ): Promise<JobRequisition> {
+    const existing = await this.getRequisition(id);
+    if (!existing) throw Object.assign(new Error("Requisition not found"), { statusCode: 404 });
+    const scope = await resolveUserBusinessScope(actorId);
+    if (!scope.isSuperAdmin && !scope.roles.includes("branch_head")) {
+      throw Object.assign(new Error("Only a branch head or a super admin can reopen a requisition."), { statusCode: 403 });
+    }
+    const fulfilled = Number(existing.fulfilled_headcount ?? 0);
+    const isOpen = existing.approval_status === "approved" && Number(existing.active_status ?? 1) === 1 && fulfilled < Number(existing.requested_headcount);
+    if (isOpen) throw Object.assign(new Error("This requisition is already open"), { statusCode: 409 });
+    if (!Number.isInteger(input.requestedHeadcount) || input.requestedHeadcount <= fulfilled || input.requestedHeadcount > 5000) {
+      throw Object.assign(new Error(`Required count must be a whole number above the ${fulfilled} already filled`), { statusCode: 400 });
+    }
+    const today = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.validity) || input.validity < today) {
+      throw Object.assign(new Error("Valid-till date must be today or later (YYYY-MM-DD)"), { statusCode: 400 });
+    }
+    await db.execute(
+      `UPDATE job_requisition
+          SET approval_status = 'approved', active_status = 1, closed_at = NULL, closed_reason = NULL,
+              requested_headcount = ?, requisition_validity = ?, updated_at = NOW()
+        WHERE id = ?`,
+      [input.requestedHeadcount, input.validity, id]
+    );
+    await this.logApprovalAction(id, 0, "approved", actorId, null, null,
+      `Reopened: required ${existing.requested_headcount} -> ${input.requestedHeadcount} (${fulfilled} already filled), valid till ${input.validity}. Was ${existing.approval_status}${existing.closed_reason ? ` (${existing.closed_reason})` : ""}. Reason: ${input.reason}`);
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM job_requisition WHERE id = ? LIMIT 1", [id]);
+    return rows[0] as JobRequisition;
+  },
+
+  /**
    * Ask whoever can close this requisition (its creator, a branch head, or a
    * super admin) to do so, with a reason — for the HR-family roles that can
    * see/work a requisition but do not hold direct-close rights themselves.

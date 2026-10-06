@@ -465,6 +465,27 @@ jobRequisitionRouter.post(
   })
 );
 
+// ─── Reopen ──────────────────────────────────────────────────────────────────
+// Branch head / super admin: reopen a closed or filled requisition with a new required count and validity.
+jobRequisitionRouter.post(
+  "/:id/reopen",
+  requireAuth,
+  requireRole("super_admin", "branch_head"),
+  inScope("id"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, message: "User not authenticated" });
+    const b = (req.body ?? {}) as { requestedHeadcount?: unknown; validity?: unknown; reason?: unknown };
+    const reason = typeof b.reason === "string" ? b.reason.trim() : "";
+    if (reason.length < 5) return res.status(400).json({ success: false, message: "A reopen reason is required (min 5 characters)" });
+    const data = await jobRequisitionService.reopenRequisition(id, userId, {
+      requestedHeadcount: Number(b.requestedHeadcount), validity: String(b.validity ?? ""), reason,
+    });
+    return res.json({ success: true, data, message: "Requisition reopened" });
+  })
+);
+
 // ─── Request Close ───────────────────────────────────────────────────────────
 // For anyone who can see/work a requisition but does not hold direct-close
 // rights: asks the creator/branch head/super_admin to close it, with a reason.
