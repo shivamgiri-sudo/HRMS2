@@ -340,7 +340,9 @@ export async function resumeSchedule(id: string): Promise<"resumed" | "not_pause
 }
 
 /** Sends one schedule now. Used by the worker (trigger "scheduled") and by Run now (trigger "manual"). */
-export async function sendSchedule(row: ScheduleRow, trigger: "scheduled" | "manual", now: Date): Promise<{ status: "sent" | "failed"; error?: string }> {
+export async function sendSchedule(
+  row: ScheduleRow, trigger: "scheduled" | "manual", now: Date,
+): Promise<{ status: "sent" | "failed"; error?: string; attachmentBytes?: number }> {
   const runId = randomUUID();
   const startedAt = fmtLocal(now);
   const period = resolvePeriod(row.range_mode, now, dateOnly(row.range_from), dateOnly(row.range_to));
@@ -351,6 +353,7 @@ export async function sendSchedule(row: ScheduleRow, trigger: "scheduled" | "man
   let error: string | undefined;
   let messageId: string | undefined;
   let attachmentRows: number | null = null;
+  let attachmentBytes: number | undefined;
 
   try {
     if (!emailService.isConfigured()) throw new Error("SMTP is not configured on this server.");
@@ -363,6 +366,7 @@ export async function sendSchedule(row: ScheduleRow, trigger: "scheduled" | "man
       }, tmpPath);
     attachmentRows = raw.reduce((s, r) => s + (r.rowsExported ?? 0), 0);
     const attachment = fs.readFileSync(tmpPath);
+    attachmentBytes = attachment.length;
     const sent = await emailService.send({
       to: toList,
       cc: ccList ?? undefined,
@@ -392,7 +396,7 @@ export async function sendSchedule(row: ScheduleRow, trigger: "scheduled" | "man
     [runId, row.id, trigger, startedAt, fmtLocal(new Date()), status, period.from, period.to, toList, ccList,
       attachmentRows, messageId ?? null, error ?? null],
   );
-  return { status, error };
+  return { status, error, attachmentBytes };
 }
 
 /**
@@ -434,7 +438,7 @@ export async function processDueSchedules(now: Date = new Date()): Promise<numbe
 }
 
 /** Run now: sends immediately without moving the scheduled time. Only for schedules still active or paused. */
-export async function runScheduleNow(id: string): Promise<{ status: "sent" | "failed"; error?: string } | null> {
+export async function runScheduleNow(id: string): Promise<{ status: "sent" | "failed"; error?: string; attachmentBytes?: number } | null> {
   const [rows] = await db.execute<ScheduleRow[]>(`SELECT ${SCHEDULE_COLUMNS} FROM mis_email_schedule WHERE id = ?`, [id]);
   const row = rows[0];
   if (!row) return null;

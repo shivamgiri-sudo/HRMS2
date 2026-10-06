@@ -119,6 +119,7 @@ on:
           - repair-sca-estimates
           - du-mis-apply
           - mis-schedule-run-now
+          - mis-report-schedules-setup
           - backfill-vendor-recognition-period
           - backfill-grn-recognition-period
           - fix-process-branches
@@ -613,6 +614,12 @@ jobs:
               # dry-run lists the schedule (recipients, subject, range). apply EMAILS it now to its recipients.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
               npx tsx scripts/mis-schedule-run-now.ts $FLAG
+              ;;
+            mis-report-schedules-setup)
+              # dry-run lists each MIS-tab process and whether its daily 10:00 MTD schedule exists. apply creates the
+              # missing schedules and EMAILS each MIS report now (test send) to tausif.ansari / harsh.singh.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
+              npx tsx scripts/mis-report-schedules-setup.ts $FLAG
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
