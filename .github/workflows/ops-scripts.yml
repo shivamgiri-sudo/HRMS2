@@ -68,6 +68,7 @@ on:
           - bank-verified-copy
           - process-scope-diagnose
           - process-code-search
+          - ops-nudge-stats
           - bank-manual-approve
           - digilocker-pending-diagnose
           - digilocker-sync-pending
@@ -366,6 +367,10 @@ jobs:
             digilocker-pending-diagnose)
               # Read-only in both modes: SELECTs only, codes and counts.
               npx tsx scripts/digilocker-pending-diagnose.ts
+              ;;
+            ops-nudge-stats)
+              # Read-only: nudge send counts and errors.
+              npx tsx scripts/ops-nudge-stats.ts
               ;;
             process-code-search)
               # Read-only. employee_codes = pattern matched against process code and name.
