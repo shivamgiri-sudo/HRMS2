@@ -67,6 +67,7 @@ on:
           - bank-verify-rejudge
           - bank-verified-copy
           - process-scope-diagnose
+          - process-code-search
           - bank-manual-approve
           - digilocker-pending-diagnose
           - digilocker-sync-pending
@@ -363,6 +364,10 @@ jobs:
             digilocker-pending-diagnose)
               # Read-only in both modes: SELECTs only, codes and counts.
               npx tsx scripts/digilocker-pending-diagnose.ts
+              ;;
+            process-code-search)
+              # Read-only. employee_codes = pattern matched against process code and name.
+              npx tsx scripts/process-code-search.ts "${INPUT_EMPLOYEE_CODES}"
               ;;
             process-scope-diagnose)
               # Read-only. employee_codes = "<name or email>" [company key, default bellavita].
