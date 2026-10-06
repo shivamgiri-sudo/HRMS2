@@ -103,6 +103,7 @@ on:
           - grn-false-paid-audit
           - grn-split-children-check
           - fix-legacy-false-paid-grns
+          - grn-status-check
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -513,6 +514,10 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            grn-status-check)
+              # Read-only in both modes: SELECTs only.
+              npx tsx scripts/grn-status-check.ts
               ;;
             fix-legacy-false-paid-grns)
               # Dry-runs unless given --apply. Apply corrects legacy GRNs wrongly marked paid (before-images saved, one transaction). Run BEFORE backfill-grn-journal.
