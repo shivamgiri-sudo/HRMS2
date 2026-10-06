@@ -11,7 +11,7 @@ import { addEvent, hasConsent, setLeadStatus } from "./he-lead.service.js";
 import { checkSendAllowed } from "./he-guardrails.js";
 import { buildParams, getTemplate, renderBody, type Lang, type TemplateKey } from "./he-template-catalog.js";
 import type { LeadStatus } from "./he-state.js";
-import { displayFirstName } from "./he-name.js";
+import { cleanName, displayFirstName } from "./he-name.js";
 
 const pinbot = new PinbotWhatsAppProvider();
 
@@ -95,20 +95,26 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   });
   if (!verdict.ok) return { status: "blocked", reason: verdict.reason };
 
-  const lang = langFor(lead.language_pref as string | null);
-  const [tr] = await db.execute<RowDataPacket[]>("SELECT pinbot_name, language, approval_state FROM he_template WHERE template_key = ? LIMIT 1", [`${o.key}:${lang}`]);
-  if (!tr[0] || tr[0].approval_state !== "approved") return { status: "blocked", reason: "template_not_approved" };
+  // Preferred language first; English is the approved fallback (Hinglish versions are not approved at Meta yet).
+  const pref = langFor(lead.language_pref as string | null);
+  const [trs] = await db.execute<RowDataPacket[]>(
+    "SELECT template_key, pinbot_name, language, approval_state FROM he_template WHERE template_key IN (?, ?) AND approval_state = 'approved' AND pinbot_name IS NOT NULL",
+    [`${o.key}:${pref}`, `${o.key}:en`]);
+  const tr = [trs.find((t) => t.template_key === `${o.key}:${pref}`) ?? trs.find((t) => t.template_key === `${o.key}:en`)].filter(Boolean) as RowDataPacket[];
+  if (!tr[0]) return { status: "blocked", reason: "template_not_approved" };
+  const lang: Lang = tr[0].template_key === `${o.key}:${pref}` ? pref : "en";
 
   const domain = env("HE_PUBLIC_BASE_URL", "");
   const slot = m?.slot_at ? String(m.slot_at) : null;
   const lat = m?.latitude, lng = m?.longitude;
   const ctx: Record<string, string | number | null | undefined> = {
-    candidate_name: displayFirstName(lead.full_name),
+    // Approved bodies read "Candidate: {{1}}" / "Name: {{1}}", so the full cleaned name, not just the first word.
+    candidate_name: cleanName(lead.full_name) || displayFirstName(lead.full_name),
     role: m?.designation_name, company: env("HE_COMPANY_NAME", "MAS Callnet"),
     branch_name: m?.branch_name, branch_address: m?.address,
     drive_date: m?.drive_date ? dateLabel(String(m.drive_date)) : null, slot_time: slot ? timeLabel(slot) : null,
     maps_link: lat != null && lng != null ? `https://maps.google.com/?q=${lat},${lng}` : m?.address ? `https://maps.google.com/?q=${encodeURIComponent(String(m.address))}` : null,
-    assessment_link: m?.bmi_assessment_url, docs_list: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"),
+    assessment_link: m?.bmi_assessment_url || env("HE_ASSESSMENT_TEXT", "Given at the branch on arrival"), docs_list: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"),
     reference_id: m ? `HE-${String(m.id).replace(/-/g, "").slice(0, 6).toUpperCase()}` : null,
     contact_name: env("HE_HR_CONTACT_NAME", ""), contact_phone: env("HE_HR_CONTACT_PHONE", ""),
     location_token: m?.token, ...o.extra,

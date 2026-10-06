@@ -21,7 +21,7 @@ export default function TemplatesTab() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const update = async (key: string, body: { approvalState?: string; pinbotName?: string }) => {
+  const update = async (key: string, body: { approvalState?: string; pinbotName?: string; language?: string }) => {
     try { await hrmsApi.patch(`/api/he/templates/${encodeURIComponent(key)}`, body); await load(); }
     catch (e: unknown) { setErr((e as { message?: string })?.message || "Only an admin can change this"); }
   };
@@ -39,7 +39,7 @@ export default function TemplatesTab() {
               <tr key={r.template_key}>
                 <td className="px-4 py-2.5 font-medium text-slate-900">{r.template_key}</td>
                 <td className="px-4 py-2.5"><input defaultValue={r.pinbot_name ?? ""} aria-label={`Pinbot name for ${r.template_key}`} onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== r.pinbot_name) void update(r.template_key, { pinbotName: v }); }} className="w-full max-w-xs rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" /></td>
-                <td className="px-4 py-2.5 text-slate-600">{r.language === "hi" ? "Hinglish" : "English"}</td>
+                <td className="px-4 py-2.5 text-slate-600"><span className="mr-2">{r.template_key.endsWith(":hi") ? "Hinglish" : "English"}</span><input defaultValue={r.language} aria-label={`Meta language code for ${r.template_key}`} title="Language code exactly as approved at Meta (en, en_US, hi)" onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== r.language) void update(r.template_key, { language: v }); }} className="w-20 rounded-lg border border-slate-200 px-2 py-1 font-mono text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" /></td>
                 <td className="px-4 py-2.5">
                   <select value={r.approval_state} onChange={(e) => void update(r.template_key, { approvalState: e.target.value })} aria-label={`Approval state for ${r.template_key}`} className={`cursor-pointer rounded-full px-2.5 py-1 text-xs font-semibold capitalize ring-1 ring-inset focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${TONE[r.approval_state] ?? TONE.draft}`}>
                     {STATES.map((s) => <option key={s} value={s}>{s}</option>)}

@@ -109,3 +109,17 @@ describe("location helpers", () => {
     ], now)).toEqual({ expected: 3, confirmed: 2, live: 1 });
   });
 });
+
+describe("quick-reply labels of the approved templates", () => {
+  it("maps every T1-T9 button", () => {
+    expect(parseReplyIntent("Yes, I'll come")).toBe("confirm");
+    expect(parseReplyIntent("Reschedule")).toBe("reschedule");
+    expect(parseReplyIntent("Can't come")).toBe("decline");
+    expect(parseReplyIntent("Yes, confirmed")).toBe("confirm");
+    expect(parseReplyIntent("Yes, this works")).toBe("confirm");
+    expect(parseReplyIntent("No, this doesn't work either")).toBe("decline");
+    expect(parseReplyIntent("I need a new slot")).toBe("reschedule");
+    expect(parseReplyIntent("Not interested")).toBe("decline");
+    expect(parseReplyIntent("Skip location")).toBe("skip");
+  });
+});

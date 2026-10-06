@@ -250,12 +250,15 @@ heRouter.get("/templates", requireAuth, requireRole(...VIEW_ROLES), async (_req,
 
 /** Record Meta's decision. Only an approved row can ever be sent. */
 heRouter.patch("/templates/:key", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
-  const b = (req.body ?? {}) as { approvalState?: string; pinbotName?: string };
+  const b = (req.body ?? {}) as { approvalState?: string; pinbotName?: string; language?: string };
   if (b.approvalState && !["draft", "submitted", "approved", "rejected"].includes(b.approvalState)) return res.status(400).json({ success: false, message: "invalid approvalState" });
   if (b.pinbotName && !/^[a-z0-9_]{1,120}$/.test(b.pinbotName)) return res.status(400).json({ success: false, message: "pinbotName must be lowercase letters, digits, underscores" });
+  // Meta language code of the approved template ("en", "en_US", "hi"): must match exactly or Meta rejects the send.
+  if (b.language && !/^[a-z]{2}(_[A-Z]{2})?$/.test(b.language)) return res.status(400).json({ success: false, message: "language must look like en, en_US or hi" });
   try {
     const [r] = await db.execute<ResultSetHeader>(
-      "UPDATE he_template SET approval_state = COALESCE(?, approval_state), pinbot_name = COALESCE(?, pinbot_name) WHERE template_key = ?", [b.approvalState ?? null, b.pinbotName ?? null, String(req.params.key)]);
+      "UPDATE he_template SET approval_state = COALESCE(?, approval_state), pinbot_name = COALESCE(?, pinbot_name), language = COALESCE(?, language) WHERE template_key = ?",
+      [b.approvalState ?? null, b.pinbotName ?? null, b.language ?? null, String(req.params.key)]);
     res.status(r.affectedRows ? 200 : 404).json({ success: r.affectedRows > 0 });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] template update failed");
