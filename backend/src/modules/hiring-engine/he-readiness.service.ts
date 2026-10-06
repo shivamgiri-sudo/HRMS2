@@ -32,8 +32,9 @@ export async function getDriveReadiness(driveId: string) {
   const [tpl] = await db.execute<RowDataPacket[]>("SELECT SUM(approval_state = 'approved') AS approved, COUNT(*) AS total FROM he_template");
   const [inv] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'");
   const [sent] = await db.execute<RowDataPacket[]>(
-    `SELECT msg.channel, COUNT(*) AS n FROM he_message msg JOIN he_match mt ON mt.lead_id = msg.lead_id AND mt.drive_id = ?
-      WHERE msg.direction = 'out' AND msg.delivery_status <> 'failed' GROUP BY msg.channel`, [driveId]);
+    // Messages sent FOR this drive (an earlier drive's emails to the same people do not count towards it).
+    `SELECT msg.channel, COUNT(*) AS n FROM he_message msg
+      WHERE msg.drive_id = ? AND msg.direction = 'out' AND msg.delivery_status <> 'failed' GROUP BY msg.channel`, [driveId]);
   const pinbotOk = new PinbotWhatsAppProvider().isConfigured();
   const vapiOk = Boolean(process.env.VAPI_API_KEY && process.env.VAPI_PHONE_NUMBER_ID);
   const engineOn = process.env.HE_ENGINE_ENABLED === "true", engineLive = process.env.HE_ENGINE_LIVE === "true";

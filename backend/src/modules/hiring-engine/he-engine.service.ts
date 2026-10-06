@@ -21,6 +21,7 @@ import { sendTemplateToLead, sendsPaused, type SendResult } from "./he-send.serv
 import { emailConfigured, sendInviteEmail, INVITE_EMAIL_KEY } from "./he-email.service.js";
 import { bestHourWait, cadenceGapMin, nextCadenceStep } from "./he-cadence.js";
 import { istHour } from "./he-guardrails.js";
+import { cleanName } from "./he-name.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
 import { offerOtherRoles, type RerouteSummary } from "./he-reroute.service.js";
@@ -141,7 +142,7 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
     const reason = step.step ? (step.step === "email" ? "email first" : "WhatsApp first (no email address)")
       : step.reason === "no_channel" ? (Number(m.has_email) && !canEmail ? "email not configured on the server" : Number(m.has_consent) && !waTemplateOk ? "WhatsApp template not approved yet" : "no email and no WhatsApp opt-in")
       : step.reason === "quiet_hours" ? "outside 09:00-20:00 IST" : step.reason;
-    if (out.planned.length < 500) out.planned.push({ matchId: m.id, leadId: m.lead_id, name: m.full_name ?? null, mobile: String(m.mobile10).slice(0, 2) + "xxxxxx" + String(m.mobile10).slice(-2), channel: step.step === "voice" ? null : step.step, reason });
+    if (out.planned.length < 500) out.planned.push({ matchId: m.id, leadId: m.lead_id, name: m.full_name ? cleanName(m.full_name) || String(m.full_name) : null, mobile: String(m.mobile10).slice(0, 2) + "xxxxxx" + String(m.mobile10).slice(-2), channel: step.step === "voice" ? null : step.step, reason });
     if (!step.step) { out.blocked[reason] = (out.blocked[reason] ?? 0) + 1; continue; }
     if (o.dryRun) { out.dryRun++; continue; }
     const slot = await reserveSlot(m.id as string);
