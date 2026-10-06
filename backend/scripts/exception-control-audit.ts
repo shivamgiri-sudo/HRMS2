@@ -27,13 +27,61 @@ const q = async (sql: string, p: unknown[] = []) => (await db.execute<RowDataPac
       ORDER BY b.created_at`);
   console.table(bucket);
 
-  for (const b of bucket as any[]) {
-    console.log(`\n-- last attendance rows for ${b.employee_code} (bucket act=${b.act} thr=${b.thr} any_punch=${b.any_punch})`);
+  const active = (bucket as any[]).filter((b) => Number(b.act) === 1);
+  const ids = active.map((b) => b.employee_id);
+  const ph = ids.map(() => "?").join(",");
+
+  console.log("\n== PER-EMPLOYEE summary since 2026-09-01 (every active bucketed employee) ==");
+  console.table(await q(
+    `SELECT e.employee_code code, b.full_day_threshold_minutes thr, b.single_punch_counts_as_present anyp,
+            COUNT(*) days, SUM(a.attendance_status='present') pres, SUM(a.attendance_status='half_day') half,
+            SUM(a.attendance_status='absent') abs_, SUM(a.attendance_status='missing_punch') miss,
+            SUM(a.attendance_status IN ('week_off','holiday','leave')) off,
+            SUM(a.source_system LIKE 'cosec%exception') exc_rows,
+            SUM(a.attendance_source='dialler') dial, SUM(a.attendance_source='biometric') bio,
+            SUM(a.is_locked=1) lk, SUM(a.override_by IS NOT NULL) ovr,
+            SUM(a.raw_minutes>=480 AND a.raw_minutes<540 AND a.attendance_status<>'present') missed_480,
+            DATE_FORMAT(MAX(a.record_date),'%m-%d') last_day
+       FROM employee_attendance_exception_bucket b
+       JOIN employees e ON e.id=b.employee_id
+       LEFT JOIN attendance_daily_record a ON a.employee_id=b.employee_id AND a.record_date>='2026-09-01'
+      WHERE b.active_status=1 GROUP BY e.employee_code, b.full_day_threshold_minutes, b.single_punch_counts_as_present
+      ORDER BY e.employee_code`));
+
+  console.log("\n== per-day mix for active bucketed employees ==");
+  console.table(await q(
+    `SELECT DATE_FORMAT(record_date,'%m-%d') d, COUNT(*) n, SUM(attendance_status='present') pres,
+            SUM(attendance_status='half_day') half, SUM(attendance_status='absent') abs_,
+            SUM(attendance_status='missing_punch') miss, SUM(source_system LIKE 'cosec%exception') exc,
+            SUM(attendance_source='dialler') dial, SUM(is_locked=1) lk
+       FROM attendance_daily_record WHERE employee_id IN (${ph}) AND record_date >= '2026-09-01'
+      GROUP BY record_date ORDER BY record_date`, ids));
+
+  console.log("\n== source_system / created_by mix (which writer produced the rows) ==");
+  console.table(await q(
+    `SELECT attendance_source src, source_system, created_by, attendance_status st, COUNT(*) n,
+            DATE_FORMAT(MIN(record_date),'%m-%d') mn, DATE_FORMAT(MAX(record_date),'%m-%d') mx
+       FROM attendance_daily_record WHERE employee_id IN (${ph}) AND record_date >= '2026-09-01'
+      GROUP BY src, source_system, created_by, st ORDER BY n DESC LIMIT 80`, ids));
+
+  console.log("\n== full detail, head-office (MAS) bucketed employees ==");
+  for (const b of active.filter((x) => String(x.employee_code).startsWith("MAS"))) {
+    console.log(`\n-- ${b.employee_code} thr=${b.thr} anyp=${b.any_punch} (${b.reason})`);
     console.table(await q(
-      `SELECT DATE_FORMAT(attendance_date,'%Y-%m-%d') d, attendance_status st, attendance_source src, source_system,
-              raw_minutes, biometric_minutes, dialler_minutes, lwp_value, is_locked, override_by IS NOT NULL ovr,
-              DATE_FORMAT(processed_at,'%m-%d %H:%i') processed
-         FROM attendance_daily_records WHERE employee_id = ? ORDER BY attendance_date DESC LIMIT 10`, [b.employee_id]));
+      `SELECT DATE_FORMAT(record_date,'%m-%d') d, attendance_status st, attendance_source src, source_system,
+              raw_minutes raw, biometric_minutes bio, dialler_minutes dial, lwp_value lwp, is_locked lk,
+              override_by IS NOT NULL ovr, created_by, DATE_FORMAT(processed_at,'%m-%d %H:%i') processed
+         FROM attendance_daily_record WHERE employee_id = ? AND record_date >= '2026-09-01' ORDER BY record_date`, [b.employee_id]));
+  }
+
+  console.log("\n== full detail, 3 GPI samples ==");
+  for (const b of active.filter((x) => !String(x.employee_code).startsWith("MAS")).slice(0, 3)) {
+    console.log(`\n-- ${b.employee_code}`);
+    console.table(await q(
+      `SELECT DATE_FORMAT(record_date,'%m-%d') d, attendance_status st, attendance_source src, source_system,
+              raw_minutes raw, biometric_minutes bio, dialler_minutes dial, lwp_value lwp, is_locked lk,
+              created_by, DATE_FORMAT(processed_at,'%m-%d %H:%i') processed
+         FROM attendance_daily_record WHERE employee_id = ? AND record_date >= '2026-09-01' ORDER BY record_date`, [b.employee_id]));
   }
 
   console.log("\n== payable days overrides (all rows) ==");
