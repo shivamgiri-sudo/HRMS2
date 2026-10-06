@@ -13,6 +13,8 @@ export interface ForecastListRow {
   costCentreName: string | null;
   branchId: string | null;
   branchName: string | null;
+  /** The cost centre's process (own process / billing name, else its staff's main process). */
+  processName: string | null;
   forecastId: string | null;
   status: ForecastStatus;
   forecastAmount: number | null;

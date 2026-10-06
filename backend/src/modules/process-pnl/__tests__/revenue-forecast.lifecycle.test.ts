@@ -41,7 +41,13 @@ vi.mock("../../../shared/istDate.js", async (orig) => ({ ...(await orig<typeof i
 
 const SCHEMA = `
 CREATE TABLE branch_master (id TEXT PRIMARY KEY, branch_name TEXT);
-CREATE TABLE cost_centre_master (id TEXT PRIMARY KEY, cost_centre_code TEXT, cost_centre_name TEXT, company_name TEXT, branch_id TEXT, active_status INT);
+CREATE TABLE cost_centre_master (id TEXT PRIMARY KEY, cost_centre_code TEXT, cost_centre_name TEXT, company_name TEXT, branch_id TEXT, active_status INT,
+  process_id TEXT, process_name_bill TEXT, billing_client_name TEXT);
+CREATE TABLE process_master (id TEXT PRIMARY KEY, process_name TEXT);
+CREATE TABLE employees (id TEXT PRIMARY KEY, cost_centre_id TEXT, process_id TEXT, active_status INT);
+INSERT INTO process_master VALUES ('P1','Onfido');
+-- cc1: no process on the master, its staff are in Onfido; cc2: billing name only.
+INSERT INTO employees VALUES ('E1','cc1','P1',1), ('E2','cc1','P1',1);
 CREATE TABLE revenue_forecast (id TEXT PRIMARY KEY, branch_id TEXT, cost_centre_id TEXT, period_code TEXT, status TEXT DEFAULT 'draft',
   forecast_amount REAL DEFAULT 0, closed_amount REAL, notes TEXT,
   finance_head_status TEXT DEFAULT 'pending', finance_head_by TEXT, finance_head_at TEXT, finance_head_note TEXT,
@@ -51,9 +57,9 @@ CREATE TABLE revenue_forecast (id TEXT PRIMARY KEY, branch_id TEXT, cost_centre_
 CREATE TABLE revenue_forecast_line (id TEXT PRIMARY KEY, forecast_id TEXT, line_no INT, line_type TEXT, description TEXT, metric_key TEXT,
   quantity REAL, rate REAL, amount REAL, actual_quantity REAL, actual_rate REAL, actual_amount REAL);
 INSERT INTO branch_master VALUES ('B1','NOIDA-2');
-INSERT INTO cost_centre_master VALUES ('cc1','BSS/IB/NOIDA/1','Inbound','Mas Callnet India Pvt Ltd','B1',1),
-  ('cc2','BSS/IB/NOIDA/2','Outbound','Mas Callnet India Pvt Ltd','B1',1),
-  ('ccX','OTHER/1','Other co','Somebody Else Ltd','B1',1);
+INSERT INTO cost_centre_master VALUES ('cc1','BSS/IB/NOIDA/1','Inbound','Mas Callnet India Pvt Ltd','B1',1,NULL,NULL,NULL),
+  ('cc2','BSS/IB/NOIDA/2','Outbound','Mas Callnet India Pvt Ltd','B1',1,NULL,'Vodafone CS',NULL),
+  ('ccX','OTHER/1','Other co','Somebody Else Ltd','B1',1,NULL,NULL,NULL);
 `;
 
 beforeAll(() => {
@@ -110,7 +116,7 @@ describe.skipIf(!sqlite)("draft -> two approvals -> open -> close -> reopen", ()
     const { revenueForecastService } = await import("../revenue-forecast.service.js");
     const out = await revenueForecastService.list("2026-11", ["B1"]);
     expect(out.dueDate).toBe("2026-10-26");
-    expect(out.rows.map((r) => [r.costCentreId, r.status])).toEqual([["cc1", "draft"], ["cc2", "missing"]]);
+    expect(out.rows.map((r) => [r.costCentreId, r.status, r.processName])).toEqual([["cc1", "draft", "Onfido"], ["cc2", "missing", "Vodafone CS"]]);
   });
 
   it("submit notifies the Finance Head only; the Finance Head's approval alone makes it OPEN", async () => {

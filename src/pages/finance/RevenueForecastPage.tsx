@@ -45,6 +45,11 @@ function Tile({ label, value, hint, tone = "slate" }: { label: string; value: st
   );
 }
 
+const NO_PROCESS = "(no process)";
+const uniqueSorted = (values: Array<string | null | undefined>) =>
+  [...new Set(values.filter((v): v is string => Boolean(v)))].sort((a, b) => a.localeCompare(b));
+const selectClass = "h-8 rounded-md border border-input bg-background px-2 text-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
 const approvalMark = (s: ApprovalState | null) => (s === "approved" ? "Approved" : s === "rejected" ? "Rejected" : s === "pending" ? "Pending" : "—");
 const approvalTone = (s: ApprovalState | null) => (s === "approved" ? "text-emerald-700" : s === "rejected" ? "text-rose-700" : "text-slate-600");
 
@@ -52,6 +57,9 @@ export default function RevenueForecastPage() {
   const [period, setPeriod] = useState(nextPeriod());
   const [filter, setFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const [branchFilter, setBranchFilter] = useState("");
+  const [costCentreFilter, setCostCentreFilter] = useState("");
+  const [processFilter, setProcessFilter] = useState("");
   const [sheet, setSheet] = useState<{ row: ForecastListRow; mode: SheetMode } | null>(null);
   const list = useRevenueForecastList(period);
 
@@ -60,12 +68,21 @@ export default function RevenueForecastPage() {
   const isFinanceHead = useHasRole("finance_head");
   const canReopen = useHasRole("super_admin", "finance_head");
 
-  const rows = list.data?.rows ?? [];
+  const allRows = list.data?.rows ?? [];
+  // Dropdown options come from the rows the server already scoped to this user, so a Branch Head
+  // is only ever offered their own branch(es). Each narrows the next: branch -> process -> cost centre.
+  const branchOptions = useMemo(() => uniqueSorted(allRows.map((r) => r.branchName)), [allRows]);
+  const inBranch = useMemo(() => allRows.filter((r) => !branchFilter || r.branchName === branchFilter), [allRows, branchFilter]);
+  const processOptions = useMemo(() => uniqueSorted(inBranch.map((r) => r.processName ?? NO_PROCESS)), [inBranch]);
+  const inProcess = useMemo(() => inBranch.filter((r) => !processFilter || (r.processName ?? NO_PROCESS) === processFilter), [inBranch, processFilter]);
+  const costCentreOptions = useMemo(() => inProcess.map((r) => ({ id: r.costCentreId, label: r.costCentreCode ?? r.costCentreId })), [inProcess]);
+  // Tiles and status counts follow the branch / process / cost-centre selection.
+  const rows = useMemo(() => inProcess.filter((r) => !costCentreFilter || r.costCentreId === costCentreFilter), [inProcess, costCentreFilter]);
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (filter === "overdue" ? !r.overdue : filter !== "all" && r.status !== filter) return false;
-      return !q || `${r.costCentreCode} ${r.costCentreName} ${r.branchName}`.toLowerCase().includes(q);
+      return !q || `${r.costCentreCode} ${r.costCentreName} ${r.processName} ${r.branchName}`.toLowerCase().includes(q);
     });
   }, [rows, filter, search]);
 
@@ -134,9 +151,28 @@ export default function RevenueForecastPage() {
               </button>
             ))}
           </div>
-          <div className="relative ml-auto">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <select aria-label="Filter by branch" className={selectClass} value={branchFilter}
+              onChange={(e) => { setBranchFilter(e.target.value); setProcessFilter(""); setCostCentreFilter(""); }}>
+              <option value="">All branches{branchOptions.length > 1 ? ` (${branchOptions.length})` : ""}</option>
+              {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+            <select aria-label="Filter by process" className={selectClass} value={processFilter}
+              onChange={(e) => { setProcessFilter(e.target.value); setCostCentreFilter(""); }}>
+              <option value="">All processes</option>
+              {processOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <select aria-label="Filter by cost centre" className={selectClass} value={costCentreFilter} onChange={(e) => setCostCentreFilter(e.target.value)}>
+              <option value="">All cost centres</option>
+              {costCentreOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            {(branchFilter || processFilter || costCentreFilter) ? (
+              <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => { setBranchFilter(""); setProcessFilter(""); setCostCentreFilter(""); }}>Clear</Button>
+            ) : null}
+          </div>
+          <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-500" aria-hidden />
-            <Input aria-label="Search cost centre or branch" className="h-8 w-64 pl-8 text-xs" placeholder="Search cost centre or branch" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Input aria-label="Search cost centre, process or branch" className="h-8 w-56 pl-8 text-xs" placeholder="Search cost centre, process, branch" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
         </div>
 
@@ -149,13 +185,14 @@ export default function RevenueForecastPage() {
               <Button size="sm" variant="outline" className="ml-auto" onClick={() => void list.refetch()}>Retry</Button>
             </div>
           ) : visible.length === 0 ? (
-            <p className="py-12 text-center text-sm text-slate-600">{rows.length ? "No cost centre matches this filter." : "No active cost centres in your scope."}</p>
+            <p className="py-12 text-center text-sm text-slate-600">{allRows.length ? "No cost centre matches these filters." : "No active cost centres in your scope."}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Cost centre</TableHead>
                   <TableHead>Branch</TableHead>
+                  <TableHead>Cost centre</TableHead>
+                  <TableHead>Process</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Finance Head</TableHead>
                   <TableHead className="text-right">Forecast</TableHead>
@@ -167,11 +204,13 @@ export default function RevenueForecastPage() {
               <TableBody>
                 {visible.map((r) => (
                   <TableRow key={r.costCentreId} className="hover:bg-slate-50">
+                    <TableCell className="text-xs">{r.branchName ?? "—"}</TableCell>
                     <TableCell>
                       <p className="font-medium text-slate-900">{r.costCentreCode}</p>
-                      <p className="text-xs text-slate-600">{r.costCentreName}{r.lineCount ? ` · ${r.lineCount} line${r.lineCount === 1 ? "" : "s"}` : ""}</p>
+                      {r.costCentreName && r.costCentreName !== r.costCentreCode ? <p className="text-xs text-slate-600">{r.costCentreName}</p> : null}
+                      {r.lineCount ? <p className="text-[11px] text-slate-500">{r.lineCount} line{r.lineCount === 1 ? "" : "s"}</p> : null}
                     </TableCell>
-                    <TableCell className="text-xs">{r.branchName ?? "—"}</TableCell>
+                    <TableCell className="text-xs text-slate-800">{r.processName ?? <span className="text-slate-500">—</span>}</TableCell>
                     <TableCell>
                       <div className="flex flex-col items-start gap-1">
                         <ForecastStatusBadge status={r.status} />

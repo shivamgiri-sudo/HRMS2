@@ -135,7 +135,9 @@ export function ForecastSheet({
 
   const update = (key: string, patch: Partial<DraftLine>) => setLines((cur) => cur.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   const editable = mode === "edit";
-  const title = row ? `${row.costCentreCode ?? ""} · ${row.costCentreName ?? ""}` : "Forecast";
+  const title = row
+    ? [row.costCentreCode, row.costCentreName !== row.costCentreCode ? row.costCentreName : null].filter(Boolean).join(" · ")
+    : "Forecast";
 
   return (
     <Sheet open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
@@ -146,7 +148,7 @@ export function ForecastSheet({
             {row ? <ForecastStatusBadge status={f?.status ?? row.status} /> : null}
           </SheetTitle>
           <SheetDescription>
-            {row?.branchName} · revenue forecast for {period}
+            {row?.branchName}{row?.processName ? ` · ${row.processName}` : ""} · revenue forecast for {period}
             {mode === "close" ? " — enter what was actually invoiced per line." : null}
           </SheetDescription>
         </SheetHeader>

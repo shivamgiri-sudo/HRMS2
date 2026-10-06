@@ -6,7 +6,8 @@ import { getCurrentDateIST } from "../../shared/istDate.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { refuse } from "./finance-error.js";
-import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { OWN_COMPANY_SQL, PROCESS_BY_COST_CENTRE } from "./pnl-actuals.service.js";
+import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
 
 /**
  * Monthly revenue forecast per cost centre (owner requirement 2026-10-06, migration 2118).
@@ -155,11 +156,17 @@ export const revenueForecastService = {
     const branchSql = branchIds ? (branchIds.length ? `AND ccm.branch_id IN (${branchIds.map(() => "?").join(",")})` : "AND 1 = 0") : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT ccm.id AS cost_centre_id, ccm.cost_centre_code, ccm.cost_centre_name, ccm.branch_id, bm.branch_name,
+              -- The cost centre's own process / billing name, else the process most of its active staff
+              -- are in (cost_centre_master.process_id is rarely set).
+              COALESCE(${ccProcessNameSql("ccm", "ccpm")}, NULLIF(TRIM(epm.process_name), '')) AS process_name,
               f.id AS forecast_id, f.status, f.forecast_amount, f.closed_amount,
               f.finance_head_status, f.payroll_head_status, f.submitted_at, f.approved_at, f.closed_at,
               (SELECT COUNT(*) FROM revenue_forecast_line l WHERE l.forecast_id = f.id) AS line_count
          FROM cost_centre_master ccm
          LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
+         ${ccProcessJoin("ccm", "ccpm")}
+         LEFT JOIN ${PROCESS_BY_COST_CENTRE} pcx ON pcx.cost_centre_id = ccm.id
+         LEFT JOIN process_master epm ON epm.id = pcx.process_id
          LEFT JOIN revenue_forecast f ON f.cost_centre_id = ccm.id AND f.period_code = ?
         WHERE (ccm.active_status = 1 OR f.id IS NOT NULL) AND ${OWN_COMPANY_SQL} ${branchSql}
         ORDER BY bm.branch_name, ccm.cost_centre_code`,
@@ -175,7 +182,7 @@ export const revenueForecastService = {
         const status = (r.status ?? "missing") as ForecastStatus | "missing";
         return {
           costCentreId: String(r.cost_centre_id), costCentreCode: r.cost_centre_code, costCentreName: r.cost_centre_name,
-          branchId: r.branch_id, branchName: r.branch_name,
+          branchId: r.branch_id, branchName: r.branch_name, processName: r.process_name ?? null,
           forecastId: r.forecast_id ?? null, status, forecastAmount: forecast, closedAmount: closed,
           variance: forecast !== null && closed !== null ? round2(closed - forecast) : null,
           financeHeadStatus: r.finance_head_status ?? null, payrollHeadStatus: r.payroll_head_status ?? null,
