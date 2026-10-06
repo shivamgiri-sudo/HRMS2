@@ -119,6 +119,11 @@ export function PnlReconciliationPanel({
       value: money(data.totals.revenueEstimated ?? 0),
       estimated: (data.totals.revenueEstimated ?? 0) > 0,
     },
+    {
+      // Approved Branch Head forecasts (Revenue Forecast page): open ones count at forecast, closed at actual.
+      label: `From revenue forecast · ${data.totals.forecastCostCentres ?? 0} CC`,
+      value: money(data.totals.revenueForecast ?? 0),
+    },
     { label: "Revenue per day (seat run-rate)", value: money(data.totals.perDayRevenue ?? 0) },
     { label: pnlLabel("PEOPLE_COST"), value: money(data.totals.payrollCost), hint: pnlTooltip("PEOPLE_COST") },
     { label: pnlLabel("GRN_CONSUMED"), value: money(data.totals.grnActual), hint: pnlTooltip("GRN_CONSUMED") },
@@ -129,6 +134,14 @@ export function PnlReconciliationPanel({
       value: money(data.totals.grnEstimated ?? 0),
       hint: pnlTooltip("GRN_COMMITTED"),
       estimated: (data.totals.grnEstimated ?? 0) > 0,
+    },
+    {
+      // Owner rule 2026-10-06: an OPEN budget line counts at full budget until it is closed, so its
+      // unspent headroom is cost on top of the GRNs; closing the line releases it.
+      label: "Open budget not yet spent",
+      value: money(data.totals.openBudgetReserve ?? 0),
+      hint: "Budget lines still open count at their full budgeted amount: actual GRN plus this unspent headroom. Close the budget line (Branch Budget → Variance) to count actual only.",
+      estimated: (data.totals.openBudgetReserve ?? 0) > 0,
     },
     {
       // BUG-7: this view computes OP as Recognised Revenue − People Cost − GRN (consumed + committed),
@@ -244,7 +257,7 @@ export function PnlReconciliationPanel({
                     <td className="px-3 py-2 text-right tabular-nums">{money(branch.revenue)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(branch.payrollCost)}</td>
                     <td className="px-3 py-2 text-right tabular-nums" title={branch.grnEstimated ? `Includes ${money(branch.grnEstimated)} reserved (not yet consumed)` : undefined}>
-                      {money(branch.grnActual + (branch.grnEstimated ?? 0))}
+                      {money(branch.grnActual + (branch.grnEstimated ?? 0) + (branch.openBudgetReserve ?? 0))}
                       {(branch.grnEstimated ?? 0) > 0 && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>}
                     </td>
                     <td className={`px-3 py-2 text-right font-semibold tabular-nums ${branch.operatingProfit < 0 ? "text-rose-700" : "text-emerald-700"}`}>
@@ -299,10 +312,19 @@ export function PnlReconciliationPanel({
                         params: { metric: CELL_METRIC.recognisedRevenue, period, costCentreId: row.costCentreId },
                         label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
-                      title={row.revenueBasis === "ESTIMATED" ? estimateTitle(row) : "View the underlying rows"}
+                      title={row.revenueBasis === "ESTIMATED" ? estimateTitle(row)
+                        : row.revenueBasis === "FORECAST_OPEN" ? "Approved revenue forecast, still open — counts until the Branch Head closes it with actuals"
+                        : row.revenueBasis === "FORECAST_CLOSED" ? `Closed forecast: actual ${money(row.recognisedRevenue)} against forecast ${money(row.revenueForecast ?? 0)}`
+                        : "View the underlying rows"}
                     >
                       {row.revenueBasis === "ESTIMATED" && (
                         <span className="mr-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>
+                      )}
+                      {row.revenueBasis === "FORECAST_OPEN" && (
+                        <span className="mr-1 rounded bg-blue-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-blue-800">Forecast · open</span>
+                      )}
+                      {row.revenueBasis === "FORECAST_CLOSED" && (
+                        <span className="mr-1 rounded bg-emerald-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-emerald-800">Closed</span>
                       )}
                       {money(row.recognisedRevenue)}
                     </td>
@@ -321,10 +343,13 @@ export function PnlReconciliationPanel({
                         params: { metric: CELL_METRIC.grnActual, period, costCentreId: row.costCentreId },
                         label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
-                      title={row.grnEstimated ? `Includes ${money(row.grnEstimated)} reserved (not yet consumed) — click to view the consumed and reserved GRNs` : "View the underlying rows"}
+                      title={[
+                        row.grnEstimated ? `Includes ${money(row.grnEstimated)} reserved (not yet consumed)` : null,
+                        row.openBudgetReserve ? `Includes ${money(row.openBudgetReserve)} of open budget not yet spent` : null,
+                      ].filter(Boolean).join(" · ") || "View the underlying rows"}
                     >
-                      {money(row.grnActual + (row.grnEstimated ?? 0))}
-                      {(row.grnEstimated ?? 0) > 0 && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>}
+                      {money(row.grnActual + (row.grnEstimated ?? 0) + (row.openBudgetReserve ?? 0))}
+                      {((row.grnEstimated ?? 0) > 0 || (row.openBudgetReserve ?? 0) > 0) && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">{(row.openBudgetReserve ?? 0) > 0 ? "Open budget" : "Est"}</span>}
                     </td>
                     <td
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"

@@ -110,6 +110,7 @@ import {
   BranchBudgetPlannerGrid, applyCopyForward, budgetLineKey, type PriorBudgetRow,
 } from "@/components/finance/pnl/BranchBudgetPlannerGrid";
 import { formatDateDDMMYYYY } from "@/lib/date-format";
+import { BudgetCostCentreClosurePanel } from "@/components/finance/budget/BudgetCostCentreClosurePanel";
 
 const UNITS = [
   "Nos",
@@ -2987,7 +2988,32 @@ export default function BranchBudgetManagementWorkspace() {
                         >
                           Close selected ({selectedForClose.size})
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={bulkCloseMutation.isPending}
+                          onClick={() => {
+                            // Closing the whole budget = closing every head/sub-head it has a line under.
+                            const keys = new Set((detailQuery.data?.lines ?? []).map((l: any) => `${l.head}|${l.sub_head ?? l.subHead ?? ""}`));
+                            const items = [...keys]
+                              .filter((key) => closureByKey.get(key)?.status !== "closed")
+                              .map((key) => { const [head, subHead] = key.split("|"); return { head, subHead: subHead || null }; });
+                            if (!items.length) { toast.info("Every head/sub-head is already closed"); return; }
+                            if (window.confirm(`Close the whole budget (${items.length} head/sub-head${items.length > 1 ? "s" : ""})? Live P&L will count actual spend only, and no new GRN can be raised against it.`)) {
+                              bulkCloseMutation.mutate(items);
+                            }
+                          }}
+                        >
+                          Close whole budget
+                        </Button>
                       </div>
+                    )}
+                    {detailId && (
+                      <BudgetCostCentreClosurePanel
+                        budgetId={detailId}
+                        canClose={Boolean(capabilities?.canCloseBusinessCase)}
+                        canReopen={Boolean(capabilities?.canReviewReopen)}
+                      />
                     )}
                     <div className="overflow-x-auto rounded-xl border border-slate-200">
                       <table className="w-full min-w-[1050px] text-xs">

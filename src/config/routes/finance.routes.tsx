@@ -7,6 +7,7 @@ const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactN
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
 
 const NativeERP                    = lazy(() => import("@/pages/NativeERP"));
+const RevenueForecastPage          = lazy(() => import("@/pages/finance/RevenueForecastPage"));
 const NativeVendorManagement       = lazy(() => import("@/pages/NativeVendorManagement"));
 const NativeVendorBankDetails = lazy(() => import("@/pages/NativeVendorBankDetails"));
 const NativeProcurementPage        = lazy(() => import("@/pages/NativeProcurementPage"));
@@ -119,6 +120,7 @@ export const financeRouteElements = (
           grant in backend/sql/1652_gst_tally_export_page_access.sql — write actions (generate,
           mark downloaded) are further gated inside the page/API to GST_WRITE_ROLES. */}
       <Route path="/finance/gst-export"               element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','admin','finance','branch_admin']}><Gate pageCode="FINANCE_GST_EXPORT"><GstTallyExportPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/revenue-forecast"        element={<ProtectedRoute roles={['super_admin','branch_head','branch_admin','finance_head','payroll_head','accounts_head','finance','ceo','coo']}><Gate pageCode="FINANCE_REVENUE_FORECAST"><RevenueForecastPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><Gate pageCode="FINANCE_BRANCH_BUDGET"><BranchBudgetManagementPage /></Gate></ProtectedRoute>} />
       {/* Roles must match ALLOWED_ROLES in annual-budget-summary.routes.ts exactly — an
           all-branches rollup is more exposure than the single-branch screen above, so it is

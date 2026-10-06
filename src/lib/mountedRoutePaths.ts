@@ -145,6 +145,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/finance/client-billing",
   "/finance/client-payments",
   "/finance/cost-centres",
+  "/finance/revenue-forecast",
   "/finance/grn",
   "/finance/gst-export",
   "/finance/journal-vouchers",

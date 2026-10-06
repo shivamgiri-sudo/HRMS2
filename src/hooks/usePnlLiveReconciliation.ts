@@ -4,7 +4,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
 /** Where a cost centre's recognised revenue came from. ESTIMATED = seat rate x seats. */
-export type PnlRevenueBasis = "INVOICE" | "ACCRUAL" | "ESTIMATED" | "NONE";
+/** FORECAST_OPEN / FORECAST_CLOSED: an approved Branch Head revenue forecast (open amount, or closed actual) is the revenue. */
+export type PnlRevenueBasis = "FORECAST_CLOSED" | "FORECAST_OPEN" | "INVOICE" | "ACCRUAL" | "ESTIMATED" | "NONE";
 
 export interface PnlSourceFreshness {
   source: string;
@@ -38,6 +39,10 @@ export interface PnlReconciliationRow {
   /** Approved GRN spend (reserved, not yet consumed) for the open month — a committed estimate,
    *  same treatment as revenueEstimated. Zero for a closed month or once the bill is consumed. */
   grnEstimated?: number;
+  /** Approved forecast amount (open or closed), null when none. */
+  revenueForecast?: number | null;
+  /** Unspent headroom of OPEN budget lines, counted as cost. */
+  openBudgetReserve?: number;
   allocatedBudget: number;
   branchBudget: number;
   payrollCost: number;
@@ -55,6 +60,7 @@ export interface PnlBranchRollup {
   revenue: number;
   grnActual: number;
   grnEstimated?: number;
+  openBudgetReserve?: number;
   allocatedBudget: number;
   branchBudget: number;
   payrollCost: number;
@@ -83,6 +89,10 @@ export interface PnlLiveReconciliation {
     perDayRevenue: number;
     grnActual: number;
     grnEstimated?: number;
+    /** Open budget headroom counted as cost; approved forecast totals. */
+    openBudgetReserve?: number;
+    revenueForecast?: number;
+    forecastCostCentres?: number;
     allocatedBudget: number;
     branchBudget: number;
     payrollCost: number;

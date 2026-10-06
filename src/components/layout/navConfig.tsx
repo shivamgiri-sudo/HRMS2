@@ -407,6 +407,8 @@ export const navGroups: NavGroup[] = [
           // Had a route, a page, a FINANCE_PNL_LOBS catalogue row and grants, but no entry here —
           // reachable only by typing the URL or via one link buried in the configuration centre.
           { label: "LOB Management",          href: "/finance/process-pnl/lobs",          icon: ic(Layers3),     roles: ["admin","finance","super_admin","ceo","coo","finance_head","accounts_head","payroll_head"], description: "Per-LOB seats, rates and delivery under a process" },
+          // Roles/pageCode match the revenue forecast API roles (revenue-forecast.routes.ts) and migration 2118 grants.
+          { label: "Revenue Forecast",        href: "/finance/revenue-forecast",         icon: ic(TrendingUp),   roles: ["super_admin","branch_head","branch_admin","finance_head","payroll_head","accounts_head","finance","ceo","coo"], pageCode: "FINANCE_REVENUE_FORECAST", description: "Monthly revenue forecast per cost centre, approval and close" },
           { label: "Branch Budget",           href: "/finance/branch-budget",            icon: ic(Wallet),       roles: ["admin","finance","super_admin","finance_head","accounts_head","branch_head","branch_admin"], description: "Monthly branch budgets and approval" },
           // Roles/pageCode must match ALLOWED_ROLES in annual-budget-summary.routes.ts and the
           // route guard in finance.routes.tsx exactly (migration 1537) — narrower than Branch

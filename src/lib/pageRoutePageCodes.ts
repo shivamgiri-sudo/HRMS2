@@ -155,6 +155,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   // then met the Gate's denial page. That is the precise drift this map exists to prevent.
   "/finance/process-pnl/configuration": "FINANCE_PNL_CONFIG",
   "/finance/cost-centres": "FINANCE_COST_CENTRES",
+  "/finance/revenue-forecast": "FINANCE_REVENUE_FORECAST",
   "/finance/masters": "FINANCE_MASTERS",
   "/finance/vendor-payment-tracking": "FINANCE_VENDOR_PAYMENTS",
   "/quality/audit-forms": "QA_EVALUATION",
