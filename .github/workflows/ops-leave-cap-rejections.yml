@@ -1,0 +1,34 @@
+name: Ops Leave Cap Rejections (manual, read-only)
+
+# Counts how many leave applications were refused with "Monthly leave limit reached"
+# in the backend error logs (refusals are thrown before any DB insert, so no table holds
+# them). Reads logs only; writes nothing. Log rotation bounds how far back this sees.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ops-leave-cap-rejections
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  count:
+    name: Count monthly-cap refusals in logs
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Count
+        shell: bash
+        run: |
+          cd /var/www/HRMS2/backend/logs 2>/dev/null || { echo "no logs dir"; exit 0; }
+          ls -la --time-style=long-iso | head -30
+          for f in backend-err.log*; do
+            case "$f" in *.gz) c=zcat;; *) c=cat;; esac
+            echo "== $f =="
+            $c "$f" | grep -c "Monthly leave limit reached" || true
+            $c "$f" | grep "Monthly leave limit reached" | tr -d '\r' | sort | uniq -c | sort -rn | head -40
+          done
