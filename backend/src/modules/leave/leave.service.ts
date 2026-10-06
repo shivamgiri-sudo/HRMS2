@@ -402,7 +402,7 @@ export const leaveService = {
 
       // Combined CL+ML monthly cap (policy engine: leave → cl_ml_policy → monthly_cap_days, default 2)
       const capCheck = await leavePolicyService.checkMonthlyCapExceeded(
-        input.employeeId, input.fromDate, input.toDate, effectiveDayCount
+        input.employeeId, input.fromDate, input.toDate, storedDays
       );
       if (capCheck.exceeded) {
         throw Object.assign(

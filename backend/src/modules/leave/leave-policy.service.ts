@@ -60,7 +60,9 @@ async function checkMonthlyCapExceeded(
     const requestEnd = new Date(toDate);
     const overlapStart = requestStart > monthStart ? requestStart : monthStart;
     const overlapEnd = requestEnd < monthEnd ? requestEnd : monthEnd;
-    const daysInThisMonth = daysInRange(overlapStart, overlapEnd);
+    // A half-day request (single day, requestedDays 0.5) counts as 0.5, not a calendar day.
+    const daysInThisMonth =
+      requestedDays === 0.5 && fromDate === toDate ? 0.5 : daysInRange(overlapStart, overlapEnd);
 
     const excludeClause = excludeRequestId ? "AND lr.id != ?" : "";
     // param order matches the SQL:
@@ -77,10 +79,11 @@ async function checkMonthlyCapExceeded(
     // leaves by including days that belong to adjacent pay periods.
     const sql = `
       SELECT COALESCE(SUM(
-        DATEDIFF(
+        CASE WHEN lr.from_date = lr.to_date THEN LEAST(lr.total_days, 1)
+        ELSE DATEDIFF(
           LEAST(lr.to_date,   LAST_DAY(CONCAT(?, '-', LPAD(?, 2, '0'), '-01'))),
           GREATEST(lr.from_date, CONCAT(?, '-', LPAD(?, 2, '0'), '-01'))
-        ) + 1
+        ) + 1 END
       ), 0) AS used_days
       FROM leave_request lr
       WHERE lr.employee_id = ?
