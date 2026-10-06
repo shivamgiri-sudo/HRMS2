@@ -56,7 +56,7 @@ function paymentMode(raw: unknown) {
 }
 
 const NEEDED: Record<string, string[]> = {
-  grn_request: ["status", "accounts_payment_status", "bill_source_id", "vendor_name", "head", "sub_head", "invoice_number", "branch_id", "due_date", "amount_without_tax", "tax_amount", "amount_with_tax", "financial_year", "cost_centre_id"],
+  grn_request: ["status", "accounts_payment_status", "review_note", "budget_line_id", "bill_source_id", "vendor_name", "head", "sub_head", "invoice_number", "branch_id", "due_date", "amount_without_tax", "tax_amount", "amount_with_tax", "financial_year", "cost_centre_id"],
   vendor_payment_tracking: ["grn_request_id", "grn_number", "branch_id", "vendor_id", "vendor_name", "head", "sub_head", "due_date", "financial_year", "amount_without_tax", "tax_amount", "amount_with_tax", "cost_centre_id", "bill_source_id", "created_at", "payment_status", "paid_amount", "balance_amount", "due_amount", "payment_date", "payment_mode", "transaction_id", "bank_name", "remarks"],
   vendor_payment_transaction: ["vendor_payment_id", "grn_request_id", "sequence_no", "payment_mode", "payment_date", "bank_name", "transaction_id", "amount", "tds_amount", "net_amount", "remarks", "created_by", "created_at"],
   sensitive_action_log: ["actor_user_id", "action_type", "module_key", "entity_type", "entity_id", "change_summary", "acted_at", "reason"],
@@ -88,7 +88,7 @@ function pair(originals: Bill[], copies: Bill[]) {
 async function main() {
   await preflight();
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT g.id grn_id, g.grn_number, g.bill_source_id, g.vendor_id, g.vendor_name, g.head, g.invoice_number, g.bill_date, g.created_at, g.status, ${AMT} amt,
+    `SELECT g.id grn_id, g.grn_number, g.bill_source_id, g.vendor_id, g.vendor_name, g.head, g.invoice_number, g.bill_date, g.created_at, g.status, g.budget_line_id, ${AMT} amt,
             t.id trk_id, t.payment_status trk_status, t.due_amount, t.paid_amount, t.balance_amount
        FROM grn_request g JOIN vendor_payment_tracking t ON t.grn_request_id = g.id
       WHERE g.grn_type = 'vendor' AND g.status = 'paid' AND g.bill_source_id IS NOT NULL
@@ -236,7 +236,16 @@ async function main() {
   const reverse = async (b: Bill, why: string, action: string) => {
     try {
       await bak2(b);
-      await (grnService as any).reverseConsumption(b.grn_id, why, ACTOR, "super_admin");
+      if (b.bill_source_id && !b.budget_line_id) {
+        // A legacy db_bill import never consumed any budget (it has no budget line), so there is nothing to release
+        // and reverseConsumption would refuse. It never reached the journal either (checked below). Plain cancel.
+        const [[je]] = await db.execute<any>(`SELECT COUNT(*) n FROM journal_entry WHERE source_type='grn' AND source_id = ? AND reversed_by_entry_id IS NULL`, [b.grn_id]);
+        if (Number(je?.n) > 0) throw new Error("legacy GRN has a live journal entry - reverse it through the GRN reversal screen");
+        const [res] = await db.execute<any>(`UPDATE grn_request SET status='cancelled', accounts_payment_status='cancelled', review_note = ? WHERE id = ? AND status IN ('paid','pending_accounts_payment','approved','partially_paid','payment_scheduled')`, [why.slice(0, 500), b.grn_id]);
+        if (Number(res.affectedRows) !== 1) throw new Error("GRN status changed before cancellation");
+      } else {
+        await (grnService as any).reverseConsumption(b.grn_id, why, ACTOR, "super_admin");
+      }
       if (b.trk_id) await db.execute(`UPDATE vendor_payment_tracking SET payment_status='Rejected', remarks = CONCAT(COALESCE(remarks,''), ?) WHERE id = ?`, [` | ${why}`, b.trk_id]);
       await db.execute(
         `INSERT INTO sensitive_action_log (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, acted_at, reason)
