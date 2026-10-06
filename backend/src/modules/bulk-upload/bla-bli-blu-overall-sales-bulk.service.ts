@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { markRowsImported } from "./batch-row-status.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { parseDurationSeconds, parseFlexibleDate, parseFlexibleDateTime } from "./dalmia-import-helpers.js";
 
 /**
  * Bla Bli Blu's own "B-3 Dashboard" workbook family's "Overall Sales Raw"
@@ -34,7 +35,8 @@ export function parseDate(raw: unknown): string | null {
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
-  return null;
+  // The Hub reads CSV/Excel as displayed text ("01-09-26"), not serials.
+  return parseFlexibleDate(v);
 }
 
 /**
@@ -53,7 +55,7 @@ export function parseDateTime(raw: unknown): string | null {
   if (!v) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(v);
   if (m) return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
-  return null;
+  return parseFlexibleDateTime(v);
 }
 
 /**
@@ -69,6 +71,7 @@ export function parseCallDurationSeconds(raw: unknown): number | null {
   }
   const v = String(raw ?? "").trim();
   if (!v) return null;
+  if (v.includes(":")) return parseDurationSeconds(v); // "0:07:12"
   const n = Number(v);
   return Number.isFinite(n) ? Math.round(n * 86400) : null;
 }
@@ -147,7 +150,11 @@ export async function importBlaBliBluOverallSalesBatch(
     const orderId = cleanText(data["OrderID"]);
     const reportDate = parseDate(data["Date"]);
     if (!orderId || !reportDate) {
-      const msg = `Row ${row.row_no}: "OrderID" and "Date" are both required -- OrderID is this row's identity`;
+      const problems = [
+        !orderId ? `"OrderID" is missing (it is this row's identity)` : null,
+        !reportDate ? `"Date" is missing or not a recognised date (got "${String(data["Date"] ?? "")}"; use YYYY-MM-DD or DD-MM-YYYY)` : null,
+      ].filter(Boolean);
+      const msg = `Row ${row.row_no}: ${problems.join("; ")}`;
       errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
