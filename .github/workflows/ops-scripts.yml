@@ -56,6 +56,7 @@ on:
           - sbi-card-demo-remove
           - holiday-mapping-audit
           - exception-control-audit
+          - repair-bucket-regrade
           - meta-outreach-audit
           - apr-source-audit
           - branch-activity-audit
@@ -620,6 +621,11 @@ jobs:
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
               ONLY=""; [ -n "${INPUT_EMPLOYEE_CODES}" ] && ONLY="--only=${INPUT_EMPLOYEE_CODES// /,}"
               npx tsx scripts/mis-report-schedules-setup.ts $FLAG $ONLY
+              ;;
+            repair-bucket-regrade)
+              # Dry-runs unless given --apply. Apply writes only bucketed employees' roster_import rows that pay more.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/repair-bucket-regrade.ts $FLAG
               ;;
             exception-control-audit)
               # Read-only in both modes.
