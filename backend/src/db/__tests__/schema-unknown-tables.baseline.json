@@ -21,6 +21,10 @@
   "modules/finance/tally-export-lock.service.ts": [
     "tally_export_lock"
   ],
+  "modules/finance/tally-payment-import.service.ts": [
+    "tally_import_batch",
+    "tally_import_voucher"
+  ],
   "modules/hiring-engine/he-bulk-call.service.ts": [
     "he_call_batch",
     "he_call_job"
