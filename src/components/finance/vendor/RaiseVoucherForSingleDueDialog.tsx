@@ -90,7 +90,6 @@ export function RaiseVoucherForSingleDueDialog({ payment, open, onOpenChange, on
     mutationFn: async () => (await hrmsApi.post("/api/finance/payment-vouchers", {
       sourceType: "vendor_grn",
       bankAccountId,
-      payableAccountId,
       grnAllocations: [{ vendorPaymentTrackingId: payment!.id, amount: netPayable }],
       amount: netPayable,
       remarks: remarks.trim() || undefined,
@@ -105,7 +104,7 @@ export function RaiseVoucherForSingleDueDialog({ payment, open, onOpenChange, on
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const canSubmit = !!payment && !!bankAccountId && !!payableAccountId && netPayable > 0 && !raiseMutation.isPending;
+  const canSubmit = !!payment && !!bankAccountId && netPayable > 0 && !raiseMutation.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -148,18 +147,6 @@ export function RaiseVoucherForSingleDueDialog({ payment, open, onOpenChange, on
                 placeholder="Which account pays this"
                 searchPlaceholder="Type an account name…"
               />
-            </div>
-
-            <div>
-              <Label>Payable Account (bank ledger — Vendor Payables, TDS Payable, etc.)</Label>
-              <Select value={payableAccountId} onValueChange={setPayableAccountId}>
-                <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select ledger account" /></SelectTrigger>
-                <SelectContent>
-                  {(payableAccountsQuery.data ?? []).map((a: any) => (
-                    <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
 
             <div>

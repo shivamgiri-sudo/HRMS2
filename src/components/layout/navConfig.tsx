@@ -107,7 +107,7 @@ export const navGroups: NavGroup[] = [
           { label: "Comm. Preferences",  href: "/communication/preferences", icon: ic(Bell), public: true, description: "Notification & communication settings" },
         ],
       },
-      { label: "My Resignation",   href: "/exit/resignation",        icon: ic(UserMinus), public: true, pageCode: "RESIGNATION_MY_REQUEST", description: "Raise resignation request" },
+      { label: "Exit Desk",          href: "/exit/resignation",        icon: ic(UserMinus), public: true, pageCode: "RESIGNATION_MY_REQUEST", description: "Raise resignation request" },
       { label: "DPDP Withdrawal",  href: "/privacy/dpdp-withdrawal", icon: ic(ShieldCheck), public: true, pageCode: "DPDP_WITHDRAWAL",       description: "Withdraw data consent" },
     ],
   },

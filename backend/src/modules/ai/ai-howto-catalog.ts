@@ -184,7 +184,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
     // before this fix).
     aliases: [/\b(submit|raise|file)\b.*\bresign/i, /\bI\s+(want|need)\s+to\s+resign\b/i, /\bresign\b.*\b(how|where|system)\b/i],
     steps: [
-      '1. Go to Exit → My Resignation.',
+      '1. Go to Exit → Exit Desk.',
       '2. Click "Submit Resignation".',
       '3. Enter your last working day and reason, then submit for approval.',
     ],
@@ -755,14 +755,14 @@ export const HOWTO_CATALOG: HowToEntry[] = [
     title: 'Revoke or cancel a resignation',
     aliases: [/\b(revoke|cancel|withdraw|take\s*back)\b.*\bresign/i],
     steps: [
-      '1. Go to Exit → My Resignation.',
+      '1. Go to Exit → Exit Desk.',
       '2. Your active resignation is shown. Click "Revoke" or "Withdraw".',
       '3. Add a reason (optional) and confirm — you return to active status.',
     ],
     route: '/exit/resignation',
     auth: { mode: 'page_code', pageCode: 'RESIGNATION_MY_REQUEST' },
     status: 'verified',
-    deniedExplanation: 'Your role does not have access to the My Resignation page.',
+    deniedExplanation: 'Your role does not have access to the Exit Desk page.',
   },
 
   // ─── PERFORMANCE / KPI ───────────────────────────────────────────────────────

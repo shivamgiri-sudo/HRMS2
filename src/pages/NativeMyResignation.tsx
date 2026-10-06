@@ -85,7 +85,7 @@ export default function NativeMyResignation() {
         <header>
           <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight text-slate-900">
             <FileText className="h-6 w-6 text-teal-700" aria-hidden />
-            My Resignation
+            Exit Desk
           </h1>
           <p className="mt-1 text-base text-slate-600">
             {openRequest ? "Track your resignation and its next steps." : "Take a moment to look back before you decide."}

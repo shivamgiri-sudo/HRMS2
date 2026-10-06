@@ -292,6 +292,16 @@ async function resolveActorNames(userIds: (string | null | undefined)[]): Promis
   return names;
 }
 
+/** Ledger head each voucher lane books against when the caller does not name one. */
+const DEFAULT_PAYABLE_ACCOUNT_BY_SOURCE: Record<string, string> = {
+  vendor_grn: "Vendor Payables",
+  vendor_advance: "Vendor Payables",
+  vendor_advance_application: "Vendor Payables",
+  imprest_allocation: "Imprest Float",
+  internal_transfer: "Inter-Account Transfer",
+  sales_receipt: "Sundry Debtors",
+};
+
 export const paymentVoucherService = {
   async list(filters: { status?: string; sourceType?: string; bankAccountId?: string; limit?: number; branchScope?: FinanceBranchScope }) {
     const conditions: string[] = ["1=1"];
@@ -522,6 +532,18 @@ export const paymentVoucherService = {
       throw new PaymentVoucherError("Amount must be a positive number");
     }
     if (!input.bankAccountId) throw new PaymentVoucherError("Bank account is required");
+    if (!input.payableAccountId) {
+      // The raise form no longer asks for a ledger head: every lane except a general payment has
+      // exactly one correct head, so it is resolved here by name rather than trusted from the client.
+      const defaultName = DEFAULT_PAYABLE_ACCOUNT_BY_SOURCE[input.sourceType];
+      if (defaultName) {
+        const [[row]] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM payable_account_master WHERE account_name = ? AND active_status = 1 LIMIT 1`,
+          [defaultName],
+        );
+        if (row) input = { ...input, payableAccountId: String((row as any).id) };
+      }
+    }
     if (!input.payableAccountId) throw new PaymentVoucherError("Payable account is required");
 
     let id = "";

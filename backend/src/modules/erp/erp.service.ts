@@ -94,7 +94,7 @@ export const vendorService = {
       `SELECT * FROM (
          SELECT v.*, ROW_NUMBER() OVER (
            PARTITION BY UPPER(TRIM(v.vendor_name))
-           ORDER BY v.updated_at DESC, v.id ASC
+           ORDER BY (v.gst_number IS NULL OR TRIM(v.gst_number) = '') ASC, v.updated_at DESC, v.id ASC
          ) AS rn
          FROM vendor_master v
          ${where}
@@ -126,7 +126,7 @@ export const vendorService = {
       `SELECT COUNT(*) AS total FROM (
          SELECT ROW_NUMBER() OVER (
            PARTITION BY UPPER(TRIM(v.vendor_name))
-           ORDER BY v.updated_at DESC, v.id ASC
+           ORDER BY (v.gst_number IS NULL OR TRIM(v.gst_number) = '') ASC, v.updated_at DESC, v.id ASC
          ) AS rn
          FROM vendor_master v
          ${where}

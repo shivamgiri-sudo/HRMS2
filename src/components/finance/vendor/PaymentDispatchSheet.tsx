@@ -325,7 +325,7 @@ export function PaymentDispatchSheet({ payment, open, onOpenChange, onSaved, onO
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {["NEFT", "RTGS", "IMPS", "Cheque", "Cash", "UPI"].map(m => (
+                    {["NEFT", "RTGS", "UPI", "IMPS"].map(m => (
                       <SelectItem key={m} value={m}>{m}</SelectItem>
                     ))}
                   </SelectContent>

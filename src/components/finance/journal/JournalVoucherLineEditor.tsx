@@ -20,7 +20,7 @@ export type EditableLine = {
   narration: string;
 };
 
-export type JvAccountOption = { accountType: "expense_sub_head" | "payable_account"; id: string; label: string; group: string };
+export type JvAccountOption = { accountType: "expense_sub_head" | "payable_account" | "bank_account" | "vendor"; id: string; label: string; group: string };
 
 export const emptyLine = (key: string): EditableLine => ({ key, accountKey: "", debitAmount: "", creditAmount: "", narration: "" });
 
@@ -66,15 +66,15 @@ export function JournalVoucherLineEditor({
 
   return (
     <div className="space-y-3">
-      <div className="overflow-hidden rounded-xl border border-slate-200">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <table className="w-full min-w-[860px] text-sm">
           <thead className="bg-slate-50 text-left text-[10px] font-bold uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-3 py-2 w-[34%]">Account</th>
-              <th className="px-3 py-2 text-right w-[15%]">Debit</th>
-              <th className="px-3 py-2 text-right w-[15%]">Credit</th>
-              <th className="px-3 py-2 w-[28%]">Line Narration</th>
-              <th className="w-[8%]" />
+              <th className="px-3 py-2 min-w-[280px]">Account</th>
+              <th className="px-3 py-2 text-right w-[170px]">Debit</th>
+              <th className="px-3 py-2 text-right w-[170px]">Credit</th>
+              <th className="px-3 py-2 min-w-[200px]">Line Narration</th>
+              <th className="w-[48px]" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -86,7 +86,7 @@ export function JournalVoucherLineEditor({
                     value={line.accountKey}
                     onChange={(v) => updateLine(line.key, { accountKey: v })}
                     placeholder="Select account…"
-                    searchPlaceholder="Search expense/ledger heads…"
+                    searchPlaceholder="Search expense heads, ledgers, banks, vendors…"
                     disabled={disabled}
                     aria-label={`Line ${index + 1} account`}
                   />
@@ -94,7 +94,7 @@ export function JournalVoucherLineEditor({
                 <td className="px-3 py-2 align-top">
                   <Input
                     type="number" min="0" step="0.01" inputMode="decimal"
-                    className="h-9 text-right text-xs"
+                    className="h-9 min-w-[140px] text-right text-sm tabular-nums"
                     value={line.debitAmount}
                     disabled={disabled}
                     onChange={(e) => updateLine(line.key, { debitAmount: e.target.value, creditAmount: e.target.value ? "" : line.creditAmount })}
@@ -105,7 +105,7 @@ export function JournalVoucherLineEditor({
                 <td className="px-3 py-2 align-top">
                   <Input
                     type="number" min="0" step="0.01" inputMode="decimal"
-                    className="h-9 text-right text-xs"
+                    className="h-9 min-w-[140px] text-right text-sm tabular-nums"
                     value={line.creditAmount}
                     disabled={disabled}
                     onChange={(e) => updateLine(line.key, { creditAmount: e.target.value, debitAmount: e.target.value ? "" : line.debitAmount })}

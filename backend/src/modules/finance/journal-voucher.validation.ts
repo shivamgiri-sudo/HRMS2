@@ -15,9 +15,10 @@ export type JvType = (typeof JV_TYPES)[number];
 export const JV_STATUSES = ["draft", "pending_approval", "posted", "rejected", "withdrawn", "reversed"] as const;
 export type JvStatus = (typeof JV_STATUSES)[number];
 
-/** Bank and vendor accounts are deliberately absent: each has its own sub-ledger (bank
- *  reconciliation, vendor dues) that only Payment Vouchers / GRNs may move. */
-export const JV_ACCOUNT_TYPES = ["expense_sub_head", "payable_account"] as const;
+/** Bank and vendor accounts are allowed (Finance needs them for corrections, opening balances and
+ *  contra entries). A journal line moves the general ledger only - the bank statement and vendor
+ *  dues sub-ledgers are still moved by Payment Vouchers / GRNs. */
+export const JV_ACCOUNT_TYPES = ["expense_sub_head", "payable_account", "bank_account", "vendor"] as const;
 export type JvAccountType = (typeof JV_ACCOUNT_TYPES)[number];
 
 /** payable_account_master heads whose balance is owned by another sub-ledger. */
@@ -112,7 +113,7 @@ export function normalizeJournalVoucherInput(raw: unknown, todayIst: string): Jv
     if (!rawLine || typeof rawLine !== "object") throw refuse(400, "JV_INVALID_LINE", `Line ${lineNo} is not valid.`);
     const line = rawLine as Record<string, unknown>;
     if (!JV_ACCOUNT_TYPES.includes(line.accountType as JvAccountType)) {
-      throw refuse(400, "JV_ACCOUNT_TYPE_NOT_ALLOWED", `Line ${lineNo}: only expense heads and ledger heads can be used in a journal voucher.`);
+      throw refuse(400, "JV_ACCOUNT_TYPE_NOT_ALLOWED", `Line ${lineNo}: only expense heads, ledger heads, bank accounts and vendors can be used in a journal voucher.`);
     }
     if (typeof line.accountId !== "string" || !UUID_PATTERN.test(line.accountId)) {
       throw refuse(400, "JV_ACCOUNT_REQUIRED", `Line ${lineNo}: pick an account.`);
