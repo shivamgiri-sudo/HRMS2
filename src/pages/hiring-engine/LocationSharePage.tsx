@@ -8,15 +8,10 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { CalendarCheck, CheckCircle2, MapPin, MessageCircle, ShieldCheck, XCircle } from "lucide-react";
+import { CheckCircle2, MapPin, ShieldCheck, XCircle } from "lucide-react";
+import { ANSWERS, InterviewCard, LocationCard, RsvpCard, Shell, StatusCard, WhatsAppCard, type Answer, type Invitation } from "./InvitationParts";
 
-interface Ctx { firstName: string; branchName: string; address: string | null; slotAt: string | null; open: boolean; sharing: boolean; waConsent?: boolean; optInOpen?: boolean; state?: string; role?: string | null; rsvpOpen?: boolean }
-type Answer = "yes" | "later" | "no";
-const ANSWERS: Array<{ k: Answer; label: string; done: string }> = [
-  { k: "yes", label: "Yes, I will come", done: "Thank you! The branch will expect you. Please reach 10 minutes early with your documents." },
-  { k: "later", label: "I need another time", done: "Noted. Our recruiter will call you to fix a better time." },
-  { k: "no", label: "I cannot come", done: "Thanks for letting us know. Your slot is freed for someone else." },
-];
+interface Ctx extends Invitation { open: boolean; sharing: boolean; waConsent?: boolean; optInOpen?: boolean; state?: string; rsvpOpen?: boolean }
 type Phase = "loading" | "invalid" | "closed" | "ready" | "sharing" | "arrived" | "stopped" | "denied";
 
 const api = (token: string, path = "") => `/api/he-public/loc/${encodeURIComponent(token)}${path}`;
@@ -29,6 +24,7 @@ export default function LocationSharePage() {
   const pre = search.get("a");
   const [picked, setPicked] = useState<Answer | null>(pre === "yes" || pre === "later" || pre === "no" ? pre : null);
   const [answered, setAnswered] = useState<Answer | null>(null);
+  const [editing, setEditing] = useState(false);
   const [answerBusy, setAnswerBusy] = useState(false);
   const [answerErr, setAnswerErr] = useState<string | null>(null);
   const [ctx, setCtx] = useState<Ctx | null>(null);
@@ -114,81 +110,44 @@ export default function LocationSharePage() {
     setAnswerBusy(true); setAnswerErr(null);
     try {
       const r = await post(api(token, "/answer"), { answer: a });
-      if (r.ok) setAnswered(a); else setAnswerErr(r.status === 403 ? "Your slot time has passed, so this can no longer be changed here." : "That did not work. Please try again.");
+      if (r.ok) { setAnswered(a); setEditing(false); } else setAnswerErr(r.status === 403 ? "Your slot time has passed, so this can no longer be changed here." : "That did not work. Please try again.");
     } catch { setAnswerErr("No connection. Please try again."); }
     setAnswerBusy(false);
   };
-  const slotText = ctx?.slotAt ? `${new Date(ctx.slotAt.slice(0, 10) + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })}, ${ctx.slotAt.slice(11, 16)}` : null;
-  const RsvpBlock = () => {
-    if (!ctx?.rsvpOpen) return null;
-    if (answered) return <div className="mb-5 flex gap-3 rounded-xl bg-emerald-50 p-4 text-emerald-800" role="status"><CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden /><p>{ANSWERS.find((x) => x.k === answered)?.done}</p></div>;
-    const current = ctx.state === "confirmed" ? "You have confirmed. You can still change it below." : ctx.state === "declined" ? "You said you cannot come. Changed your mind? Pick below." : null;
-    return (
-      <section aria-label="Will you come" className="mb-5">
-        <p className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-blue-700"><CalendarCheck className="h-4 w-4" aria-hidden /> Walk-in interview</p>
-        <h1 className="mt-1 text-xl font-bold text-slate-900">Hi {ctx.firstName}, will you come?</h1>
-        <p className="mt-1 text-slate-700">{ctx.role ? <><b>{ctx.role}</b> · </> : null}{ctx.branchName}{slotText ? <><br /><b>{slotText}</b></> : null}{ctx.address ? <><br /><span className="text-sm text-slate-500">{ctx.address}</span></> : null}</p>
-        {current && <p className="mt-2 text-sm text-slate-600">{current}</p>}
-        <div role="radiogroup" aria-label="Your answer" className="mt-4 space-y-2">
-          {ANSWERS.map((a) => (
-            <button key={a.k} type="button" role="radio" aria-checked={picked === a.k} onClick={() => setPicked(a.k)}
-              className={`w-full cursor-pointer rounded-xl border px-4 py-3 text-left text-base font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${picked === a.k ? (a.k === "yes" ? "border-emerald-600 bg-emerald-50 text-emerald-900" : a.k === "no" ? "border-rose-500 bg-rose-50 text-rose-900" : "border-blue-600 bg-blue-50 text-blue-900") : "border-slate-300 bg-white text-slate-800 hover:bg-slate-50"}`}>{a.label}</button>
-          ))}
-        </div>
-        {answerErr && <p role="alert" className="mt-2 text-sm text-rose-600">{answerErr}</p>}
-        <button type="button" disabled={!picked || answerBusy} onClick={() => picked && void sendAnswer(picked)} className="mt-3 w-full cursor-pointer rounded-xl bg-blue-700 px-4 py-3.5 text-base font-semibold text-white transition-colors duration-200 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">{answerBusy ? "Saving…" : "Send my answer"}</button>
-      </section>
-    );
-  };
-  const showOptIn = Boolean(ctx?.optInOpen && !ctx?.waConsent);
-  const OptInBlock = () => !showOptIn ? null : optIn === "done" ? (
-    <div className="mt-5 flex gap-3 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800" role="status"><CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden /><p>Done. We will send your reminder and directions on WhatsApp. Reply STOP there any time to stop.</p></div>
-  ) : (
-    <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-      <p className="flex items-center gap-2 font-semibold text-slate-900"><MessageCircle className="h-5 w-5 text-emerald-600" aria-hidden /> Get interview updates on WhatsApp?</p>
-      <p className="mt-1 text-sm text-slate-700">Reminders, directions and a quick way to change your time. Optional, and you can reply STOP any time.</p>
-      <button type="button" disabled={optIn === "busy"} onClick={() => void optInWhatsApp()} className="mt-3 w-full cursor-pointer rounded-xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white transition-colors duration-200 hover:bg-emerald-700 disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2">{optIn === "busy" ? "Saving…" : "Yes, send me updates on WhatsApp"}</button>
-      {optIn === "failed" && <p role="alert" className="mt-2 text-sm text-rose-600">That did not work. Please try again.</p>}
-    </div>
-  );
-
+  // Not offered once they have said they cannot come or want another time: the server refuses opt-in for a released slot.
+  const showOptIn = Boolean(ctx?.optInOpen && !ctx?.waConsent && (answered == null || answered === "yes"));
   const stop = async () => { stopWatch(); await post(api(token, "/stop")).catch(() => undefined); setPhase("stopped"); };
 
-  const Card = ({ children }: { children: React.ReactNode }) => (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-8">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">{children}</div>
-    </main>
-  );
-  const btn = "w-full cursor-pointer rounded-xl px-4 py-3.5 text-base font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2";
+  if (phase === "loading") return <Shell><StatusCard tone="plain" icon={<MapPin className="h-6 w-6" />} title="Loading your interview…" /></Shell>;
+  if (phase === "invalid" || !ctx) return <Shell><StatusCard tone="bad" icon={<XCircle className="h-6 w-6" />} title="This link is not valid">Please use the latest message we sent you.</StatusCard></Shell>;
 
-  if (phase === "loading") return <Card><p className="text-center text-slate-500">Loading…</p></Card>;
-  if (phase === "invalid") return <Card><div className="text-center"><XCircle className="mx-auto h-10 w-10 text-rose-500" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">This link is not valid</h1><p className="mt-1 text-slate-600">Please use the latest message we sent you.</p></div></Card>;
-  if (phase === "closed" && ctx?.rsvpOpen) return <Card><RsvpBlock /><OptInBlock /></Card>;
-  if (phase === "closed") return <Card><div className="text-center"><MapPin className="mx-auto h-10 w-10 text-slate-400" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">{showOptIn ? `Hi ${ctx?.firstName}, your walk-in is booked` : "Location sharing is not active right now"}</h1><p className="mt-1 text-slate-600">{showOptIn ? <>{ctx?.branchName}{ctx?.slotAt ? <>, {ctx.slotAt.slice(0, 10)} at {ctx.slotAt.slice(11, 16)}</> : null}. Live location sharing opens a few hours before your time.</> : "It opens a few hours before your walk-in time. You can still just come to the branch on time."}</p></div><OptInBlock /></Card>;
-  if (phase === "arrived") return <Card><div className="text-center"><CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">You have reached {ctx?.branchName}</h1><p className="mt-1 text-slate-600">Sharing has stopped. Please register at the reception. Good luck!</p></div></Card>;
-  if (phase === "stopped") return <Card><div className="text-center"><ShieldCheck className="mx-auto h-10 w-10 text-slate-500" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">Sharing stopped</h1><p className="mt-1 text-slate-600">We are no longer using your location. See you at the branch.</p></div></Card>;
-  if (phase === "denied") return <Card><div className="text-center"><XCircle className="mx-auto h-10 w-10 text-amber-500" aria-hidden /><h1 className="mt-3 text-lg font-bold text-slate-900">Location permission is off</h1><p className="mt-1 text-slate-600">No problem. You can still come to {ctx?.branchName} at your time. If you change your mind, allow location for this page and reload.</p></div></Card>;
+  // The interview card, the answer card and the optional WhatsApp card are shared by every state where the invitation is still live.
+  const interview = <InterviewCard inv={ctx} />;
+  const rsvp = ctx.rsvpOpen ? (
+    <RsvpCard firstName={ctx.firstName} state={ctx.state} picked={picked} answered={answered}
+      showOptions={editing || (!answered && (pre != null || !["confirmed", "declined"].includes(ctx.state ?? "")))}
+      busy={answerBusy} error={answerErr} onPick={setPicked} onSend={() => picked && void sendAnswer(picked)}
+      onChange={() => { setAnswered(null); setEditing(true); }} />
+  ) : null;
+  const whatsapp = showOptIn ? <WhatsAppCard state={optIn} onOptIn={() => void optInWhatsApp()} /> : null;
 
+  if (phase === "arrived") return <Shell><StatusCard tone="ok" icon={<CheckCircle2 className="h-6 w-6" />} title={`You have reached ${ctx.branchName}`}>Sharing has stopped. Please register at the reception and quote your reference {ctx.reference}. Good luck!</StatusCard></Shell>;
+  if (phase === "stopped") return <Shell>{interview}<StatusCard tone="plain" icon={<ShieldCheck className="h-6 w-6" />} title="Sharing stopped">We are no longer using your location. See you at the branch.</StatusCard>{whatsapp}</Shell>;
+  if (phase === "denied") return <Shell>{interview}<StatusCard tone="warn" icon={<XCircle className="h-6 w-6" />} title="Location permission is off">No problem. You can still come to {ctx.branchName} at your time. If you change your mind, allow location for this page and reload.</StatusCard>{whatsapp}</Shell>;
+  if (phase === "closed") {
+    return (
+      <Shell>
+        {interview}{rsvp}
+        {!ctx.rsvpOpen && <StatusCard tone="plain" icon={<MapPin className="h-6 w-6" />} title={showOptIn ? `Hi ${ctx.firstName}, your walk-in is booked` : "Location sharing is not active right now"}>{showOptIn ? "Live location sharing opens a few hours before your time." : "It opens a few hours before your walk-in time. You can still just come to the branch on time."}</StatusCard>}
+        {whatsapp}
+      </Shell>
+    );
+  }
   return (
-    <Card>
-      <RsvpBlock />
-      <h1 className="text-xl font-bold text-slate-900">Hi {ctx?.firstName}, on your way?</h1>
-      <p className="mt-1 text-slate-600">Your walk-in is at <b>{ctx?.branchName}</b>{ctx?.slotAt ? <> at <b>{ctx.slotAt.slice(11, 16)}</b></> : null}.{ctx?.address ? <><br /><span className="text-sm">{ctx.address}</span></> : null}</p>
-      {phase === "sharing" ? (
-        <div className="mt-5 space-y-4" aria-live="polite">
-          <div className="rounded-xl bg-emerald-50 p-4 text-emerald-800"><b>Sharing your live location.</b> Keep this page open while you travel.{eta && eta.min != null ? <div className="mt-1 text-sm">About {eta.km != null ? `${eta.km} km` : ""} away{eta.min > 0 ? `, around ${eta.min} min` : ""}.</div> : null}</div>
-          {error && <p role="status" className="text-sm text-amber-700">{error}</p>}
-          <button type="button" onClick={() => void stop()} className={`${btn} border border-slate-300 bg-white text-slate-800 hover:bg-slate-50`}>Stop sharing</button>
-        </div>
-      ) : (
-        <div className="mt-5 space-y-4">
-          <div className="flex gap-3 rounded-xl bg-slate-50 p-4 text-sm text-slate-700"><ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" aria-hidden /><p>If you tap Share, your phone's location is sent to Mas Callnet <b>only while this page is open</b>, so the branch can prepare for your arrival. It stops when you reach the branch, or whenever you tap Stop. It is optional.</p></div>
-          {error && <p role="alert" className="text-sm text-rose-600">{error}</p>}
-          <button type="button" onClick={() => void start()} className={`${btn} bg-blue-600 text-white hover:bg-blue-700`}>Share my location</button>
-          <button type="button" onClick={() => setPhase("stopped")} className={`${btn} bg-white text-slate-600 hover:bg-slate-50`}>No thanks</button>
-        </div>
-      )}
-      <OptInBlock />
-    </Card>
+    <Shell>
+      {interview}{rsvp}
+      <LocationCard firstName={ctx.firstName} sharing={phase === "sharing"} eta={eta} error={error} onStart={() => void start()} onStop={() => void stop()} onSkip={() => setPhase("stopped")} />
+      {whatsapp}
+    </Shell>
   );
 }

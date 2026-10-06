@@ -37,7 +37,7 @@ export function buildInviteEmail(c: InviteEmailInput): { subject: string; html: 
   const subject = `Walk-in interview: ${c.date}, ${c.time} - ${c.role}, ${c.company}`;
   const docs = c.docs.split(/\s*,\s*/).filter(Boolean);
   const btn = (href: string, label: string, bg: string, fg: string, border: string) =>
-    `<a href="${esc(href)}" style="display:inline-block;background:${bg};color:${fg};border:1px solid ${border};padding:12px 18px;border-radius:8px;font-weight:bold;font-size:15px;text-decoration:none;margin:4px 6px 4px 0">${label}</a>`;
+    `<a href="${esc(href)}" style="display:inline-block;background:${bg};color:${fg};border:1px solid ${border};padding:14px 18px;border-radius:8px;font-weight:bold;font-size:16px;text-decoration:none;margin:0 0 10px;display:block;text-align:center">${label}</a>`;
   const row = (label: string, value: string) =>
     `<tr><td style="padding:10px 0;border-top:1px solid #e2e8f0;width:110px;color:#64748b;font-size:13px;vertical-align:top">${label}</td><td style="padding:10px 0;border-top:1px solid #e2e8f0;font-size:15px;color:#0f172a">${value}</td></tr>`;
   const answer = c.answerUrl ? `

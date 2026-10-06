@@ -9,6 +9,7 @@ import { loadOpenRequisitionsForMatching } from "./he-drive.service.js";
 import { rankRequisitions } from "./he-matcher.js";
 import { ratingFor } from "./he-jd-doc.js";
 import { loadProfiles } from "./he-profile.service.js";
+import { cleanName } from "./he-name.js";
 
 export const SHORTLIST_FILTERS = ["all", "not_contacted", "emailed", "whatsapp", "called", "replied", "confirmed", "declined"] as const;
 export type ShortlistFilter = (typeof SHORTLIST_FILTERS)[number];
@@ -63,7 +64,7 @@ export async function getDriveShortlist(driveId: string, o: { filter?: Shortlist
     const lead = { age: r.age, educationRank: r.education_rank, experienceYears: r.experience_years == null ? null : Number(r.experience_years), nightShiftOk: r.night_shift_ok == null ? null : Boolean(r.night_shift_ok), lat: r.lat == null ? null : Number(r.lat), lng: r.lng == null ? null : Number(r.lng), city: r.locality ?? null, ...profiles.get(String(r.lead_id)) };
     const also = rankRequisitions(lead, reqs, 3).map((x) => ({ code: x.req.code, role: x.req.role, process: x.req.process, branch: x.req.branch, score: x.result.score }));
     return {
-      matchId: r.id, leadId: r.lead_id, name: r.full_name, mobile: String(r.mobile10).slice(0, 2) + "xxxxxx" + String(r.mobile10).slice(-2),
+      matchId: r.id, leadId: r.lead_id, name: cleanName(r.full_name) || r.full_name, mobile: String(r.mobile10).slice(0, 2) + "xxxxxx" + String(r.mobile10).slice(-2),
       hasEmail: Boolean(r.email), waConsent: Number(r.wa_consent) === 1, source: r.primary_source, effort: r.effort_tier, walkins: Number(r.walkin_count ?? 0),
       state: r.state, leadStatus: r.lead_status, slotAt: r.slot_at ? String(r.slot_at).slice(0, 16) : null,
       fit: { score: Number(r.score), rating: ratingFor(Number(r.score)), confidence: rj?.confidence ?? null, reasons: rj?.reasons ?? [], unknown: rj?.unknown ?? [], priority: rj?.priority ?? null },

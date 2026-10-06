@@ -132,7 +132,10 @@ export async function createDrive(i: DriveInput): Promise<{ id: string; invites:
     `INSERT INTO he_drive (requisition_id, branch_name, drive_date, slot_start, slot_end, slot_minutes, slot_capacity, target_shows, show_rate_pct, status, auto_send, created_by)
      VALUES (?,?,?,?,?,?,?,?,?, 'draft', ?, ?)
      ON DUPLICATE KEY UPDATE slot_start = VALUES(slot_start), slot_end = VALUES(slot_end), slot_minutes = VALUES(slot_minutes),
-       slot_capacity = VALUES(slot_capacity), target_shows = VALUES(target_shows), show_rate_pct = VALUES(show_rate_pct)`,
+       slot_capacity = VALUES(slot_capacity), target_shows = VALUES(target_shows), show_rate_pct = VALUES(show_rate_pct),
+       -- creating a drive for a requisition + date whose drive was closed means "run it again": reopen it as a draft instead of
+       -- updating a closed drive that can never be started (the other statuses are left alone)
+       status = IF(status = 'closed', 'draft', status)`,
     [i.requisitionId, req.branch_name, i.driveDate, `${cfg.start}:00`.slice(0, 8), `${cfg.end}:00`.slice(0, 8), cfg.minutes, cfg.capacity, targetShows, i.showRatePct ?? 40, i.autoSend ? 1 : 0, i.createdBy ?? null]);
   const [row] = await db.execute<RowDataPacket[]>("SELECT id FROM he_drive WHERE requisition_id = ? AND branch_name = ? AND drive_date = ?", [i.requisitionId, req.branch_name, i.driveDate]);
   void r;

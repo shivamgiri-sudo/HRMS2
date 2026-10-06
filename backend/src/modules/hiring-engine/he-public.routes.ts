@@ -16,7 +16,7 @@ hePublicRouter.get("/loc/:token", async (req, res) => {
   try {
     const c = await getContextByToken(String(req.params.token));
     if (!c) return res.status(404).json({ success: false, message: "This link is not valid." });
-    res.json({ success: true, data: { firstName: c.firstName, branchName: c.branchName, address: c.address, slotAt: c.slotAt, open: c.open, sharing: c.sharing, state: c.state, waConsent: c.waConsent, optInOpen: c.optInOpen, role: c.role, rsvpOpen: c.rsvpOpen } });
+    res.json({ success: true, data: { firstName: c.firstName, branchName: c.branchName, address: c.address, slotAt: c.slotAt, open: c.open, sharing: c.sharing, state: c.state, waConsent: c.waConsent, optInOpen: c.optInOpen, role: c.role, rsvpOpen: c.rsvpOpen, reference: c.reference, mapsUrl: c.mapsUrl, docs: c.docs } });
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-public] context failed");
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });

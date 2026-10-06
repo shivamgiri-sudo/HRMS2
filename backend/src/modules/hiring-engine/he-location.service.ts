@@ -22,6 +22,8 @@ export interface LocationContext {
   /** Opt-in is offered while the invitation is live: until 3h after the slot. */
   optInOpen: boolean;
   role: string | null;
+  /** What the candidate needs on the day, shown on the invitation page (same values as the email). */
+  reference: string; mapsUrl: string | null; docs: string[];
   /** Yes / No / another time can be answered until the slot starts. */
   rsvpOpen: boolean;
 }
@@ -49,6 +51,9 @@ export async function getContextByToken(token: string): Promise<LocationContext 
     waConsent: await hasConsent(r.lead_id as string, "whatsapp_contact"),
     optInOpen: Number(r.optin_open) === 1 && r.lead_status !== "opted_out",
     role: (r.designation_name as string | null) ?? null,
+    reference: `HE-${String(r.id).replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+    mapsUrl: r.latitude != null && r.longitude != null ? `https://maps.google.com/?q=${r.latitude},${r.longitude}` : r.address ? `https://maps.google.com/?q=${encodeURIComponent(String(r.address))}` : null,
+    docs: String(process.env.HE_DOCS_LIST?.trim() || "Aadhaar, PAN, 12th marksheet").split(/\s*,\s*/).filter(Boolean),
     rsvpOpen: Number(r.rsvp_open) === 1 && r.lead_status !== "opted_out",
   };
 }
