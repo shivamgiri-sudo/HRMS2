@@ -117,6 +117,7 @@ on:
           - trace-grn
           - grn-amount-audit
           - repair-migrated-grn-ex-gst
+          - book-nk-to-bluevine
           - backfill-vendor-recognition-period
           - backfill-grn-recognition-period
           - fix-process-branches
@@ -323,6 +324,11 @@ jobs:
               # Dry-runs unless given --apply. Apply adds db_bill GRNs missing from grn_request / vendor_payment_tracking for FY 2026-27 (idempotent).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/migrate-grn-from-dbbill.ts --fy=2026-27 $FLAG
+              ;;
+            book-nk-to-bluevine)
+              # Dry-runs unless given --apply. Apply books FY 2026-27 Ahmedabad NK spend to the Bluevine (Finfort) process (old values logged).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/book-nk-to-bluevine.ts $FLAG
               ;;
             repair-migrated-grn-ex-gst)
               # Dry-runs unless given --apply. Apply moves GST out of amount_without_tax on FY 2026-27 migrated GRNs (old values logged).
