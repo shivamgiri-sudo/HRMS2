@@ -33,6 +33,9 @@ export interface ActualsByKey {
   byProcess: Map<string, number>;
   /** Populated only by sources that carry a cost centre at the line level. */
   byCostCentre: Map<string, number>;
+  /** Where each cost centre's amount was attributed (branch / process), so one cost centre's share
+   *  can be taken back out exactly (pnl-forecast-overlay.ts withoutCostCentres). */
+  ccKeys?: Map<string, { branchId: string | null; processId: string | null }>;
 }
 
 const emptyActuals = (): ActualsByKey => ({
@@ -58,11 +61,14 @@ function accumulate(
         processId,
         (into.byProcess.get(processId) ?? 0) + amount,
       );
-    if (costCentreId)
+    if (costCentreId) {
       into.byCostCentre.set(
         costCentreId,
         (into.byCostCentre.get(costCentreId) ?? 0) + amount,
       );
+      if (!into.ccKeys) into.ccKeys = new Map();
+      if (!into.ccKeys.has(costCentreId)) into.ccKeys.set(costCentreId, { branchId, processId });
+    }
   }
   return into;
 }
@@ -489,16 +495,19 @@ export async function getDriverRevenueActuals(
     // Process via the precomputed PROCESS_BY_COST_CENTRE join (once per cost centre) rather than
     // the per-row correlated PROCESS_FROM_EMPLOYEES subquery — the same modal-process rule, the
     // same rows (see PROCESS_BY_COST_CENTRE's own note), without re-scanning employees per driver.
-    `SELECT branch_id, process_id, SUM(amount) AS amount FROM (
+    // cost_centre_id is carried (totals unchanged) so a cost centre with an approved revenue
+    // forecast can be taken out of planned revenue and replaced by the forecast (pnl-forecast-overlay.ts).
+    `SELECT branch_id, process_id, cost_centre_id, SUM(amount) AS amount FROM (
        SELECT d.branch_id AS branch_id,
               pc.process_id AS process_id,
+              ccm.id AS cost_centre_id,
               d.planned_headcount * d.revenue_rate_per_head AS amount
          FROM finance_cost_centre_monthly_driver d
          JOIN cost_centre_master ccm ON ccm.id = d.cost_centre_id
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE d.period_code = ?
      ) t
-      GROUP BY branch_id, process_id`,
+      GROUP BY branch_id, process_id, cost_centre_id`,
     [periodCode],
   );
   return accumulate(rows);

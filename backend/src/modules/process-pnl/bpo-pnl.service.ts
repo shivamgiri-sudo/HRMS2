@@ -28,6 +28,7 @@ import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.serv
 import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
 import { nonVoidRunSql } from "../payroll/run-status.js";
+import { getForecastRevenueActuals, withoutCostCentres } from "./pnl-forecast-overlay.js";
 
 type NumericMap = Map<string, number>;
 type AllocationDriver =
@@ -1610,9 +1611,15 @@ async function computeBranchRows(scope: PnlQueryFilters) {
   // Live P&L's seat-rate estimate for not-yet-billed cost centres — only for the month just
   // closed (closed per isOpenPeriod, still inside isEstimateWindow). Same figure the Statement,
   // Live P&L and CEO Overview add; see pnl-statement.service.ts enrichColumn. Degrades to none.
-  const lastMonthEstimate = !isOpenPeriod(scope.period ?? "") && isEstimateWindow(scope.period ?? "", getCurrentDateIST())
+  const lastMonthEstimateAll = !isOpenPeriod(scope.period ?? "") && isEstimateWindow(scope.period ?? "", getCurrentDateIST())
     ? await getLiveRevenueEstimate(scope.period ?? "").catch(() => null)
     : null;
+  // Approved revenue forecasts (owner rule 2026-10-06, same as Live P&L and the Statement): their
+  // cost centres' invoiced / estimated revenue is taken out and the forecast added per process.
+  const forecast = await getForecastRevenueActuals(scope.period ?? "").catch(() => null);
+  const forecastCcs = forecast ? [...forecast.byCostCentre.keys()] : [];
+  const invoicedNet = forecastCcs.length ? withoutCostCentres(invoiced, forecastCcs) : invoiced;
+  const lastMonthEstimate = lastMonthEstimateAll && forecastCcs.length ? withoutCostCentres(lastMonthEstimateAll, forecastCcs) : lastMonthEstimateAll;
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
     const configuredRules = rulesMap.get(base.processId) ?? [];
@@ -1723,12 +1730,17 @@ async function computeBranchRows(scope: PnlQueryFilters) {
      */
     // + last month's seat estimate for this process's unbilled cost centres (zero otherwise), so
     // header KPIs / Full Waterfall agree with the Statement and Live P&L for the default month.
-    const invoicedForProcess = (invoiced.byProcess.get(base.processId) ?? 0)
+    const invoicedForProcess = (invoicedNet.byProcess.get(base.processId) ?? 0)
       + (lastMonthEstimate?.byProcess.get(base.processId) ?? 0);
-    const ruleRevenue = toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
+    const forecastForProcess = forecast?.byProcess.get(base.processId);
+    // The rule/plan figure is a whole-process number that already contains the forecast cost
+    // centres, so a process with any forecast does not fall back to it (forecast + billed only).
+    const ruleRevenue = forecastForProcess !== undefined
+      ? 0
+      : toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
     const periodOpen = isOpenPeriod(scope.period ?? "");
     const usedInvoicedFallback = !periodOpen && invoicedForProcess > 0;
-    const recognizedRevenue = usedInvoicedFallback ? invoicedForProcess : ruleRevenue;
+    const recognizedRevenue = (usedInvoicedFallback ? invoicedForProcess : ruleRevenue) + (forecastForProcess ?? 0);
     const cost = calculateBpoCostWaterfall({
       revenue: recognizedRevenue,
       agentSalary: peopleMeta.agentSalary,
