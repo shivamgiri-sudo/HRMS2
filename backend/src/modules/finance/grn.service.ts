@@ -2634,11 +2634,13 @@ export const grnService = {
 
       // Release from either pre-Finance-Head status — both are still holding a reservation;
       // only Finance Head's own approve() converts it into consumed.
-      if (
-        (from === "branch_head_approved" ||
-          from === "accounts_head_approved") &&
-        grn.budget_line_id
-      ) {
+      // A Smart GRN's reservation sits on its allocation rows (possibly spread over several
+      // lines), not on grn_request.budget_line_id, which is only its first split's line. Releasing
+      // the GRN total there drained other GRNs' reservations and left the other lines reserved.
+      const holdsReservation = from === "branch_head_approved" || from === "accounts_head_approved";
+      if (holdsReservation && (await grnSmartService.hasAllocations(grnId))) {
+        await grnSmartService.releaseReservations(connection, grnId);
+      } else if (holdsReservation && grn.budget_line_id) {
         await budgetConsumptionService.release(
           connection,
           String(grn.budget_line_id),

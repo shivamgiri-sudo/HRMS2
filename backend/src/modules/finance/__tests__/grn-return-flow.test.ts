@@ -56,6 +56,9 @@ function makeConnection(grn: Record<string, unknown>, affectedRows = 1) {
 
 beforeEach(() => {
   execute.mockReset();
+  // grnSmartService.hasAllocations(): these are ordinary GRNs (no allocation rows); the Smart GRN
+  // return path is pinned in grn-split-reservation-draws.test.ts.
+  execute.mockResolvedValue([[{ total: 0 }], []]);
   getConnection.mockReset();
   release.mockReset();
 });

@@ -904,6 +904,53 @@ function hasBudgetLine(allocation: any) {
  * shortfall — the same answer the raiser would have got at save time, instead of a per-line
  * message about a line they never chose.
  */
+type BudgetMove = { lineId: string; gross: number; quantity: number; net?: number };
+
+const isNoSuchTable = (error: unknown) => (error as { code?: string })?.code === "ER_NO_SUCH_TABLE";
+
+/** The budget lines an allocation's money sits on: the draws recorded when Branch Head approval
+ *  spread its reservation across several lines (grn_allocation_budget_draw, migration 2115), else
+ *  its own budget_line_id for the full amount. consume / release / reverse must move money on
+ *  exactly these lines — moving the row's full amount on one line drifted reserved_amount. */
+async function budgetMovesFor(connection: PoolConnection, allocation: any): Promise<BudgetMove[]> {
+  let draws: RowDataPacket[] = [];
+  try {
+    const result = await connection.execute<RowDataPacket[]>(
+      `SELECT budget_line_id, amount_with_tax, amount_without_tax, quantity
+         FROM grn_allocation_budget_draw
+        WHERE allocation_id = ?
+        ORDER BY created_at, id`,
+      [String(allocation.id)]
+    );
+    draws = (result?.[0] as RowDataPacket[] | undefined) ?? [];
+  } catch (error) {
+    if (!isNoSuchTable(error)) throw error;
+  }
+  if (draws.length) {
+    return draws.map((draw) => ({
+      lineId: String(draw.budget_line_id),
+      gross: Number(draw.amount_with_tax),
+      quantity: Number(draw.quantity),
+      net: draw.amount_without_tax == null ? undefined : Number(draw.amount_without_tax) || undefined,
+    }));
+  }
+  return [{
+    lineId: String(allocation.budget_line_id),
+    gross: Number(allocation.amount_with_tax),
+    quantity: Number(allocation.quantity),
+    net: Number(allocation.amount_without_tax) || undefined,
+  }];
+}
+
+/** Forget an allocation's recorded draws — its money now sits wholly on its own line again. */
+async function clearBudgetDraws(connection: PoolConnection, allocationId: string) {
+  try {
+    await connection.execute(`DELETE FROM grn_allocation_budget_draw WHERE allocation_id = ?`, [allocationId]);
+  } catch (error) {
+    if (!isNoSuchTable(error)) throw error;
+  }
+}
+
 async function reserveAllocations(connection: PoolConnection, allocations: any[]) {
   for (const allocation of allocations) {
     if (!hasBudgetLine(allocation)) continue;
@@ -917,6 +964,7 @@ async function reserveAllocations(connection: PoolConnection, allocations: any[]
         Number(allocation.quantity),
         netAmount
       );
+      await clearBudgetDraws(connection, String(allocation.id));
       continue;
     } catch (error) {
       // Only a headroom shortfall on this one line is recoverable. A closed sub-head, an
@@ -950,16 +998,21 @@ async function reserveAllocations(connection: PoolConnection, allocations: any[]
 
     // Throws HEADROOM_EXCEEDED with the exact shortfall when the whole branch cannot cover it.
     const draws = allocateAcrossLines(String(allocation.budget_line_id), amount, coverage.lines, netAmount);
+    await clearBudgetDraws(connection, String(allocation.id));
     for (const draw of draws) {
       // Quantity and net amount are apportioned by this draw's share of the row so the ledgers
       // stay consistent with the money actually moved onto each line.
       const share = amount > 0 ? draw.amount / amount : 0;
-      await budgetConsumptionService.reserve(
-        connection,
-        draw.lineId,
-        draw.amount,
-        roundQuantity(Number(allocation.quantity) * share),
-        netAmount == null ? undefined : roundMoney(netAmount * share)
+      const drawQuantity = roundQuantity(Number(allocation.quantity) * share);
+      const drawNet = netAmount == null ? undefined : roundMoney(netAmount * share);
+      await budgetConsumptionService.reserve(connection, draw.lineId, draw.amount, drawQuantity, drawNet);
+      // Recorded so consume / release / reverse move exactly these amounts on these lines.
+      await connection.execute(
+        `INSERT INTO grn_allocation_budget_draw
+           (id, allocation_id, grn_request_id, budget_line_id, amount_with_tax, amount_without_tax, quantity)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [randomUUID(), String(allocation.id), String(allocation.grn_request_id), draw.lineId,
+          draw.amount, drawNet ?? null, drawQuantity]
       );
     }
     // Re-point the row at the line that carried the largest share, so the allocation still names
@@ -993,13 +1046,9 @@ async function reserveAllocations(connection: PoolConnection, allocations: any[]
 async function consumeAllocations(connection: PoolConnection, allocations: any[]) {
   for (const allocation of allocations) {
     if (!hasBudgetLine(allocation)) continue;
-    await budgetConsumptionService.consume(
-      connection,
-      String(allocation.budget_line_id),
-      Number(allocation.amount_with_tax),
-      Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined
-    );
+    for (const move of await budgetMovesFor(connection, allocation)) {
+      await budgetConsumptionService.consume(connection, move.lineId, move.gross, move.quantity, move.net);
+    }
   }
   await connection.execute(
     `UPDATE grn_cost_allocation
@@ -1013,13 +1062,9 @@ async function releaseAllocations(connection: PoolConnection, allocations: any[]
   for (const allocation of allocations) {
     if (String(allocation.lifecycle_status) !== "reserved") continue;
     if (!hasBudgetLine(allocation)) continue;
-    await budgetConsumptionService.release(
-      connection,
-      String(allocation.budget_line_id),
-      Number(allocation.amount_with_tax),
-      Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined
-    );
+    for (const move of await budgetMovesFor(connection, allocation)) {
+      await budgetConsumptionService.release(connection, move.lineId, move.gross, move.quantity, move.net);
+    }
   }
   if (allocations.length) {
     await connection.execute(
@@ -1038,13 +1083,9 @@ async function reverseConsumedAllocations(connection: PoolConnection, allocation
   for (const allocation of allocations) {
     if (String(allocation.lifecycle_status) !== "consumed") continue;
     if (!hasBudgetLine(allocation)) continue;
-    await budgetConsumptionService.reverseConsumption(
-      connection,
-      String(allocation.budget_line_id),
-      Number(allocation.amount_with_tax),
-      Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined
-    );
+    for (const move of await budgetMovesFor(connection, allocation)) {
+      await budgetConsumptionService.reverseConsumption(connection, move.lineId, move.gross, move.quantity, move.net);
+    }
   }
   if (allocations.length) {
     await connection.execute(
@@ -1063,6 +1104,15 @@ export const grnSmartService = {
       [grnId]
     );
     return Number(rows[0]?.total ?? 0) > 0;
+  },
+
+  /** Called by grnService.returnGrn() for a Smart GRN still holding its Branch Head reservation:
+   *  releases every allocation (per recorded draw) and marks the rows 'released', so a resubmit's
+   *  fresh Branch Head approval reserves them once, not on top of the old reservation. Caller
+   *  holds the row lock on grn_request. */
+  async releaseReservations(connection: PoolConnection, grnId: string) {
+    const allocations = await loadAllocations(connection, grnId, true);
+    await releaseAllocations(connection, allocations);
   },
 
   /** Called by grnService.reverseConsumption() once it has confirmed the GRN is a smart
@@ -2779,13 +2829,10 @@ export const grnSmartService = {
          */
         if (String(allocation.lifecycle_status) === "reserved") {
           if (hasBudgetLine(allocation)) {
-            await budgetConsumptionService.release(
-              connection,
-              String(allocation.budget_line_id),
-              Number(allocation.amount_with_tax),
-              Number(allocation.quantity),
-              Number(allocation.amount_without_tax) || undefined
-            );
+            for (const move of await budgetMovesFor(connection, allocation)) {
+              await budgetConsumptionService.release(connection, move.lineId, move.gross, move.quantity, move.net);
+            }
+            await clearBudgetDraws(connection, String(allocation.id));
           }
           await budgetConsumptionService.reserve(
             connection,
