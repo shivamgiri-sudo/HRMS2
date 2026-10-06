@@ -122,6 +122,8 @@ on:
           - fix-process-branches
           - db-bill-snapshot-refresh
           - grn-migrate-2026-27
+          - book-nk-to-bluevine
+          - repair-migrated-grn-ex-gst
 
       mode:
         description: "dry-run reports what it would do and writes nothing"
@@ -319,6 +321,16 @@ jobs:
               export DB_USER="$(envv DB_USER)" DB_PASSWORD="$(envv DB_PASSWORD)" HRMS_DB_HOST="$(envv DB_HOST)" BILL_DB_HOST="$(envv BILL_DB_HOST)"
               if [ "$MODE" = "apply" ]; then node scripts/sync-db-bill-snapshot.mjs; fi
               node scripts/reconcile-db-bill-snapshot.mjs --hrms-host="$HRMS_DB_HOST" --bill-host="$BILL_DB_HOST"
+              ;;
+            repair-migrated-grn-ex-gst)
+              # Dry-runs unless given --apply. Apply moves GST out of amount_without_tax on FY 2026-27 migrated GRNs (old values logged).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/repair-migrated-grn-ex-gst.ts $FLAG
+              ;;
+            book-nk-to-bluevine)
+              # Dry-runs unless given --apply. Apply books FY 2026-27 Ahmedabad NK spend to the Bluevine (Finfort) process (old values logged).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/book-nk-to-bluevine.ts $FLAG
               ;;
             grn-migrate-2026-27)
               # Dry-runs unless given --apply. Apply adds db_bill GRNs missing from grn_request / vendor_payment_tracking for FY 2026-27 (idempotent).
