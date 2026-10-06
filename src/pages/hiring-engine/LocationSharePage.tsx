@@ -88,10 +88,16 @@ export default function LocationSharePage() {
     watchId.current = navigator.geolocation.watchPosition(
       (p) => {
         lastPos.current = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy };
+        setError(null);
         setPhase((cur) => (cur === "arrived" ? cur : "sharing"));
         void ping(lastPos.current);
       },
-      (e) => { stopWatch(); void post(api(token, "/stop")); setPhase(e.code === e.PERMISSION_DENIED ? "denied" : "ready"); if (e.code !== e.PERMISSION_DENIED) setError("We could not get your location. Please try again."); },
+      (e) => {
+        if (e.code === e.PERMISSION_DENIED) { stopWatch(); void post(api(token, "/stop")); setPhase("denied"); return; }
+        // A weak GPS signal or a timeout on the road is temporary: the browser keeps the watch alive and the 30 s heartbeat keeps
+        // re-sending the last known position, so keep sharing and just say we are waiting.
+        setError("Waiting for a GPS signal. Keep this page open.");
+      },
       { enableHighAccuracy: true, maximumAge: 15_000, timeout: 30_000 },
     );
     // watchPosition only fires when the position CHANGES, so someone waiting at home would go silent and the branch
@@ -171,6 +177,7 @@ export default function LocationSharePage() {
       {phase === "sharing" ? (
         <div className="mt-5 space-y-4" aria-live="polite">
           <div className="rounded-xl bg-emerald-50 p-4 text-emerald-800"><b>Sharing your live location.</b> Keep this page open while you travel.{eta && eta.min != null ? <div className="mt-1 text-sm">About {eta.km != null ? `${eta.km} km` : ""} away{eta.min > 0 ? `, around ${eta.min} min` : ""}.</div> : null}</div>
+          {error && <p role="status" className="text-sm text-amber-700">{error}</p>}
           <button type="button" onClick={() => void stop()} className={`${btn} border border-slate-300 bg-white text-slate-800 hover:bg-slate-50`}>Stop sharing</button>
         </div>
       ) : (
