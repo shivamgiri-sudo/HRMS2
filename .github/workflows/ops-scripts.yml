@@ -117,6 +117,7 @@ on:
           - trace-grn
           - migration-status
           - missing-grn-company-check
+          - grn-no-payable-breakdown
           - view-select-check
           - grn-amount-audit
           - repair-migrated-grn-ex-gst
@@ -345,6 +346,10 @@ jobs:
             view-select-check)
               # Read-only: runs the SELECT of scripts/view-2114.sql, no DDL.
               npx tsx scripts/view-select-check.ts scripts/view-2114.sql
+              ;;
+            grn-no-payable-breakdown)
+              # Read-only aggregates. employee_codes = YYYY-MM for the top list.
+              npx tsx scripts/grn-no-payable-breakdown.ts "${INPUT_EMPLOYEE_CODES:-2026-08}"
               ;;
             missing-grn-company-check)
               # Read-only: db_bill FY 2026-27 GRNs missing from HRMS, with cost-centre company.
