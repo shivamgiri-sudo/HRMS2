@@ -115,6 +115,7 @@ on:
           - nonpeople-timing
           - grn-month-basis-audit
           - trace-grn
+          - migration-status
           - grn-amount-audit
           - repair-migrated-grn-ex-gst
           - book-nk-to-bluevine
@@ -338,6 +339,10 @@ jobs:
             grn-amount-audit)
               # Read-only in both modes: aggregate SELECTs (HRMS and db_bill).
               npx tsx scripts/grn-amount-audit.ts
+              ;;
+            migration-status)
+              # Read-only: schema_migrations rows for the fragment given in employee_codes.
+              npx tsx scripts/migration-status.ts "${INPUT_EMPLOYEE_CODES}"
               ;;
             trace-grn)
               # Read-only in both modes. employee_codes input reused as '<FinanceMonth> <min amount>'.
