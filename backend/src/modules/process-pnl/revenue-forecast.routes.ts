@@ -12,6 +12,7 @@ import {
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { refuse } from "./finance-error.js";
+import { writeAuditLog } from "../../shared/auditLog.js";
 import { clearPnlReadCache } from "./pnl-read-cache.js";
 import { revenueForecastService } from "./revenue-forecast.service.js";
 
@@ -165,7 +166,24 @@ revenueForecastRouter.delete(
   requireWriteAccess,
   requireRole(...WRITE_ROLES),
   h(async (req, res) => {
-    await scopedForecast(req, req.params.id);
-    res.json({ success: true, data: await revenueForecastService.discard(req.params.id) });
+    const forecast = await scopedForecast(req, req.params.id);
+    const user = actor(req);
+    const isSuperAdmin = [user.role, ...user.roles].includes("super_admin");
+    // A Branch Head discards only a draft or returned forecast. A super_admin may remove one in
+    // any status (raised in error, test data) — with a reason, and the whole forecast kept in the
+    // audit log, because an approved or closed forecast has already been counted by the P&L.
+    const anyStatus = isSuperAdmin && !["draft", "rejected"].includes(String(forecast.status));
+    if (anyStatus) {
+      const reason = String(req.body?.reason ?? req.query.reason ?? "").trim();
+      if (!reason) throw refuse(400, "FORECAST_DELETE_REASON", "Give a reason for deleting an approved or closed forecast");
+      await writeAuditLog({
+        actor_user_id: user.id, actor_role: "super_admin", action_type: "REVENUE_FORECAST_DELETE",
+        module_key: "finance", entity_type: "revenue_forecast", entity_id: req.params.id, reason, req,
+        old_value_json: forecast as unknown as Record<string, unknown>,
+      });
+    }
+    const data = await revenueForecastService.discard(req.params.id, { anyStatus });
+    if (anyStatus) clearPnlReadCache();
+    res.json({ success: true, data });
   }),
 );

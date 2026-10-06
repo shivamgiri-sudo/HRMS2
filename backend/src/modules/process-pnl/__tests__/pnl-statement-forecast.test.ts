@@ -114,3 +114,10 @@ describe("statement revenue with approved forecasts", () => {
     expect(s.forecastRevenue.costCentres).toBe(0);
   });
 });
+
+describe("statement default wiring", () => {
+  it("the production dependencies read approved forecasts (they inject getInvoicedRevenue, so this must be explicit)", async () => {
+    const { defaultDependencies } = await import("../pnl-statement.service.js");
+    expect(typeof defaultDependencies.getForecastRevenue).toBe("function");
+  });
+});

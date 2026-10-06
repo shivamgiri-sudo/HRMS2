@@ -355,9 +355,15 @@ export const revenueForecastService = {
     return loadForecast(id);
   },
 
-  /** Draft or rejected only — nothing the P&L has counted is ever deleted. */
-  async discard(id: string) {
-    const [result] = await db.execute<any>(`DELETE FROM revenue_forecast WHERE id = ? AND status IN ('draft','rejected')`, [id]);
+  /**
+   * Draft or rejected only, for the Branch Head — nothing the P&L has counted is deleted that way.
+   * `anyStatus` is the super_admin correction path (a forecast raised in error, test data): it
+   * removes an approved or closed forecast too, and the caller records the full snapshot in the
+   * audit log first (revenue-forecast.routes.ts), so the deletion stays traceable.
+   */
+  async discard(id: string, opts: { anyStatus?: boolean } = {}) {
+    const statusSql = opts.anyStatus ? "" : " AND status IN ('draft','rejected')";
+    const [result] = await db.execute<any>(`DELETE FROM revenue_forecast WHERE id = ?${statusSql}`, [id]);
     if (result.affectedRows !== 1) throw refuse(409, "FORECAST_WRONG_STAGE", "Only a draft or rejected forecast can be discarded");
     await db.execute(`DELETE FROM revenue_forecast_line WHERE forecast_id = ?`, [id]);
     return { id, discarded: true };

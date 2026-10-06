@@ -741,7 +741,7 @@ export async function getStatementPeopleCost(period: string): Promise<PeopleCost
   return actual;
 }
 
-const defaultDependencies: StatementDependencies = {
+export const defaultDependencies: StatementDependencies = {
   getComponents,
   getSummary: (filters) => getStatementSummary(filters),
   getProcessSummary: (processId, period) => processLobService.getProcessSummary(processId, period),
@@ -749,6 +749,9 @@ const defaultDependencies: StatementDependencies = {
   getCommittedIndirectCost: (period) => getCommittedIndirectCostActuals(period),
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
   getInvoicedRevenue: (period) => getInvoicedRevenueActuals(period),
+  // Must be listed here: an injected getInvoicedRevenue without it reads as "test double, no
+  // forecasts" (getStatement), and these defaults inject getInvoicedRevenue.
+  getForecastRevenue: (period) => getForecastRevenueActuals(period),
   getSeatRevenue: (period) => getSeatRevenueActuals(period),
   /*
    * Actual payroll first; the recomputed snapshot only if payroll has nothing for the period.
