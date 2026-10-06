@@ -6,6 +6,7 @@
  *
  *   npx tsx scripts/mis-report-schedules-setup.ts          # dry-run: lists what it would create
  *   npx tsx scripts/mis-report-schedules-setup.ts --send   # creates missing schedules, then sends each one now (test)
+ *   npx tsx scripts/mis-report-schedules-setup.ts --send --only=housing_owner,housing_premium   # just these processes
  *
  * Idempotent: a process that already has an active/paused MIS schedule is not created again
  * (its existing schedule is the one sent).
@@ -16,6 +17,8 @@ import { getMisCompanies } from "../src/modules/process-performance/mis-export.s
 import { createSchedule, parseScheduleInput, runScheduleNow } from "../src/modules/process-performance/mis-schedule.service.js";
 
 const SEND = process.argv.includes("--send");
+const ONLY = (process.argv.find((a) => a.startsWith("--only="))?.slice(7) ?? "")
+  .split(/[,\s]+/).map((k) => k.trim()).filter(Boolean);
 const TO = "tausif.ansari@teammas.in, harsh.singh@teammas.in";
 const CREATED_BY = "ops:mis-report-schedules-setup";
 
@@ -32,7 +35,9 @@ const mb = (n?: number) => (n === undefined ? "-" : `${(n / 1024 / 1024).toFixed
 
 (async () => {
   const companies = await getMisCompanies();
-  const keys = Object.keys(companies).filter((k) => companies[k].length > 0);
+  const keys = Object.keys(companies).filter((k) => companies[k].length > 0 && (ONLY.length === 0 || ONLY.includes(k)));
+  const unknown = ONLY.filter((k) => !companies[k]?.length);
+  if (unknown.length) { console.log(`--only names processes with no MIS report: ${unknown.join(", ")}`); process.exit(1); }
   const empty = Object.keys(companies).filter((k) => companies[k].length === 0);
   console.log(`MIS processes with sections (${keys.length}): ${keys.join(", ")}`);
   if (empty.length) console.log(`No MIS sections, skipped: ${empty.join(", ")}`);

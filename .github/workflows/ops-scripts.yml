@@ -624,8 +624,10 @@ jobs:
             mis-report-schedules-setup)
               # dry-run lists each MIS-tab process and whether its daily 10:00 MTD schedule exists. apply creates the
               # missing schedules and EMAILS each MIS report now (test send) to tausif.ansari / harsh.singh.
+              # Optional: company keys in employee_codes (comma/space list) limit it to those processes.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
-              npx tsx scripts/mis-report-schedules-setup.ts $FLAG
+              ONLY=""; [ -n "${INPUT_EMPLOYEE_CODES}" ] && ONLY="--only=${INPUT_EMPLOYEE_CODES// /,}"
+              npx tsx scripts/mis-report-schedules-setup.ts $FLAG $ONLY
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
