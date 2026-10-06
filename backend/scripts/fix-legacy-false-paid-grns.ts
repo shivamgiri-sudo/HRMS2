@@ -23,6 +23,10 @@
  * Copies are matched ONE-TO-ONE (same vendor name or id, same head, amount within Re 1, same bill month),
  * so five identical Rs 411.82 phone bills are not all treated as copies of one.
  *
+ *   A2  an imported GRN db_bill says was PAID but HRMS shows approved / pending (or has no payment record at all)
+ *         -> marked Paid with a payment transaction; a payment record is created when there is none. Repeatable:
+ *            run it after every legacy import.
+ *
  * Not touched: bills db_bill never paid whose tracking says Paid, and the ~6,000 old reclassified GRNs
  * with no tracking row (a Finance decision). Run this BEFORE backfill-grn-journal.
  *
@@ -52,8 +56,8 @@ function paymentMode(raw: unknown) {
 }
 
 const NEEDED: Record<string, string[]> = {
-  grn_request: ["status", "accounts_payment_status", "bill_source_id", "vendor_name", "head", "invoice_number", "branch_id"],
-  vendor_payment_tracking: ["payment_status", "paid_amount", "balance_amount", "due_amount", "payment_date", "payment_mode", "transaction_id", "bank_name", "remarks"],
+  grn_request: ["status", "accounts_payment_status", "bill_source_id", "vendor_name", "head", "sub_head", "invoice_number", "branch_id", "due_date", "amount_without_tax", "tax_amount", "amount_with_tax", "financial_year", "cost_centre_id"],
+  vendor_payment_tracking: ["grn_request_id", "grn_number", "branch_id", "vendor_id", "vendor_name", "head", "sub_head", "due_date", "financial_year", "amount_without_tax", "tax_amount", "amount_with_tax", "cost_centre_id", "bill_source_id", "created_at", "payment_status", "paid_amount", "balance_amount", "due_amount", "payment_date", "payment_mode", "transaction_id", "bank_name", "remarks"],
   vendor_payment_transaction: ["vendor_payment_id", "grn_request_id", "sequence_no", "payment_mode", "payment_date", "bank_name", "transaction_id", "amount", "tds_amount", "net_amount", "remarks", "created_by", "created_at"],
   sensitive_action_log: ["actor_user_id", "action_type", "module_key", "entity_type", "entity_id", "change_summary", "acted_at", "reason"],
 };
@@ -93,13 +97,26 @@ async function main() {
   const cands = rows as (Bill & { due_amount: number })[];
   console.log(`${APPLY ? "APPLY" : "DRY RUN"} (actor ${ACTOR}): ${cands.length} legacy GRNs are 'paid' but their tracking is not Paid and has no payment`);
 
+  // A2: imported GRNs still sitting in an approval / payment-pending state that db_bill says were PAID (new legacy
+  // imports arrive like this). Tracking row may be Payment Pending or missing altogether.
+  const [pendingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT g.id grn_id, g.grn_number, g.bill_source_id, g.vendor_id, g.vendor_name, g.head, g.sub_head, g.invoice_number, g.bill_date, g.created_at, g.status, ${AMT} amt,
+            g.branch_id, g.due_date, g.amount_without_tax, g.tax_amount, g.amount_with_tax, g.financial_year, g.cost_centre_id,
+            t.id trk_id, t.payment_status trk_status, t.due_amount, t.paid_amount, t.balance_amount
+       FROM grn_request g LEFT JOIN vendor_payment_tracking t ON t.grn_request_id = g.id
+      WHERE g.grn_type = 'vendor' AND g.bill_source_id IS NOT NULL
+        AND g.status IN ('finance_head_approved','pending_accounts_payment','payment_scheduled','partially_paid','approved')
+        AND (t.id IS NULL OR t.payment_status <> 'Paid')
+        AND (t.id IS NULL OR NOT EXISTS (SELECT 1 FROM vendor_payment_transaction x WHERE x.vendor_payment_id = t.id))`);
+  const pendingCands = pendingRows as any[];
+
   // db_bill payments for the candidates AND for every legacy GRN billed recently (the "already paid" pool).
   const [recent] = await db.execute<RowDataPacket[]>(
     `SELECT g.id grn_id, g.grn_number, g.bill_source_id, g.vendor_id, g.vendor_name, g.head, g.bill_date, g.created_at, g.status, ${AMT} amt, t.id trk_id
        FROM grn_request g LEFT JOIN vendor_payment_tracking t ON t.grn_request_id = g.id
       WHERE g.grn_type='vendor' AND g.bill_source_id IS NOT NULL AND g.status = 'paid' AND COALESCE(g.bill_date, DATE(g.created_at)) >= '${SINCE}'`);
   const pays = new Map<number, any[]>();
-  const ids = [...new Set([...cands, ...(recent as any[])].map((c) => Number(c.bill_source_id)))];
+  const ids = [...new Set([...cands, ...pendingCands, ...(recent as any[])].map((c) => Number(c.bill_source_id)))];
   for (let i = 0; i < ids.length; i += 1000) {
     const chunk = ids.slice(i, i + 1000);
     for (const p of await billQuery<any>(`SELECT Id, GrnId, PaymentMode, PaymentDate, BankName, TransactionId, CreateDate FROM tbl_payment_processing WHERE GrnId IN (${chunk.map(() => "?").join(",")}) ORDER BY Id`, chunk)) {
@@ -118,6 +135,7 @@ async function main() {
   const live = liveRows as Bill[];
 
   const A = cands.filter((c) => pays.has(Number(c.bill_source_id))).map((c) => ({ ...c, pay: pays.get(Number(c.bill_source_id))!.slice(-1)[0], n: pays.get(Number(c.bill_source_id))!.length }));
+  const A2 = pendingCands.filter((c) => pays.has(Number(c.bill_source_id))).map((c) => ({ ...c, pay: pays.get(Number(c.bill_source_id))!.slice(-1)[0], n: pays.get(Number(c.bill_source_id))!.length }));
   const U = cands.filter((c) => !pays.has(Number(c.bill_source_id)));
 
   // D1: live copies, still awaiting payment with nothing paid and no voucher, of a bill db_bill says was paid.
@@ -132,6 +150,7 @@ async function main() {
   const sum = (xs: { amt: unknown }[]) => r2(xs.reduce((s, x) => s + Number(x.amt), 0));
   console.table([
     { action: "A  db_bill paid it -> tracking Paid + payment recorded", grns: A.length, amount: sum(A) },
+    { action: "A2 imported GRN db_bill says is paid, HRMS shows pending/none -> mark paid", grns: A2.length, amount: sum(A2) },
     { action: "D1 live copy of a bill db_bill already paid -> reverse the live copy", grns: D1.length, amount: sum(D1.map((p) => p.copy)) },
     { action: "B1 never paid, re-entered live -> reverse the legacy copy", grns: B1.length, amount: sum(B1.map((p) => p.legacy)) },
     { action: "B2 never paid, not re-entered -> label back to pending", grns: B2.length, amount: sum(B2) },
@@ -177,13 +196,34 @@ async function main() {
          c.due_amount, 0, c.due_amount, `db_bill payment (${c.n} row${c.n > 1 ? "s" : ""}), recorded by legacy false-paid fix`, ACTOR, c.pay.CreateDate ? new Date(c.pay.CreateDate) : new Date()]);
       await audit(c.grn_id, c.grn_number, "A", { paid_from: "db_bill.tbl_payment_processing", db_bill_rows: c.n });
     }
+    for (const c of A2) {
+      await bak(c.grn_id, c.trk_id ?? null, "A2");
+      let trkId = c.trk_id as string | null;
+      const due = Number(c.due_amount ?? c.amt);
+      if (trkId) {
+        await conn.query(`UPDATE vendor_payment_tracking SET payment_status='Paid', paid_amount = due_amount, balance_amount = 0, payment_date = ?, payment_mode = ?, transaction_id = ?, bank_name = ? WHERE id = ?`,
+          [day(c.pay.PaymentDate), paymentMode(c.pay.PaymentMode), c.pay.TransactionId ?? null, c.pay.BankName ?? null, trkId]);
+      } else {
+        trkId = randomUUID();
+        await conn.query(`INSERT INTO vendor_payment_tracking (id, grn_request_id, grn_number, branch_id, vendor_id, vendor_name, head, sub_head, due_amount, due_date, paid_amount, balance_amount, payment_status, financial_year, amount_without_tax, tax_amount, amount_with_tax, cost_centre_id, bill_source_id, payment_date, payment_mode, transaction_id, bank_name, created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())`,
+          [trkId, c.grn_id, c.grn_number, c.branch_id, c.vendor_id, c.vendor_name, c.head, c.sub_head, due, c.due_date, due, 0, "Paid", c.financial_year, c.amount_without_tax, c.tax_amount, c.amount_with_tax, c.cost_centre_id, c.bill_source_id,
+           day(c.pay.PaymentDate), paymentMode(c.pay.PaymentMode), c.pay.TransactionId ?? null, c.pay.BankName ?? null]);
+      }
+      await conn.query(`INSERT IGNORE INTO vendor_payment_transaction (id, vendor_payment_id, grn_request_id, sequence_no, payment_mode, payment_date, bank_name, transaction_id, amount, tds_amount, net_amount, remarks, created_by, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [randomUUID(), trkId, c.grn_id, Number(c.pay.Id), paymentMode(c.pay.PaymentMode), day(c.pay.PaymentDate) ?? day(c.created_at), c.pay.BankName ?? null, c.pay.TransactionId ?? null,
+         due, 0, due, `db_bill payment (${c.n} row${c.n > 1 ? "s" : ""}), synced from db_bill`, ACTOR, c.pay.CreateDate ? new Date(c.pay.CreateDate) : new Date()]);
+      await conn.query(`UPDATE grn_request SET status='paid', accounts_payment_status='paid' WHERE id = ?`, [c.grn_id]);
+      await audit(c.grn_id, c.grn_number, "A2", { paid_from: "db_bill.tbl_payment_processing", db_bill_rows: c.n, tracking_created: !c.trk_id });
+    }
     for (const c of B2) {
       await bak(c.grn_id, c.trk_id, "B2");
       await conn.query(`UPDATE grn_request SET status='pending_accounts_payment', accounts_payment_status='pending' WHERE id = ? AND status='paid'`, [c.grn_id]);
       await audit(c.grn_id, c.grn_number, "B2", { relabelled_to: "pending_accounts_payment" });
     }
     await conn.commit();
-    console.log(`\nA ${A.length} and B2 ${B2.length} applied (before-images in grn_false_paid_fix_bak_grn / _trk).`);
+    console.log(`\nA ${A.length}, A2 ${A2.length} and B2 ${B2.length} applied (before-images in grn_false_paid_fix_bak_grn / _trk).`);
   } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
 
   if (STATUS_ONLY) { console.log("\n--status-only: duplicate reversals (D1, B1) left for a later run."); await closeBillPool(); return; }
