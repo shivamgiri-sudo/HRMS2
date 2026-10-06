@@ -204,7 +204,11 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
        LEFT JOIN job_requisition jrm ON jrm.id = mr.requisition_id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
         AND l.is_employee = 0 AND l.final_status <> 'joined'
-        AND NOT EXISTS (SELECT 1 FROM he_match m WHERE m.lead_id = l.id AND m.state IN ('invited','confirmed') AND m.slot_at >= NOW())
+        -- Already booked: an invite on a LIVE drive, or a confirmation anywhere. An invite that sits on a closed drive (the drive was
+        -- replaced or abandoned) no longer holds anyone, so that person can be lined up again; a confirmed person keeps their date.
+        AND NOT EXISTS (SELECT 1 FROM he_match m LEFT JOIN he_drive dd ON dd.id = m.drive_id
+                         WHERE m.lead_id = l.id AND m.slot_at >= NOW()
+                           AND ((m.state IN ('invited','confirmed') AND (dd.id IS NULL OR dd.status <> 'closed')) OR m.state = 'confirmed'))
         AND NOT EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NOT NULL)
         ${locRe ? `AND (mr.requisition_id = ?
              OR LOWER(CONCAT_WS(' ', l.locality, ac.applied_for_branch, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, jrm.branch_name)) REGEXP ?

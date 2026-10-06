@@ -7,7 +7,9 @@ const COMBINING = /[̀-ͯ᪰-᫿᷀-᷿⃐-⃿︠-︯]/g;
 const NOT_NAME = /^(mr|mrs|ms|miss|dr|sir|madam|candidate|test|na|n\/a|null|none|unknown|user|hr)$/i;
 
 export function cleanName(raw: unknown): string {
-  const plain = String(raw ?? "").normalize("NFKC").normalize("NFKD").replace(COMBINING, "");
+  // Markup or links typed into a name field are dropped whole (so "<b>Rohan</b>" and "<img src=x onerror=..> Rohan" both give Rohan).
+  const text = String(raw ?? "").replace(/<[^>]*>?/g, " ").replace(/https?:\/\/\S+/gi, " ");
+  const plain = text.normalize("NFKC").normalize("NFKD").replace(COMBINING, "");
   const words = plain.split(/[^\p{L}\p{M}]+/u).filter((w) => w.length > 1 && !NOT_NAME.test(w));
   const seen = new Set<string>();
   const out: string[] = [];

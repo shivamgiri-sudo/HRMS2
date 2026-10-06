@@ -115,3 +115,24 @@ describe("night shift column", () => {
     expect(r.nightShiftOk).toBe(true);
   });
 });
+
+describe("ragged rows", () => {
+  it("finds the mobile column even when the first row lacks it", async () => {
+    const { detectColumns } = await import("../he-intake.js");
+    const r = detectColumns([{ "Candidate Name": "No Mobile" }, { "Candidate Name": "B", "Mobile Number": "9000070002" }]);
+    expect(r.mapping.mobile).toBe("Mobile Number");
+  });
+});
+
+describe("email and age cleaning", () => {
+  it("keeps only plausible emails", async () => {
+    const { validEmail } = await import("../he-intake.js");
+    expect(validEmail(" Rahul@Mail.COM ")).toBe("rahul@mail.com");
+    for (const bad of ["not-an-email", "a@b", "a b@c.com", "", null, "x@y.c"]) expect(validEmail(bad)).toBeNull();
+  });
+  it("reads '26 yrs' as an age and drops a bad email on the row", async () => {
+    const { mapIntakeRows } = await import("../he-intake.js");
+    const { rows } = mapIntakeRows([{ Mobile: "9000070005", Age: "26 yrs", Email: "oops" }]);
+    expect(rows[0]).toMatchObject({ ok: true, age: 26, email: null });
+  });
+});

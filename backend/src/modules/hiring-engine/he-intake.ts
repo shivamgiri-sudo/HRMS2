@@ -109,7 +109,9 @@ function dataField(vals: string[]): { field: Field; score: number } | null {
 
 /** Detect which column holds which field. Each field goes to its best column; each column feeds at most one field. */
 export function detectColumns(rows: Array<Record<string, unknown>>, saved?: Mapping | null): { guesses: ColumnGuess[]; mapping: Mapping; signature: string } {
-  const headers = rows.length ? Object.keys(rows[0]) : [];
+  // Union over the sample, not just row 1: a parsed CSV/Excel gives every row every column, but JSON feeds and sheets with
+  // trailing blanks can leave early rows without a column that later rows have.
+  const headers = [...new Set(rows.slice(0, 200).flatMap((r) => Object.keys(r)))];
   const signature = headerSignature(headers);
   const sample = rows.slice(0, 200);
   const values = (h: string) => sample.map((r) => (r[h] == null ? "" : String(r[h])));
@@ -274,6 +276,12 @@ export interface IntakeRow {
   nightShiftOk?: boolean | null;
 }
 
+/** Keep an email only when it looks like one: a typo'd address would count as "reachable by email" and then bounce. */
+export function validEmail(raw: string | null | undefined): string | null {
+  const e = String(raw ?? "").trim().toLowerCase();
+  return /^[^\s@<>,;]+@[^\s@<>,;]+\.[a-z]{2,}$/.test(e) && e.length <= 190 ? e : null;
+}
+
 export function mapIntakeRows(rows: Array<Record<string, unknown>>, mappingIn?: Mapping | null): { rows: IntakeRow[]; missingColumns: string[]; tooMany: boolean; mapping: Mapping } {
   if (rows.length > INTAKE_MAX_ROWS) return { rows: [], missingColumns: [], tooMany: true, mapping: {} };
   const mapping = mappingIn && mappingIn.mobile ? mappingIn : detectColumns(rows, mappingIn ?? null).mapping;
@@ -289,7 +297,7 @@ export function mapIntakeRows(rows: Array<Record<string, unknown>>, mappingIn?: 
     seen.add(m);
     const alt = normalizeMobile10(get("altMobile") ?? "") ?? phones[1] ?? null;
     const name = get("name") ?? ([get("firstName"), get("lastName")].filter(Boolean).join(" ") || null);
-    const ageNum = Number(get("age"));
+    const ageNum = Number(String(get("age") ?? "").match(/\d+(?:\.\d+)?/)?.[0] ?? NaN); // "26", "26 yrs", "26 years old"
     const age = Number.isFinite(ageNum) && ageNum >= 15 && ageNum <= 70 ? Math.round(ageNum) : parseAgeFromDob(get("dob"));
     const exp = get("experienceMonths") ? parseExperienceYears(get("experienceMonths"), true) : parseExperienceYears(get("experience"), /month/i.test(mapping.experience ?? ""));
     const g = (get("gender") ?? "").toLowerCase();
@@ -297,7 +305,7 @@ export function mapIntakeRows(rows: Array<Record<string, unknown>>, mappingIn?: 
     const langs = LANGS.filter((l) => langText.includes(l));
     const c = (get("consent") ?? "").toLowerCase();
     return {
-      rowNo: i + 2, ok: true, mobile10: m, altMobile10: alt && alt !== m ? alt : null, name, email: get("email"), age,
+      rowNo: i + 2, ok: true, mobile10: m, altMobile10: alt && alt !== m ? alt : null, name, email: validEmail(get("email")), age,
       education: get("education"), experienceYears: exp, city: get("city") ?? get("state"), pincode: (get("pincode") ?? "").replace(/\D/g, "").slice(0, 6) || null,
       gender: /^(m|male|man)$/.test(g) ? "male" : /^(f|female|woman)$/.test(g) ? "female" : g ? "other" : null,
       process: get("process"), skills: get("skills"), languages: langs.length ? langs : get("languages") ? [] : null,

@@ -33,7 +33,7 @@ function cleanMapping(m: unknown, headers: string[]): Mapping {
 
 /** What the system understood from the file, before anything is written. */
 export async function previewCandidates(raw: Array<Record<string, unknown>>) {
-  const headers = raw.length ? Object.keys(raw[0]) : [];
+  const headers = [...new Set(raw.slice(0, 200).flatMap((r) => Object.keys(r)))];
   const signature = headerSignature(headers);
   const saved = await savedMapping(signature);
   const d = detectColumns(raw, saved);
@@ -58,7 +58,7 @@ export async function previewCandidates(raw: Array<Record<string, unknown>>) {
 }
 
 export async function ingestCandidates(raw: Array<Record<string, unknown>>, source: IntakeSource, o: { dryRun?: boolean; mapping?: unknown; saveMapping?: boolean; userId?: string | null } = {}): Promise<IntakeResult> {
-  const headers = raw.length ? Object.keys(raw[0]) : [];
+  const headers = [...new Set(raw.slice(0, 200).flatMap((r) => Object.keys(r)))];
   const signature = headerSignature(headers);
   const chosen = cleanMapping(o.mapping, headers);
   const mapping = chosen.mobile ? chosen : (await savedMapping(signature)) ?? undefined;

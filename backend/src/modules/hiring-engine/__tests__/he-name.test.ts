@@ -15,6 +15,11 @@ describe("he-name", () => {
     expect(displayFirstName("😊😊 123")).toBe("there");
     expect(displayFirstName(null)).toBe("there");
   });
+  it("drops markup and links typed into a name", () => {
+    expect(cleanName("<img src=x onerror=alert(1)> Rohan")).toBe("Rohan");
+    expect(cleanName("<b>Rohan</b> Kumar")).toBe("Rohan Kumar");
+    expect(displayFirstName("http://spam.example/x")).toBe("there");
+  });
   it("keeps non-latin scripts", () => {
     expect(displayFirstName("राहुल कुमार")).toBe("राहुल");
   });
