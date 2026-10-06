@@ -518,94 +518,25 @@ jobs:
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/recruiter-list-diagnose.ts
               ;;
-            vendor-bills-journal-vs-tracking)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+            aug-payroll-vs-dbbill-gap|vendor-ledger-gap-audit|trial-balance-timing|tally-reports-validate|tally-gaps-detail|unposted-grn-diagnose|voucher-unassigned-detail|unposted-grn-forensics|duplicate-grn-forensics|grn-pair-deepdive|grn-false-paid-audit|grn-split-children-check|grn-status-check|grn-status-mismatch-detail|vendor-bills-journal-vs-tracking)
+              # Read-only diagnostics: SELECTs only. The script file is named after the option.
+              npx tsx scripts/${{ inputs.script }}.ts
               ;;
-            grn-status-mismatch-detail)
-              # Read-only in both modes: SELECTs only (HRMS and db_bill).
-              npx tsx scripts/grn-status-mismatch-detail.ts
-              ;;
-            fix-grn-status-from-tracking)
-              # Dry-runs unless given --apply. Apply aligns the GRN status LABEL with its Paid payment record (before-images saved).
+            fix-gst-credit-note-roundoff|fix-legacy-false-paid-grns|fix-grn-status-from-tracking)
+              # Dry-run unless given --apply; each script saves before-images / is idempotent. File named after the option.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
-              npx tsx scripts/fix-grn-status-from-tracking.ts $FLAG
-              ;;
-            grn-status-check)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/grn-status-check.ts
-              ;;
-            fix-legacy-false-paid-grns)
-              # Dry-runs unless given --apply. Apply corrects legacy GRNs wrongly marked paid (before-images saved, one transaction). Run BEFORE backfill-grn-journal.
-              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
-              npx tsx scripts/fix-legacy-false-paid-grns.ts $FLAG
-              ;;
-            grn-split-children-check)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/grn-split-children-check.ts
-              ;;
-            grn-false-paid-audit)
-              # Read-only in both modes: SELECTs only (HRMS and db_bill).
-              npx tsx scripts/grn-false-paid-audit.ts
-              ;;
-            grn-pair-deepdive)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/grn-pair-deepdive.ts
-              ;;
-            duplicate-grn-forensics)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/duplicate-grn-forensics.ts
-              ;;
-            unposted-grn-forensics)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/unposted-grn-forensics.ts
-              ;;
-            voucher-unassigned-detail)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/voucher-unassigned-detail.ts
+              npx tsx scripts/${{ inputs.script }}.ts $FLAG
               ;;
             backfill-grn-journal)
-              # Dry-runs unless given --apply. Apply posts a journal entry for every vendor GRN that has none (same code path as live approval); GRNs with no vendor or an unmatched ledger head are reported, not posted.
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/backfill-journal-entries.ts --grn --vendor-only $FLAG
               ;;
-            fix-gst-credit-note-roundoff)
-              # Dry-runs unless given --apply. Apply flips the round-off sign on credit-note rows that do not add up.
-              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
-              npx tsx scripts/fix-gst-credit-note-roundoff.ts $FLAG
-              ;;
-            unposted-grn-diagnose)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/unposted-grn-diagnose.ts
-              ;;
-            tally-gaps-detail)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/tally-gaps-detail.ts
-              ;;
-            tally-reports-validate)
-              # Read-only in both modes: SELECTs only; nothing is exported or locked.
-              npx tsx scripts/tally-reports-validate.ts
-              ;;
-            trial-balance-timing)
-              # Read-only in both modes: SELECT / EXPLAIN only.
-              npx tsx scripts/trial-balance-timing.ts
-              ;;
             vendor-ledger-tally-audit)
-              # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-ledger-tally-audit.ts sanchia sachi "sai sa"
               ;;
-            vendor-ledger-gap-audit)
-              # Read-only in both modes: SELECTs only.
-              npx tsx scripts/vendor-ledger-gap-audit.ts
-              ;;
             match-month-to-dbbill)
-              # Dry-runs unless given --apply. Apply sets voucher-relevant line figures to db_bill (backup table first, one transaction).
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
               npx tsx scripts/match-month-to-dbbill.ts 2026-08 $FLAG
-              ;;
-            aug-payroll-vs-dbbill-gap)
-              # Read-only in both modes: SELECTs only. Per-employee HRMS vs db_bill salary_data for the month.
-              npx tsx scripts/aug-payroll-vs-dbbill-gap.ts
               ;;
             zero-day-gross-audit)
               # Read-only in both modes: SELECTs only.
