@@ -45,6 +45,7 @@ on:
           - statutory-identifier-encrypt-backfill
           - apr-resync-sep-gap
           - oct-attendance-verify
+          - attendance-rules-audit
           - oct-attendance-regrade
           - oct-outside-employment-cleanup
           - sep-attendance-regrade
@@ -222,6 +223,10 @@ jobs:
           MODE="${{ inputs.mode }}"
 
           case "${{ inputs.script }}" in
+            attendance-rules-audit)
+              # Read-only in both modes. Counts only.
+              npx tsx scripts/attendance-rules-audit.ts
+              ;;
             oct-attendance-verify)
               # Read-only in both modes. Counts only.
               npx tsx scripts/oct-attendance-verify.ts
