@@ -1149,7 +1149,10 @@ export async function commitImportBatch(
       (async () => {
         for (const { employeeId, date } of pairs) {
           try {
-            const result = await attendanceEngineService.processEmployee(employeeId, date, null);
+            // No third argument: null would tell the engine "already resolved, no exception" and
+            // skip employee_attendance_exception_bucket, regrading a bucketed employee's 8h05m
+            // day on the default 540-minute full day. Omitted, the engine looks the bucket up.
+            const result = await attendanceEngineService.processEmployee(employeeId, date);
             await attendanceEngineService.upsertDailyRecord(result, 'roster_import');
           } catch {
             // Non-critical: nightly sweep will recompute any that fail here

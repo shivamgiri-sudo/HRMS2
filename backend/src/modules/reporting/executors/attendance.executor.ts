@@ -19,6 +19,7 @@ import type {
   ExecResult,
 } from "./types.js";
 import { calculateWeekoffEligibility } from "../../payroll/weekoff-eligibility.service.js";
+import { getPayableDaysOverrides } from "../../payroll/payroll-cc-attendance.service.js";
 import {
   ATTENDANCE_STATUS_CODE,
   resolveMissingDayCell,
@@ -436,6 +437,13 @@ export async function attendanceRegisterMonthly(
   const todayTs = new Date();
   todayTs.setHours(0, 0, 0, 0);
 
+  // Payroll Head payable-days overrides (migration 1653): payroll pays these, so the register's
+  // SalDays must show them. Same cap as payroll — never more than the days in the month.
+  const salDaysOverrides = await getPayableDaysOverrides(
+    month,
+    Array.from(empMap.keys()),
+  );
+
   const pivotRows = await Promise.all(
     Array.from(empMap.values()).map(async (emp, idx) => {
       // Normalise date_of_joining and date_of_exit to midnight for day-boundary comparisons.
@@ -491,12 +499,11 @@ export async function attendanceRegisterMonthly(
 
       // Capped at the length of the month — see computeSalDays() in shared/attendanceDayCounts.ts
       // for why the sum is a ceiling and not a running total.
-      const salDays = computeSalDays(
-        paidBase,
-        eligibleWO,
-        holiday,
-        daysInMonth,
-      );
+      const salDays = salDaysOverrides.has(emp.employee_id)
+        ? Math.round(
+            Math.min(salDaysOverrides.get(emp.employee_id)!, daysInMonth) * 100,
+          ) / 100
+        : computeSalDays(paidBase, eligibleWO, holiday, daysInMonth);
 
       return {
         sno: idx + 1,
