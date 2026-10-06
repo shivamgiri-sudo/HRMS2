@@ -37,3 +37,18 @@ describe("JD-aware scoring", () => {
     expect(proven.rankScore).toBeGreaterThan(thin.rankScore);
   });
 });
+
+describe("strict drive shortlists", () => {
+  it("required certification and education must be confirmed", () => {
+    const req = { certifications: ["DRA"], minEducationRank: 5, strict: true };
+    expect(scoreLead({ certifications: ["DRA"], educationRank: 5 }, req).eligible).toBe(true);
+    expect(scoreLead({ certifications: [], educationRank: 5 }, req).eligible).toBe(false);
+    expect(scoreLead({ educationRank: 5 }, req).reasons.join(" ")).toMatch(/not confirmed: certifications/);
+    expect(scoreLead({ certifications: ["DRA"] }, req).eligible).toBe(false);
+    expect(scoreLead({}, { certifications: ["DRA"] }).eligible).toBe(true); // non-strict stays lenient
+  });
+  it("experience minimum is hard when strict", () => {
+    expect(scoreLead({ experienceYears: 0.5 }, { minExperienceYears: 1, strict: true }).eligible).toBe(false);
+    expect(scoreLead({ experienceYears: 0.5 }, { minExperienceYears: 1 }).eligible).toBe(true);
+  });
+});

@@ -72,7 +72,7 @@ export function toMatchRequisition(r: ReqRow): MatchRequisition & { id: string }
 }
 
 /** Configured screening wins; anything left empty is filled from the requisition's free-text skills/education. */
-function withJdText(cfg: ReturnType<typeof screeningOf>, r: ReqRow): ReturnType<typeof screeningOf> & Pick<MatchRequisition, "nightShift" | "minExperienceYears" | "streams"> {
+function withJdText(cfg: ReturnType<typeof screeningOf>, r: ReqRow): ReturnType<typeof screeningOf> & Pick<MatchRequisition, "nightShift" | "minExperienceYears" | "streams" | "minEducationRank"> {
   const jd = parseJdText(`${r.skills_required ?? ""}. ${r.education_requirement ?? ""}`);
   return {
     gender: cfg.gender ?? jd.gender,
@@ -83,6 +83,7 @@ function withJdText(cfg: ReturnType<typeof screeningOf>, r: ReqRow): ReturnType<
     streams: jd.streams.length ? jd.streams : null,
     ...(r.night_shift_required ? {} : jd.nightShift ? { nightShift: true } : {}),
     ...(r.experience_min_years == null && jd.minExperienceYears != null ? { minExperienceYears: jd.minExperienceYears } : {}),
+    ...(!r.education_requirement && jd.minEducationRank ? { minEducationRank: jd.minEducationRank } : {}),
   };
 }
 
@@ -145,7 +146,7 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   if (!drive) throw new Error("Drive not found");
   const req = await loadRequisition(drive.requisition_id);
   if (!req) throw new Error("Requisition not found");
-  const mreq = toMatchRequisition(req);
+  const mreq = { ...toMatchRequisition(req), strict: true };
   const cfg = slotCfg(drive);
   const { invites } = inviteTarget({ openPositions: Math.max(1, req.requested_headcount - req.fulfilled_headcount), showRatePct: drive.show_rate_pct, capacity: driveCapacity(cfg) });
   const want = limit ?? invites;
@@ -154,10 +155,11 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   // scored are all potentially eligible instead of an arbitrary slice of a pool that can be 100k+ strong.
   const pre: string[] = [];
   const preArgs: unknown[] = [];
-  if (mreq.minEducationRank != null) { pre.push("(l.education_rank IS NULL OR l.education_rank >= ?)"); preArgs.push(mreq.minEducationRank); }
-  if (mreq.ageMin != null) { pre.push("(l.age IS NULL OR l.age >= ?)"); preArgs.push(mreq.ageMin); }
-  if (mreq.ageMax != null) { pre.push("(l.age IS NULL OR l.age <= ?)"); preArgs.push(mreq.ageMax); }
-  if (mreq.nightShift === true) pre.push("(l.night_shift_ok IS NULL OR l.night_shift_ok = 1)");
+  // Strict drive shortlists: a required level must be on record, so unknowns do not crowd the scored pool.
+  if (mreq.minEducationRank != null) { pre.push("l.education_rank >= ?"); preArgs.push(mreq.minEducationRank); }
+  if (mreq.ageMin != null) { pre.push("l.age >= ?"); preArgs.push(mreq.ageMin); }
+  if (mreq.ageMax != null) { pre.push("l.age <= ?"); preArgs.push(mreq.ageMax); }
+  if (mreq.nightShift === true) pre.push("l.night_shift_ok = 1");
   // Walk-ins only work if people can reach the branch: shortlist only those whose records place them in the branch's
   // city/region (lead locality, ATS branch/address, Meta form location or campaign branch, recruiter-call branch), or
   // who applied to this very requisition. Unknown location = left out of a city drive.

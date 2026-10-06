@@ -16,3 +16,12 @@ describe("JD free text -> rules", () => {
     expect(parseJdText(null).languages).toEqual([]);
   });
 });
+
+describe("education from JD text", () => {
+  it("reads the level", () => {
+    expect(parseJdText("Graduation with good typing speed").minEducationRank).toBe(5);
+    expect(parseJdText("12th pass, Hindi").minEducationRank).toBe(3);
+    expect(parseJdText("Graduate preferred").minEducationRank).toBeNull();
+    expect(parseJdText("Good communication").minEducationRank).toBeNull();
+  });
+});

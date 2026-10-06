@@ -11,6 +11,8 @@ export interface JdRules {
   nightShift: boolean | null;
   minExperienceYears: number | null;
   streams: string[];
+  /** Education level the text asks for, on the lead-screener ladder (2=10th 3=12th 5=graduate 6=PG); null if none. */
+  minEducationRank: number | null;
 }
 
 const LANGS = ["english", "hindi", "marathi", "gujarati", "punjabi", "bengali", "tamil", "telugu", "kannada", "malayalam", "odia", "urdu", "assamese"];
@@ -18,7 +20,7 @@ const CERT: Record<string, RegExp> = { DRA: /(^|[^a-z])dra([^a-z]|$)/i, IRDA: /i
 
 export function parseJdText(text: string | null | undefined): JdRules {
   const t = String(text ?? "").toLowerCase();
-  const r: JdRules = { languages: [], certifications: [], minTypingWpm: null, englishLevel: null, gender: null, nightShift: null, minExperienceYears: null, streams: [] };
+  const r: JdRules = { languages: [], certifications: [], minTypingWpm: null, englishLevel: null, gender: null, nightShift: null, minExperienceYears: null, streams: [], minEducationRank: null };
   if (!t.trim()) return r;
   for (const l of LANGS) {
     const re = new RegExp(`(fluent|good|excellent|strong|proficient|speak|spoken|communication)[^.;,\\n]{0,30}${l}|${l}[^.;,\\n]{0,25}(fluen|speak|spoken|communication|proficien|mandatory|must|required)`);
@@ -36,6 +38,11 @@ export function parseJdText(text: string | null | undefined): JdRules {
   const exp = t.match(/(\d+(?:\.\d+)?)\s*\+?\s*(?:-\s*\d+\s*)?(?:years?|yrs?)\s*(?:of\s*)?(?:relevant\s*)?(?:experience|exp)/);
   if (exp) r.minExperienceYears = Number(exp[1]);
   else if (/fresher/.test(t)) r.minExperienceYears = 0;
+  if (/post ?graduat|\bpg\b|master'?s degree|\bmba\b|\bm\.? ?com\b/.test(t)) r.minEducationRank = 6;
+  else if (/graduat|bachelor|\bdegree\b|\bb\.? ?com\b|\bb\.? ?a\b|\bb\.? ?sc\b|\bbba\b|\bbca\b/.test(t)) r.minEducationRank = 5;
+  else if (/12th|hsc|intermediate|higher secondary|\+2\b/.test(t)) r.minEducationRank = 3;
+  else if (/10th|ssc|matric/.test(t)) r.minEducationRank = 2;
+  if (/(preferred|preferable|desirable|optional)/.test(t)) r.minEducationRank = null;
   for (const [st, re] of [["commerce", /commerce|b\.? ?com\b/], ["science", /science graduate|b\.? ?sc\b/], ["it_engineering", /\bbca\b|b\.? ?tech|engineering graduate|\bit graduate/], ["management", /\bbba\b|\bmba\b/], ["arts", /arts graduate|\bb\.? ?a\b graduate/]] as const) {
     if (re.test(t)) r.streams.push(st);
   }

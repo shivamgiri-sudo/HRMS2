@@ -49,6 +49,8 @@ export interface MatchRequisition {
   /** Industries whose experience helps for this process (derived from the process name). */
   goodIndustries?: string[] | null;
   streams?: string[] | null;
+  /** Drive shortlists: every hard JD requirement must be CONFIRMED on the candidate (unknown = not shortlisted). */
+  strict?: boolean;
 }
 
 export interface MatchResult {
@@ -88,7 +90,8 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
   if (req.minExperienceYears != null && req.minExperienceYears > 0) {
     if (lead.experienceYears == null) unknown.push("experience");
     else if (lead.experienceYears >= req.minExperienceYears) score += 10;
-    else score -= 10; // soft: freshers are still trainable
+    else if (req.strict) { eligible = false; reasons.push(`${lead.experienceYears} yrs experience, JD needs ${req.minExperienceYears}`); }
+    else score -= 10; // soft outside drives: freshers are still trainable
   }
   if (req.nightShift === true) {
     if (lead.nightShiftOk == null) unknown.push("night_shift");
@@ -135,8 +138,9 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
     if (lead.certifications == null) unknown.push("certifications");
     else {
       const missing = req.certifications.filter((c) => !lead.certifications!.includes(c.toUpperCase()));
-      // Soft: certifications like DRA can be obtained during training, so it lowers the rank instead of excluding.
-      if (missing.length) { score -= 15; reasons.push(`needs ${missing.join(", ")}`); } else { score += 10; reasons.push("has required certification"); }
+      // Drive shortlists (strict): the JD's certification is required. Elsewhere it only lowers the rank.
+      if (missing.length) { if (req.strict) { eligible = false; reasons.push(`does not hold ${missing.join(", ")}`); } else { score -= 15; reasons.push(`needs ${missing.join(", ")}`); } }
+      else { score += 10; reasons.push(`holds ${req.certifications.join(", ")}`); }
     }
   }
   if (req.minTypingWpm) {
@@ -167,6 +171,11 @@ export function scoreLead(lead: MatchLead, req: MatchRequisition): MatchResult {
     if (req.streams.includes(lead.stream)) score += 5; else { score -= 5; reasons.push(`${lead.stream.replace(/_/g, " ")} stream, JD prefers ${req.streams.join("/")}`); }
   }
 
+  if (req.strict) {
+    const hard = new Set(["age", "education", "experience", "night_shift", "gender", "languages", "certifications"]);
+    const missingFacts = unknown.filter((u) => hard.has(u));
+    if (missingFacts.length) { eligible = false; reasons.push(`not confirmed: ${missingFacts.map((u) => u.replace(/_/g, " ")).join(", ")}`); }
+  }
   const asked = [req.ageMin != null || req.ageMax != null, req.minEducationRank != null, (req.minExperienceYears ?? 0) > 0, req.nightShift === true,
     true /* distance */, !!req.gender, !!req.languages?.length, !!req.certifications?.length, !!req.minTypingWpm, !!req.englishLevel].filter(Boolean).length;
   const confidence = asked ? Math.max(0, Math.round(((asked - unknown.length) / asked) * 100) / 100) : 1;
