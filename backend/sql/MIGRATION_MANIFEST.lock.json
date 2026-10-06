@@ -1402,6 +1402,7 @@
     "207_fix_leave_balance_calculation.sql",
     "208_sync_leave_from_db_bill.sql",
     "210_ml_rename_to_medical_leave.sql",
+    "2117_alt_rx_dump.sql",
     "215_inactive_access_and_otp_auth.sql",
     "215_inactive_access_and_otp_auth_no_trigger.sql",
     "216_missing_page_catalog_entries.sql",
