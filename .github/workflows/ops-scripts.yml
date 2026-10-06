@@ -66,6 +66,7 @@ on:
           - bank-verify-diagnose
           - bank-verify-rejudge
           - bank-verified-copy
+          - process-scope-diagnose
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
@@ -344,6 +345,10 @@ jobs:
             holiday-mapping-audit)
               # Read-only in both modes.
               npx tsx scripts/holiday-mapping-audit.ts 2026-10-02
+              ;;
+            process-scope-diagnose)
+              # Read-only. employee_codes = "<name or email>" [company key, default bellavita].
+              npx tsx scripts/process-scope-diagnose.ts ${INPUT_EMPLOYEE_CODES}
               ;;
             bank-verified-copy)
               # Dry-runs unless given --apply. Apply copies verified onboarding accounts to employee_bank_detail.
