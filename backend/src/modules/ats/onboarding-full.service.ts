@@ -9,6 +9,7 @@ import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { luckpayClient, sanitizeProviderPayload } from "../integrations/luckpay/luckpay.client.js";
 import { withProviderFailureLogged } from "./bgv-api-log.service.js";
+import { syncBridgePennyDropStatus } from "./onboarding-bridge-status.js";
 import { getConfiguredBgvProviderAdapter } from "./bgv-provider.adapter.js";
 import { encrypt, decrypt } from "../../utils/encryption.js";
 // Reads go through the format-aware resolver, not utils/encryption.decrypt directly.
@@ -740,6 +741,44 @@ async function resolveEsignSource(candidateId: string) {
 // provider_key and a provider_reference_id.
 
 /**
+ * The submit-time penny drop used to land only in candidate_bgv_check. Employee creation, the
+ * verified-bank copy and Ops Control Tower read candidate_bank_verification / the onboarding
+ * bridge, so a verified account looked "pending" and never reached employee_bank_detail. Writes
+ * the same stores the verify button does, then copies the account onto the employee if one already
+ * exists. A failure here must not lose the check result already stored, so it is logged, not thrown.
+ */
+async function recordBankVerificationOutcome(
+  candidateId: string,
+  args: {
+    accountNo: string;
+    ifscCode: string;
+    accountHolderName: string | null;
+    result: Awaited<ReturnType<Awaited<ReturnType<typeof getConfiguredBgvProviderAdapter>>["verifyBank"]>>;
+  },
+): Promise<void> {
+  try {
+    const { persistBankVerificationOutcome } = await import("./bgv-verification.service.js");
+    const [dupe] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bank_verification WHERE candidate_id = ? AND provider_reference_id = ? LIMIT 1`,
+      [candidateId, args.result.providerReferenceId],
+    );
+    if ((dupe as RowDataPacket[]).length === 0) {
+      await persistBankVerificationOutcome(candidateId, args, args.result);
+    }
+    await syncBridgePennyDropStatus(db, candidateId, args.result.status, args.result.riskFlags);
+    if (args.result.status === "verified") {
+      const { copyVerifiedBankToEmployee } = await import("../payroll/bank-manual-review.service.js");
+      await copyVerifiedBankToEmployee(candidateId);
+    }
+  } catch (err) {
+    console.error(
+      `[BGV] could not record bank verification outcome for candidate ${candidateId}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+/**
  * Trigger real BGV checks asynchronously after onboarding submission
  *
  * Uses the configured BGV provider (befisc_luckpay / infinity_ai / digio)
@@ -822,6 +861,12 @@ async function triggerRealBgvChecksAsync(
         candidateName: cand.full_name ?? null,
       });
       await storeBgvCheckResult(candidateId, 'bank', result, adapter.providerKey);
+      await recordBankVerificationOutcome(candidateId, {
+        accountNo,
+        ifscCode,
+        accountHolderName: bank.accountHolderName ?? cand.full_name ?? null,
+        result,
+      });
       console.log(`[BGV] Bank check for ${candidateId}: ${result.status}`);
     } catch (err) {
       await storeBgvCheckError(candidateId, 'bank', adapter.providerKey, err);
