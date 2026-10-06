@@ -370,6 +370,27 @@ function unwrapList(value: any): any[] {
   return value?.data ?? value ?? [];
 }
 
+/**
+ * A prior-month line as Copy should recreate it. A branch-level line's driver (headcount, seats,
+ * revenue...) is re-evaluated against the NEW month's data on save, so copying the driver would
+ * split the same amount differently across cost centres. Freezing the saved split as manual
+ * percentages over the same cost centres reproduces last month's per-cost-centre amounts exactly.
+ */
+function frozenSplitLine(record: BranchBudgetLineRecord): BranchBudgetLineInput {
+  const input = { ...budgetLineRecordToInput(record), id: undefined };
+  const allocations = record.allocations ?? [];
+  if (record.planning_level !== "branch" || allocations.length === 0) return input;
+  return {
+    ...input,
+    allocationDriver: "manual",
+    manualAllocations: allocations.map((a) => ({
+      costCentreId: a.cost_centre_id,
+      percentage: Number(a.allocation_percentage),
+    })),
+    includedCostCentreIds: allocations.map((a) => a.cost_centre_id),
+  };
+}
+
 function blankLine(preset: Partial<BranchBudgetLineInput> = {}): BranchBudgetLineInput {
   return {
     attributionScope: "branch_common",
@@ -715,7 +736,13 @@ export default function BranchBudgetManagementWorkspace() {
   // because saveDraft replaces the line set with fresh UUIDs on every save.
   const priorPeriod = previousPeriod(period);
   const priorList = useBranchBudgets({ period: priorPeriod, branchId: branchId || undefined });
-  const priorBudgetId = priorList.budgetsQuery.data?.[0]?.id ?? null;
+  // The list is newest-created first, which can be a later draft or revision; what was submitted
+  // and signed off is the approved one, so prefer it (highest revision) and fall back to newest.
+  const priorBudgets = priorList.budgetsQuery.data ?? [];
+  const priorBudgetId = [...priorBudgets]
+    .filter((b) => b.status === "approved")
+    .sort((a, b) => b.revision_no - a.revision_no)[0]?.id
+    ?? priorBudgets[0]?.id ?? null;
   const priorDetail = useBranchBudgetDetail(priorBudgetId);
   // July 2026 exists only in the db_bill mirror, never as a workspace budget, so the Prev/Var
   // columns read zero and Copy-forward stays disabled against a month that does have a budget.
@@ -738,6 +765,8 @@ export default function BranchBudgetManagementWorkspace() {
         amount: Number(l.gross_amount ?? 0),
         quantity: Number((l as any).quantity ?? 0) || null,
         unitRate: Number((l as any).unit_rate ?? (l as any).unitRate ?? 0) || null,
+        // The whole submitted line, so Copy reproduces tax, cost centre, vendor and allocation too.
+        line: frozenSplitLine(l),
       }));
     }
     return (priorMirror.data ?? []).map((l) => ({

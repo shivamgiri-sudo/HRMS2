@@ -135,3 +135,26 @@ describe("applyCopyForward", () => {
     expect(result[0].unitRate).toBe(500);
   });
 });
+
+describe("applyCopyForward — submitted workspace budget", () => {
+  const submitted = blank({
+    head: "Repairs & Maintenance", subHead: "R&M- Ups", itemName: "UPS AMC", unit: "Month",
+    quantity: 12, unitRate: 32_000, taxTreatment: "exclusive", gstRate: 18, gstType: "igst",
+    recoverableTaxPct: 50, costCentreId: "cc-1", planningLevel: "cost_centre",
+    attributionScope: "cost_centre", preferredVendorId: "v-9", justification: "Annual contract",
+  });
+  const prior: PriorBudgetRow = { head: submitted.head, subHead: submitted.subHead!, amount: 453_120, line: submitted };
+
+  it("reproduces the submitted line exactly, without its id", () => {
+    expect(applyCopyForward([blank()], [prior], makeLine)).toEqual([{ ...submitted, id: undefined }]);
+  });
+
+  it("keeps duplicate head/sub-head lines separate instead of summing them", () => {
+    expect(applyCopyForward([blank()], [prior, prior], makeLine)).toHaveLength(2);
+  });
+
+  it("still never overwrites a priced row", () => {
+    const priced = blank({ head: submitted.head, subHead: submitted.subHead, quantity: 1, unitRate: 10 });
+    expect(applyCopyForward([priced], [prior], makeLine)).toEqual([priced]);
+  });
+});
