@@ -107,22 +107,48 @@ const asDate = (v: unknown): Date | null => {
  * package's own epf_employee/esic_employee amounts then decide applicability.
  */
 async function fromApprovedPackage(employeeId: string): Promise<AppointmentLetterSalary | null> {
+  // A revision made AFTER the Payroll Head approved the package but taking
+  // effect on or before the date of joining supersedes it: the employee joined
+  // on the revised terms. A revision effective after joining does not - the
+  // letter states what was agreed at joining.
+  const [revised] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT a.package_id
+         FROM employee_payroll_head_review r
+         JOIN employees e ON e.id = r.employee_id
+         JOIN salary_component_assignments a
+           ON a.employee_id = r.employee_id
+          AND a.status = 'active'
+          AND a.package_id IS NOT NULL
+          AND a.package_id <> r.salary_package_id
+          AND a.assigned_at > r.reviewed_at
+          AND a.effective_date <= e.date_of_joining
+        WHERE r.employee_id = ?
+          AND r.status = 'approved'
+          AND r.package_accepted = 1
+        ORDER BY a.effective_date DESC, a.assigned_at DESC
+        LIMIT 1`,
+      [employeeId],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const revisedPackageId = ((revised as RowDataPacket[])[0]?.package_id as string | undefined) ?? null;
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT p.*,
             a.pf_applicable, a.esi_applicable,
             r.package_effective_from, r.reviewed_by, r.reviewed_at
        FROM employee_payroll_head_review r
-       JOIN salary_package_master p ON p.id = r.salary_package_id
+       JOIN salary_package_master p ON p.id = COALESCE(?, r.salary_package_id)
        LEFT JOIN salary_component_assignments a
               ON a.employee_id = r.employee_id
              AND a.status = 'active'
-             AND a.package_id = r.salary_package_id
+             AND a.package_id = p.id
       WHERE r.employee_id = ?
         AND r.status = 'approved'
         AND r.package_accepted = 1
         AND r.salary_package_id IS NOT NULL
       LIMIT 1`,
-    [employeeId],
+    [revisedPackageId, employeeId],
   ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const p = (rows as RowDataPacket[])[0];
   if (!p) return null;
