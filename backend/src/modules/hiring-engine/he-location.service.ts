@@ -13,6 +13,20 @@ import { recordInviteAnswer, type InviteAnswer } from "./he-ingest.service.js";
 export const LOCATION_TEXT_VERSION = "location_v1";
 const TOKEN_RE = /^[a-f0-9]{32}$/;
 
+/**
+ * Sample-email links point at this fixed token. It serves a fake candidate ("Rahul") so HR can click through the real candidate
+ * page from the test emails; every action on it is accepted and thrown away (no lead, no match, nothing written).
+ */
+export const DEMO_TOKEN = "0".repeat(32);
+export function demoContext(): LocationContext {
+  const d = new Date(Date.now() + 86_400_000 + 5.5 * 3600_000);
+  return {
+    matchId: "demo", leadId: "demo", firstName: "Rahul", branchName: "Noida Sector 62", address: "Trapezoid IT Park, 1st Floor, C-27, Sector 62, Noida - 201309",
+    branchLat: 28.627, branchLng: 77.3649, slotAt: `${d.toISOString().slice(0, 10)} 11:00:00`, state: "invited", open: true, sharing: false, waConsent: false, optInOpen: true,
+    role: "Customer Success Executive", reference: "HE-SAMPLE", mapsUrl: "https://maps.google.com/?q=28.627,77.3649", docs: String(process.env.HE_DOCS_LIST?.trim() || "Aadhaar, PAN, 12th marksheet").split(/\s*,\s*/).filter(Boolean), rsvpOpen: true,
+  };
+}
+
 export interface LocationContext {
   matchId: string; leadId: string; firstName: string; branchName: string; address: string | null;
   branchLat: number | null; branchLng: number | null; slotAt: string | null; state: string;
@@ -31,6 +45,7 @@ export interface LocationContext {
 /** Link is usable from 6h before the slot until 3h after, while the candidate is still expected. */
 export async function getContextByToken(token: string): Promise<LocationContext | null> {
   if (!TOKEN_RE.test(token)) return null;
+  if (token === DEMO_TOKEN) return demoContext();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.state, m.slot_at, l.full_name, jr.branch_name, jr.designation_name,
             (m.state IN ('invited','confirmed','declined','slot_released') AND m.slot_at IS NOT NULL AND NOW() < m.slot_at) AS rsvp_open, bm.address, bm.latitude, bm.longitude,
@@ -59,6 +74,7 @@ export async function getContextByToken(token: string): Promise<LocationContext 
 }
 
 export async function startSharing(token: string): Promise<boolean> {
+  if (token === DEMO_TOKEN) return true;
   const c = await getContextByToken(token);
   if (!c || !c.open) return false;
   await grantConsent(c.leadId, "location", LOCATION_TEXT_VERSION, "wa_link");
@@ -67,6 +83,7 @@ export async function startSharing(token: string): Promise<boolean> {
 }
 
 export async function stopSharing(token: string): Promise<boolean> {
+  if (token === DEMO_TOKEN) return true;
   const c = await getContextByToken(token);
   if (!c) return false;
   await revokeConsent(c.leadId, "location");
@@ -77,6 +94,7 @@ export async function stopSharing(token: string): Promise<boolean> {
 export type PingResult = { ok: true; distanceKm: number | null; etaMin: number | null; arrived: boolean } | { ok: false; reason: "invalid_token" | "closed" | "no_consent" | "bad_coordinates" | "too_frequent" };
 
 export async function recordPing(token: string, lat: unknown, lng: unknown, accuracyM?: unknown): Promise<PingResult> {
+  if (token === DEMO_TOKEN) return { ok: true, distanceKm: 3.2, etaMin: 12, arrived: false };
   const c = await getContextByToken(token);
   if (!c) return { ok: false, reason: "invalid_token" };
   if (!c.open) return { ok: false, reason: "closed" };
@@ -98,6 +116,7 @@ export const WA_OPTIN_TEXT_VERSION = "link_optin_v1";
 
 /** Candidate tapped "Get updates on WhatsApp" on their own invitation page. Records explicit, versioned consent. */
 export async function optInWhatsApp(token: string): Promise<"granted" | "already" | "closed" | "invalid"> {
+  if (token === DEMO_TOKEN) return "granted";
   const c = await getContextByToken(token);
   if (!c) return "invalid";
   if (c.waConsent) return "already";
@@ -110,6 +129,7 @@ export async function optInWhatsApp(token: string): Promise<"granted" | "already
 /** Candidate answered the invitation (Yes / Cannot come / Another time) on their invitation page. */
 export async function answerInvite(token: string, answer: unknown): Promise<{ ok: true; state: string } | { ok: false; reason: "invalid" | "closed" | "bad_answer" }> {
   if (answer !== "yes" && answer !== "no" && answer !== "later") return { ok: false, reason: "bad_answer" };
+  if (token === DEMO_TOKEN) return { ok: true, state: answer === "yes" ? "confirmed" : answer === "no" ? "declined" : "slot_released" };
   const c = await getContextByToken(token);
   if (!c) return { ok: false, reason: "invalid" };
   if (!c.rsvpOpen) return { ok: false, reason: "closed" };

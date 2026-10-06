@@ -31,7 +31,7 @@ export const quietBtn = `w-full cursor-pointer rounded-xl border border-slate-30
 const card = "rounded-2xl border border-slate-200 bg-white p-5 shadow-sm";
 
 /** Page frame: brand band, content column, footer. */
-export function Shell({ children }: { children: ReactNode }) {
+export function Shell({ children, sample }: { children: ReactNode; sample?: boolean }) {
   return (
     <div className="min-h-screen bg-slate-100">
       <header className="bg-blue-900 text-white">
@@ -40,6 +40,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <span className="text-xs uppercase tracking-widest text-blue-200">Careers</span>
         </div>
       </header>
+      {sample && <div role="note" className="bg-amber-100 px-4 py-2 text-center text-xs font-semibold text-amber-900">SAMPLE PAGE for testing. Nothing you tap here is saved or sent to anyone.</div>}
       <main className="mx-auto flex max-w-md flex-col gap-4 px-4 py-5">{children}</main>
       <footer className="mx-auto max-w-md px-4 pb-10 text-center text-xs leading-relaxed text-slate-500">
         Mas Callnet India Pvt Ltd. This page is only for you. Interviews are free of charge; we never ask for money.

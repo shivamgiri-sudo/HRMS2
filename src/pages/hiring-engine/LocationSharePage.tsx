@@ -11,7 +11,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { CheckCircle2, MapPin, ShieldCheck, XCircle } from "lucide-react";
 import { ANSWERS, InterviewCard, LocationCard, RsvpCard, Shell, StatusCard, WhatsAppCard, type Answer, type Invitation } from "./InvitationParts";
 
-interface Ctx extends Invitation { open: boolean; sharing: boolean; waConsent?: boolean; optInOpen?: boolean; state?: string; rsvpOpen?: boolean }
+interface Ctx extends Invitation { demo?: boolean; open: boolean; sharing: boolean; waConsent?: boolean; optInOpen?: boolean; state?: string; rsvpOpen?: boolean }
 type Phase = "loading" | "invalid" | "closed" | "ready" | "sharing" | "arrived" | "stopped" | "denied";
 
 const api = (token: string, path = "") => `/api/he-public/loc/${encodeURIComponent(token)}${path}`;
@@ -131,12 +131,12 @@ export default function LocationSharePage() {
   ) : null;
   const whatsapp = showOptIn ? <WhatsAppCard state={optIn} onOptIn={() => void optInWhatsApp()} /> : null;
 
-  if (phase === "arrived") return <Shell><StatusCard tone="ok" icon={<CheckCircle2 className="h-6 w-6" />} title={`You have reached ${ctx.branchName}`}>Sharing has stopped. Please register at the reception and quote your reference {ctx.reference}. Good luck!</StatusCard></Shell>;
-  if (phase === "stopped") return <Shell>{interview}<StatusCard tone="plain" icon={<ShieldCheck className="h-6 w-6" />} title="Sharing stopped">We are no longer using your location. See you at the branch.</StatusCard>{whatsapp}</Shell>;
-  if (phase === "denied") return <Shell>{interview}<StatusCard tone="warn" icon={<XCircle className="h-6 w-6" />} title="Location permission is off">No problem. You can still come to {ctx.branchName} at your time. If you change your mind, allow location for this page and reload.</StatusCard>{whatsapp}</Shell>;
+  if (phase === "arrived") return <Shell sample={ctx.demo}><StatusCard tone="ok" icon={<CheckCircle2 className="h-6 w-6" />} title={`You have reached ${ctx.branchName}`}>Sharing has stopped. Please register at the reception and quote your reference {ctx.reference}. Good luck!</StatusCard></Shell>;
+  if (phase === "stopped") return <Shell sample={ctx.demo}>{interview}<StatusCard tone="plain" icon={<ShieldCheck className="h-6 w-6" />} title="Sharing stopped">We are no longer using your location. See you at the branch.</StatusCard>{whatsapp}</Shell>;
+  if (phase === "denied") return <Shell sample={ctx.demo}>{interview}<StatusCard tone="warn" icon={<XCircle className="h-6 w-6" />} title="Location permission is off">No problem. You can still come to {ctx.branchName} at your time. If you change your mind, allow location for this page and reload.</StatusCard>{whatsapp}</Shell>;
   if (phase === "closed") {
     return (
-      <Shell>
+      <Shell sample={ctx.demo}>
         {interview}{rsvp}
         {!ctx.rsvpOpen && <StatusCard tone="plain" icon={<MapPin className="h-6 w-6" />} title={showOptIn ? `Hi ${ctx.firstName}, your walk-in is booked` : "Location sharing is not active right now"}>{showOptIn ? "Live location sharing opens a few hours before your time." : "It opens a few hours before your walk-in time. You can still just come to the branch on time."}</StatusCard>}
         {whatsapp}
@@ -144,7 +144,7 @@ export default function LocationSharePage() {
     );
   }
   return (
-    <Shell>
+    <Shell sample={ctx.demo}>
       {interview}{rsvp}
       <LocationCard firstName={ctx.firstName} sharing={phase === "sharing"} eta={eta} error={error} onStart={() => void start()} onStop={() => void stop()} onSkip={() => setPhase("stopped")} />
       {whatsapp}
