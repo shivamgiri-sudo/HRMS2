@@ -10,6 +10,7 @@ import { budgetByBranchId, budgetByCostCentreId, readBudgetEntries } from "./pnl
 import { cachedPnlRead } from "./pnl-read-cache.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
 import { nonVoidRunSql } from "../payroll/run-status.js";
+import { snapshotUncoveredByRunSql } from "./pnl-payroll-coverage.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
@@ -475,8 +476,10 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
     [period],
   );
   for (const row of rows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), { cost: n(row.amount), staff: n(row.staff) });
-  if (out.size > 0 || !(await tableExists("pnl_running_salary_snapshot"))) return out;
+  if (!(await tableExists("pnl_running_salary_snapshot"))) return out;
 
+  // Staff no valid run covers yet keep their accrual (per employee, not company-wide: a scoped run
+  // must not zero every other cost centre — pnl-payroll-coverage.ts).
   // Running-salary fallback stays CTC (earned till date): the snapshot has no other/loan/advance/
   // LWP deduction columns, so the People Cost rule (pnl-people-cost.ts) cannot be applied here.
   const ovSnapshot = await overrideJoinSql("s.employee_id", "s.cost_centre_id");
@@ -486,12 +489,15 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
             SUM(earned_salary_till_date) AS amount
        FROM pnl_running_salary_snapshot s
        ${ovSnapshot.join}
-      WHERE period_code = ?
+      WHERE s.period_code = ? AND ${await snapshotUncoveredByRunSql("s")}
       GROUP BY ${ovSnapshot.effectiveCostCentreExpr}`,
     [period],
   );
   for (const row of runningRows) {
-    if (row.cost_centre_id) out.set(String(row.cost_centre_id), { cost: n(row.amount), staff: n(row.staff) });
+    if (!row.cost_centre_id) continue;
+    const key = String(row.cost_centre_id);
+    const prev = out.get(key);
+    out.set(key, { cost: (prev?.cost ?? 0) + n(row.amount), staff: (prev?.staff ?? 0) + n(row.staff) });
   }
   return out;
 }
@@ -538,7 +544,8 @@ async function readUnallocatedPayroll(
       WHERE r.run_month = ?`,
     [period],
   );
-  if (n(posted[0]?.line_count) === 0) return readUnallocatedRunningPayroll(period, branchIds, processIds);
+  const running = await readUnallocatedRunningPayroll(period, branchIds, processIds);
+  if (n(posted[0]?.line_count) === 0) return running;
   const branchClause = branchIds?.length ? `AND e.branch_id IN (${marks(branchIds)})` : "";
   const proc = processClause("e.process_id", processIds);
   // A mapped override takes an employee out of "unallocated" too — that is a real use of this
@@ -557,9 +564,16 @@ async function readUnallocatedPayroll(
       GROUP BY e.branch_id`,
     [period, ...(branchIds ?? []), ...proc.params],
   );
-  return rows
-    .map((r) => ({ branchId: r.branch_id ? String(r.branch_id) : null, branchName: r.branch_name ? String(r.branch_name) : "Unassigned", cost: n(r.amount), staff: n(r.staff) }))
-    .filter((r) => r.cost !== 0 || r.staff > 0);
+  const merged = new Map<string, { branchId: string | null; branchName: string; cost: number; staff: number }>();
+  for (const r of [
+    ...rows.map((r) => ({ branchId: r.branch_id ? String(r.branch_id) : null, branchName: r.branch_name ? String(r.branch_name) : "Unassigned", cost: n(r.amount), staff: n(r.staff) })),
+    ...running,
+  ]) {
+    const key = r.branchId ?? "";
+    const prev = merged.get(key);
+    merged.set(key, prev ? { ...prev, cost: prev.cost + r.cost, staff: prev.staff + r.staff } : { ...r });
+  }
+  return [...merged.values()].filter((r) => r.cost !== 0 || r.staff > 0);
 }
 
 /** readUnallocatedPayroll()'s running-salary leg: same population (effective cost centre IS NULL),
@@ -580,7 +594,7 @@ async function readUnallocatedRunningPayroll(
        FROM pnl_running_salary_snapshot s
        LEFT JOIN branch_master bm ON bm.id = s.branch_id
        ${ov.join}
-      WHERE s.period_code = ? AND ${ov.effectiveCostCentreExpr} IS NULL ${branchClause} ${proc.sql}
+      WHERE s.period_code = ? AND ${ov.effectiveCostCentreExpr} IS NULL AND ${await snapshotUncoveredByRunSql("s")} ${branchClause} ${proc.sql}
       GROUP BY s.branch_id`,
     [period, ...(branchIds ?? []), ...proc.params],
   );

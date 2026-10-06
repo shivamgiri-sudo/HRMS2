@@ -11,6 +11,7 @@ import { budgetByBranchId, entriesForCodes, readBudgetEntries as readBudgetEntri
 import { cachedPnlRead } from "./pnl-read-cache.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
 import { nonVoidRunSql } from "../payroll/run-status.js";
+import { snapshotUncoveredByRunSql } from "./pnl-payroll-coverage.js";
 
 /*
  * PER-REQUEST DEDUP (2026-09-24). One overview asks for the same month's revenue / people / spend /
@@ -490,7 +491,7 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   for (const r of rows) {
     out.set(r.branch_id ? String(r.branch_id) : "", { cost: n(r.cost), staff: n(r.staff) });
   }
-  if (out.size > 0 || !(await tableExists("pnl_running_salary_snapshot"))) return out;
+  if (!(await tableExists("pnl_running_salary_snapshot"))) return out;
 
   // Same fallback as pnl-reconciliation.service.ts's readPayroll() (2026-09-16 finding: it existed
   // there and worked, but nothing had ever triggered it for September — see
@@ -504,7 +505,8 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
     employeeIdExpr: "s.employee_id", homeCostCentreExpr: "s.cost_centre_id",
     homeBranchExpr: "s.branch_id", homeProcessExpr: "s.process_id", ccAlias: "pcc",
   });
-  const runningWhere: string[] = ["s.period_code = ?"];
+  // Per employee: only staff no valid run covers yet (pnl-payroll-coverage.ts).
+  const runningWhere: string[] = ["s.period_code = ?", await snapshotUncoveredByRunSql("s")];
   const runningParams: unknown[] = [period];
   if (s.processIds.length) {
     runningWhere.push(`${ovSnapshot.effectiveProcessExpr} IN (${marks(s.processIds)})`);
@@ -524,7 +526,9 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
     runningParams,
   );
   for (const r of runningRows) {
-    out.set(r.branch_id ? String(r.branch_id) : "", { cost: n(r.cost), staff: n(r.staff) });
+    const key = r.branch_id ? String(r.branch_id) : "";
+    const prev = out.get(key);
+    out.set(key, { cost: (prev?.cost ?? 0) + n(r.cost), staff: (prev?.staff ?? 0) + n(r.staff) });
   }
   return out;
 }

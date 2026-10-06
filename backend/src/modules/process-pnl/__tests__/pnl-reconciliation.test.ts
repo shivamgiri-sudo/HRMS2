@@ -159,6 +159,9 @@ function mockDb(options: { payrollRows?: number } = {}) {
       return [[{ rows: 2, latest_synced_at: "2026-08-19 12:00:00" }], []];
     }
     if (q.includes("FROM pnl_running_salary_snapshot")) {
+      // Posted payroll here is a company-wide run: the accrual's "not covered by a run" predicate
+      // (pnl-payroll-coverage.ts) leaves no snapshot row once it has lines.
+      if (payrollRows > 0) return [[], []];
       return [[{ cost_centre_id: "cc-noida-1", staff: 2, amount: L(42) }], []];
     }
     // readUnallocatedPayroll / exceptions(): filtering on the effective cost centre being NULL,

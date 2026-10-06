@@ -701,8 +701,21 @@ async function getStatementSummary(filters: Partial<PnlQueryFilters>) {
  */
 export async function getStatementPeopleCost(period: string): Promise<PeopleCostByKey> {
   const actual = await getActualPeopleCost(period);
-  if (actual.byBranch.size > 0 || actual.byProcess.size > 0) return actual;
-  return getRunningPeopleCost(period);
+  if (actual.byBranch.size === 0 && actual.byProcess.size === 0) return getRunningPeopleCost(period);
+  // Some cost centres run, others not yet: their staff keep the accrual (pnl-payroll-coverage.ts).
+  const running = await getRunningPeopleCost(period, { uncoveredOnly: true });
+  const add = <K>(into: Map<K, Record<string, number>>, from: Map<K, Record<string, number>>) => {
+    for (const [key, buckets] of from) {
+      const current = { ...(into.get(key) ?? {}) };
+      for (const [bucket, amount] of Object.entries(buckets)) current[bucket] = (current[bucket] ?? 0) + amount;
+      into.set(key, current);
+    }
+  };
+  add(actual.byBranch as Map<string, Record<string, number>>, running.byBranch as Map<string, Record<string, number>>);
+  add(actual.byProcess as Map<string, Record<string, number>>, running.byProcess as Map<string, Record<string, number>>);
+  for (const [key, cov] of running.coverageByBranch) if (!actual.coverageByBranch.has(key)) actual.coverageByBranch.set(key, cov);
+  for (const [key, cov] of running.coverageByProcess) if (!actual.coverageByProcess.has(key)) actual.coverageByProcess.set(key, cov);
+  return actual;
 }
 
 const defaultDependencies: StatementDependencies = {
