@@ -46,6 +46,7 @@ on:
           - apr-resync-sep-gap
           - oct-attendance-verify
           - attendance-rules-audit
+          - oct-attendance-deep-audit
           - oct-attendance-regrade
           - oct-outside-employment-cleanup
           - sep-attendance-regrade
@@ -223,6 +224,10 @@ jobs:
           MODE="${{ inputs.mode }}"
 
           case "${{ inputs.script }}" in
+            oct-attendance-deep-audit)
+              # Read-only in both modes (engine computes only). Counts only.
+              npx tsx scripts/attendance-deep-audit.ts 2026-10-01 2026-10-05
+              ;;
             attendance-rules-audit)
               # Read-only in both modes. Counts only.
               npx tsx scripts/attendance-rules-audit.ts
