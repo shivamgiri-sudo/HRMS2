@@ -784,74 +784,6 @@ export async function verifyBankByToken(token: string, input: { accountNo?: stri
   );
 }
 
-/**
- * Records a bank penny-drop outcome in the stores the rest of the system reads:
- * candidate_bank_verification (what employee creation and the verified-bank copy read) and
- * candidate_onboarding_bank_detail (the onboarding form's status). Shared by the verify button and
- * the submit-time async BGV trigger -- the latter used to write only candidate_bgv_check, so a
- * genuinely verified account (63555C, 2026-09-17) never reached the employee record and Ops
- * Control Tower kept listing it as pending.
- */
-export async function persistBankVerificationOutcome(
-  candidateId: string,
-  input: { accountNo?: string | null; ifscCode?: string | null; accountHolderName?: string | null; bankDetailId?: string | null },
-  result: { status: string; providerKey: string; providerReferenceId: string; matchedName?: string | null; matchScore?: number | null; raw?: unknown },
-): Promise<void> {
-  const { accountNo, ifscCode, accountHolderName } = input;
-  const bankDetailId = input.bankDetailId ?? null;
-  await db.execute(
-    `INSERT INTO candidate_bank_verification
-       (id, candidate_id, bank_detail_id, account_no_last4, account_no_hash, ifsc_code, input_account_holder_name,
-        provider_account_holder_name, name_match_score, verification_method, provider_key, provider_reference_id,
-        verification_status, result_json, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
-    [
-      randomUUID(),
-      candidateId,
-      bankDetailId,
-      accountNo ? String(accountNo).slice(-4) : null,
-      accountNo ? hashValue(accountNo) : null,
-      ifscCode || null,
-      accountHolderName ?? null,
-      result.matchedName ?? null,
-      result.matchScore ?? null,
-      resolveBankVerificationMethod(result),
-      result.providerKey,
-      result.providerReferenceId,
-      result.status,
-      JSON.stringify(result.raw ?? result),
-      result.status === "verified" ? new Date() : null,
-    ]
-  );
-  // account_no_encrypted was missing from this SET list, so a verification could
-  // succeed here (candidate_bank_verification below correctly records it worked)
-  // while the number itself never made it into candidate_onboarding_bank_detail --
-  // a second, independent path to the same "verified but unretrievable" gap that
-  // saveBankDetails' resave-wipe produces. COALESCE so this never overwrites an
-  // already-good stored value with NULL on a re-verify call.
-  const accountNoEncrypted = accountNo ? encrypt(String(accountNo).trim()) : null;
-  await db.execute(
-    `UPDATE candidate_onboarding_bank_detail
-        SET account_no_masked = COALESCE(?, account_no_masked), account_no_hash = COALESCE(?, account_no_hash),
-            account_no_encrypted = COALESCE(?, account_no_encrypted),
-            ifsc_code = COALESCE(?, ifsc_code), verification_status = ?,
-            provider_name = ?, verification_ref = ?, verified_account_holder_name = ?, verified_at = ?, updated_at = NOW()
-      WHERE candidate_id = ?`,
-    [
-      accountNo ? maskLast4(accountNo) : null,
-      accountNo ? hashValue(accountNo) : null,
-      accountNoEncrypted,
-      ifscCode || null,
-      result.status,
-      result.providerKey,
-      result.providerReferenceId,
-      result.matchedName ?? null,
-      result.status === "verified" ? new Date() : null,
-      candidateId,
-    ]
-  );
-}
-
 export async function verifyBankForCandidate(candidateId: string, input: { accountNo?: string; ifscCode?: string; accountHolderName?: string; forceProvider?: boolean }, meta?: { actorType?: "candidate" | "hr" | "system"; actorId?: string | null; ip?: string; userAgent?: string }) {
   await ensureConsent(candidateId);
   const candidate = await getCandidateIdentity(candidateId);
@@ -1018,6 +950,74 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
   // rather than waiting for an HR user to press it.
   await reconcileNamesAfterVerification(candidateId);
   return getBgvStatusForCandidate(candidateId);
+}
+
+/**
+ * Records a bank penny-drop outcome in the stores the rest of the system reads:
+ * candidate_bank_verification (what employee creation and the verified-bank copy read) and
+ * candidate_onboarding_bank_detail (the onboarding form's status). Shared by the verify button and
+ * the submit-time async BGV trigger -- the latter used to write only candidate_bgv_check, so a
+ * genuinely verified account (63555C, 2026-09-17) never reached the employee record and Ops
+ * Control Tower kept listing it as pending.
+ */
+export async function persistBankVerificationOutcome(
+  candidateId: string,
+  input: { accountNo?: string | null; ifscCode?: string | null; accountHolderName?: string | null; bankDetailId?: string | null },
+  result: { status: string; providerKey: string; providerReferenceId: string; matchedName?: string | null; matchScore?: number | null; raw?: unknown },
+): Promise<void> {
+  const { accountNo, ifscCode, accountHolderName } = input;
+  const bankDetailId = input.bankDetailId ?? null;
+  await db.execute(
+    `INSERT INTO candidate_bank_verification
+       (id, candidate_id, bank_detail_id, account_no_last4, account_no_hash, ifsc_code, input_account_holder_name,
+        provider_account_holder_name, name_match_score, verification_method, provider_key, provider_reference_id,
+        verification_status, result_json, verified_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    [
+      randomUUID(),
+      candidateId,
+      bankDetailId,
+      accountNo ? String(accountNo).slice(-4) : null,
+      accountNo ? hashValue(accountNo) : null,
+      ifscCode || null,
+      accountHolderName ?? null,
+      result.matchedName ?? null,
+      result.matchScore ?? null,
+      resolveBankVerificationMethod(result),
+      result.providerKey,
+      result.providerReferenceId,
+      result.status,
+      JSON.stringify(result.raw ?? result),
+      result.status === "verified" ? new Date() : null,
+    ]
+  );
+  // account_no_encrypted was missing from this SET list, so a verification could
+  // succeed here (candidate_bank_verification below correctly records it worked)
+  // while the number itself never made it into candidate_onboarding_bank_detail --
+  // a second, independent path to the same "verified but unretrievable" gap that
+  // saveBankDetails' resave-wipe produces. COALESCE so this never overwrites an
+  // already-good stored value with NULL on a re-verify call.
+  const accountNoEncrypted = accountNo ? encrypt(String(accountNo).trim()) : null;
+  await db.execute(
+    `UPDATE candidate_onboarding_bank_detail
+        SET account_no_masked = COALESCE(?, account_no_masked), account_no_hash = COALESCE(?, account_no_hash),
+            account_no_encrypted = COALESCE(?, account_no_encrypted),
+            ifsc_code = COALESCE(?, ifsc_code), verification_status = ?,
+            provider_name = ?, verification_ref = ?, verified_account_holder_name = ?, verified_at = ?, updated_at = NOW()
+      WHERE candidate_id = ?`,
+    [
+      accountNo ? maskLast4(accountNo) : null,
+      accountNo ? hashValue(accountNo) : null,
+      accountNoEncrypted,
+      ifscCode || null,
+      result.status,
+      result.providerKey,
+      result.providerReferenceId,
+      result.matchedName ?? null,
+      result.status === "verified" ? new Date() : null,
+      candidateId,
+    ]
+  );
 }
 
 export async function verifyUanByToken(token: string, input: { uanNumber?: string }, meta?: { ip?: string; userAgent?: string }) {
