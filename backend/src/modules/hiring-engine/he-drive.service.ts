@@ -9,6 +9,7 @@ import { refreshHistoryChunk } from "./he-master.service.js";
 import { loadProfiles } from "./he-profile.service.js";
 import { parseJdText } from "./he-jd-parse.js";
 import { learnedBonus } from "./he-learn.js";
+import { branchLocationTokens, locationRegex } from "./he-location-match.js";
 import { loadMatchParams } from "./he-showup.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -131,7 +132,7 @@ const slotCfg = (d: DriveRow): SlotConfig => ({ date: String(d.drive_date).slice
  * A lead already booked into another live drive is skipped (no double booking); leads that cleared a round
  * for this process before get a bonus. Returns how many matches were written.
  */
-export interface SuggestResult { suggested: number; blockedByReason: Record<string, number>; considered: number }
+export interface SuggestResult { suggested: number; blockedByReason: Record<string, number>; considered: number; location?: string[] | null }
 
 export async function suggestMatches(driveId: string, limit?: number): Promise<number> {
   return (await suggestMatchesDetailed(driveId, limit)).suggested;
@@ -157,17 +158,29 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
   if (mreq.ageMin != null) { pre.push("(l.age IS NULL OR l.age >= ?)"); preArgs.push(mreq.ageMin); }
   if (mreq.ageMax != null) { pre.push("(l.age IS NULL OR l.age <= ?)"); preArgs.push(mreq.ageMax); }
   if (mreq.nightShift === true) pre.push("(l.night_shift_ok IS NULL OR l.night_shift_ok = 1)");
+  // Walk-ins only work if people can reach the branch: shortlist only those whose records place them in the branch's
+  // city/region (lead locality, ATS branch/address, Meta form location or campaign branch, recruiter-call branch), or
+  // who applied to this very requisition. Unknown location = left out of a city drive.
+  const locRe = locationRegex(branchLocationTokens(req.branch_name, req.bcity ?? null));
   const selectCandidates = async () => (await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.mobile10, l.ats_candidate_id, l.status, l.primary_source, l.final_status, l.is_employee, l.walkin_count, l.last_attempt_date, l.last_outcome,
             l.history_refreshed_at, l.locality, l.age, l.education_rank, l.experience_years, l.night_shift_ok, l.lat, l.lng, COALESCE(i.engagement_score, 0) AS eng,
             EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
        FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id
+       LEFT JOIN ats_candidate ac ON ac.id = l.ats_candidate_id
+       LEFT JOIN meta_lead_raw mr ON mr.id = l.meta_lead_id
+       LEFT JOIN job_requisition jrm ON jrm.id = mr.requisition_id
       WHERE l.status IN ('new','contacted','interested','declined','no_show')
         AND l.is_employee = 0 AND l.final_status <> 'joined'
         AND NOT EXISTS (SELECT 1 FROM he_match m WHERE m.lead_id = l.id AND m.state IN ('invited','confirmed') AND m.slot_at >= NOW())
         AND NOT EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NOT NULL)
+        ${locRe ? `AND (mr.requisition_id = ?
+             OR LOWER(CONCAT_WS(' ', l.locality, ac.applied_for_branch, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, jrm.branch_name)) REGEXP ?
+             OR EXISTS (SELECT 1 FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10
+                          AND LOWER(CONCAT_WS(' ', a.branch_name, a.location_name, a.candidate_location)) REGEXP ?))` : ""}
         ${pre.map((c) => `AND ${c}`).join("\n        ")}
-      ORDER BY has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`, preArgs))[0];
+      ORDER BY (mr.requisition_id <=> ?) DESC, has_consent DESC, eng DESC, (l.education_rank IS NOT NULL) + (l.age IS NOT NULL) + (l.night_shift_ok IS NOT NULL) DESC LIMIT 5000`,
+    [...(locRe ? [req.id, locRe, locRe] : []), ...preArgs, req.id]))[0];
   let leads = await selectCandidates();
   // The rollup columns decide who is an employee / already joined. Refresh any prefix whose rollup is missing or a day old
   // before trusting it, so a never-refreshed lead cannot slip through the gate.
@@ -203,7 +216,12 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
        ON DUPLICATE KEY UPDATE drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)`,
       [s.id, drive.requisition_id, driveId, s.res.score, JSON.stringify({ reasons: s.res.reasons, unknown: s.res.unknown, confidence: s.res.confidence, priority: s.priority }), s.res.distanceKm, randomBytes(16).toString("hex")]);
   }
-  return { suggested: scored.length, blockedByReason: gate.blockedByReason, considered: leads.length };
+  // Earlier suggestions that no longer qualify (e.g. before the location rule) are dropped; contacted people are kept.
+  if (scored.length) {
+    const keep = scored.map((x) => x.id);
+    await db.execute(`DELETE FROM he_match WHERE drive_id = ? AND state = 'suggested' AND lead_id NOT IN (${keep.map(() => "?").join(",")})`, [driveId, ...keep]);
+  } else await db.execute("DELETE FROM he_match WHERE drive_id = ? AND state = 'suggested'", [driveId]);
+  return { suggested: scored.length, blockedByReason: { ...gate.blockedByReason, ...(locRe ? {} : { no_branch_location_known: 0 }) }, considered: leads.length, location: locRe ? branchLocationTokens(req.branch_name, req.bcity ?? null).slice(0, 6) : null };
 }
 
 /** Other open requisitions a declined lead fits (feeds the "other role" offer). Same branch ranked first by score. */
