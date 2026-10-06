@@ -67,6 +67,8 @@ on:
           - bank-verify-rejudge
           - bank-verified-copy
           - process-scope-diagnose
+          - bank-manual-approve
+          - digilocker-pending-diagnose
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
@@ -345,6 +347,15 @@ jobs:
             holiday-mapping-audit)
               # Read-only in both modes.
               npx tsx scripts/holiday-mapping-audit.ts 2026-10-02
+              ;;
+            bank-manual-approve)
+              # Dry-runs unless given --apply. employee_codes = codes the owner approved.
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/bank-manual-approve.ts ${INPUT_EMPLOYEE_CODES} $FLAG
+              ;;
+            digilocker-pending-diagnose)
+              # Read-only in both modes: SELECTs only, codes and counts.
+              npx tsx scripts/digilocker-pending-diagnose.ts
               ;;
             process-scope-diagnose)
               # Read-only. employee_codes = "<name or email>" [company key, default bellavita].
