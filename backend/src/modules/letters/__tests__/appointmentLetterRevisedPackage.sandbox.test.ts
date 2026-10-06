@@ -42,8 +42,12 @@ describe.skipIf(!port)("appointment letter: revised package (real MySQL)", () =>
     expect(await ctcFor("E_BEFORE")).toBe(25125);
   });
 
-  it("keeps the approved package when the revision takes effect after joining", async () => {
-    expect(await ctcFor("E_AFTER")).toBe(15006);
+  it("uses the revised package when it took effect after joining but is already in effect", async () => {
+    expect(await ctcFor("E_AFTER")).toBe(25125);
+  });
+
+  it("keeps the approved package when the revision is future-dated", async () => {
+    expect(await ctcFor("E_FUTURE")).toBe(15006);
   });
 
   it("keeps the approved package when there is no revision", async () => {

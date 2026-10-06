@@ -187,8 +187,8 @@ describe("source pins", () => {
     expect(refs.length).toBe(2);
     expect(code).toContain("AND a.package_id = p.id");
     expect(code).toContain("SELECT a.package_id");
-    // A revision only counts if it took effect on or before the joining date.
-    expect(code).toContain("a.effective_date <= e.date_of_joining");
+    // A revision only counts once it is in effect.
+    expect(code).toContain("a.effective_date <= CURDATE()");
     // Amounts come off the package alias `p`, never off the assignment alias `a`.
     expect(code).not.toMatch(/\bnum\(a\./);
   });

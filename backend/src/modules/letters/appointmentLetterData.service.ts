@@ -107,22 +107,21 @@ const asDate = (v: unknown): Date | null => {
  * package's own epf_employee/esic_employee amounts then decide applicability.
  */
 async function fromApprovedPackage(employeeId: string): Promise<AppointmentLetterSalary | null> {
-  // A revision made AFTER the Payroll Head approved the package but taking
-  // effect on or before the date of joining supersedes it: the employee joined
-  // on the revised terms. A revision effective after joining does not - the
-  // letter states what was agreed at joining.
+  // A revision made AFTER the Payroll Head approved the package supersedes it
+  // once it is in effect (effective date today or earlier), so the letter shows
+  // the employee's current salary. A future-dated revision is not yet current
+  // and is ignored until its effective date arrives.
   const [revised] = await db
     .execute<RowDataPacket[]>(
       `SELECT a.package_id
          FROM employee_payroll_head_review r
-         JOIN employees e ON e.id = r.employee_id
          JOIN salary_component_assignments a
            ON a.employee_id = r.employee_id
           AND a.status = 'active'
           AND a.package_id IS NOT NULL
           AND a.package_id <> r.salary_package_id
           AND a.assigned_at > r.reviewed_at
-          AND a.effective_date <= e.date_of_joining
+          AND a.effective_date <= CURDATE()
         WHERE r.employee_id = ?
           AND r.status = 'approved'
           AND r.package_accepted = 1
