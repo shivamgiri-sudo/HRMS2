@@ -67,9 +67,10 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
   const followUps = async () => {
     setBusy("follow"); setMsg(null);
     try {
-      const x = await hrmsApi.post<{ data: { whatsapp: Cnt; reminders: Cnt; calls: Cnt } }>("/api/he/engine/follow-ups", { dryRun: false }, 300000);
+      const x = await hrmsApi.post<{ data: { whatsapp: Cnt; reminders: Cnt; calls: Cnt; recovery?: Cnt; replacement?: Cnt; noShows?: number; otherRoles?: { offered?: number } | null; alerts?: { alerted?: number } } }>("/api/he/engine/follow-ups", { dryRun: false }, 300000);
       const f = x.data; const why = (c: Cnt) => Object.entries(c.blocked).map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`).join(", ");
-      setMsg({ ok: true, text: `Follow-ups: ${f.whatsapp.sent} WhatsApp${why(f.whatsapp) ? ` (waiting: ${why(f.whatsapp)})` : ""} · ${f.calls.sent} calls${why(f.calls) ? ` (waiting: ${why(f.calls)})` : ""} · ${f.reminders.sent} reminders.` });
+      const more = [f.noShows ? `${f.noShows} marked no-show (${f.recovery?.sent ?? 0} follow-up messages)` : "", f.replacement?.sent ? `${f.replacement.sent} new-slot offers` : "", f.otherRoles?.offered ? `${f.otherRoles.offered} other-role offers` : "", f.alerts?.alerted ? `${f.alerts.alerted} branch HR alerts` : ""].filter(Boolean).join(" · ");
+      setMsg({ ok: true, text: `Follow-ups: ${f.whatsapp.sent} WhatsApp${why(f.whatsapp) ? ` (waiting: ${why(f.whatsapp)})` : ""} · ${f.calls.sent} calls${why(f.calls) ? ` (waiting: ${why(f.calls)})` : ""} · ${f.reminders.sent} reminders${more ? ` · ${more}` : ""}.` });
       await load();
     } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Follow-ups failed" }); }
     finally { setBusy(null); }

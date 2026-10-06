@@ -5,7 +5,8 @@ import type {
   DeliveryStatus,
 } from "../../communication.types.js";
 
-const PINBOT_BASE = "https://partnersv1.pinbot.ai/v3";
+// PINBOT_BASE_URL only for a staging/sandbox endpoint; production uses the Pinbot partner API.
+const pinbotBase = () => (process.env.PINBOT_BASE_URL?.trim() || "https://partnersv1.pinbot.ai/v3").replace(/\/$/, "");
 const SEND_TIMEOUT_MS = 15000;
 
 interface PinbotSendResponse {
@@ -95,7 +96,7 @@ export class PinbotWhatsAppProvider implements CommunicationProvider {
     }
     try {
       const res = await axios.post<PinbotSendResponse>(
-        `${PINBOT_BASE}/${encodeURIComponent(this.phoneNumberId)}/messages`,
+        `${pinbotBase()}/${encodeURIComponent(this.phoneNumberId)}/messages`,
         {
           messaging_product: "whatsapp",
           recipient_type: "individual",

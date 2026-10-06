@@ -26,7 +26,7 @@ function toE164(mobile10: string): string { return `+91${mobile10}`; }
 export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = {}): Promise<CallPlacement> {
   const dryRun = o.dryRun !== false;
   const [mr] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id, m.lead_id, m.state, m.slot_at, l.full_name, l.mobile10, l.status, jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status,
+    `SELECT m.id, m.lead_id, m.requisition_id, m.state, m.slot_at, l.full_name, l.mobile10, l.status, jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status,
             jr.requested_headcount, jr.fulfilled_headcount, bm.address, d.drive_date, d.status AS drive_status
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN job_requisition jr ON jr.id = m.requisition_id
        LEFT JOIN he_drive d ON d.id = m.drive_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
@@ -37,7 +37,13 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   if (["opted_out", "arrived", "joined", "dead", "declined"].includes(String(m.status))) return { status: "blocked", reason: `lead_${m.status}` };
   if (m.approval_status !== "approved" || !m.active_status || Number(m.fulfilled_headcount) >= Number(m.requested_headcount)) return { status: "blocked", reason: "requisition_closed" };
   if (sendsPaused() || m.drive_status === "paused") return { status: "blocked", reason: "paused" };
-  if (!(await hasConsent(m.lead_id as string, "whatsapp_contact"))) return { status: "blocked", reason: "no_consent" };
+  // WhatsApp needs an explicit opt-in; a confirmation call about the walk-in we already emailed them (their own application) does not,
+  // which is what lets the email -> call path reach candidates who never opted in to WhatsApp. Opt-out above always wins.
+  if (!(await hasConsent(m.lead_id as string, "whatsapp_contact"))) {
+    const [emailed] = await db.execute<RowDataPacket[]>(
+      "SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = 'he_walkin_invite_email' AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1", [m.lead_id, m.requisition_id]);
+    if (!emailed.length) return { status: "blocked", reason: "no_consent" };
+  }
   if (!m.address) return { status: "blocked", reason: "missing_branch_address" }; // never read out an invented address
 
   const [att] = await db.execute<RowDataPacket[]>(
@@ -84,7 +90,7 @@ export async function startVapiCall(a: { ctx: VoiceCtx; mobile10: string; metada
   const serverUrl = `${base}/api/he-hook/voice-vapi?token=${encodeURIComponent(token)}`;
   try {
     const { data } = await axios.post(
-      "https://api.vapi.ai/call/phone",
+      `${env("VAPI_BASE_URL", "https://api.vapi.ai").replace(/\/$/, "")}/call/phone`, // VAPI_BASE_URL only for a sandbox
       {
         phoneNumberId,
         customer: { number: toE164(a.mobile10), name: a.ctx.candidateName },

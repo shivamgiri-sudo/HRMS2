@@ -16,6 +16,8 @@ import {
 import { planFromCallOutcome, planFromReply, type LeadStatus, type TransitionPlan } from "./he-state.js";
 import { addEvent, findLeadByMobile, persistSignals, revokeConsent, setLeadStatus, upsertLead } from "./he-lead.service.js";
 import { recomputeInsight } from "./he-insight.service.js";
+import { sendTemplateToLead } from "./he-send.service.js";
+import type { TemplateKey } from "./he-template-catalog.js";
 
 const isDuplicateKey = (e: unknown) => (e as { code?: string; errno?: number })?.code === "ER_DUP_ENTRY" || (e as { errno?: number })?.errno === 1062;
 
@@ -47,13 +49,36 @@ async function mirrorToMeta(metaLeadId: string | null, plan: TransitionPlan): Pr
     [confirmed, resched, declined, keyword, metaLeadId]);
 }
 
+/** Template follow-ups a state change triggers. Never fails the ingestion: a blocked/failed send is only logged. */
+async function sendFollowUpTemplate(leadId: string, key: TemplateKey, matchId: string | null): Promise<void> {
+  try {
+    // Once per drive (or per lead without a match): a second confirm tap must not send a second T2.
+    const [dup] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM he_message w WHERE w.lead_id = ? AND w.direction = 'out' AND w.template_key LIKE ? AND w.delivery_status <> 'failed'
+          AND (? IS NULL OR w.drive_id <=> (SELECT drive_id FROM he_match WHERE id = ?)) LIMIT 1`, [leadId, `${key}:%`, matchId, matchId]);
+    if (dup.length) return;
+    const r = await sendTemplateToLead({ leadId, key, matchId, transactional: true });
+    if (r.status !== "sent") logger.info({ leadId, key, status: r.status, reason: "reason" in r ? r.reason : undefined }, "[he-ingest] follow-up template not sent");
+  } catch (err) { logger.warn({ leadId, key, err: (err as Error).message }, "[he-ingest] follow-up template failed"); }
+}
+
 async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPlan, ctx: { matchId: string | null; channel: string; detail: string | null; metaLeadId: string | null; replyText: string | null }): Promise<void> {
+  // T10: acknowledge STOP while the consent still exists (the reply opened a 24h window); suppression follows below.
+  if (plan.event === "opted_out") await sendFollowUpTemplate(leadId, "he_optout_ack", ctx.matchId);
   if (plan.leadStatus && plan.leadStatus !== current) await setLeadStatus(leadId, plan.leadStatus);
   if (plan.matchState && ctx.matchId) await db.execute("UPDATE he_match SET state = ? WHERE id = ?", [plan.matchState, ctx.matchId]);
   if (plan.revokeConsent) await revokeConsent(leadId, "whatsapp_contact");
   await addEvent(leadId, plan.event, { channel: ctx.channel, detail: ctx.detail });
   if (plan.humanHandoff) await addEvent(leadId, "needs_human_followup", { channel: ctx.channel, detail: "second decline / declined offered slot" });
   await mirrorToMeta(ctx.metaLeadId, plan);
+  // T2: appointment details + reference once the candidate confirms (button, email tap or bot call).
+  if (plan.matchState === "confirmed" && ctx.matchId) await sendFollowUpTemplate(leadId, "he_walkin_confirmed", ctx.matchId);
+  // T9: the bot could not reach them twice -> ask on WhatsApp instead.
+  if (plan.event === "call_no_answer" && ctx.matchId) {
+    const [n] = await db.execute<RowDataPacket[]>(
+      "SELECT COUNT(*) AS n FROM he_lead_event WHERE lead_id = ? AND event_type = 'call_no_answer' AND created_at >= (SELECT COALESCE(MAX(created_at), '2000-01-01') FROM he_message WHERE lead_id = ? AND direction = 'out' AND template_key = 'he_walkin_invite_email')", [leadId, leadId]);
+    if (Number(n[0].n) >= 2) await sendFollowUpTemplate(leadId, "he_missed_call", ctx.matchId);
+  }
 }
 
 export async function recordInboundReply(p: { mobile: string; text: string; providerMessageId?: string | null; channel?: "whatsapp" | "email" }): Promise<{ leadId: string; intent: string } | null> {

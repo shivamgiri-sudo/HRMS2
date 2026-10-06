@@ -91,7 +91,8 @@ async function replacementSlots(dryRun: boolean, c: Counts, max: number): Promis
     if (dryRun) { c.dryRun++; continue; }
     const slot = await reserveSlot(r.match_id as string, true);
     if (!slot) { await addEvent(r.lead_id as string, "needs_human_followup", { detail: "no free slot to reschedule into" }); c.blocked.no_free_slot = (c.blocked.no_free_slot ?? 0) + 1; continue; }
-    const res = await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_reschedule_offer", matchId: r.match_id as string });
+    // Answers the candidate's own "reschedule" request, so the 2-hour spacing / daily cap meant for unprompted messages does not apply.
+    const res = await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_reschedule_offer", matchId: r.match_id as string, transactional: true });
     if (res.status === "sent") await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ?", [r.match_id]);
     else await db.execute("UPDATE he_match SET slot_at = NULL WHERE id = ?", [r.match_id]); // not sent -> do not hold the seat
     tally(c, res);
@@ -124,6 +125,7 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
   const out: LaunchResult = { ...counts(), planned: [], considered: 0 };
   const [ms] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, l.full_name, l.mobile10,
+            (l.last_contact_at IS NOT NULL AND l.last_contact_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) AS dormant,
             (l.email IS NOT NULL AND l.email <> '') AS has_email,
             EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id
@@ -146,7 +148,8 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
     if (!slot) { out.blocked["drive full"] = (out.blocked["drive full"] ?? 0) + 1; break; }
     const res = step.step === "email"
       ? await sendInviteEmail(m.id as string)
-      : await sendTemplateToLead({ leadId: m.lead_id as string, key: "he_walkin_invite", matchId: m.id as string });
+      // T8 win-back for someone we have not spoken to in 30+ days (approved as MARKETING), else the T1 invite.
+      : await sendTemplateToLead({ leadId: m.lead_id as string, key: Number(m.dormant) ? "he_winback" : "he_walkin_invite", matchId: m.id as string });
     if (res.status === "sent") await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ?", [m.id]);
     else await db.execute("UPDATE he_match SET slot_at = NULL WHERE id = ?", [m.id]); // not sent -> do not hold the seat
     tally(out, res);
@@ -154,13 +157,20 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
   return out;
 }
 
-/** Steps 2 and 3 plus reminders, on demand (HR button) - the same work the scheduler does every 5 minutes. */
-export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: Counts; reminders: Counts; calls: Counts }> {
-  const out = { whatsapp: counts(), reminders: counts(), calls: counts() };
+/**
+ * Everything the scheduler does every 5 minutes, on demand (HR's "Run follow-ups now"), so the whole flow works while
+ * the scheduler is off: WhatsApp step, reminders (T3/T4), bot calls, no-shows + recovery (T6), replacement slots after a
+ * reschedule (T5) and other-role offers (T7).
+ */
+export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: Counts; reminders: Counts; calls: Counts; recovery: Counts; replacement: Counts; noShows: number; otherRoles: RerouteSummary | null }> {
+  const out = { whatsapp: counts(), reminders: counts(), calls: counts(), recovery: counts(), replacement: counts(), noShows: 0, otherRoles: null as RerouteSummary | null };
+  out.noShows = await noShows(o.dryRun, out.recovery); // state hygiene runs even while sends are paused
   if (sendsPaused()) return out;
+  await replacementSlots(o.dryRun, out.replacement, 50);
   await whatsappFollowUps(o.dryRun, out.whatsapp, 200);
   await reminders(o.dryRun, out.reminders);
   await voiceCalls(o.dryRun, out.calls, 50);
+  out.otherRoles = await offerOtherRoles({ dryRun: o.dryRun, max: 50 });
   return out;
 }
 
