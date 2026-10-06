@@ -116,6 +116,7 @@ on:
           - grn-month-basis-audit
           - trace-grn
           - migration-status
+          - missing-grn-company-check
           - view-select-check
           - grn-amount-audit
           - repair-migrated-grn-ex-gst
@@ -344,6 +345,10 @@ jobs:
             view-select-check)
               # Read-only: runs the SELECT of scripts/view-2114.sql, no DDL.
               npx tsx scripts/view-select-check.ts scripts/view-2114.sql
+              ;;
+            missing-grn-company-check)
+              # Read-only: db_bill FY 2026-27 GRNs missing from HRMS, with cost-centre company.
+              npx tsx scripts/missing-grn-company-check.ts
               ;;
             migration-status)
               # Read-only: schema_migrations rows for the fragment given in employee_codes.
