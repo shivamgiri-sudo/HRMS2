@@ -4,7 +4,7 @@ import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getInvoicedRevenueActuals, OWN_COMPANY_SQL, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
-import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
+import { notDialDeskProcessSql, ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostExprsForColumns } from "./pnl-people-cost.js";
@@ -341,7 +341,8 @@ async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRo
   // total with no unattributed line (Finnable, Adani/AWL, EBC Bridge, Aspeya, Raritiq: 10-19 lakh a month).
   const include = isCurrentOrFuturePeriod(filters.period) ? [] : (filters.includeProcessIds ?? []).filter(Boolean);
   const eligible = `(COALESCE(p.active_status, 1) = 1 AND ${notDialDeskProcessSql("p", "bm")})`;
-  const conds = [include.length ? `(${eligible} OR p.id IN (${include.map(() => "?").join(", ")}))` : eligible];
+  // Included processes must still sit on a MAS Callnet branch: DialDesk / I-Spark / IDC is never MAS (owner rule).
+  const conds = [include.length ? `(${eligible} OR (p.id IN (${include.map(() => "?").join(", ")}) AND ${ownCompanyBranchSql("bm")}))` : eligible];
   const params: unknown[] = [...include];
   if (isCurrentOrFuturePeriod(filters.period)) conds.push("COALESCE(bm.active_status, 1) = 1");
 
