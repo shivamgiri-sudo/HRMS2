@@ -24,11 +24,11 @@ jobs:
       - name: Count
         shell: bash
         run: |
-          cd /var/www/HRMS2/backend/logs 2>/dev/null || { echo "no logs dir"; exit 0; }
-          ls -la --time-style=long-iso | head -30
-          for f in backend-err.log*; do
-            case "$f" in *.gz) c=zcat;; *) c=cat;; esac
-            echo "== $f =="
-            $c "$f" | grep -c "Monthly leave limit reached" || true
-            $c "$f" | grep "Monthly leave limit reached" | tr -d '\r' | sort | uniq -c | sort -rn | head -40
+          set +e
+          pm2 jlist | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{for(const p of JSON.parse(d))console.log(p.name,p.pm2_env.pm_err_log_path,p.pm2_env.pm_out_log_path)})"
+          for f in $(pm2 jlist | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{for(const p of JSON.parse(d))console.log(p.pm2_env.pm_err_log_path,p.pm2_env.pm_out_log_path)})" | tr ' ' '\n' | sort -u) /var/www/HRMS2/backend/logs/backend-err.log /var/www/HRMS2/backend/logs/backend-out.log; do
+            [ -f "$f" ] || continue
+            echo "== $f ($(stat -c %y "$f")) =="
+            grep -c "Monthly leave limit reached" "$f"
+            grep "Monthly leave limit reached" "$f" | tr -d '\r' | sed -E 's/^[^M]*//' | sort | uniq -c | sort -rn | head -40
           done
