@@ -909,7 +909,7 @@ type BudgetMove = { lineId: string; gross: number; quantity: number; net?: numbe
 const isNoSuchTable = (error: unknown) => (error as { code?: string })?.code === "ER_NO_SUCH_TABLE";
 
 /** The budget lines an allocation's money sits on: the draws recorded when Branch Head approval
- *  spread its reservation across several lines (grn_allocation_budget_draw, migration 2115), else
+ *  spread its reservation across several lines (grn_allocation_budget_draw, migration 2117), else
  *  its own budget_line_id for the full amount. consume / release / reverse must move money on
  *  exactly these lines — moving the row's full amount on one line drifted reserved_amount. */
 async function budgetMovesFor(connection: PoolConnection, allocation: any): Promise<BudgetMove[]> {
