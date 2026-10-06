@@ -7,6 +7,7 @@ import { receiptFlagsFromDocuments } from "./bgv-document-receipt.js";
 import { syncBridgePennyDropStatus } from "./onboarding-bridge-status.js";
 import { loadAsyncBgvTriggerContext, validateOnboardingToken, decryptPanForProvider } from "./onboarding-full.service.js";
 import { resolveBankNameVariance } from "./bank-name-corroboration.js";
+import { classifyNameMatch } from "./indian-name-match.js";
 import { digilockerVerifiedCheckTypes, type DigilockerEvidence } from "./digilocker-evidence.js";
 import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
 import { encrypt } from "../../utils/encryption.js";
@@ -91,11 +92,46 @@ async function ensureConsent(candidateId: string) {
   if (!rows.length) throw Object.assign(new Error("BGV consent is required before verification"), { statusCode: 403 });
 }
 
+/** Every name the candidate is recorded under, most specific first, de-duplicated. */
+export function recordedIdentityNames(candidate: Record<string, unknown>): string[] {
+  const names = [candidate.employee_name, candidate.full_name, candidate.employee_record_name]
+    .map((n) => String(n ?? "").trim())
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
+/**
+ * The adapter judges the bank's owner against one name: the profile's employee_name when
+ * there is one. The candidate is recorded under up to three (that one, the ATS record and
+ * the employee master), and they are corrected independently. "SAKSHI" at the bank against
+ * an ATS record of "SAKSHI" went to manual review on 2026-09-29 because the profile name
+ * differed. Any recorded name of the candidate matching the bank's owner is the same person.
+ * Only these names count: the typed account-holder name is never identity.
+ */
+export function clearByRecordedName<T extends { status: string; matchScore?: number | null; matchedName?: string | null; resultSummary?: string | null; riskFlags?: string[] }>(
+  result: T,
+  names: string[],
+): T {
+  if (!result.riskFlags?.includes("BANK_HOLDER_NAME_DIVERGENCE") || !result.matchedName) return result;
+  const hit = names
+    .map((name) => ({ name, match: classifyNameMatch(name, result.matchedName) }))
+    .find((m) => !m.match.suspicious && m.match.tier !== "unknown");
+  if (!hit) return result;
+  return {
+    ...result,
+    status: "verified",
+    matchScore: hit.match.score,
+    resultSummary: `bank registered name matches the candidate's recorded name "${hit.name}" (${hit.match.tier}: ${hit.match.reason})`,
+    riskFlags: [],
+  };
+}
+
 async function getCandidateIdentity(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.full_name, c.email, c.mobile, c.date_of_birth, c.pan_number, c.aadhar_number,
             p.employee_name, p.pan_number_hash, p.aadhaar_number_hash, p.pan_number_masked, p.aadhaar_number_masked,
-            p.pan_number_encrypted
+            p.pan_number_encrypted,
+            (SELECT e.full_name FROM employees e WHERE e.employee_code = c.employee_code AND c.employee_code <> '' LIMIT 1) AS employee_record_name
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
       WHERE c.id = ? LIMIT 1`,
@@ -826,6 +862,7 @@ export async function verifyBankForCandidate(candidateId: string, input: { accou
       }
     }
   }
+  result = clearByRecordedName(result, recordedIdentityNames(candidate));
   // Before troubling a human with a name variance, see whether the candidate's
   // verified PAN already settles it.
   //

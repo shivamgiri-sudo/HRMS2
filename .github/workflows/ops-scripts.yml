@@ -64,6 +64,7 @@ on:
           - master-duplicate-merge
           - kit-esign-diagnose
           - bank-verify-diagnose
+          - bank-verify-rejudge
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
@@ -341,6 +342,11 @@ jobs:
             holiday-mapping-audit)
               # Read-only in both modes.
               npx tsx scripts/holiday-mapping-audit.ts 2026-10-02
+              ;;
+            bank-verify-rejudge)
+              # Dry-runs unless given --apply. Apply replays stored bank answers (no new penny drop).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/bank-verify-rejudge.ts $FLAG
               ;;
             bank-verify-diagnose)
               # Read-only in both modes: SELECTs only, no account numbers printed.
