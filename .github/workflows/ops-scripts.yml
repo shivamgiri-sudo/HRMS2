@@ -118,6 +118,7 @@ on:
           - migration-status
           - missing-grn-company-check
           - grn-no-payable-breakdown
+          - grn-duplicate-check
           - view-select-check
           - grn-amount-audit
           - repair-migrated-grn-ex-gst
@@ -346,6 +347,10 @@ jobs:
             view-select-check)
               # Read-only: runs the SELECT of scripts/view-2114.sql, no DDL.
               npx tsx scripts/view-select-check.ts scripts/view-2114.sql
+              ;;
+            grn-duplicate-check)
+              # Read-only.
+              npx tsx scripts/grn-duplicate-check.ts
               ;;
             grn-no-payable-breakdown)
               # Read-only aggregates. employee_codes = YYYY-MM for the top list.
