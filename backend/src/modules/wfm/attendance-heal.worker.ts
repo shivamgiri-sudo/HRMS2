@@ -23,7 +23,8 @@ export async function runHealOnce(): Promise<void> {
     await recordWorkerRun(HEAL_WORKER_NAME, "started");
     try {
       const r = await runAutomaticHeal();
-      await recordWorkerRun(HEAL_WORKER_NAME, "completed", { found: r.found, processed: r.processed, failed: r.failed, truncated: r.truncated });
+      await recordWorkerRun(HEAL_WORKER_NAME, "completed", { found: r.found, processed: r.processed, failed: r.failed, truncated: r.truncated, stale: r.stale ?? null });
+      if (r.stale?.regraded) logger.info({ ...r.stale }, "[attendance-heal] re-graded days whose evidence arrived late");
       if (r.found > 0) logger.info({ found: r.found, processed: r.processed, failed: r.failed }, "[attendance-heal] filled missing attendance records");
     } catch (err) {
       await recordWorkerRun(HEAL_WORKER_NAME, "failed", { error: err instanceof Error ? err.message : String(err) });

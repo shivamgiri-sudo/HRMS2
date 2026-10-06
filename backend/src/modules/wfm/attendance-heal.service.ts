@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { nowIST } from "../../shared/timezone.js";
 import { attendanceEngineService } from "./attendance-engine.service.js";
+import { regradeStaleDays, type StaleRegradeResult } from "./attendance-stale-regrade.service.js";
 import {
   MAX_PERSON_DAYS_PER_RUN, addDays, autoHealWindow, summariseMissing, type MissingDay,
 } from "./attendance-heal.logic.js";
@@ -123,10 +124,17 @@ export async function resolveFilledGaps(): Promise<number> {
 }
 
 /** What the nightly job, the restart job and the heal worker run: last 7 complete days, capped. */
-export async function runAutomaticHeal(): Promise<HealResult> {
+export async function runAutomaticHeal(): Promise<HealResult & { stale?: StaleRegradeResult }> {
   const today = nowIST().split("T")[0]!;
   const { from, to } = autoHealWindow(today);
-  const result = await healMissingAttendance({ from, to, limit: MAX_PERSON_DAYS_PER_RUN, actor: "system:attendance-heal" });
+  const result: HealResult & { stale?: StaleRegradeResult } =
+    await healMissingAttendance({ from, to, limit: MAX_PERSON_DAYS_PER_RUN, actor: "system:attendance-heal" });
+  // Days that exist but were graded before their punches / dialler minutes arrived (attendance-stale-regrade.service.ts).
+  try {
+    result.stale = await regradeStaleDays(from, to);
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "[attendance-heal] stale-day re-grade failed");
+  }
   // healMissingAttendance returns early when nothing is missing, but records can also appear from elsewhere
   // (the COSEC sync, a correction), leaving old "missing record" items open. Close those on every pass.
   if (result.found === 0) {

@@ -17,7 +17,7 @@ describe("heal worker", () => {
     m.heal.mockResolvedValue({ found: 4, processed: 3, failed: 1, truncated: false });
     await runHealOnce();
     expect(m.record.mock.calls.map((c) => c[1])).toEqual(["started", "completed"]);
-    expect(m.record.mock.calls[1]).toEqual([HEAL_WORKER_NAME, "completed", { found: 4, processed: 3, failed: 1, truncated: false }]);
+    expect(m.record.mock.calls[1]).toEqual([HEAL_WORKER_NAME, "completed", { found: 4, processed: 3, failed: 1, truncated: false, stale: null }]);
   });
   it("a failure is recorded as failed and never thrown (it must not break the server)", async () => {
     m.heal.mockRejectedValue(new Error("db down"));
