@@ -15,8 +15,8 @@ import type { RowDataPacket } from "mysql2";
   const rows = await billQuery<any>(
     `SELECT m.Id id, m.GrnNo g, m.FinanceMonth fm, m.ExpenseEntryType t, m.Reject rej, b.branch_name br, h.HeadingDesc head,
             SUM(CAST(p.Amount AS DECIMAL(16,2))) taxable, SUM(CAST(p.Tax AS DECIMAL(16,2))) tax,
-            GROUP_CONCAT(DISTINCT CONCAT(COALESCE(c.cost_center, p.CostCenterId), '|', COALESCE(c.company_name, '?')) SEPARATOR ' ; ') ccs,
-            SUM(c.company_name LIKE '%Mas Callnet%') mas_lines, SUM(c.company_name IS NOT NULL AND c.company_name NOT LIKE '%Mas Callnet%') other_lines, COUNT(p.Id) lines
+            GROUP_CONCAT(DISTINCT CONCAT(p.CostCenterId, ':', COALESCE(c.process_name, '?'), '|', COALESCE(c.company_name, '?')) SEPARATOR ' ; ') ccs,
+            SUM(c.company_name LIKE '%Mas Callnet%') mas_lines, SUM(c.company_name IS NOT NULL AND c.company_name NOT LIKE '%Mas Callnet%') other_lines, COUNT(p.Id) line_n
        FROM expense_entry_master m
        LEFT JOIN expense_entry_particular p ON CAST(p.ExpenseEntry AS UNSIGNED) = m.Id
        LEFT JOIN cost_master c ON c.id = CAST(p.CostCenterId AS UNSIGNED)
