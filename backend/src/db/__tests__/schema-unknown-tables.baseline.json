@@ -5,6 +5,9 @@
   "modules/ats/mock-digilocker.routes.ts": [
     "ats_bgv_check"
   ],
+  "modules/bulk-upload/alt-rx-dump-bulk.service.ts": [
+    "db_masmis"
+  ],
   "modules/bulk-upload/batch-auto-recovery.service.ts": [
     "bulk_import_queue"
   ],
