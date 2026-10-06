@@ -41,11 +41,7 @@ const TOOLTIP_PROPS = {
 type TabKey = "dashboard" | "overview" | "daywise" | "agentwise" | "tqmqbq" | "tlTarget" | "team";
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "dashboard", label: "Dashboard" },
-  { key: "overview", label: "Metric Matrix" },
-  { key: "daywise", label: "Day Wise" },
   { key: "agentwise", label: "Agent Wise" },
-  { key: "tqmqbq", label: "Target Achievement" },
-  { key: "tlTarget", label: "TL Target" },
   { key: "team", label: "Team Details" },
 ];
 

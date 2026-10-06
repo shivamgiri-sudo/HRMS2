@@ -210,8 +210,15 @@ export function AltRxDashboard() {
   const [batch, setBatch] = useState<DataResponse["batch"]>(null);
   const [error, setError] = useState("");
   const [viewBy, setViewBy] = useState<ViewBy>("MTD");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // Start on the same default the server uses (1st of this month through today), so the first load is one request, not two.
+  const [from, setFrom] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  });
+  const [to, setTo] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  });
   const [available, setAvailable] = useState<{ from: string | null; to: string | null } | null>(null);
   const [drill, setDrill] = useState<{ title: string; key: string; kind: "agent" | "brand" | "type" } | null>(null);
 
@@ -230,11 +237,6 @@ export function AltRxDashboard() {
         setAnalysis(res.data ?? null);
         setBatch(res.batch ?? null);
         setAvailable(res.available ?? null);
-        // First load: show the whole Dump, so the range inputs start at its first and last day.
-        if (!from && !to && res.selected) {
-          setFrom(res.selected.from ?? "");
-          setTo(res.selected.to ?? "");
-        }
       })
       .catch((err) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "The dashboard could not be loaded.");
