@@ -4,7 +4,7 @@ import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getInvoicedRevenueActuals, OWN_COMPANY_SQL, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
-import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
+import { notDialDeskProcessSql, ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostExprsForColumns } from "./pnl-people-cost.js";
@@ -341,7 +341,8 @@ async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRo
   // total with no unattributed line (Finnable, Adani/AWL, EBC Bridge, Aspeya, Raritiq: 10-19 lakh a month).
   const include = isCurrentOrFuturePeriod(filters.period) ? [] : (filters.includeProcessIds ?? []).filter(Boolean);
   const eligible = `(COALESCE(p.active_status, 1) = 1 AND ${notDialDeskProcessSql("p", "bm")})`;
-  const conds = [include.length ? `(${eligible} OR p.id IN (${include.map(() => "?").join(", ")}))` : eligible];
+  // Included processes must still sit on a MAS Callnet branch: DialDesk / I-Spark / IDC is never MAS (owner rule).
+  const conds = [include.length ? `(${eligible} OR (p.id IN (${include.map(() => "?").join(", ")}) AND ${ownCompanyBranchSql("bm")}))` : eligible];
   const params: unknown[] = [...include];
   if (isCurrentOrFuturePeriod(filters.period)) conds.push("COALESCE(bm.active_status, 1) = 1");
 
@@ -1048,7 +1049,11 @@ function vendorPayableAmountExpr(columns: Set<string>): string {
 const GRN_EX_GST_AMOUNT = grnRequestExGstSql("g");
 
 function actualGrnStatusExpr(alias: string) {
-  return `LOWER(COALESCE(${alias}.status, '')) IN ('approved','posted','paid')`;
+  // Same approved set as bpo-pnl.service.ts getGrnVendorActuals: a finance-head-approved GRN awaiting payment is an
+  // accrued cost (migrated db_bill GRNs approved but not yet booked land in finance_head_approved).
+  return `LOWER(REPLACE(COALESCE(${alias}.status, ''), '_', ' ')) IN (
+    'approved','finance head approved','pending accounts payment','payment scheduled','partially paid','paid','posted'
+  )`;
 }
 
 /**
@@ -1187,8 +1192,14 @@ async function getIndirectAllocationMap(
     for (const row of rows) {
       poolByBranch.set(String(row.branch_id), toNumber(row.pool_amount));
     }
-  } else if (branchIds.length > 0 && await tableExists("grn_request")) {
+  }
+  // Approved GRNs that have no vendor payable yet (accrual: approved, not yet booked for payment) count in
+  // their accounting month too - the direct-cost map above already does this (vpt.id IS NULL leg). This used
+  // to run only when vendor_payment_tracking did not exist at all, so an approved indirect GRN without a payable
+  // was invisible to the pool (FY 2026-27: 64 approved db_bill GRNs, Aug 2.4L + Sep 18.1L, and db_bill imprest 1.5-2.4L/month).
+  if (branchIds.length > 0 && await tableExists("grn_request")) {
     const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
+    const hasVpt = await tableExists("vendor_payment_tracking");
     const rows = await queryRows<RowDataPacket>(
       `SELECT g.branch_id, SUM(${GRN_EX_GST_AMOUNT}) AS pool_amount
         FROM grn_request g
@@ -1197,11 +1208,17 @@ async function getIndirectAllocationMap(
           AND ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
           AND ${actualGrnStatusExpr("g")}
           AND g.accounting_period = ?
+          ${hasVpt ? "AND NOT EXISTS (SELECT 1 FROM vendor_payment_tracking vx WHERE vx.grn_request_id = g.id)" : ""}
+          -- db_bill-imported GRNs only (imprest, approved-not-yet-booked vendor bills). HRMS-created rows without a
+          -- payable are mostly the monthly split copies (-Apr, -Jun, ...) of a multi-month GRN whose migrated parent is
+          -- already counted through its payable; counting them here doubled that spend (+1 to +7 L/month).
+          ${hasVpt ? "AND g.bill_source_id IS NOT NULL" : ""}
         GROUP BY g.branch_id`,
       [...branchIds, period]
     );
     for (const row of rows) {
-      poolByBranch.set(String(row.branch_id), toNumber(row.pool_amount));
+      const key = String(row.branch_id);
+      poolByBranch.set(key, (poolByBranch.get(key) ?? 0) + toNumber(row.pool_amount));
     }
   }
 
