@@ -63,6 +63,7 @@ on:
           - master-duplicate-audit
           - master-duplicate-merge
           - kit-esign-diagnose
+          - bank-verify-diagnose
           - running-salary-diagnose
           - loan-backfill-duplicate-cancel
           - deduction-duplicates-scan
@@ -340,6 +341,10 @@ jobs:
             holiday-mapping-audit)
               # Read-only in both modes.
               npx tsx scripts/holiday-mapping-audit.ts 2026-10-02
+              ;;
+            bank-verify-diagnose)
+              # Read-only in both modes: SELECTs only, no account numbers printed.
+              npx tsx scripts/bank-verify-diagnose.ts ${INPUT_EMPLOYEE_CODES:-MAS63576 MAS63671 MAS63527 MAS63523}
               ;;
             kit-esign-diagnose)
               # Read-only in both modes: SELECTs only.
