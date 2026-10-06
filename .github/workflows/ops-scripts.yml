@@ -55,6 +55,7 @@ on:
           - sbi-card-demo-seed
           - sbi-card-demo-remove
           - holiday-mapping-audit
+          - exception-control-audit
           - meta-outreach-audit
           - apr-source-audit
           - branch-activity-audit
@@ -619,6 +620,10 @@ jobs:
               FLAG=""; [ "$MODE" = "apply" ] && FLAG="--send"
               ONLY=""; [ -n "${INPUT_EMPLOYEE_CODES}" ] && ONLY="--only=${INPUT_EMPLOYEE_CODES// /,}"
               npx tsx scripts/mis-report-schedules-setup.ts $FLAG $ONLY
+              ;;
+            exception-control-audit)
+              # Read-only in both modes.
+              npx tsx scripts/exception-control-audit.ts
               ;;
             *)
               echo "::error::Unknown script '${{ inputs.script }}'"
