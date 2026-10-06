@@ -141,3 +141,21 @@ describe("billability (payroll_branch)", () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe("P&L drilldown by process", () => {
+  it("branch_head cannot drill into another branch's process", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (/FROM user_assignment_scope/.test(q)) return [[], []];
+      if (/SELECT role_key FROM user_roles/.test(q)) return [[{ role_key: actor.role }], []];
+      if (/SELECT id, employee_code, branch_id/.test(q)) return [[{ id: "emp-me", branch_id: "b1" }], []];
+      if (/SELECT branch_id\s+FROM employees/.test(q)) return [[{ branch_id: "b1" }], []];
+      if (/SELECT branch_id FROM process_master WHERE id = \?/.test(q)) return [[{ branch_id: "b2" }], []];
+      return [[], []];
+    });
+const res = await request(appAs("branch_head")).get("/api/finance/pnl/drilldown?period=2026-09&processId=p-other&metric=revenue");
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    const ok = await request(appAs("finance_head")).get("/api/finance/pnl/drilldown?period=2026-09&processId=p-other&metric=revenue");
+    expect(ok.status).not.toBe(403);
+  });
+});

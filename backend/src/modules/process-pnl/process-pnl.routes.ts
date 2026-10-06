@@ -1645,6 +1645,9 @@ router.get(
           userId: user.id, primaryRole: user.role, userRoles: user.roles, requestedProcessId,
         })
       : undefined;
+    // resolveFinanceProcessScope only confines process-scoped roles; a branch head passing another
+    // branch's process must be refused on that process's own branch too.
+    if (processId) await asForbidden(assertProcessInScope(req, processId));
 
     // A cost centre carries no scope resolver of its own, so confine it the way every other
     // cost-centre read in this file does — assertBranchOf treats an unmapped cost centre as a
