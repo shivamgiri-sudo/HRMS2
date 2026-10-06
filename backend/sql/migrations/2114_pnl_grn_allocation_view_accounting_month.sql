@@ -5,13 +5,11 @@
 -- allocations carry no recognition_period, so they were dated by bill date: live Oct 2026, 214 consumed
 -- allocations (21 lakh ex-GST) sat in a month other than grn_request.accounting_period.
 --
--- Now: grn_request.accounting_period first; a multi-month GRN keeps its per-month allocation recognition_period
+-- Now: grn_request.accounting_period first, a multi-month GRN keeps its per-month allocation recognition_period
 -- (the period split). Same rule as backend/src/modules/process-pnl/pnl-grn-month.ts.
 --
 -- Body is exactly sql/1852's (every column, name and position unchanged) with only the period_code expression
 -- (SELECT and GROUP BY) replaced. Idempotent: CREATE OR REPLACE VIEW. Rollback: re-run sql/1852.
-
-CREATE OR REPLACE VIEW. Rollback: re-run the CREATE OR REPLACE VIEW from sql/418.
 
 CREATE OR REPLACE VIEW vw_process_pnl_grn_allocation AS
 SELECT
