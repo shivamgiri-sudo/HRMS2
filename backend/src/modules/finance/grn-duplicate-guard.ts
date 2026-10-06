@@ -78,3 +78,54 @@ export async function assertNoPaidTwin(
     `Paying both would pay the same bill twice. Reject or cancel the duplicate GRN; if they really are two different bills, a finance head can confirm and pay.`,
   );
 }
+
+export type PaidGrnTwin = { grnId: string; grnNumber: string | null; status: string; amount: number };
+
+/**
+ * Same idea as findPaidTwin, but asked at SUBMIT time about the GRN itself, before it has a
+ * payment-tracking row. A bill already paid under another GRN (typically the legacy db_bill copy,
+ * which has no invoice number) is the case that reached live data in Sept-Oct 2026: the second copy
+ * sat in approval and counted against the budget until someone noticed. Only a PAID twin blocks
+ * here; two bills that are both still open are left to the payment-stage check above.
+ */
+export async function findPaidTwinForGrn(executor: Executor, grnId: string): Promise<PaidGrnTwin | null> {
+  const [rows] = (await executor.execute(
+    `SELECT g2.id, g2.grn_number, g2.status, g2.amount
+       FROM grn_request g
+       JOIN grn_request g2
+         ON g2.id <> g.id
+        AND g2.grn_type = g.grn_type
+        AND (g2.vendor_id = g.vendor_id OR UPPER(TRIM(g2.vendor_name)) = UPPER(TRIM(g.vendor_name)))
+      WHERE g.id = ?
+        AND g.grn_type = 'vendor'
+        AND g.vendor_id IS NOT NULL
+        AND ABS(g2.amount - g.amount) <= 1
+        AND g.amount >= 1000
+        AND DATE_FORMAT(g2.bill_date, '%Y-%m') = DATE_FORMAT(g.bill_date, '%Y-%m')
+        AND g.branch_id <=> g2.branch_id
+        AND g2.status = 'paid'
+        AND (${INVOICE("g")} = ${INVOICE("g2")} OR ${INVOICE("g")} IS NULL OR ${INVOICE("g2")} IS NULL)
+      ORDER BY g2.created_at ASC
+      LIMIT 1`,
+    [grnId],
+  )) as [RowDataPacket[], unknown];
+  const row = (rows as RowDataPacket[])[0];
+  if (!row) return null;
+  return { grnId: String(row.id), grnNumber: row.grn_number ?? null, status: String(row.status), amount: Number(row.amount ?? 0) };
+}
+
+/** Refuses to submit a GRN for a bill that is already paid under another GRN, unless a finance head overrides. */
+export async function assertNoPaidTwinForGrn(
+  executor: Executor, grnId: string, grnLabel: string,
+  opts: { allow?: boolean; actorRole?: string } = {},
+  makeError: (message: string) => Error = (m) => new Error(m),
+): Promise<void> {
+  const twin = await findPaidTwinForGrn(executor, grnId);
+  if (!twin) return;
+  if (opts.allow && OVERRIDE_ROLES.has(String(opts.actorRole ?? ""))) return;
+  throw makeError(
+    `${grnLabel} looks like a duplicate of ${twin.grnNumber ?? twin.grnId}, which is already paid ` +
+    `(same vendor, amount, bill month and branch). Do not raise it again. If it is a genuinely different bill, ` +
+    `ask a finance head to submit it with the duplicate confirmation.`,
+  );
+}

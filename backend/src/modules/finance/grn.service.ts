@@ -18,6 +18,7 @@ import { budgetConsumptionService } from "../process-pnl/budget-consumption.serv
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { resolveAccountingPeriod } from "./grn-number-monthly.service.js";
 import { grnSmartService } from "./grn-smart.service.js";
+import { assertNoPaidTwinForGrn } from "./grn-duplicate-guard.js";
 import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
@@ -121,6 +122,8 @@ export interface CreateGrnPayload {
 
 export interface SubmitGrnPayload {
   remarks?: string;
+  /** Finance head / super admin only: confirms this is a different bill from an already-paid look-alike. */
+  allowPossibleDuplicate?: boolean;
 }
 
 export interface ReviewGrnPayload {
@@ -791,6 +794,14 @@ export const grnService = {
         "Invoice / supporting attachment is required before submission",
       );
     }
+    // The same bill must not enter approval (and the budget) again once it has been paid under
+    // another GRN - the legacy-import copy has no invoice number, so only this check sees it.
+    await assertNoPaidTwinForGrn(
+      db,
+      grnId,
+      `GRN ${grn.grn_number ?? grn.invoice_number ?? grnId}`,
+      { allow: payload?.allowPossibleDuplicate === true, actorRole },
+    );
 
     // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
     // submission — mirrors the live path's own change in grn-validation-control.service.ts's
