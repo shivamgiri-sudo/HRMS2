@@ -105,6 +105,7 @@ on:
           - grn-split-children-check
           - fix-legacy-false-paid-grns
           - grn-status-check
+          - grn-status-mismatch-detail
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
           - recruiter-list-diagnose
@@ -519,6 +520,10 @@ jobs:
             vendor-bills-journal-vs-tracking)
               # Read-only in both modes: SELECTs only.
               npx tsx scripts/vendor-bills-journal-vs-tracking.ts
+              ;;
+            grn-status-mismatch-detail)
+              # Read-only in both modes: SELECTs only (HRMS and db_bill).
+              npx tsx scripts/grn-status-mismatch-detail.ts
               ;;
             grn-status-check)
               # Read-only in both modes: SELECTs only.
