@@ -105,6 +105,7 @@ on:
           - grn-split-children-check
           - fix-legacy-false-paid-grns
           - grn-status-check
+          - fix-grn-status-from-tracking
           - grn-status-mismatch-detail
           - vendor-bills-journal-vs-tracking
           - heal-zero-day-lines
@@ -524,6 +525,11 @@ jobs:
             grn-status-mismatch-detail)
               # Read-only in both modes: SELECTs only (HRMS and db_bill).
               npx tsx scripts/grn-status-mismatch-detail.ts
+              ;;
+            fix-grn-status-from-tracking)
+              # Dry-runs unless given --apply. Apply aligns the GRN status LABEL with its Paid payment record (before-images saved).
+              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
+              npx tsx scripts/fix-grn-status-from-tracking.ts $FLAG
               ;;
             grn-status-check)
               # Read-only in both modes: SELECTs only.
