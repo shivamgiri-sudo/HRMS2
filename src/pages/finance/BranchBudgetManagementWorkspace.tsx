@@ -376,18 +376,29 @@ function unwrapList(value: any): any[] {
  * split the same amount differently across cost centres. Freezing the saved split as manual
  * percentages over the same cost centres reproduces last month's per-cost-centre amounts exactly.
  */
-function frozenSplitLine(record: BranchBudgetLineRecord): BranchBudgetLineInput {
+function frozenSplitLine(
+  record: BranchBudgetLineRecord,
+  activeCostCentreIds: ReadonlySet<string> | null,
+): BranchBudgetLineInput {
   const input = { ...budgetLineRecordToInput(record), id: undefined };
   const allocations = record.allocations ?? [];
   if (record.planning_level !== "branch" || allocations.length === 0) return input;
+  // A cost centre closed since last month cannot take an allocation (the server refuses the save),
+  // so drop it and rescale the rest to 100%. The caller warns about every cost centre dropped.
+  const usable = activeCostCentreIds
+    ? allocations.filter((a) => activeCostCentreIds.has(a.cost_centre_id))
+    : allocations;
+  if (usable.length === 0) return input;
+  const total = usable.reduce((sum, a) => sum + Number(a.allocation_percentage), 0);
+  const scale = total > 0 ? 100 / total : 1;
   return {
     ...input,
     allocationDriver: "manual",
-    manualAllocations: allocations.map((a) => ({
+    manualAllocations: usable.map((a) => ({
       costCentreId: a.cost_centre_id,
-      percentage: Number(a.allocation_percentage),
+      percentage: Number(a.allocation_percentage) * scale,
     })),
-    includedCostCentreIds: allocations.map((a) => a.cost_centre_id),
+    includedCostCentreIds: usable.map((a) => a.cost_centre_id),
   };
 }
 
@@ -734,6 +745,14 @@ export default function BranchBudgetManagementWorkspace() {
   const reviewDetailQuery = useBranchBudgetDetail(reviewingBudgetId);
   // Last month's budget, for the Prev/Var columns and Copy-forward. Matched by head+sub-head NAME
   // because saveDraft replaces the line set with fresh UUIDs on every save.
+  const { costCentresQuery: activeCostCentresQuery, monthlyDriversQuery, saveMonthlyDrivers } =
+    useBranchBudgetAllocations(branchId || null, period);
+  const activeCostCentres = activeCostCentresQuery.data ?? [];
+  // Null until the list has loaded, so Copy never mistakes "not loaded yet" for "all closed".
+  const activeCostCentreIdSet = useMemo(
+    () => (activeCostCentresQuery.data ? new Set(activeCostCentresQuery.data.map((cc) => cc.id)) : null),
+    [activeCostCentresQuery.data],
+  );
   const priorPeriod = previousPeriod(period);
   const priorList = useBranchBudgets({ period: priorPeriod, branchId: branchId || undefined });
   // The list is newest-created first, which can be a later draft or revision; what was submitted
@@ -766,7 +785,7 @@ export default function BranchBudgetManagementWorkspace() {
         quantity: Number((l as any).quantity ?? 0) || null,
         unitRate: Number((l as any).unit_rate ?? (l as any).unitRate ?? 0) || null,
         // The whole submitted line, so Copy reproduces tax, cost centre, vendor and allocation too.
-        line: frozenSplitLine(l),
+        line: frozenSplitLine(l, activeCostCentreIdSet),
       }));
     }
     return (priorMirror.data ?? []).map((l) => ({
@@ -774,7 +793,20 @@ export default function BranchBudgetManagementWorkspace() {
       subHead: l.subHead ?? "",
       amount: Number(l.amount ?? 0),
     }));
-  }, [priorDetail.data, priorMirror.data]);
+  }, [priorDetail.data, priorMirror.data, activeCostCentreIdSet]);
+
+  // Cost centres last month's splits used that are no longer active, by code, for the Copy warning.
+  const droppedCostCentres = useMemo(() => {
+    if (!activeCostCentreIdSet) return [] as string[];
+    const dropped = new Map<string, string>();
+    for (const l of priorDetail.data?.lines ?? []) {
+      if (l.planning_level !== "branch") continue;
+      for (const a of l.allocations ?? []) {
+        if (!activeCostCentreIdSet.has(a.cost_centre_id)) dropped.set(a.cost_centre_id, a.cost_centre_code ?? a.cost_centre_name ?? a.cost_centre_id);
+      }
+    }
+    return [...dropped.values()];
+  }, [priorDetail.data, activeCostCentreIdSet]);
 
   const priorByKey = useMemo(() => {
     const map = new Map<string, number>();
@@ -1138,9 +1170,6 @@ export default function BranchBudgetManagementWorkspace() {
     queryKey: ["budget-vendors"],
     queryFn: () => hrmsApi.get<any>("/api/erp/vendors?limit=500"),
   });
-  const { costCentresQuery: activeCostCentresQuery, monthlyDriversQuery, saveMonthlyDrivers } =
-    useBranchBudgetAllocations(branchId || null, period);
-  const activeCostCentres = activeCostCentresQuery.data ?? [];
   const [driverDraft, setDriverDraft] = useState<Record<string, MonthlyDriverInput>>({});
   const readinessQuery = useBudgetReadiness(branchId || null, period);
   const readiness = readinessQuery.data ?? [];
@@ -2119,6 +2148,9 @@ export default function BranchBudgetManagementWorkspace() {
                   priorRowCount={priorByKey.size}
                   onCopyForward={() => {
                     pushUndo();
+                    if (droppedCostCentres.length > 0) {
+                      toast.warning(`${droppedCostCentres.join(", ")} ${droppedCostCentres.length === 1 ? "is" : "are"} no longer active; ${droppedCostCentres.length === 1 ? "its" : "their"} share was spread across the remaining cost centres.`);
+                    }
                     // Same preset as "add from masters" below: the plan is non-taxable, so a
                     // copied row must not arrive carrying blankLine()'s 18% exclusive default.
                     setLines((current) => applyCopyForward(current, priorRows, (preset) => blankLine({
