@@ -19,7 +19,7 @@ export const INTAKE_MAX_ROWS = 5000;
 export const FIELDS = [
   "mobile", "altMobile", "name", "firstName", "lastName", "email", "age", "dob", "gender", "education", "experience", "experienceMonths",
   "city", "state", "pincode", "address", "process", "skills", "languages", "expectedSalary", "currentSalary", "consent", "appliedOn",
-  "educationStatus", "stream", "lastEmployer", "prevRole", "industry",
+  "educationStatus", "stream", "lastEmployer", "prevRole", "industry", "nightShift",
 ] as const;
 export type Field = (typeof FIELDS)[number];
 
@@ -29,7 +29,7 @@ export const FIELD_LABEL: Record<Field, string> = {
   city: "City / location", state: "State", pincode: "Pincode", process: "Job / role applied", skills: "Skills", languages: "Languages",
   expectedSalary: "Expected salary", currentSalary: "Current / last salary", consent: "WhatsApp consent", appliedOn: "Applied on",
   address: "Address", educationStatus: "Education status", stream: "Stream / specialisation", lastEmployer: "Previous company",
-  prevRole: "Previous role / experience details", industry: "Industry / functional area",
+  prevRole: "Previous role / experience details", industry: "Industry / functional area", nightShift: "Night shift OK",
 };
 
 /** Normalised header -> words. "Candidate's Mobile No." -> "candidate s mobile no" */
@@ -67,6 +67,7 @@ const ALIASES: Record<Field, string[]> = {
   stream: ["stream", "specialization", "specialisation", "major", "subject", "ug specialization", "education stream", "field of study", "discipline"],
   lastEmployer: ["previous company", "last company", "current company", "current employer", "previous employer", "last employer", "company name", "organisation", "organization", "employer"],
   prevRole: ["previous experience", "experience details", "previous role", "last designation", "current designation", "previous designation", "work history", "past experience", "current role", "job profile previous"],
+  nightShift: ["night shift", "night shift ok", "open to night shift", "willing for night shift", "shift preference", "preferred shift", "rotational shift", "shift", "can work night shift", "night shift willing"],
   industry: ["industry", "functional area", "current industry", "previous industry", "domain", "sector", "experience in", "experience type"],
   consent: ["consent", "whatsapp consent", "opt in", "optin", "agreed to contact", "whatsapp opt in", "contact consent", "permission to contact"],
   appliedOn: ["applied on", "applied date", "date applied", "application date", "applied at", "created at", "created date", "date", "timestamp", "submission date", "lead date"],
@@ -187,6 +188,15 @@ export function parseAgeFromDob(raw: string | null, now = new Date()): number | 
   return age >= 15 && age <= 70 ? age : null;
 }
 
+/** "Yes" / "Night" / "Any shift" / "Rotational" -> true; "No" / "Day only" -> false; unclear -> null. */
+export function parseNightShift(raw: string | null): boolean | null {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (!v) return null;
+  if (/^(no|n|nahi|day( shift)?( only)?|only day|morning|general)\b/.test(v)) return false;
+  if (/^(yes|y|haan|ok|okay|any|night|rotational|flexible|both|24)/.test(v) || /night|rotational|any shift/.test(v)) return true;
+  return null;
+}
+
 /** DOB as YYYY-MM-DD (day-first, ISO or Excel serial), or null. */
 export function isoDob(raw: string | null): string | null {
   if (!raw) return null;
@@ -261,6 +271,7 @@ export interface IntakeRow {
   expectedSalary?: number | null; consent?: boolean;
   dob?: string | null; educationStatus?: "completed" | "pursuing" | "dropped" | null; stream?: string | null; lastSalary?: number | null;
   lastEmployer?: string | null; prevIndustry?: string | null; state?: string | null; address?: string | null;
+  nightShiftOk?: boolean | null;
 }
 
 export function mapIntakeRows(rows: Array<Record<string, unknown>>, mappingIn?: Mapping | null): { rows: IntakeRow[]; missingColumns: string[]; tooMany: boolean; mapping: Mapping } {
@@ -295,6 +306,7 @@ export function mapIntakeRows(rows: Array<Record<string, unknown>>, mappingIn?: 
       lastSalary: parseMoney(get("currentSalary")), lastEmployer: get("lastEmployer")?.slice(0, 150) ?? null,
       prevIndustry: (get("industry") || get("prevRole") || get("lastEmployer") || get("experience")) ? parseIndustry(get("industry"), get("prevRole"), get("lastEmployer"), get("experience")) : null,
       state: get("state")?.slice(0, 60) ?? null, address: get("address")?.slice(0, 300) ?? null,
+      nightShiftOk: parseNightShift(get("nightShift")),
     };
   });
   return { rows: out, missingColumns: [], tooMany: false, mapping };

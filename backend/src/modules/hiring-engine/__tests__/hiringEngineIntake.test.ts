@@ -103,3 +103,15 @@ describe("portal screening facts", () => {
     expect(scoreLead({ educationRank: 5, educationStatus: "dropped" }, req).eligible).toBe(false);
   });
 });
+
+import { parseNightShift } from "../he-intake.js";
+describe("night shift column", () => {
+  it("parses common answers", () => {
+    expect(parseNightShift("Yes")).toBe(true); expect(parseNightShift("Rotational")).toBe(true); expect(parseNightShift("Any shift")).toBe(true);
+    expect(parseNightShift("Day shift only")).toBe(false); expect(parseNightShift("No")).toBe(false); expect(parseNightShift("")).toBeNull();
+  });
+  it("is mapped from a portal header", () => {
+    const r = mapIntakeRows([{ Name: "X", Mobile: "9811100099", "Shift Preference": "Night" }]).rows[0];
+    expect(r.nightShiftOk).toBe(true);
+  });
+});

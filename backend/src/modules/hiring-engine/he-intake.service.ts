@@ -79,7 +79,7 @@ export async function ingestCandidates(raw: Array<Record<string, unknown>>, sour
     const edu = r.education ? eduRank(r.education) : 0;
     const lead = await upsertLead({
       mobile: r.mobile10!, fullName: r.name, email: r.email, age: r.age, educationRank: edu > 0 ? edu : null,
-      experienceYears: r.experienceYears, pincode: r.pincode, locality: r.city, source, linkMeta: true,
+      experienceYears: r.experienceYears, pincode: r.pincode, locality: r.city, source, linkMeta: true, nightShiftOk: r.nightShiftOk ?? null,
     });
     if (!lead) { out.rejected.push({ rowNo: r.rowNo, reason: "invalid_mobile" }); continue; }
     if (lead.created) out.created++; else out.updated++;
