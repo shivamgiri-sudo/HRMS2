@@ -119,6 +119,9 @@ export const budgetConsumptionService = {
     await budgetClosureService.assertSubheadOpen(
       connection, String(line.budget_id), String(line.head), line.sub_head ? String(line.sub_head) : null
     );
+    if (line.cost_centre_id) {
+      await budgetClosureService.assertCostCentreOpen(connection, String(line.budget_id), String(line.cost_centre_id));
+    }
     const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
     validatePositive(amount, quantity);
     const available = availability(line);

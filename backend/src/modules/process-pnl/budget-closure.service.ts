@@ -299,4 +299,89 @@ export const budgetClosureService = {
       );
     }
   },
+
+  /** A closed cost centre refuses NEW spend (reserve) like a closed head/sub-head; completing or
+   *  correcting a GRN reserved before the close keeps working. Missing table = nothing closed. */
+  async assertCostCentreOpen(connection: PoolConnection, budgetId: string, costCentreId: string) {
+    let rows: RowDataPacket[] = [];
+    try {
+      [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT status FROM finance_budget_cost_centre_closure WHERE budget_id = ? AND cost_centre_id = ? LIMIT 1`,
+        [budgetId, costCentreId]
+      );
+    } catch (error) {
+      if ((error as { code?: string })?.code === "ER_NO_SUCH_TABLE") return;
+      throw error;
+    }
+    if (rows?.[0] && String(rows[0].status) === "closed") {
+      throw refuse(409, "BUDGET_COST_CENTRE_CLOSED",
+        "This cost centre is closed for this month's budget. Ask the Finance Head to reopen it before raising a new GRN against it.");
+    }
+  },
+
+  /** Cost centres of a budget and whether each is closed (migration 2118). A line of a closed cost
+   *  centre counts in Live P&L at actual, not at budget (pnl-open-budget.ts). */
+  async getCostCentreStatus(budgetId: string) {
+    await getBudgetBranchOrThrow(budgetId);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT x.cost_centre_id, ccm.cost_centre_code, ccm.cost_centre_name,
+              SUM(x.budget) AS budget_amount, SUM(x.used) AS used_amount,
+              MAX(c.status) AS closure_status, MAX(c.closed_at) AS closed_at, MAX(c.closed_reason) AS closed_reason
+         FROM (
+           SELECT l.cost_centre_id,
+                  COALESCE(NULLIF(l.base_amount, 0), l.pnl_cost_amount, 0) AS budget,
+                  COALESCE(l.reserved_amount, 0) + COALESCE(l.consumed_amount, 0) AS used
+             FROM finance_budget_line l
+            WHERE l.budget_id = ? AND l.cost_centre_id IS NOT NULL
+           UNION ALL
+           SELECT a.cost_centre_id, COALESCE(NULLIF(a.base_amount, 0), a.pnl_cost_amount, 0), 0
+             FROM finance_budget_line_allocation a
+             JOIN finance_budget_line l ON l.id = a.budget_line_id
+            WHERE l.budget_id = ? AND l.cost_centre_id IS NULL AND a.cost_centre_id IS NOT NULL
+         ) x
+         LEFT JOIN cost_centre_master ccm ON ccm.id = x.cost_centre_id
+         LEFT JOIN finance_budget_cost_centre_closure c ON c.budget_id = ? AND c.cost_centre_id = x.cost_centre_id
+        GROUP BY x.cost_centre_id, ccm.cost_centre_code, ccm.cost_centre_name
+        ORDER BY ccm.cost_centre_code`,
+      [budgetId, budgetId, budgetId]
+    );
+    return rows.map((r) => ({
+      costCentreId: String(r.cost_centre_id),
+      costCentreCode: r.cost_centre_code ?? null,
+      costCentreName: r.cost_centre_name ?? null,
+      budgetAmount: Number(r.budget_amount ?? 0),
+      usedAmount: Number(r.used_amount ?? 0),
+      status: r.closure_status === "closed" ? "closed" : "open",
+      closedAt: r.closed_at ?? null,
+      closedReason: r.closed_reason ?? null,
+    }));
+  },
+
+  /** Close a cost centre's share of a budget — same roles and idempotence as close(). */
+  async closeCostCentre(budgetId: string, costCentreId: string, reason: string | null, actorId: string, actorRole: string) {
+    if (!CLOSE_ROLES.has(actorRole.toLowerCase())) {
+      throw refuse(403, "CLOSURE_NO_CLOSE_ROLE", `Role ${actorRole} cannot close a budget cost centre`);
+    }
+    await getBudgetBranchOrThrow(budgetId);
+    if (!costCentreId) throw refuse(400, "CLOSURE_COST_CENTRE_REQUIRED", "costCentreId is required");
+    await db.execute(
+      `INSERT INTO finance_budget_cost_centre_closure (id, budget_id, cost_centre_id, status, closed_by, closed_at, closed_reason)
+       VALUES (?, ?, ?, 'closed', ?, NOW(), ?)
+       ON DUPLICATE KEY UPDATE status = 'closed', closed_by = VALUES(closed_by), closed_at = NOW(), closed_reason = VALUES(closed_reason)`,
+      [randomUUID(), budgetId, costCentreId, actorId, reason?.trim() || null]
+    );
+  },
+
+  /** Reopen a closed cost centre — Finance Head only, directly (the line goes back to counting at budget). */
+  async reopenCostCentre(budgetId: string, costCentreId: string, actorId: string, actorRole: string) {
+    if (!REOPEN_APPROVE_ROLES.has(actorRole.toLowerCase())) {
+      throw refuse(403, "CLOSURE_NO_REOPEN_ROLE", "Only the Finance Head can reopen a closed cost centre");
+    }
+    const [result] = await db.execute<any>(
+      `UPDATE finance_budget_cost_centre_closure SET status = 'open', reopened_by = ?, reopened_at = NOW()
+        WHERE budget_id = ? AND cost_centre_id = ? AND status = 'closed'`,
+      [actorId, budgetId, costCentreId]
+    );
+    if (!result?.affectedRows) throw refuse(409, "CLOSURE_NOT_CLOSED", "This cost centre is not closed");
+  },
 };

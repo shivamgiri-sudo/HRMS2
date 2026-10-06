@@ -12,6 +12,8 @@ import { cachedPnlRead } from "./pnl-read-cache.js";
 import { peopleCostSql } from "./pnl-people-cost.js";
 import { nonVoidRunSql } from "../payroll/run-status.js";
 import { snapshotUncoveredByRunSql } from "./pnl-payroll-coverage.js";
+import { getForecastRevenueByCostCentre } from "./revenue-forecast.service.js";
+import { readOpenBudgetReserve } from "./pnl-open-budget.js";
 
 /*
  * PER-REQUEST DEDUP (2026-09-24). One overview asks for the same month's revenue / people / spend /
@@ -990,6 +992,48 @@ function estimateByBranch(period: string, s: CeoScope): Promise<Map<string, numb
 }
 
 /**
+ * Revenue forecast + open-budget accounting (owner rule 2026-10-06), per branch, from the same Live
+ * P&L rows so the two tabs agree. `revenue` is what a forecast changes relative to this page's own
+ * invoice/accrual read (recognised - invoice - accrual + credit note, on forecast rows only);
+ * `cost` is the open budget headroom counted as cost (rows, plus branch-pooled lines when the view is
+ * not narrowed to cost centres). Not applied under a client/process filter, like the estimate.
+ */
+const forecastAdjustCache = new Map<string, { at: number; value: Promise<{ revenue: Map<string, number>; cost: Map<string, number> }> }>();
+function forecastAdjustByBranch(period: string, s: CeoScope) {
+  const empty = { revenue: new Map<string, number>(), cost: new Map<string, number>() };
+  if (s.processIds.length) return Promise.resolve(empty);
+  const key = `${period}|${[...s.branchIds].sort().join(",")}|${[...s.costCentreIds].sort().join(",")}`;
+  const hit = forecastAdjustCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.value;
+  const value = (async () => {
+    const out = { revenue: new Map<string, number>(), cost: new Map<string, number>() };
+    try {
+      // Two cheap reads first: a month with no approved forecast and no open budget headroom
+      // changes nothing, and must not cost the page a full Live P&L build per trend month.
+      const [forecasts, openBudget] = await Promise.all([getForecastRevenueByCostCentre(period), readOpenBudgetReserve(period)]);
+      if (!forecasts.size && !openBudget.byCostCentre.size && !openBudget.unallocatedByBranch.size) return out;
+      const rec = await getPnlReconciliation(period, { branchIds: s.branchIds });
+      const only = new Set(s.costCentreIds);
+      const add = (m: Map<string, number>, k: string, v: number) => { if (v) m.set(k, (m.get(k) ?? 0) + v); };
+      for (const row of rec.rows) {
+        if (!row.branchId || (only.size && !only.has(row.costCentreId))) continue;
+        if (row.revenueBasis === "FORECAST_OPEN" || row.revenueBasis === "FORECAST_CLOSED") {
+          add(out.revenue, row.branchId, row.recognisedRevenue - (row.revenueInvoice + row.revenueAccrual - row.creditNote));
+        }
+        if (only.size) add(out.cost, row.branchId, row.openBudgetReserve);
+      }
+      if (!only.size) for (const b of rec.branches) if (b.branchId) add(out.cost, b.branchId, b.openBudgetReserve);
+    } catch {
+      // Supplementary, like the estimate: the page still stands on invoiced revenue and GRN spend.
+    }
+    return out;
+  })();
+  forecastAdjustCache.set(key, { at: Date.now(), value });
+  if (forecastAdjustCache.size > 40) forecastAdjustCache.delete(forecastAdjustCache.keys().next().value as string);
+  return value;
+}
+
+/**
  * `inScope` decides which branch keys of the per-branch maps count toward a trend month. It MUST be
  * the same rule the headline uses (getCeoOverview's branchKeyInHeadline), because the current month
  * is overwritten with the headline figures while prior months are summed here — a looser rule here
@@ -1018,12 +1062,13 @@ async function marginTrend(
     [...m.entries()].reduce((a, [key, value]) => (inScope(key) ? a + value : a), 0);
   return Promise.all(
     periods.map(async (period) => {
-      const [rev, ppl, spend, est] = await Promise.all([
+      const [rev, ppl, spend, est, adj] = await Promise.all([
         memoRevenueByBranch(period, s), memoPeopleByBranch(period, s), memoSpendByBranch(period, s), estimateByBranch(period, s),
+        forecastAdjustByBranch(period, s),
       ]);
-      const revenue = sum(rev) + sum(est);
+      const revenue = sum(rev) + sum(est) + sum(adj.revenue);
       const people = [...ppl.entries()].reduce((a, [key, p]) => (inScope(key) ? a + p.cost : a), 0);
-      const operatingProfit = revenue - people - sum(spend);
+      const operatingProfit = revenue - people - sum(spend) - sum(adj.cost);
       const idcMissing = people > 0 && !(await grnExistsCompanyWide(period, s, spend));
       return {
         period, revenue, operatingProfit,
@@ -1293,12 +1338,13 @@ async function buildCeoOverview(
   const branchRowsPromise = db.execute<RowDataPacket[]>(
     `SELECT id, branch_name, active_status FROM branch_master`,
   ).then(([rows]) => rows);
-  const [revenue, people, spend, budget, estimate, idcContamination, branchRows] = await Promise.all([
+  const [revenue, people, spend, budget, estimate, idcContamination, branchRows, forecastAdj] = await Promise.all([
     memoRevenueByBranch(period, scope), memoPeopleByBranch(period, scope),
     memoSpendByBranch(period, scope), budgetByBranch(period),
     estimateByBranch(period, scope),
     idcContaminationFor(period),
     branchRowsPromise,
+    forecastAdjustByBranch(period, scope),
   ]);
   const nameOfBranch = (id: string) =>
     String(branchRows.find((r) => String(r.id) === id)?.branch_name ?? "Unnamed");
@@ -1364,7 +1410,7 @@ async function buildCeoOverview(
       .filter((r) => String(r.branch_name ?? "").trim().toUpperCase() === entry.name.trim().toUpperCase())
       .map((r) => String(r.id));
     const est = ids.reduce((t, i) => t + (estimate.get(i) ?? 0), 0);
-    const rev = ids.reduce((t, i) => t + (revenue.get(i) ?? 0), 0) + est;
+    const rev = ids.reduce((t, i) => t + (revenue.get(i) ?? 0) + (forecastAdj.revenue.get(i) ?? 0), 0) + est;
     const pay = ids.reduce(
       (t, i) => {
         const p = people.get(i);
@@ -1372,7 +1418,8 @@ async function buildCeoOverview(
       },
       { cost: 0, staff: 0 },
     );
-    const idc = ids.reduce((t, i) => t + (spend.get(i) ?? 0), 0);
+    // Indirect cost includes the open budget headroom (open lines count at full budget).
+    const idc = ids.reduce((t, i) => t + (spend.get(i) ?? 0) + (forecastAdj.cost.get(i) ?? 0), 0);
     if (rev === 0 && pay.staff === 0 && idc === 0) continue;   // nothing happened here this month
 
     const isClosed = !entry.active;

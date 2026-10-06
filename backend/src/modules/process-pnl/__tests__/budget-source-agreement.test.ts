@@ -91,6 +91,8 @@ INSERT INTO finance_budget_line_snapshot VALUES
 beforeAll(() => {
   if (!sqlite) return;
   sqlite.exec(SCHEMA);
+  // Live P&L also reads open-budget headroom (pnl-open-budget.ts); nothing reserved or consumed here.
+  sqlite.exec("ALTER TABLE finance_budget_line ADD COLUMN reserved_amount REAL DEFAULT 0; ALTER TABLE finance_budget_line ADD COLUMN consumed_amount REAL DEFAULT 0;");
   execute.mockImplementation(async (sql: string, params?: unknown[]) => [run(String(sql), params ?? []), []]);
 });
 

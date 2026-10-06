@@ -910,6 +910,13 @@ const CLOSURE_READ_ROLES = ["super_admin", "admin", "branch_admin", "branch_head
 const CLOSURE_CLOSE_ROLES = ["super_admin", "branch_admin", "finance_head"] as const;
 const CLOSURE_REOPEN_REQUEST_ROLES = ["super_admin", "admin", "branch_admin", "finance_head"] as const;
 const CLOSURE_REVIEW_ROLES = ["super_admin", "finance_head"] as const;
+/** The role a closure action runs under: the strongest closure role the user holds (primary role
+ *  first), so a Finance Head whose primary role is something else is not refused. */
+function closureRole(user: { role: string; roles: string[] }) {
+  const held = new Set([user.role, ...user.roles].map((r) => String(r).toLowerCase()));
+  for (const r of ["super_admin", "finance_head", "branch_admin"]) if (held.has(r)) return r;
+  return user.role;
+}
 
 router.get(
   "/pnl/budgets/:budgetId/subhead-closure",
@@ -936,6 +943,42 @@ router.post(
       user.id,
       user.role
     );
+    res.json({ success: true });
+  })
+);
+
+router.get(
+  "/pnl/budgets/:budgetId/cost-centre-closure",
+  requireRole(...CLOSURE_READ_ROLES),
+  h(async (req, res) => {
+    await scopedBudget(req, req.params.budgetId);
+    res.json({ success: true, data: await budgetClosureService.getCostCentreStatus(req.params.budgetId) });
+  })
+);
+
+router.post(
+  "/pnl/budgets/:budgetId/cost-centre-closure/close",
+  requireWriteAccess,
+  requireRole(...CLOSURE_CLOSE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.budgetId);
+    await budgetClosureService.closeCostCentre(
+      req.params.budgetId, String(req.body?.costCentreId ?? ""),
+      req.body?.reason ? String(req.body.reason) : null, user.id, closureRole(user)
+    );
+    res.json({ success: true });
+  })
+);
+
+router.post(
+  "/pnl/budgets/:budgetId/cost-centre-closure/reopen",
+  requireWriteAccess,
+  requireRole(...CLOSURE_REVIEW_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.budgetId);
+    await budgetClosureService.reopenCostCentre(req.params.budgetId, String(req.body?.costCentreId ?? ""), user.id, closureRole(user));
     res.json({ success: true });
   })
 );

@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1232,
-  "columnCount": 17903,
+  "tableCount": 1235,
+  "columnCount": 17956,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -8888,6 +8888,19 @@
       "created_at",
       "updated_at"
     ],
+    "finance_budget_cost_centre_closure": [
+      "id",
+      "budget_id",
+      "cost_centre_id",
+      "status",
+      "closed_by",
+      "closed_at",
+      "closed_reason",
+      "reopened_by",
+      "reopened_at",
+      "created_at",
+      "updated_at"
+    ],
     "finance_budget_header": [
       "id",
       "budget_number",
@@ -16176,6 +16189,52 @@
       "response_date",
       "response_remarks",
       "created_at"
+    ],
+    "revenue_forecast": [
+      "id",
+      "branch_id",
+      "cost_centre_id",
+      "period_code",
+      "status",
+      "forecast_amount",
+      "closed_amount",
+      "notes",
+      "finance_head_status",
+      "finance_head_by",
+      "finance_head_at",
+      "finance_head_note",
+      "payroll_head_status",
+      "payroll_head_by",
+      "payroll_head_at",
+      "payroll_head_note",
+      "submitted_by",
+      "submitted_at",
+      "approved_at",
+      "closed_by",
+      "closed_at",
+      "close_note",
+      "reopened_by",
+      "reopened_at",
+      "reopen_reason",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "revenue_forecast_line": [
+      "id",
+      "forecast_id",
+      "line_no",
+      "line_type",
+      "description",
+      "metric_key",
+      "quantity",
+      "rate",
+      "amount",
+      "actual_quantity",
+      "actual_rate",
+      "actual_amount",
+      "created_at",
+      "updated_at"
     ],
     "reward_catalog": [
       "id",
