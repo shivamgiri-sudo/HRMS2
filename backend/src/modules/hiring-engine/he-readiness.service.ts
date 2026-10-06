@@ -1,0 +1,61 @@
+/**
+ * Drive readiness: everything that decides whether outreach can actually go out, in one place, so HR sees why the
+ * screen is quiet instead of guessing. Read-only.
+ */
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { PinbotWhatsAppProvider } from "../communication/providers/whatsapp/pinbot.provider.js";
+import { emailConfigured } from "./he-email.service.js";
+import { istHour } from "./he-guardrails.js";
+import { cadenceGapMin } from "./he-cadence.js";
+import { sendsPaused } from "./he-send.service.js";
+
+export interface Check { key: string; ok: boolean; label: string; detail: string; blocks: "email" | "whatsapp" | "voice" | "followups" | "all" | null }
+
+export async function getDriveReadiness(driveId: string) {
+  const [dr] = await db.execute<RowDataPacket[]>(
+    `SELECT d.id, d.status, d.auto_send, d.drive_date, d.target_shows, jr.requisition_code, jr.designation_name, jr.approval_status, jr.active_status,
+            jr.requested_headcount, jr.fulfilled_headcount, bm.address
+       FROM he_drive d JOIN job_requisition jr ON jr.id = d.requisition_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
+      WHERE d.id = ? LIMIT 1`, [driveId]);
+  const d = dr[0];
+  if (!d) return null;
+  const [m] = await db.execute<RowDataPacket[]>(
+    `SELECT m.state, COUNT(*) AS n,
+            SUM(l.email IS NOT NULL AND l.email <> '') AS with_email,
+            SUM(EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)) AS with_consent
+       FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.drive_id = ? GROUP BY m.state`, [driveId]);
+  const st = (s: string) => m.find((r) => r.state === s);
+  const sug = st("suggested");
+  const [tpl] = await db.execute<RowDataPacket[]>("SELECT SUM(approval_state = 'approved') AS approved, COUNT(*) AS total FROM he_template");
+  const [inv] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'");
+  const [sent] = await db.execute<RowDataPacket[]>(
+    `SELECT msg.channel, COUNT(*) AS n FROM he_message msg JOIN he_match mt ON mt.lead_id = msg.lead_id AND mt.drive_id = ?
+      WHERE msg.direction = 'out' AND msg.delivery_status <> 'failed' GROUP BY msg.channel`, [driveId]);
+  const pinbotOk = new PinbotWhatsAppProvider().isConfigured();
+  const vapiOk = Boolean(process.env.VAPI_API_KEY && process.env.VAPI_PHONE_NUMBER_ID);
+  const engineOn = process.env.HE_ENGINE_ENABLED === "true", engineLive = process.env.HE_ENGINE_LIVE === "true";
+  const h = istHour(new Date());
+  const reqOpen = d.approval_status === "approved" && Boolean(d.active_status) && Number(d.fulfilled_headcount) < Number(d.requested_headcount);
+  const checks: Check[] = [
+    { key: "requisition", ok: reqOpen, label: "Requisition open", detail: reqOpen ? `${d.requisition_code}: ${Number(d.requested_headcount) - Number(d.fulfilled_headcount)} open` : `${d.requisition_code} is closed or filled`, blocks: reqOpen ? null : "all" },
+    { key: "paused", ok: !sendsPaused(), label: "Sending not paused", detail: sendsPaused() ? "HE_SENDS_PAUSED is on" : "ok", blocks: sendsPaused() ? "all" : null },
+    { key: "hours", ok: h >= 9 && h < 20, label: "Within 09:00-20:00 IST", detail: h >= 9 && h < 20 ? "messages can go out now" : "nothing is sent outside 09:00-20:00; send after 9 AM", blocks: h >= 9 && h < 20 ? null : "all" },
+    { key: "email", ok: emailConfigured(), label: "Email set up on the server", detail: emailConfigured() ? "ok" : "mail provider not configured", blocks: emailConfigured() ? null : "email" },
+    { key: "address", ok: Boolean(d.address), label: "Branch address on file", detail: d.address ? "used in the email and the call" : "add the branch address in Branch master (the bot never invents one)", blocks: d.address ? null : "voice" },
+    { key: "wa_template", ok: Number(inv[0]?.n ?? 0) > 0 && pinbotOk, label: "WhatsApp invite template approved", detail: !pinbotOk ? "WhatsApp provider not configured" : Number(inv[0]?.n ?? 0) > 0 ? "ok" : `${Number(tpl[0]?.approved ?? 0)} of ${Number(tpl[0]?.total ?? 0)} templates approved - WhatsApp step waits; the call follows the email instead`, blocks: Number(inv[0]?.n ?? 0) > 0 && pinbotOk ? null : "whatsapp" },
+    { key: "voice", ok: vapiOk, label: "Voice bot set up", detail: vapiOk ? "ok" : "voice provider keys not configured", blocks: vapiOk ? null : "voice" },
+    { key: "engine", ok: engineOn && engineLive, label: "Automatic follow-ups on", detail: engineOn && engineLive ? `WhatsApp ${cadenceGapMin()} min after the email, call after another ${cadenceGapMin()} min` : "scheduler off: use 'Run follow-ups now' (or set HE_ENGINE_ENABLED and HE_ENGINE_LIVE on the server)", blocks: engineOn && engineLive ? null : "followups" },
+  ];
+  return {
+    drive: { id: d.id, status: d.status, autoSend: Boolean(d.auto_send), date: String(d.drive_date).slice(0, 10), targetShows: Number(d.target_shows), requisition: d.requisition_code, role: d.designation_name },
+    checks,
+    pool: {
+      suggested: Number(sug?.n ?? 0), suggestedWithEmail: Number(sug?.with_email ?? 0), suggestedWithConsent: Number(sug?.with_consent ?? 0),
+      invited: Number(st("invited")?.n ?? 0), confirmed: Number(st("confirmed")?.n ?? 0), arrived: Number(st("arrived")?.n ?? 0),
+    },
+    sent: Object.fromEntries(sent.map((r) => [String(r.channel), Number(r.n)])),
+    canSendEmailNow: reqOpen && !sendsPaused() && h >= 9 && h < 20 && emailConfigured(),
+    gapMinutes: cadenceGapMin(),
+  };
+}

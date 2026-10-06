@@ -1,0 +1,158 @@
+/**
+ * Drive launch panel (opens from a drive row in the Drives tab): what is ready, who would get what, and the buttons to
+ * start. Step 1 is the EMAIL invite, which needs neither a WhatsApp template nor WhatsApp opt-in, so outreach can start
+ * today. WhatsApp follows one hour later once its template is approved; the call follows one hour after that (or two
+ * hours after the email when WhatsApp could not go out). Nothing is sent from Preview.
+ */
+import { useCallback, useEffect, useState } from "react";
+import { CheckCircle2, Mail, MessageCircle, PhoneCall, Send, XCircle, Eye, RefreshCcw } from "lucide-react";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { num } from "@/components/analytics/analytics-kit";
+
+interface Check { key: string; ok: boolean; label: string; detail: string; blocks: string | null }
+interface Readiness {
+  drive: { id: string; status: string; autoSend: boolean; date: string; targetShows: number; requisition: string; role: string };
+  checks: Check[];
+  pool: { suggested: number; suggestedWithEmail: number; suggestedWithConsent: number; invited: number; confirmed: number; arrived: number };
+  sent: Record<string, number>;
+  canSendEmailNow: boolean;
+  gapMinutes: number;
+}
+interface Planned { matchId: string; name: string | null; mobile: string; channel: "email" | "whatsapp" | null; reason: string }
+interface Launch { sent: number; failed: number; dryRun: number; blocked: Record<string, number>; planned: Planned[]; considered: number }
+interface Cnt { sent: number; failed: number; dryRun: number; blocked: Record<string, number> }
+
+const BATCHES = [25, 50, 100, 200];
+
+export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driveId: string | null; onClose: () => void; onChanged: () => void }) {
+  const [r, setR] = useState<Readiness | null>(null);
+  const [plan, setPlan] = useState<Launch | null>(null);
+  const [limit, setLimit] = useState(50);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [confirm, setConfirm] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!driveId) return;
+    try { const x = await hrmsApi.get<{ data: Readiness }>(`/api/he/drives/${driveId}/readiness`); setR(x.data); }
+    catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Could not load the drive" }); }
+  }, [driveId]);
+  useEffect(() => { setR(null); setPlan(null); setMsg(null); setConfirm(false); void load(); }, [load]);
+
+  const preview = async () => {
+    setBusy("preview"); setMsg(null); setConfirm(false);
+    try { const x = await hrmsApi.post<{ data: Launch }>(`/api/he/drives/${driveId}/launch`, { dryRun: true, limit }); setPlan(x.data); }
+    catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Preview failed" }); }
+    finally { setBusy(null); }
+  };
+  const send = async () => {
+    setBusy("send"); setMsg(null); setConfirm(false);
+    try {
+      const x = await hrmsApi.post<{ data: Launch }>(`/api/he/drives/${driveId}/launch`, { dryRun: false, limit }, 300000);
+      const d = x.data;
+      const blocked = Object.entries(d.blocked).map(([k, v]) => `${v} ${k}`).join(", ");
+      setMsg({ ok: d.failed === 0, text: `${num(d.sent)} invites sent${d.failed ? ` · ${num(d.failed)} failed` : ""}${blocked ? ` · not sent: ${blocked}` : ""}.` });
+      setPlan(null); await load(); onChanged();
+    } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Sending failed" }); }
+    finally { setBusy(null); }
+  };
+  const followUps = async () => {
+    setBusy("follow"); setMsg(null);
+    try {
+      const x = await hrmsApi.post<{ data: { whatsapp: Cnt; reminders: Cnt; calls: Cnt } }>("/api/he/engine/follow-ups", { dryRun: false }, 300000);
+      const f = x.data; const why = (c: Cnt) => Object.entries(c.blocked).map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`).join(", ");
+      setMsg({ ok: true, text: `Follow-ups: ${f.whatsapp.sent} WhatsApp${why(f.whatsapp) ? ` (waiting: ${why(f.whatsapp)})` : ""} · ${f.calls.sent} calls${why(f.calls) ? ` (waiting: ${why(f.calls)})` : ""} · ${f.reminders.sent} reminders.` });
+      await load();
+    } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Follow-ups failed" }); }
+    finally { setBusy(null); }
+  };
+
+  const willEmail = plan?.planned.filter((p) => p.channel === "email").length ?? 0;
+  const willWa = plan?.planned.filter((p) => p.channel === "whatsapp").length ?? 0;
+  const followNeeded = r?.checks.find((c) => c.key === "engine")?.ok === false;
+
+  return (
+    <Sheet open={driveId != null} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
+        <SheetHeader><SheetTitle>{r ? `Start outreach · ${r.drive.role} · ${r.drive.date}` : "Start outreach"}</SheetTitle></SheetHeader>
+        {!r ? <div className="mt-6 h-40 animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none" aria-hidden /> : (
+          <div className="space-y-5 pb-8">
+            <ol className="mt-3 grid grid-cols-3 gap-2 text-center text-xs" aria-label="Outreach order">
+              <li className="rounded-lg border border-blue-200 bg-blue-50 p-2"><Mail className="mx-auto h-4 w-4 text-blue-600" aria-hidden /><div className="mt-1 font-semibold text-slate-900">1. Email</div><div className="text-slate-500">now</div></li>
+              <li className="rounded-lg border border-emerald-200 bg-emerald-50 p-2"><MessageCircle className="mx-auto h-4 w-4 text-emerald-600" aria-hidden /><div className="mt-1 font-semibold text-slate-900">2. WhatsApp</div><div className="text-slate-500">+{r.gapMinutes} min</div></li>
+              <li className="rounded-lg border border-violet-200 bg-violet-50 p-2"><PhoneCall className="mx-auto h-4 w-4 text-violet-600" aria-hidden /><div className="mt-1 font-semibold text-slate-900">3. Bot call</div><div className="text-slate-500">+{r.gapMinutes} min</div></li>
+            </ol>
+
+            <section aria-label="Readiness">
+              <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">Ready to send?</h3>
+              <ul className="space-y-1.5">
+                {r.checks.map((c) => (
+                  <li key={c.key} className="flex items-start gap-2 text-sm">
+                    {c.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-label="ready" /> : <XCircle className={`mt-0.5 h-4 w-4 shrink-0 ${c.blocks === "all" || c.blocks === "email" ? "text-rose-600" : "text-amber-500"}`} aria-label="not ready" />}
+                    <span><span className="font-medium text-slate-900">{c.label}</span> <span className="text-slate-500">· {c.detail}</span></span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            <section aria-label="Candidates" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[["Shortlisted", r.pool.suggested], ["With email", r.pool.suggestedWithEmail], ["With WhatsApp opt-in", r.pool.suggestedWithConsent], ["Already invited", r.pool.invited + r.pool.confirmed]].map(([k, v]) => (
+                <div key={String(k)} className="rounded-lg border border-slate-200 p-2"><div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{k}</div><div className="text-xl font-bold tabular-nums text-slate-900">{num(Number(v))}</div></div>
+              ))}
+            </section>
+            {r.pool.suggested === 0 && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Nobody is shortlisted yet. Close this and click <b>Find leads</b> on the drive first.</p>}
+            {r.drive.status !== "active" && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">The drive is <b>{r.drive.status}</b>. Activate it to send invites (Preview works anyway).</p>}
+
+            <section aria-label="Send" className="rounded-xl border border-slate-200 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <label htmlFor="batch" className="text-sm text-slate-700">Batch</label>
+                <select id="batch" value={limit} onChange={(e) => { setLimit(Number(e.target.value)); setPlan(null); setConfirm(false); }} className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                  {BATCHES.map((b) => <option key={b} value={b}>{b} candidates</option>)}
+                </select>
+                <button type="button" onClick={() => void preview()} disabled={busy != null || r.pool.suggested === 0} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><Eye className="h-4 w-4" aria-hidden /> {busy === "preview" ? "Checking…" : "Preview"}</button>
+                {plan && !confirm && (
+                  <button type="button" onClick={() => setConfirm(true)} disabled={busy != null || plan.dryRun === 0 || r.drive.status !== "active"} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors duration-200 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><Send className="h-4 w-4" aria-hidden /> Send {num(plan.dryRun)} invites now</button>
+                )}
+                {confirm && plan && (
+                  <span className="flex flex-wrap items-center gap-2 rounded-lg bg-blue-50 px-2 py-1 text-sm">
+                    Send {num(willEmail)} emails{willWa ? ` and ${num(willWa)} WhatsApp` : ""} now?
+                    <button type="button" onClick={() => void send()} disabled={busy != null} className="cursor-pointer rounded-md bg-blue-600 px-2.5 py-1 font-semibold text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">{busy === "send" ? "Sending…" : "Yes, send"}</button>
+                    <button type="button" onClick={() => setConfirm(false)} className="cursor-pointer rounded-md px-2 py-1 text-slate-600 hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Cancel</button>
+                  </span>
+                )}
+              </div>
+              {plan && (
+                <div className="mt-3">
+                  <p className="text-sm text-slate-700"><b className="tabular-nums">{num(willEmail)}</b> by email · <b className="tabular-nums">{num(willWa)}</b> by WhatsApp · <b className="tabular-nums">{num(plan.considered - plan.dryRun)}</b> cannot be reached{Object.keys(plan.blocked).length ? ` (${Object.entries(plan.blocked).map(([k, v]) => `${v} ${k}`).join(", ")})` : ""}</p>
+                  <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-slate-100">
+                    <table className="w-full text-left text-sm">
+                      <thead className="sticky top-0 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-500"><tr><th className="px-2 py-1.5">Candidate</th><th className="px-2 py-1.5">First touch</th></tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {plan.planned.map((p) => (
+                          <tr key={p.matchId}><td className="px-2 py-1.5">{p.name ?? "Unnamed"} <span className="font-mono text-xs text-slate-400">{p.mobile}</span></td>
+                            <td className={`px-2 py-1.5 text-xs ${p.channel ? "text-slate-700" : "text-rose-700"}`}>{p.channel === "email" ? "Email" : p.channel === "whatsapp" ? "WhatsApp" : "Not sent"} · {p.reason}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section aria-label="Follow-ups" className="rounded-xl border border-slate-200 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm text-slate-700">
+                  <div className="font-medium text-slate-900">Follow-ups (WhatsApp, then bot call)</div>
+                  <div className="text-xs text-slate-500">Sent so far for this drive: {num(r.sent.email ?? 0)} email · {num(r.sent.whatsapp ?? 0)} WhatsApp. {followNeeded ? "Automatic follow-ups are off on the server, so run them here about every hour." : "These run automatically every 5 minutes."}</div>
+                </div>
+                <button type="button" onClick={() => void followUps()} disabled={busy != null} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><RefreshCcw className={`h-4 w-4 ${busy === "follow" ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden /> Run follow-ups now</button>
+              </div>
+            </section>
+            {msg && <p role="status" className={`rounded-lg p-3 text-sm ${msg.ok ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"}`}>{msg.text}</p>}
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}

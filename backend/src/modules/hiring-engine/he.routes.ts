@@ -8,7 +8,8 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { addEvent, backfillLeadPool } from "./he-lead.service.js";
 import { createDrive, setDriveStatus, suggestMatchesDetailed } from "./he-drive.service.js";
-import { runEngineTick } from "./he-engine.service.js";
+import { inviteForDrive, runEngineTick, runFollowUps } from "./he-engine.service.js";
+import { getDriveReadiness } from "./he-readiness.service.js";
 import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches, previewBulkCalls, runBulkCallJobs, startBulkBatch } from "./he-bulk-call.service.js";
@@ -520,4 +521,33 @@ heRouter.post("/model/learn", requireAuth, requireRole(...ADMIN_ROLES), async (_
 heRouter.get("/master/recruiters", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
   try { res.json({ success: true, data: await getRecruiterProductivity(Number((req.query as { days?: string }).days ?? 7) || 7) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] recruiter productivity failed"); res.status(500).json({ message: "Could not load recruiter productivity" }); }
+});
+
+// Drive launch panel: readiness, preview (dry run), send invites now (email first), and follow-ups on demand.
+heRouter.get("/drives/:id/readiness", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try {
+    const r = await getDriveReadiness(String(req.params.id));
+    if (!r) return res.status(404).json({ message: "Drive not found" });
+    res.json({ success: true, data: r });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] readiness failed"); res.status(500).json({ message: "Could not check readiness" }); }
+});
+
+heRouter.post("/drives/:id/launch", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const b = (req.body ?? {}) as { dryRun?: unknown; limit?: unknown };
+    const dryRun = b.dryRun !== false;
+    const limit = Math.max(1, Math.min(500, Math.floor(Number(b.limit) || 100)));
+    const id = String(req.params.id);
+    const [d] = await db.execute<RowDataPacket[]>("SELECT status FROM he_drive WHERE id = ? LIMIT 1", [id]);
+    if (!d[0]) return res.status(404).json({ message: "Drive not found" });
+    if (!dryRun && d[0].status !== "active") return res.status(400).json({ message: "Activate the drive before sending invites" });
+    const r = await inviteForDrive(id, { dryRun, max: limit });
+    if (!dryRun) logger.info({ driveId: id, by: (req as AuthenticatedRequest).authUser?.id, sent: r.sent, blocked: r.blocked }, "[he] invites sent from the launch panel");
+    res.json({ success: true, data: r });
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] launch failed"); res.status(500).json({ message: "Could not send invites" }); }
+});
+
+heRouter.post("/engine/follow-ups", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try { res.json({ success: true, data: await runFollowUps({ dryRun: (req.body ?? {}).dryRun !== false }) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] follow-ups failed"); res.status(500).json({ message: "Could not run follow-ups" }); }
 });

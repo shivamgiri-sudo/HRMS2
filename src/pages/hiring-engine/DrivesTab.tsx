@@ -4,10 +4,11 @@
  * A drive only auto-sends once it is Active AND "auto-send" is on AND the scheduler is live (server flags).
  */
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Pause, Play, Sparkles, XCircle } from "lucide-react";
+import { Plus, Pause, Play, Send, Sparkles, XCircle } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState, num } from "@/components/analytics/analytics-kit";
+import DriveLaunchPanel from "./DriveLaunchPanel";
 
 interface Drive {
   id: string; branch_name: string; drive_date: string; designation_name: string; requisition_code: string; open_positions: number;
@@ -21,6 +22,7 @@ const n = (v: number | null) => num(Number(v ?? 0));
 const field = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500";
 
 export default function DrivesTab() {
+  const [launchId, setLaunchId] = useState<string | null>(null);
   const [drives, setDrives] = useState<Drive[]>([]);
   const [reqs, setReqs] = useState<Req[]>([]);
   const [open, setOpen] = useState(false);
@@ -81,6 +83,7 @@ export default function DrivesTab() {
                 <td className="px-4 py-3"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ring-1 ring-inset ${STATUS[d.status] ?? STATUS.draft}`}>{d.status}</span></td>
                 <td className="px-4 py-3">
                   <div className="flex justify-end gap-1.5">
+                    {d.status !== "closed" && <button type="button" onClick={() => setLaunchId(d.id)} className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors duration-200 hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><Send className="h-3.5 w-3.5" aria-hidden /> Start outreach</button>}
                     <button type="button" disabled={busy !== null || d.status === "closed"} onClick={() => void act(`s${d.id}`, () => hrmsApi.post(`/api/he/drives/${d.id}/suggest`, {}), "Leads matched to this drive")} className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><Sparkles className="h-3.5 w-3.5" aria-hidden /> Find leads</button>
                     {d.status !== "active" && d.status !== "closed" && <button type="button" disabled={busy !== null} onClick={() => void act(`a${d.id}`, () => hrmsApi.post(`/api/he/drives/${d.id}/status`, { status: "active" }), "Drive is active")} className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-emerald-200 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"><Play className="h-3.5 w-3.5" aria-hidden /> Activate</button>}
                     {d.status === "active" && <button type="button" disabled={busy !== null} onClick={() => void act(`p${d.id}`, () => hrmsApi.post(`/api/he/drives/${d.id}/status`, { status: "paused" }), "Drive paused: no more sends")} className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"><Pause className="h-3.5 w-3.5" aria-hidden /> Pause</button>}
@@ -118,6 +121,7 @@ export default function DrivesTab() {
           </div>
         </DialogContent>
       </Dialog>
+      <DriveLaunchPanel driveId={launchId} onClose={() => setLaunchId(null)} onChanged={() => void load()} />
     </div>
   );
 }

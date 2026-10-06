@@ -51,10 +51,17 @@ async function voiceCalls(dryRun: boolean, c: Counts, max: number): Promise<void
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.slot_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m
       WHERE m.state = 'invited' AND m.slot_at > NOW()
-        AND EXISTS (SELECT 1 FROM he_message o WHERE o.lead_id = m.lead_id AND o.direction = 'out' AND o.template_key LIKE 'he_walkin_invite%'
-                      AND o.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
+        AND (
+          -- normal cadence: one gap after the WhatsApp invite
+          EXISTS (SELECT 1 FROM he_message o WHERE o.lead_id = m.lead_id AND o.direction = 'out' AND o.template_key LIKE 'he_walkin_invite:%'
+                    AND o.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
+          -- WhatsApp could not go out (template not approved / no opt-in): the call follows the email two gaps later
+          OR (EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.direction = 'out' AND e.template_key = 'he_walkin_invite_email'
+                        AND e.delivery_status <> 'failed' AND e.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE))
+              AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%'))
+        )
         AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > DATE_SUB(NOW(), INTERVAL 2 DAY))
-      ORDER BY m.slot_at LIMIT ?`, [cadenceGapMin(), max]);
+      ORDER BY m.slot_at LIMIT ?`, [cadenceGapMin(), cadenceGapMin() * 2, max]);
   for (const r of rows) {
     if (bestHourWait({ now: new Date(), bestHourIst: r.best_hour == null ? null : Number(r.best_hour), slotAt: r.slot_at ? new Date(String(r.slot_at).replace(" ", "T") + "+05:30") : null })) {
       c.blocked.waiting_best_hour = (c.blocked.waiting_best_hour ?? 0) + 1; continue;
@@ -96,36 +103,65 @@ async function driveInvites(dryRun: boolean, c: Counts, max: number): Promise<vo
     "SELECT id FROM he_drive WHERE status = 'active' AND auto_send = 1 AND drive_date >= CURDATE() AND drive_date <= DATE_ADD(CURDATE(), INTERVAL 3 DAY)");
   let budget = max;
   for (const d of drives) {
-    const driveId = d.id as string;
-    if (!dryRun) await suggestMatches(driveId);
-    const [ms] = await db.execute<RowDataPacket[]>(
-      // Reachable people only: an email address (and a configured mail provider) or WhatsApp consent. Anyone with neither stays
-      // 'suggested' (visible in the drive) until a telecaller gets consent or an email.
-      `SELECT m.id, m.lead_id,
-              (l.email IS NOT NULL AND l.email <> '') AS has_email,
-              EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
-         FROM he_match m JOIN he_lead l ON l.id = m.lead_id
-        WHERE m.drive_id = ? AND m.state = 'suggested'
-          AND ((l.email IS NOT NULL AND l.email <> '') OR EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL))
-        ORDER BY m.score DESC LIMIT ?`, [driveId, budget]);
-    const quiet = istHour(new Date()) >= 20 || istHour(new Date()) < 9;
-    for (const m of ms) {
-      if (budget <= 0) return;
-      if (dryRun) { c.dryRun++; budget--; continue; }
-      const step = nextCadenceStep({ now: new Date(), gapMin: cadenceGapMin(), canEmail: Boolean(Number(m.has_email)) && emailConfigured(), waConsent: Boolean(Number(m.has_consent)), emailSentAt: null, waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: quiet });
-      if (!step.step) { c.blocked[step.reason] = (c.blocked[step.reason] ?? 0) + 1; continue; }
-      const slot = await reserveSlot(m.id as string);
-      if (!slot) break; // drive full
-      // Step 1 is the email when there is one; otherwise the WhatsApp invite goes first and the call follows an hour later.
-      const res = step.step === "email"
-        ? await sendInviteEmail(m.id as string)
-        : await sendTemplateToLead({ leadId: m.lead_id as string, key: "he_walkin_invite", matchId: m.id as string });
-      if (res.status === "sent") await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ?", [m.id]);
-      else await db.execute("UPDATE he_match SET slot_at = NULL WHERE id = ?", [m.id]);
-      tally(c, res);
-      budget--;
-    }
+    if (budget <= 0) return;
+    if (!dryRun) await suggestMatches(d.id as string);
+    const r = await inviteForDrive(d.id as string, { dryRun, max: budget });
+    c.sent += r.sent; c.failed += r.failed; c.dryRun += r.dryRun;
+    for (const [k, v] of Object.entries(r.blocked)) c.blocked[k] = (c.blocked[k] ?? 0) + v;
+    budget -= r.sent + r.dryRun;
   }
+}
+
+export interface PlannedInvite { matchId: string; leadId: string; name: string | null; mobile: string; channel: "email" | "whatsapp" | null; reason: string }
+export interface LaunchResult extends Counts { planned: PlannedInvite[]; considered: number }
+
+/**
+ * Step 1 for one drive (used by the scheduler for auto-send drives and by HR's "Send invites now" button):
+ * suggested matches who can be reached get a slot and their first touch - the EMAIL when they have an address (this needs
+ * no WhatsApp template or consent), otherwise the WhatsApp invite. dryRun returns the plan without sending or holding seats.
+ */
+export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max: number }): Promise<LaunchResult> {
+  const out: LaunchResult = { ...counts(), planned: [], considered: 0 };
+  const [ms] = await db.execute<RowDataPacket[]>(
+    `SELECT m.id, m.lead_id, l.full_name, l.mobile10,
+            (l.email IS NOT NULL AND l.email <> '') AS has_email,
+            EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
+       FROM he_match m JOIN he_lead l ON l.id = m.lead_id
+      WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out'
+      ORDER BY has_email DESC, m.score DESC LIMIT ?`, [driveId, Math.max(1, Math.min(2000, Math.floor(o.max)))]);
+  const [tpl] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'");
+  const waTemplateOk = Number(tpl[0]?.n ?? 0) > 0;
+  const quiet = istHour(new Date()) >= 20 || istHour(new Date()) < 9;
+  const canEmail = emailConfigured();
+  for (const m of ms) {
+    out.considered++;
+    const step = nextCadenceStep({ now: new Date(), gapMin: cadenceGapMin(), canEmail: Boolean(Number(m.has_email)) && canEmail, waConsent: Boolean(Number(m.has_consent)) && waTemplateOk, emailSentAt: null, waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: quiet });
+    const reason = step.step ? (step.step === "email" ? "email first" : "WhatsApp first (no email address)")
+      : step.reason === "no_channel" ? (Number(m.has_email) && !canEmail ? "email not configured on the server" : Number(m.has_consent) && !waTemplateOk ? "WhatsApp template not approved yet" : "no email and no WhatsApp opt-in")
+      : step.reason === "quiet_hours" ? "outside 09:00-20:00 IST" : step.reason;
+    if (out.planned.length < 500) out.planned.push({ matchId: m.id, leadId: m.lead_id, name: m.full_name ?? null, mobile: String(m.mobile10).slice(0, 2) + "xxxxxx" + String(m.mobile10).slice(-2), channel: step.step === "voice" ? null : step.step, reason });
+    if (!step.step) { out.blocked[reason] = (out.blocked[reason] ?? 0) + 1; continue; }
+    if (o.dryRun) { out.dryRun++; continue; }
+    const slot = await reserveSlot(m.id as string);
+    if (!slot) { out.blocked["drive full"] = (out.blocked["drive full"] ?? 0) + 1; break; }
+    const res = step.step === "email"
+      ? await sendInviteEmail(m.id as string)
+      : await sendTemplateToLead({ leadId: m.lead_id as string, key: "he_walkin_invite", matchId: m.id as string });
+    if (res.status === "sent") await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ?", [m.id]);
+    else await db.execute("UPDATE he_match SET slot_at = NULL WHERE id = ?", [m.id]); // not sent -> do not hold the seat
+    tally(out, res);
+  }
+  return out;
+}
+
+/** Steps 2 and 3 plus reminders, on demand (HR button) - the same work the scheduler does every 5 minutes. */
+export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: Counts; reminders: Counts; calls: Counts }> {
+  const out = { whatsapp: counts(), reminders: counts(), calls: counts() };
+  if (sendsPaused()) return out;
+  await whatsappFollowUps(o.dryRun, out.whatsapp, 200);
+  await reminders(o.dryRun, out.reminders);
+  await voiceCalls(o.dryRun, out.calls, 50);
+  return out;
 }
 
 /** Step 2: matches whose invite EMAIL went out a cadence gap ago and have no WhatsApp invite yet get the WhatsApp invite now. */
