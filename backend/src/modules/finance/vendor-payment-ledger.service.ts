@@ -1,4 +1,5 @@
 import { assertNoPaidTwin } from "./grn-duplicate-guard.js";
+import { recordTdsAssessmentSafely } from "./tds-assessment.service.js";
 import { createHash, randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
@@ -360,6 +361,15 @@ export const vendorPaymentLedgerService = {
           actorUserId,
         ]
       );
+
+      // Advisory only: record what the TDS rules say should have been deducted next to what was.
+      await recordTdsAssessmentSafely(connection, {
+        trackingId: paymentId,
+        transactionRowId,
+        paymentAmount: amount,
+        deductedTds: tdsAmount,
+        paymentDate: payload.paymentDate,
+      });
 
       const paidAfter = roundMoney(currentPaid + amount);
       const balanceAfter = roundMoney(Math.max(0, dueAmount - paidAfter));

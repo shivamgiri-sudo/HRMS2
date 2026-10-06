@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1235,
-  "columnCount": 17956,
+  "tableCount": 1238,
+  "columnCount": 17986,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -18166,6 +18166,42 @@
       "deductor_id",
       "branch_id",
       "created_at"
+    ],
+    "tds_assessment": [
+      "id",
+      "vendor_payment_tracking_id",
+      "transaction_row_id",
+      "vendor_id",
+      "sub_head_name",
+      "section_code",
+      "confidence",
+      "financial_year",
+      "payment_amount",
+      "base_amount",
+      "rate_pct",
+      "expected_tds",
+      "deducted_tds",
+      "shortfall",
+      "pan_valid",
+      "reason",
+      "created_at"
+    ],
+    "tds_section_master": [
+      "section_code",
+      "nature",
+      "rate_individual",
+      "rate_other",
+      "rate_no_pan",
+      "single_limit",
+      "annual_limit",
+      "active_status",
+      "updated_at"
+    ],
+    "tds_sub_head_default": [
+      "sub_head_name",
+      "section_code",
+      "confidence",
+      "note"
     ],
     "tenant_config": [
       "id",
