@@ -6,6 +6,7 @@
 import { emailService } from "../communication/email.service.js";
 import { buildInviteEmail } from "./he-email.service.js";
 import { HE_TEMPLATES, renderBody, type TemplateDef } from "./he-template-catalog.js";
+import { DEMO_TOKEN } from "./he-location.service.js";
 import { VOICE_FIRST_MESSAGE, buildVoiceSystemPrompt, type VoiceCtx } from "./he-voice.js";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -58,7 +59,8 @@ function whatsappHtml(t: TemplateDef, stage: string, when: string, body: string,
 </table></td></tr></table></body></html>`;
 }
 
-export async function sendStageSamples(to: string): Promise<SampleResult[]> {
+/** Sample values shared by the email and WhatsApp samples. The location button points at the demo candidate page. */
+export function sampleContext() {
   const base = env("HE_PUBLIC_BASE_URL", env("FRONTEND_URL", "https://mcnhrms.teammas.in")).replace(/\/$/, "");
   const company = env("HE_COMPANY_NAME", "MAS Callnet");
   const day = new Date(Date.now() + 86_400_000 + 5.5 * 3600_000);
@@ -68,8 +70,13 @@ export async function sendStageSamples(to: string): Promise<SampleResult[]> {
     branch_address: "Trapezoid IT Park, 1st Floor, C-27, Sector 62, Noida - 201309", drive_date: date, slot_time: "11:00 AM",
     maps_link: "https://maps.google.com/?q=Trapezoid+IT+Park+Sector+62+Noida", assessment_link: env("HE_ASSESSMENT_TEXT", "Given at the branch on arrival"),
     docs_list: env("HE_DOCS_LIST", "Aadhaar, PAN, 12th marksheet"), reference_id: "HE-SAMPLE", contact_name: env("HE_HR_CONTACT_NAME", "Priya Singh"),
-    contact_phone: env("HE_HR_CONTACT_PHONE", "98765 43210"), location_token: "sample", expected_count: 8, confirmed_count: 6, live_count: 4, board_link: `${base}/ats/hiring-engine`,
+    contact_phone: env("HE_HR_CONTACT_PHONE", "98765 43210"), location_token: DEMO_TOKEN, expected_count: 8, confirmed_count: 6, live_count: 4, board_link: `${base}/ats/hiring-engine`,
   };
+  return { base, company, ctx };
+}
+
+export async function sendStageSamples(to: string): Promise<SampleResult[]> {
+  const { base, company, ctx } = sampleContext();
   const out: SampleResult[] = [];
   const send = async (stage: string, subject: string, html: string, text: string) => {
     try { await emailService.send({ to, subject: `[TEST] ${subject}`, html, text }); out.push({ stage, subject, ok: true }); }
