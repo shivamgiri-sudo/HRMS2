@@ -1195,7 +1195,7 @@ async function getIndirectAllocationMap(
   // Approved GRNs that have no vendor payable yet (accrual: approved, not yet booked for payment) count in
   // their accounting month too - the direct-cost map above already does this (vpt.id IS NULL leg). This used
   // to run only when vendor_payment_tracking did not exist at all, so an approved indirect GRN without a payable
-  // was invisible to the pool (FY 2026-27: 64 approved db_bill GRNs, Aug 2.4L + Sep 18.1L).
+  // was invisible to the pool (FY 2026-27: 64 approved db_bill GRNs, Aug 2.4L + Sep 18.1L, and db_bill imprest 1.5-2.4L/month).
   if (branchIds.length > 0 && await tableExists("grn_request")) {
     const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
     const hasVpt = await tableExists("vendor_payment_tracking");
@@ -1208,6 +1208,10 @@ async function getIndirectAllocationMap(
           AND ${actualGrnStatusExpr("g")}
           AND g.accounting_period = ?
           ${hasVpt ? "AND NOT EXISTS (SELECT 1 FROM vendor_payment_tracking vx WHERE vx.grn_request_id = g.id)" : ""}
+          -- db_bill-imported GRNs only (imprest, approved-not-yet-booked vendor bills). HRMS-created rows without a
+          -- payable are mostly the monthly split copies (-Apr, -Jun, ...) of a multi-month GRN whose migrated parent is
+          -- already counted through its payable; counting them here doubled that spend (+1 to +7 L/month).
+          ${hasVpt ? "AND g.bill_source_id IS NOT NULL" : ""}
         GROUP BY g.branch_id`,
       [...branchIds, period]
     );
