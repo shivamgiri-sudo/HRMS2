@@ -33,6 +33,7 @@ import { refreshExEmployees } from "./he-ex-employee.service.js";
 import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import { getMetaFunnel } from "./he-meta-funnel.service.js";
+import { getCampaignDashboard } from "./he-campaign-dashboard.service.js";
 import { listCampaignConfigs, setCampaignConfig } from "./he-campaign-config.service.js";
 import { listBatches, listLaunches, previewLaunch, startLaunch, type LaunchInput } from "./he-launch.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -843,3 +844,9 @@ for (const mode of ["preview", "import"] as const) {
     } catch (err) { logger.error({ err: (err as Error).message }, "[he] superbot report failed"); res.status(500).json({ success: false, message: "Could not read that report" }); }
   });
 }
+
+// One dashboard for the three campaign types (live Meta, old Meta re-runs, saved data) plus the next few days' drives.
+heRouter.get("/campaign-dashboard", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await getCampaignDashboard() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] campaign dashboard failed"); res.status(500).json({ success: false, message: "Could not load the campaign dashboard" }); }
+});
