@@ -1318,6 +1318,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/2121_grn_branch_split.sql", // Registered 2026-10-07. grn_request.is_branch_split: marks a Head Office GRN whose cost is split across branches (each branch share on its Back Office cost centre, the branch carried in grn_cost_allocation.branch_id). PREPARE-guarded, additive.
   "migrations/2122_payment_voucher_salary_source_type.sql", // Registered 2026-10-07. Adds 'salary' to payment_voucher.source_type ENUM (general-lane voucher with its own purpose). Idempotent MODIFY COLUMN.
   "migrations/2132_approval_email_action.sql", // Registered 2026-10-07. approval_email_action: hashed single-use tokens behind the approve/decline buttons in approval emails.
+  "migrations/2133_qualified_followup.sql", // Registered 2026-10-07. qualified_followup (per mobile+requisition email/WhatsApp/call schedule and outcomes) and qualified_followup_call_batch. CREATE TABLE IF NOT EXISTS only, additive.
 ];
 
 export type MigrationHealth = {
