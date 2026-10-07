@@ -126,8 +126,9 @@ export function ApprovalCenterPopup() {
   const run = async (action: "approve" | "reject") => {
     if (!item) return;
     const remarks = action === "reject" ? reason.trim() : note.trim();
-    if (action === "reject" && item.rejectNeedsReason && remarks.length < 3) {
-      toast.error("Please write a reason before declining.");
+    const minReason = item.rejectMinLength ?? 3;
+    if (action === "reject" && item.rejectNeedsReason && remarks.length < minReason) {
+      toast.error(minReason > 3 ? `Please write a reason of at least ${minReason} characters.` : "Please write a reason before declining.");
       return;
     }
     setBusy(action);
@@ -274,7 +275,7 @@ export function ApprovalCenterPopup() {
                 {declining && (
                   <div className="mt-4 rounded-xl border border-red-200 bg-red-50/60 p-4 dark:border-red-900 dark:bg-red-950/30">
                     <label htmlFor="approval-reason" className="text-sm font-semibold text-red-800 dark:text-red-200">
-                      Reason for declining{item.rejectNeedsReason ? " (required)" : ""}
+                      Reason for declining{item.rejectNeedsReason ? ` (required${(item.rejectMinLength ?? 3) > 3 ? `, at least ${item.rejectMinLength} characters` : ""})` : ""}
                     </label>
                     <Textarea
                       id="approval-reason"
@@ -331,7 +332,7 @@ export function ApprovalCenterPopup() {
                         <Button
                           className="min-h-[44px] gap-1.5 bg-red-600 text-white hover:bg-red-700"
                           onClick={() => void run("reject")}
-                          disabled={!!busy || (item.rejectNeedsReason && reason.trim().length < 3)}
+                          disabled={!!busy || (item.rejectNeedsReason && reason.trim().length < (item.rejectMinLength ?? 3))}
                         >
                           {busy === "reject" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <XCircle className="h-4 w-4" aria-hidden />}
                           Confirm {item.rejectLabel ?? "decline"}

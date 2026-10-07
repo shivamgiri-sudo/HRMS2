@@ -55,6 +55,9 @@ export const branchBudgetAdapter: ApprovalAdapter = {
     pending.forEach((r, i) => {
       const d: any = details[i];
       const status = str(r.status);
+      // The inbox also lists 'submitted' budgets to a pure finance_head, but POST /review resolves the
+      // stage owner for 'submitted' as branch_head (resolveFinanceStageRole) and 403s everyone else.
+      if (status === "submitted" && !hasRole(roles, "branch_head", "super_admin")) return;
       // Detail missing and reviewer not exempt from maker-checker: cannot prove they may approve.
       if (!d && !exempt) return;
       if (d && !exempt && str(d.submitted_by) === ctx.userId) return;

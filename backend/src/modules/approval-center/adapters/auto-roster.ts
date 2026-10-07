@@ -67,6 +67,7 @@ export const autoRosterAdapter: ApprovalAdapter = {
         priority: submitted && Date.now() - new Date(submitted).getTime() > AGE_HIGH_MS ? "high" : "normal",
         viewPath: `/wfm/roster-insights?tab=heatmap&approvalId=${encodeURIComponent(id)}`,
         rejectNeedsReason: true,
+        rejectMinLength: 5,
       };
     });
   },

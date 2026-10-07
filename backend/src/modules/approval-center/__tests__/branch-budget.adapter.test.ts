@@ -43,6 +43,11 @@ describe("branch budget adapter", () => {
     expect(items).toHaveLength(1);
     expect(items[0].stage).toBe("Stage 2 of 2 — Finance Head");
   });
+  it("a pure finance_head does not get stage-1 (submitted) budgets: /review would 403 them", async () => {
+    roles = ["finance_head"];
+    const { ctx } = fakeCtx(routes([inbox()]));
+    expect(await branchBudgetAdapter.list(ctx)).toEqual([]);
+  });
   it("decide approve / reject", async () => {
     const { ctx, calls } = fakeCtx({ "POST /api/finance/pnl/budgets/b1/review": {} });
     await branchBudgetAdapter.decide(ctx, { id: "b1" }, "approve", "");

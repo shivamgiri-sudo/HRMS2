@@ -68,6 +68,7 @@ export const rejoinAdapter: ApprovalAdapter = {
         priority: absconding ? "high" : "normal",
         viewPath: `/employees/reactivation/${encodeURIComponent(String(r.id))}/review`,
         rejectNeedsReason: true,
+        rejectMinLength: 5,
         meta: { absconding, viewOnly: absconding },
       });
     }

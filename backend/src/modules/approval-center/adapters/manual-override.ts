@@ -56,6 +56,7 @@ export const manualOverrideAdapter: ApprovalAdapter = {
         viewPath: `/hr/attendance-lookup?empCode=${encodeURIComponent(str(r.employee_code))}&approvalId=${encodeURIComponent(String(r.id))}`,
         // The module demands a >=10 char reason; the popup enforces a written reason, the endpoint enforces the length.
         rejectNeedsReason: true,
+        rejectMinLength: 10,
         meta: { locked },
       });
     }

@@ -85,6 +85,7 @@ export const bulkUploadAdapter: ApprovalAdapter = {
         viewPath: `/bulk-upload/approvals?approvalId=${encodeURIComponent(String(r.id))}`,
         // reject: remarks >= 10 chars; approve is async (202) and applies rows, so review the preview on the page first.
         rejectNeedsReason: true,
+        rejectMinLength: 10,
         meta: { stage, upload_type: str(r.upload_type_code) },
       });
     }
