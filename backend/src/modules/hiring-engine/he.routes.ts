@@ -48,6 +48,7 @@ import { getInboxThread, listInbox, replyToCandidate } from "./he-inbox.service.
 import { resolveBranchScope } from "../meta-campaign/meta-access.js";
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
+import { getFollowupAudit, listAttention, logAttentionError, markFollowupCalled, mobileOfFollowup, retryFollowupStep, type AttentionChannel } from "./qualified-followup.attention.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -56,6 +57,7 @@ let masterCache: { at: number; data: unknown } | null = null;
 setTimeout(() => { void getMetaRecruitment().catch(() => undefined); }, 20_000).unref?.();
 const VIEW_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr", "ceo"];
 const ADMIN_ROLES = ["super_admin", "admin"];
+const WRITE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr"];
 
 heRouter.get("/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try {
@@ -84,6 +86,58 @@ heRouter.get("/qualified-followup/summary", requireAuth, requireRole(...VIEW_ROL
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he] qualified-followup summary failed");
     res.status(500).json({ success: false, message: "Could not load follow-up summary" });
+  }
+});
+
+const FOLLOWUP_ID_RE = /^[0-9a-f-]{36}$/i;
+const FOLLOWUP_CHANNELS: readonly string[] = ["email", "whatsapp", "call"];
+
+// Failed follow-up steps grouped by cause (phones masked).
+heRouter.get("/qualified-followup/attention", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try {
+    res.json({ success: true, data: await listAttention() });
+  } catch (err) {
+    logAttentionError("attention list", err);
+    res.status(500).json({ success: false, message: "Could not load follow-up attention list" });
+  }
+});
+
+heRouter.post("/qualified-followup/:id/retry", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  const channel = String(req.body?.channel ?? "");
+  if (!FOLLOWUP_ID_RE.test(req.params.id) || !FOLLOWUP_CHANNELS.includes(channel)) return res.status(400).json({ success: false, message: "Invalid id or channel" });
+  try {
+    const out = await retryFollowupStep(req.params.id, channel as AttentionChannel);
+    if (out === "ok") return res.json({ success: true });
+    if (out === "not_found") return res.status(404).json({ success: false, message: "not_found" });
+    return res.status(409).json({ success: false, message: out });
+  } catch (err) {
+    logAttentionError("retry", err);
+    res.status(500).json({ success: false, message: "Could not retry the follow-up step" });
+  }
+});
+
+heRouter.post("/qualified-followup/:id/mark-called", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  if (!FOLLOWUP_ID_RE.test(req.params.id)) return res.status(400).json({ success: false, message: "Invalid id" });
+  try {
+    const mobile = await mobileOfFollowup(req.params.id);
+    if (!mobile) return res.status(404).json({ success: false, message: "not_found" });
+    res.json({ success: true, updated: await markFollowupCalled(mobile, req.params.id) });
+  } catch (err) {
+    logAttentionError("mark-called", err);
+    res.status(500).json({ success: false, message: "Could not mark the follow-up as called" });
+  }
+});
+
+// Per-row audit: source, origin, mode tag and every channel's due/sent/status/error (phone masked).
+heRouter.get("/qualified-followup/:id", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  if (!FOLLOWUP_ID_RE.test(req.params.id)) return res.status(400).json({ success: false, message: "Invalid id" });
+  try {
+    const row = await getFollowupAudit(req.params.id);
+    if (!row) return res.status(404).json({ success: false, message: "not_found" });
+    res.json({ success: true, data: row });
+  } catch (err) {
+    logAttentionError("audit", err);
+    res.status(500).json({ success: false, message: "Could not load the follow-up row" });
   }
 });
 
@@ -185,7 +239,6 @@ heRouter.post("/backfill", requireAuth, requireRole(...ADMIN_ROLES), async (req,
 
 // ── Drives ────────────────────────────────────────────────────────────────────────────────────
 
-const WRITE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 heRouter.get("/requisitions/open", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {

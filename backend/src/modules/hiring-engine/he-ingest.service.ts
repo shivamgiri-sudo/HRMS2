@@ -19,6 +19,7 @@ import { addEvent, findLeadByMobile, persistSignals, revokeConsent, setLeadStatu
 import { recomputeInsight } from "./he-insight.service.js";
 import { sendTemplateToLead } from "./he-send.service.js";
 import type { TemplateKey } from "./he-template-catalog.js";
+import { markFollowupCalled } from "./qualified-followup.attention.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 
 const isDuplicateKey = (e: unknown) => (e as { code?: string; errno?: number })?.code === "ER_DUP_ENTRY" || (e as { errno?: number })?.errno === 1062;
@@ -219,6 +220,12 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
   } catch (err) {
     if (isDuplicateKey(err)) return { leadId: l.id, outcome: "duplicate" };
     throw err;
+  }
+  // A call result exists for this number, so a row waiting in a calling file or the bot queue is done (never blocks the result).
+  const callMobile = (lead as { mobile10?: string | null }).mobile10;
+  if (callMobile) {
+    try { await markFollowupCalled(callMobile); }
+    catch (err) { logger.warn({ leadId: l.id, err: (err as Error).message }, "[hiring-engine] mark follow-up called failed"); }
   }
   await persistSignals(l.id, signalsFromVoice(r), p.providerCallId ?? null);
   if (p.incomplete) {

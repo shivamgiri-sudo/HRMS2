@@ -78,6 +78,9 @@
   "modules/hiring-engine/he-showup.service.ts": [
     "he_model_param"
   ],
+  "modules/hiring-engine/qualified-followup.attention.ts": [
+    "qualified_followup"
+  ],
   "modules/hiring-engine/qualified-followup.call.ts": [
     "qualified_followup"
   ],
