@@ -42,7 +42,7 @@ let autoRows: Row[];
 
 const baseStream = (o: Row = {}): Row => ({
   id: "s-1", requisition_id: "r-1", branch_name: "Noida", source_type: "meta_live", origin_id: "c-1", origin_label: "Campaign", open_from: "2026-10-09", open_days: 3,
-  daily_invites: null, status: "open", closed_reason: null, created_by: "u-1", created_at: "2026-10-07 10:00:00", ...o,
+  daily_invites: null, status: "open", closed_reason: null, created_by: "u-1", created_at: "2026-10-07 10:00:00", version: 0, ...o,
 });
 
 function route(sql: string, p: unknown[]): unknown[] {
@@ -59,10 +59,11 @@ function route(sql: string, p: unknown[]): unknown[] {
 function connRoute(sql: string, p: unknown[]): unknown[] {
   const s = sql.replace(/\s+/g, " ");
   h.stmts.push({ sql: s, params: p });
+  if (s.includes("FOR UPDATE")) return [stream ? [{ version: stream.version }] : []];
   if (s.startsWith("UPDATE requisition_stream SET status = ?")) {
     if (update0) return [{ affectedRows: 0 }];
-    if (stream && stream.id === p[3] && stream.status === p[4] && stream.open_from === p[5] && Number(stream.open_days) === p[6]) {
-      stream = { ...stream, status: p[0], closed_reason: p[1], open_days: p[2] };
+    if (stream && stream.id === p[3] && stream.status === p[4] && stream.open_from === p[5] && Number(stream.open_days) === p[6] && Number(stream.version) === p[7]) {
+      stream = { ...stream, status: p[0], closed_reason: p[1], open_days: p[2], version: Number(stream.version) + 1 };
       return [{ affectedRows: 1 }];
     }
     return [{ affectedRows: 0 }];
@@ -152,7 +153,7 @@ describe("createStream", () => {
   it("names a he stream Pool: ATS history and a re-run stream after its drive", async () => {
     const v = await createStream(create({ sourceType: "he", originId: "pool" }), hr, NOW);
     expect(v.originLabel).toBe("Pool: ATS history");
-    h.execute.mockImplementation(async (sql: string, p: unknown[] = []) => sql.includes("FROM he_drive") ? [[{ id: "d-1", run_label: null, drive_date: "2026-09-20" }]] : route(sql, p));
+    h.execute.mockImplementation(async (sql: string, p: unknown[] = []) => sql.includes("FROM he_drive") ? [[{ id: "d-1", requisition_id: "r-1", branch_name: "Noida", run_label: null, drive_date: "2026-09-20" }]] : route(sql, p));
     const v2 = await createStream(create({ sourceType: "meta_old", originId: "d-1" }), hr, NOW);
     expect(v2.originLabel).toBe("Re-run 2026-09-20");
     expect(h.stmts.some((s) => s.sql.includes("source_kind"))).toBe(false); // that check is on db.execute
@@ -202,8 +203,8 @@ describe("changeStream", () => {
     const r = await changeStream("s-1", { action: "extend", days: 2 }, hr, NOW);
     expect(r.changed).toBe(true);
     const up = h.stmts.find((s) => s.sql.startsWith("UPDATE requisition_stream SET status = ?"))!;
-    expect(up.sql).toContain("WHERE id = ? AND status = ? AND open_from = ? AND open_days = ?");
-    expect(up.params).toEqual(["open", null, 5, "s-1", "open", "2026-10-09", 3]);
+    expect(up.sql).toContain("WHERE id = ? AND status = ? AND open_from = ? AND open_days = ? AND version = ?");
+    expect(up.params).toEqual(["open", null, 5, "s-1", "open", "2026-10-09", 3, 0]);
     expect(events()).toHaveLength(1);
     expect(events()[0].params.slice(1)).toEqual(["u-2", "extend", "2026-10-09", 3, 5, "open", "open", null, null]);
     expect(r.stream.openDays).toBe(5);
@@ -413,7 +414,7 @@ describe("autoCloseStreams", () => {
       { streamId: "s-b", requisitionId: "r-1", reason: "requisition_filled" },
     ]);
     const ups = h.stmts.filter((s) => s.sql.startsWith("UPDATE requisition_stream SET status = 'closed'"));
-    expect(ups.map((u) => u.params)).toEqual([["window_ended", "s-a"], ["requisition_filled", "s-b"]]);
+    expect(ups.map((u) => u.params)).toEqual([["window_ended", "s-a", "2026-10-09", 3, 0], ["requisition_filled", "s-b"]]);
     expect(ups[0].sql).toContain("WHERE id = ? AND status IN ('open','paused')");
     expect(events().map((e) => [e.params[0], e.params[1], e.params[2], e.params[9]])).toEqual([["s-a", null, "auto_close", "window_ended"], ["s-b", null, "auto_close", "requisition_filled"]]);
     expect(h.execute.mock.calls.some((c) => String(c[0]).includes("COLLATE utf8mb4_unicode_ci"))).toBe(true);

@@ -1,7 +1,8 @@
 /**
  * Requisition source streams: create, change, history, auto-close.
- * Every change is ONE guarded UPDATE (guard on the row's old status and window) plus ONE requisition_stream_event row in ONE
- * transaction. Expected failures come back as `{ ok: false, reason }` from tryCreateStream / tryChangeStream (the planner path);
+ * Every change is ONE guarded UPDATE (guard on the row's old status, window and version; the version is bumped on every change, so the
+ * exception-day rewrite cannot land on a row another writer changed) plus ONE requisition_stream_event row in ONE transaction.
+ * Expected failures come back as `{ ok: false, reason }` from tryCreateStream / tryChangeStream (the planner path);
  * createStream / changeStream wrap them and throw StreamError for the routes. Nothing here logs candidate data.
  */
 import { randomUUID } from "node:crypto";
@@ -23,7 +24,7 @@ export type AutoCloseReason = "window_ended" | "requisition_filled" | "requisiti
 export interface StreamRow {
   id: string; requisitionId: string; branchName: string; sourceType: SourceType; originId: string; originLabel: string;
   openFrom: string; openDays: number; dailyInvites: number | null; status: StreamStatus; closedReason: string | null;
-  createdBy: string | null; createdAt: string; add: string[]; skip: string[];
+  createdBy: string | null; createdAt: string; add: string[]; skip: string[]; version: number;
 }
 export const toWindow = (s: StreamRow): StreamWindow => ({ openFrom: s.openFrom, openDays: s.openDays, add: s.add, skip: s.skip });
 export interface StreamView extends StreamRow { window: ReturnType<typeof windowStatus>; label: string; warnings: ReadinessProblem[] }
@@ -73,7 +74,7 @@ function mapRow(r: RowDataPacket, add: string[] = [], skip: string[] = []): Stre
     originId: String(r.origin_id), originLabel: String(r.origin_label), openFrom: day10(r.open_from), openDays: Number(r.open_days),
     dailyInvites: r.daily_invites == null ? null : Number(r.daily_invites), status: r.status as StreamStatus,
     closedReason: r.closed_reason == null ? null : String(r.closed_reason), createdBy: r.created_by == null ? null : String(r.created_by),
-    createdAt: String(r.created_at), add, skip,
+    createdAt: String(r.created_at), add, skip, version: Number(r.version ?? 0),
   };
 }
 
@@ -161,7 +162,7 @@ export async function tryCreateStream(i: CreateStreamInput, a: StreamActor, now:
     if (!rq[0] || !inScope(String(rq[0].branch_name), a.scope)) return fail("not_found", 404, "Requisition not found");
     const branchName = String(rq[0].branch_name);
 
-    const origin = await resolveOrigin(i);
+    const origin = await resolveOrigin(i, branchName);
     if (!origin.ok) return origin;
     const originLabel = (typeof i.originLabel === "string" && i.originLabel.trim() ? i.originLabel.trim() : origin.label).slice(0, 200);
 
@@ -191,7 +192,7 @@ export async function tryCreateStream(i: CreateStreamInput, a: StreamActor, now:
       conn.release();
     }
     const stream: StreamRow = { id, requisitionId: i.requisitionId, branchName, sourceType: i.sourceType, originId: i.originId, originLabel, openFrom: i.openFrom, openDays: i.openDays,
-      dailyInvites: i.dailyInvites ?? null, status, closedReason: null, createdBy: a.userId, createdAt: now.toISOString(), add: [], skip: [] };
+      dailyInvites: i.dailyInvites ?? null, status, closedReason: null, createdBy: a.userId, createdAt: now.toISOString(), add: [], skip: [], version: 0 };
     return { ok: true, stream: toView(stream, today, await warningsFor(stream)) };
   } catch (err) {
     logFail("create", err);
@@ -199,7 +200,7 @@ export async function tryCreateStream(i: CreateStreamInput, a: StreamActor, now:
   }
 }
 
-async function resolveOrigin(i: CreateStreamInput): Promise<{ ok: true; label: string } | StreamFail> {
+async function resolveOrigin(i: CreateStreamInput, branchName: string): Promise<{ ok: true; label: string } | StreamFail> {
   const notFound = fail("not_found", 404, "Source not found");
   if (typeof i.originId !== "string" || !i.originId.trim() || i.originId.length > 64) return notFound;
   if (i.sourceType === "he") return i.originId === "pool" ? { ok: true, label: "Pool: ATS history" } : notFound;
@@ -209,8 +210,11 @@ async function resolveOrigin(i: CreateStreamInput): Promise<{ ok: true; label: s
     if (c[0].requisition_id != null && String(c[0].requisition_id) !== i.requisitionId) return fail("conflict", 409, "That campaign is linked to another requisition");
     return { ok: true, label: String(c[0].campaign_name ?? "Campaign") };
   }
-  const [d] = await db.execute<RowDataPacket[]>("SELECT id, run_label, drive_date FROM he_drive WHERE id = ? AND source_kind <> 'pool' LIMIT 1", [i.originId]);
+  const [d] = await db.execute<RowDataPacket[]>("SELECT id, requisition_id, branch_name, run_label, drive_date FROM he_drive WHERE id = ? AND source_kind <> 'pool' LIMIT 1", [i.originId]);
   if (!d[0]) return notFound;
+  // the re-run reuses that drive's audience: only a launch of this requisition in its branch
+  if (String(d[0].requisition_id) !== i.requisitionId) return fail("conflict", 409, "That drive belongs to another requisition");
+  if (String(d[0].branch_name) !== branchName) return fail("conflict", 409, "That drive belongs to another branch");
   return { ok: true, label: d[0].run_label ? String(d[0].run_label) : `Re-run ${day10(d[0].drive_date)}` };
 }
 
@@ -265,9 +269,11 @@ export async function tryChangeStream(id: string, c: StreamChangeInput, a: Strea
     const conn = await db.getConnection();
     try {
       await conn.beginTransaction();
+      const [locked] = await conn.execute<RowDataPacket[]>("SELECT version FROM requisition_stream WHERE id = ? FOR UPDATE", [s.id]);
+      if (!locked[0] || Number(locked[0].version) !== s.version) { await rollbackQuietly(conn); return fail("changed_meanwhile", 409, MSG_CHANGED); }
       const [u] = await conn.execute<ResultSetHeader>(
-        "UPDATE requisition_stream SET status = ?, closed_reason = ?, open_days = ? WHERE id = ? AND status = ? AND open_from = ? AND open_days = ?",
-        [newStatus, closedReason, w.openDays, s.id, s.status, s.openFrom, s.openDays]);
+        "UPDATE requisition_stream SET status = ?, closed_reason = ?, open_days = ?, version = version + 1 WHERE id = ? AND status = ? AND open_from = ? AND open_days = ? AND version = ?",
+        [newStatus, closedReason, w.openDays, s.id, s.status, s.openFrom, s.openDays, s.version]);
       if (!u.affectedRows) { await rollbackQuietly(conn); return fail("changed_meanwhile", 409, MSG_CHANGED); }
       if (exceptionsChanged) await writeExceptions(conn, s.id, w);
       await insertEvent(conn, s.id, a.userId, {
@@ -281,7 +287,7 @@ export async function tryChangeStream(id: string, c: StreamChangeInput, a: Strea
     } finally {
       conn.release();
     }
-    const next: StreamRow = { ...s, status: newStatus, closedReason, openDays: w.openDays, add: w.add, skip: w.skip };
+    const next: StreamRow = { ...s, status: newStatus, closedReason, openDays: w.openDays, add: w.add, skip: w.skip, version: s.version + 1 };
     return { ok: true, changed: true, stream: toView(next, today, await warningsFor(next)) };
   } catch (err) {
     logFail("change", err);
@@ -400,7 +406,11 @@ export async function autoCloseStreams(date: string, dryRun: boolean): Promise<A
     try {
       conn = await db.getConnection();
       await conn.beginTransaction();
-      const [u] = await conn.execute<ResultSetHeader>("UPDATE requisition_stream SET status = 'closed', closed_reason = ? WHERE id = ? AND status IN ('open','paused')", [reason, s.id]);
+      // window_ended was decided on the rows read above: an extend / add_day landing meanwhile must make the close miss
+      const windowGuard = reason === "window_ended";
+      const [u] = await conn.execute<ResultSetHeader>(
+        `UPDATE requisition_stream SET status = 'closed', closed_reason = ?, version = version + 1 WHERE id = ? AND status IN ('open','paused')${windowGuard ? " AND open_from = ? AND open_days = ? AND version = ?" : ""}`,
+        windowGuard ? [reason, s.id, s.openFrom, s.openDays, s.version] : [reason, s.id]);
       if (!u.affectedRows) { await rollbackQuietly(conn); continue; }
       await insertEvent(conn, s.id, null, { action: "auto_close", oldStatus: s.status, newStatus: "closed", oldOpenFrom: s.openFrom, oldOpenDays: s.openDays, newOpenDays: s.openDays, day: null, reason });
       await conn.commit();
