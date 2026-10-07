@@ -10,11 +10,11 @@ import { classifyQueueError, sbPhone, type QueueFailure, type SuperbotParams } f
 
 export type SuperbotQueue = { ok: true; requestId: string; alreadyQueued?: boolean } | { ok: false; reason: "not_configured" | QueueFailure; error: string };
 
-export async function queueSuperbotCall(a: { referenceId: string; mobile10: string; params: SuperbotParams }): Promise<SuperbotQueue> {
+export async function queueSuperbotCall(a: { referenceId: string; mobile10: string; params: SuperbotParams; campaignId?: string }): Promise<SuperbotQueue> {
   const cfg = await superbotConfig();
   if (!cfg) return { ok: false, reason: "not_configured", error: "superbot_not_configured" };
   try {
-    const { data } = await axios.post(`${cfg.baseUrl}/superbot/${cfg.superbotId}/campaign/${cfg.campaignId}/call`,
+    const { data } = await axios.post(`${cfg.baseUrl}/superbot/${cfg.superbotId}/campaign/${a.campaignId || cfg.campaignId}/call`,
       { numbers: [{ parameters: a.params, phone: sbPhone(a.mobile10), reference_id: a.referenceId }], lang: cfg.lang },
       { headers: { apiKey: cfg.apiKey, "Content-Type": "application/json" }, timeout: 20000 });
     if (data?.status === false) return { ok: false, reason: "provider_error", error: String(data?.message ?? "rejected").slice(0, 200) };

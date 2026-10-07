@@ -173,7 +173,7 @@ const slotCfg = (d: DriveRow): SlotConfig => ({ date: String(d.drive_date).slice
  */
 export interface SuggestResult { suggested: number; blockedByReason: Record<string, number>; considered: number; location?: string[] | null }
 
-function audienceSql(d: DriveRow, opts: { metaOnly?: boolean }): { sql: string; args: unknown[] } {
+export function audienceSql(d: Pick<DriveRow, "source_kind" | "source_ids" | "max_lead_age_days">, opts: { metaOnly?: boolean }): { sql: string; args: unknown[] } {
   let ids: string[] = [];
   try { const raw = d.source_ids; ids = Array.isArray(raw) ? raw.map(String) : raw ? JSON.parse(String(raw)) : []; } catch { ids = []; }
   const age = d.max_lead_age_days && d.max_lead_age_days > 0 ? Math.floor(d.max_lead_age_days) : 0;
@@ -185,6 +185,8 @@ function audienceSql(d: DriveRow, opts: { metaOnly?: boolean }): { sql: string; 
                        WHERE lc.lead_id = l.id ${extra} ${age ? "AND lc.form_filled_at >= DATE_SUB(NOW(), INTERVAL ? DAY)" : ""})`,
     args: [...args, ...(age ? [age] : [])],
   });
+  // A campaign / batch drive whose audience cannot be read must match NOBODY, never fall back to the whole pool.
+  if ((kind === "campaign" || kind === "batch") && !ids.length) return { sql: "AND 1 = 0", args: [] };
   if (kind === "campaign" && ids.length) return fill(`AND lc.campaign_id IN (${ph(ids.length)})`, ids);
   if (kind === "batch" && ids.length) return { sql: `AND EXISTS (SELECT 1 FROM he_lead_batch lb WHERE lb.lead_id = l.id AND lb.batch_id IN (${ph(ids.length)}))`, args: ids };
   if (kind === "meta") return fill("", []);

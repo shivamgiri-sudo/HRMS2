@@ -27,6 +27,7 @@ import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
 import { offerOtherRoles, type RerouteSummary } from "./he-reroute.service.js";
 import { whatsappRequiresOptIn } from "./he-policy.service.js";
 import { planNextDay } from "./he-plan.service.js";
+import { sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 
 export interface TickSummary {
@@ -132,6 +133,8 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
     `SELECT m.id, m.lead_id, l.full_name, l.mobile10,
             (l.last_contact_at IS NOT NULL AND l.last_contact_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) AS dormant,
             (l.email IS NOT NULL AND l.email <> '') AS has_email,
+            COALESCE((SELECT cfg.email_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS email_on,
+            COALESCE((SELECT cfg.whatsapp_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS whatsapp_on,
             (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
               OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = m.lead_id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL))) AS has_consent
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id
@@ -143,7 +146,7 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
   const canEmail = emailConfigured();
   for (const m of ms) {
     out.considered++;
-    const step = nextCadenceStep({ now: new Date(), gapMin: cadenceGapMin(), canEmail: Boolean(Number(m.has_email)) && canEmail, waConsent: Boolean(Number(m.has_consent)) && waTemplateOk, emailSentAt: null, waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: quiet });
+    const step = nextCadenceStep({ now: new Date(), gapMin: cadenceGapMin(), canEmail: Boolean(Number(m.has_email)) && Number(m.email_on) === 1 && canEmail, waConsent: Boolean(Number(m.has_consent)) && Number(m.whatsapp_on) === 1 && waTemplateOk, emailSentAt: null, waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: quiet });
     const reason = step.step ? (step.step === "email" ? "email first" : "WhatsApp first (no email address)")
       : step.reason === "no_channel" ? (Number(m.has_email) && !canEmail ? "email not configured on the server" : Number(m.has_consent) && !waTemplateOk ? "WhatsApp template not approved yet" : "no email and no WhatsApp opt-in")
       : step.reason === "quiet_hours" ? "outside 09:00-20:00 IST" : step.reason;
@@ -276,6 +279,20 @@ async function followUpCatchUp(dryRun: boolean, c: Counts): Promise<void> {
   for (const r of rows) tally(c, await sendFollowUpEmail("no_show", r.id as string, { dryRun }));
 }
 
+/**
+ * A lead left at invited / confirmed / rescheduled with no live booking (the engine was off, a drive was closed, the date passed) would never be lined
+ * up again, because the shortlist only takes new / contacted / interested / declined / no_show. After 3 days with no live booking they go back to
+ * 'contacted' (a passed slot that was never marked becomes 'no_show').
+ */
+export async function expireStaleLeadStatus(dryRun: boolean): Promise<number> {
+  const live = `EXISTS (SELECT 1 FROM he_match m WHERE m.lead_id = l.id AND m.state IN ('invited','confirmed','slot_released') AND (m.slot_at IS NULL OR m.slot_at >= DATE_SUB(NOW(), INTERVAL 3 HOUR)))`;
+  const stale = `l.status IN ('invited','confirmed','rescheduled') AND COALESCE(l.status_at, l.updated_at) < DATE_SUB(NOW(), INTERVAL 3 DAY) AND NOT ${live}`;
+  if (dryRun) { const [r] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS n FROM he_lead l WHERE ${stale}`); return Number(r[0].n); }
+  const [u] = await db.execute<import("mysql2").ResultSetHeader>(
+    `UPDATE he_lead l SET l.status = IF(EXISTS (SELECT 1 FROM he_match x WHERE x.lead_id = l.id AND x.state IN ('no_show')), 'no_show', 'contacted'), l.status_at = NOW() WHERE ${stale}`);
+  return u.affectedRows;
+}
+
 export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number } = {}): Promise<TickSummary> {
   const dryRun = o.dryRun !== false; // safe default: only an explicit false sends
   const s: TickSummary = { dryRun, paused: sendsPaused(), replacementSlots: counts(), invites: counts(), reminders: counts(), arrivals: 0, noShows: 0, recovery: counts(), calls: counts(), bulkCalls: null, otherRoles: null };
@@ -283,7 +300,9 @@ export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number }
   // Arrival + no-show bookkeeping is state hygiene, not outreach, so it runs even while sends are paused.
   await guard("arrival", async () => { s.arrivals = await arrivalSync(dryRun); });
   await guard("noshow", async () => { s.noShows = await noShows(dryRun, s.recovery); });
+  await guard("stale-status", async () => { await expireStaleLeadStatus(dryRun); });
   if (!s.paused) {
+    await guard("meta-bridge", async () => { if (!dryRun) await sweepOwnedCampaigns(); });
     // Evening (17:00-20:00 IST): make sure the next working day has its drive, sized to the owner's daily plan. Idempotent.
     if (!dryRun && istHour(new Date()) >= 17 && istHour(new Date()) < 20) await guard("daily-plan", async () => { const r = await planNextDay(); const made = r.days.filter((d) => d.status === "created"); if (made.length) logger.info({ date: r.date, made: made.map((d) => `${d.code}:${d.lined}`) }, "[he-engine] daily plan created drives"); });
     await guard("replacement", () => replacementSlots(dryRun, s.replacementSlots, 50));

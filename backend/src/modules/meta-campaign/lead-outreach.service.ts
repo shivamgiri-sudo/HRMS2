@@ -34,6 +34,7 @@ import { triggerVapiCallWithInlineScript, isVapiConfigured } from './vapi-voiceb
 import { sendWhatsAppNotification, isWhatsAppWebConfigured } from './whatsapp-web.provider.js';
 import { sendShortlistMessage, isWassengerConfigured } from './wassenger.provider.js';
 import { saveMessage as saveLeadMessage } from './meta-messages.service.js';
+import { metaOutreachBlockedByEngine } from '../hiring-engine/he-campaign-config.service.js';
 import { assignInterviewSlot } from './interview-slot.service.js';
 import type { InterviewSlot } from './interview-slot.service.js';
 import { requisitionClosedReason } from './lead-screener.service.js';
@@ -282,6 +283,15 @@ export async function notifyQualifiedLead(
   if (!loaded.qualified) {
     outcome.skipped.push({ channel: 'all', reason: 'Lead is not qualified; outreach refused' });
     return outcome;
+  }
+  // One owner per lead: a campaign handed to the Hiring Engine, or a person the Hiring Engine already contacted, is not messaged from here
+  // (the Hiring Engine does email, WhatsApp, bot call, reminders and no-show follow-up with its own guards). Fails open: a lookup error must not stop outreach.
+  if (!options.force) {
+    const blocked = await metaOutreachBlockedByEngine(leadId).catch(() => null);
+    if (blocked) {
+      outcome.skipped.push({ channel: 'all', reason: blocked });
+      return outcome;
+    }
   }
   // Shortlisting is against the batch requisition: a closed or fully-staffed batch cannot take
   // more candidates, so refuse outreach outright (force does not override this).

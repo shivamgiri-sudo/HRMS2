@@ -9,6 +9,7 @@ import { logger } from "../../logger.js";
 import { PinbotWhatsAppProvider } from "../communication/providers/whatsapp/pinbot.provider.js";
 import { addEvent, hasConsent, setLeadStatus } from "./he-lead.service.js";
 import { checkSendAllowed } from "./he-guardrails.js";
+import { channelAllowed } from "./he-campaign-config.service.js";
 import { buildParams, getTemplate, renderBody, type Lang, type TemplateKey } from "./he-template-catalog.js";
 import type { LeadStatus } from "./he-state.js";
 import { cleanName, displayFirstName } from "./he-name.js";
@@ -56,6 +57,14 @@ export function timeLabel(slot: string): string {
   return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
 }
 
+/** The old Meta flow already messaged this person in the last 3 days (any channel: the Hiring Engine does not send a second first touch). */
+export async function metaFlowNotifiedRecently(metaLeadId: string | null | undefined): Promise<boolean> {
+  if (!metaLeadId) return false;
+  const [mn] = await db.execute<RowDataPacket[]>(
+    "SELECT 1 FROM meta_lead_raw WHERE id = ? AND notification_sent_at IS NOT NULL AND notification_sent_at > DATE_SUB(NOW(), INTERVAL 3 DAY) LIMIT 1", [metaLeadId]);
+  return mn.length > 0;
+}
+
 export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   const [lr] = await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.mobile10, l.full_name, l.status, l.meta_lead_id, i.language_pref FROM he_lead l LEFT JOIN he_lead_insight i ON i.lead_id = l.id WHERE l.id = ? LIMIT 1`, [o.leadId]);
@@ -64,16 +73,14 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
 
   // The Meta campaign flow (lead-outreach.service) already sends its own interview invite to qualified Meta leads.
   // Never send a second first-contact invite to the same person within 3 days of that one.
-  if (lead.meta_lead_id && FIRST_CONTACT.has(o.key)) {
-    const [mn] = await db.execute<RowDataPacket[]>(
-      "SELECT 1 FROM meta_lead_raw WHERE id = ? AND notification_sent_at IS NOT NULL AND notification_sent_at > DATE_SUB(NOW(), INTERVAL 3 DAY) LIMIT 1", [lead.meta_lead_id]);
-    if (mn.length) return { status: "blocked", reason: "meta_flow_already_notified" };
-  }
+  if (FIRST_CONTACT.has(o.key) && (await metaFlowNotifiedRecently(lead.meta_lead_id))) return { status: "blocked", reason: "meta_flow_already_notified" };
+  // Per-campaign channel switch (Master tab): WhatsApp off for the campaign this person came from. The STOP acknowledgement always goes.
+  if (o.key !== "he_optout_ack" && !(await channelAllowed(o.leadId, "whatsapp"))) return { status: "blocked", reason: "whatsapp_off_for_campaign" };
 
   let m: RowDataPacket | undefined;
   if (o.matchId) {
     const [mr] = await db.execute<RowDataPacket[]>(
-      `SELECT m.id, m.requisition_id, m.slot_at, m.token, m.state, d.id AS drive_id, d.drive_date, d.status AS drive_status,
+      `SELECT m.id, m.requisition_id, m.slot_at, m.token, m.state, d.id AS drive_id, d.drive_date, d.status AS drive_status, d.reinvite,
               jr.designation_name, jr.branch_name, jr.bmi_assessment_url, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount,
               bm.address, bm.latitude, bm.longitude
          FROM he_match m LEFT JOIN he_drive d ON d.id = m.drive_id JOIN job_requisition jr ON jr.id = m.requisition_id
@@ -106,12 +113,21 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
 
   // Preferred language first; English is the approved fallback (Hinglish versions are not approved at Meta yet).
   const pref = langFor(lead.language_pref as string | null);
-  const [trs] = await db.execute<RowDataPacket[]>(
-    "SELECT template_key, pinbot_name, language, approval_state FROM he_template WHERE template_key IN (?, ?) AND approval_state = 'approved' AND pinbot_name IS NOT NULL",
-    [`${o.key}:${pref}`, `${o.key}:en`]);
-  const tr = [trs.find((t) => t.template_key === `${o.key}:${pref}`) ?? trs.find((t) => t.template_key === `${o.key}:en`)].filter(Boolean) as RowDataPacket[];
+  // A re-run drive (people who never booked, or missed an earlier date) uses the re-invite wording once Meta has approved it (T12); until then
+  // the normal invite goes out. The message is still logged as the invite so the cadence (email -> WhatsApp -> call) treats it as one.
+  let tplKey: TemplateKey = o.key;
+  const findTpl = async (k: TemplateKey) => {
+    const [trs] = await db.execute<RowDataPacket[]>(
+      "SELECT template_key, pinbot_name, language, approval_state FROM he_template WHERE template_key IN (?, ?) AND approval_state = 'approved' AND pinbot_name IS NOT NULL",
+      [`${k}:${pref}`, `${k}:en`]);
+    return trs.find((t) => t.template_key === `${k}:${pref}`) ?? trs.find((t) => t.template_key === `${k}:en`);
+  };
+  let found: RowDataPacket | undefined;
+  if (o.key === "he_walkin_invite" && Number(m?.reinvite) === 1) { found = await findTpl("he_reinvite"); if (found) tplKey = "he_reinvite"; }
+  if (!found) found = await findTpl(o.key);
+  const tr = found ? [found] : [];
   if (!tr[0]) return { status: "blocked", reason: "template_not_approved" };
-  const lang: Lang = tr[0].template_key === `${o.key}:${pref}` ? pref : "en";
+  const lang: Lang = tr[0].template_key === `${tplKey}:${pref}` ? pref : "en";
 
   const domain = env("HE_PUBLIC_BASE_URL", "");
   const slot = m?.slot_at ? String(m.slot_at) : null;
@@ -129,16 +145,16 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
     location_token: m?.token, ...o.extra,
   };
   let params: string[];
-  try { params = buildParams(o.key, lang, ctx); }
+  try { params = buildParams(tplKey, lang, ctx); }
   catch (e) { return { status: "blocked", reason: (e as Error).message }; }
-  const previewBody = renderBody(o.key, lang, ctx);
+  const previewBody = renderBody(tplKey, lang, ctx);
 
   if (o.dryRun) return { status: "dry_run", body: previewBody, lang, params };
   if (!pinbot.isConfigured()) return { status: "blocked", reason: "whatsapp_not_configured" };
 
-  const hasUrlButton = getTemplate(o.key).buttons[lang].some((b) => b.startsWith("URL:"));
+  const hasUrlButton = getTemplate(tplKey).buttons[lang].some((b) => b.startsWith("URL:"));
   let res = await pinbot.sendTemplate(String(lead.mobile10), String(tr[0].pinbot_name), params, String(tr[0].language), hasUrlButton ? String(ctx.location_token ?? "") : undefined);
-  let body = renderBody(o.key, lang, ctx);
+  let body = renderBody(tplKey, lang, ctx);
   let fellBack = false;
   // The invite (T1) can be rejected at Meta while its approved wording differs from ours (#132000 / #132001 / #132018). The approved
   // "interview appointment pending confirmation" (T9) carries the same role, date, time and branch with the same Yes / Reschedule /

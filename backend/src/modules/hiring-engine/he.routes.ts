@@ -32,6 +32,8 @@ import { refreshExEmployees } from "./he-ex-employee.service.js";
 import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import { getMetaFunnel } from "./he-meta-funnel.service.js";
+import { listCampaignConfigs, setCampaignConfig } from "./he-campaign-config.service.js";
+import { listBatches, listLaunches, previewLaunch, startLaunch, type LaunchInput } from "./he-launch.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendStageSamples } from "./he-samples.service.js";
 import { emailConfigured } from "./he-email.service.js";
@@ -514,9 +516,12 @@ heRouter.post("/candidates/import", requireAuth, requireRole(...WRITE_ROLES), as
     const source = String(b.source ?? "other") as IntakeSource;
     if (!INTAKE_SOURCES.includes(source)) return res.status(400).json({ message: `source must be one of ${INTAKE_SOURCES.join(", ")}` });
     if (!Array.isArray(b.rows)) return res.status(400).json({ message: "rows must be an array" });
-    const bb = req.body as { mapping?: unknown; saveMapping?: unknown };
+    const bb = req.body as { mapping?: unknown; saveMapping?: unknown; label?: unknown; fileName?: unknown; consentAttested?: unknown };
     masterCache = null;
-    res.json({ success: true, data: await ingestCandidates(b.rows as Array<Record<string, unknown>>, source, { dryRun: b.dryRun === true, mapping: bb.mapping, saveMapping: bb.saveMapping !== false, userId: (req as AuthenticatedRequest).authUser?.id ?? null }) });
+    res.json({ success: true, data: await ingestCandidates(b.rows as Array<Record<string, unknown>>, source, {
+      dryRun: b.dryRun === true, mapping: bb.mapping, saveMapping: bb.saveMapping !== false, userId: (req as AuthenticatedRequest).authUser?.id ?? null,
+      label: typeof bb.label === "string" ? bb.label : null, fileName: typeof bb.fileName === "string" ? bb.fileName : null, consentAttested: bb.consentAttested === true,
+    }) });
   } catch (err) {
     const e = err as Error & { statusCode?: number };
     if (e.statusCode === 400) return res.status(400).json({ message: e.message });
@@ -768,4 +773,58 @@ heRouter.get("/drives/:id/superbot-sheet", requireAuth, requireRole(...WRITE_ROL
 heRouter.get("/meta-funnel", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: await getMetaFunnel() }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] meta funnel failed"); res.status(500).json({ success: false, message: "Could not load the Meta funnel" }); }
+});
+
+// Per Meta campaign: who owns the outreach (old Meta flow / Hiring Engine), channel switches, Superbot campaign.
+heRouter.get("/campaign-config", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await listCampaignConfigs() }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] campaign config list failed"); res.status(500).json({ success: false, message: "Could not load the campaign settings" }); }
+});
+heRouter.put("/campaign-config/:id", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  try {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const bool = (v: unknown) => (v === undefined ? undefined : v === true);
+    const data = await setCampaignConfig(String(req.params.id), {
+      owner: b.owner === "he" ? "he" : b.owner === "meta" ? "meta" : undefined, emailOn: bool(b.emailOn), whatsappOn: bool(b.whatsappOn), voiceOn: bool(b.voiceOn),
+      superbotCampaign: b.superbotCampaign === undefined ? undefined : b.superbotCampaign === null ? null : String(b.superbotCampaign),
+    }, (req as AuthenticatedRequest).authUser?.id ?? null);
+    logger.info({ campaign: req.params.id, by: (req as AuthenticatedRequest).authUser?.id }, "[he] campaign settings changed");
+    res.json({ success: true, data });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    res.status(e.statusCode ?? 500).json({ success: false, message: e.statusCode ? e.message : "Could not save the campaign settings" });
+  }
+});
+
+// Campaign / upload-batch launches: pick the audience, an OPEN requisition and a date; the engine takes it from there.
+const launchInput = (req: ExpressRequest): LaunchInput => {
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const num = (v: unknown) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+  return {
+    kind: b.kind === "batch" ? "batch" : "campaign", ids: Array.isArray(b.ids) ? (b.ids as unknown[]).map(String) : [], requisitionId: String(b.requisitionId ?? ""), date: String(b.date ?? ""),
+    maxLeadAgeDays: num(b.maxLeadAgeDays), label: typeof b.label === "string" ? b.label : null, reinvite: b.reinvite !== false, walkInsWanted: num(b.walkInsWanted),
+    autoSend: b.autoSend !== false, userId: (req as AuthenticatedRequest).authUser?.id ?? null,
+  };
+};
+const launchError = (res: import("express").Response, err: unknown, what: string) => {
+  const e = err as Error & { statusCode?: number };
+  if (e.statusCode) return res.status(e.statusCode).json({ success: false, message: e.message });
+  logger.error({ err: e.message }, `[he] ${what} failed`);
+  return res.status(500).json({ success: false, message: `Could not ${what}` });
+};
+heRouter.post("/launch/preview", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try { res.json({ success: true, data: await previewLaunch(launchInput(req)) }); } catch (err) { launchError(res, err, "preview the launch"); }
+});
+heRouter.post("/launch", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const r = await startLaunch(launchInput(req));
+    logger.info({ drive: r.driveId, by: (req as AuthenticatedRequest).authUser?.id, lined: r.shortlist.suggested }, "[he] campaign launched");
+    res.json({ success: true, data: r });
+  } catch (err) { launchError(res, err, "start the launch"); }
+});
+heRouter.get("/launches", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await listLaunches() }); } catch (err) { launchError(res, err, "load the launches"); }
+});
+heRouter.get("/import-batches", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try { res.json({ success: true, data: await listBatches() }); } catch (err) { launchError(res, err, "load the upload batches"); }
 });

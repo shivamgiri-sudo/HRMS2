@@ -72,3 +72,19 @@ export async function heOwnsCampaign(campaignId: string | null | undefined): Pro
   const [r] = await db.execute<RowDataPacket[]>("SELECT 1 FROM he_campaign_config WHERE campaign_id = ? AND owner = 'he' LIMIT 1", [campaignId]);
   return r.length > 0;
 }
+
+/**
+ * One owner per lead. The old Meta outreach (lead-outreach.service) asks this before it messages: it steps aside for a campaign the Hiring Engine
+ * owns, and when the Hiring Engine already contacted the person in the last 3 days. null = go ahead. A recruiter's explicit force skips it.
+ */
+export async function metaOutreachBlockedByEngine(metaLeadId: string): Promise<string | null> {
+  const [r] = await db.execute<RowDataPacket[]>("SELECT campaign_id, RIGHT(REGEXP_REPLACE(parsed_phone, '[^0-9]', ''), 10) AS m FROM meta_lead_raw WHERE id = ? LIMIT 1", [metaLeadId]);
+  if (!r[0]) return null;
+  if (await heOwnsCampaign(r[0].campaign_id as string | null)) return "The Hiring Engine owns this campaign's outreach";
+  if (r[0].m) {
+    const [c] = await db.execute<RowDataPacket[]>(
+      "SELECT 1 FROM he_message WHERE mobile10 = ? AND direction = 'out' AND created_at > DATE_SUB(NOW(), INTERVAL 3 DAY) AND delivery_status <> 'failed' LIMIT 1", [r[0].m]);
+    if (c.length) return "The Hiring Engine already contacted this person in the last 3 days";
+  }
+  return null;
+}

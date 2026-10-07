@@ -12,7 +12,8 @@ import { normaliseEmail } from "../../shared/email-domains.js";
 import { addEvent } from "./he-lead.service.js";
 import { istHour } from "./he-guardrails.js";
 import { displayFirstName } from "./he-name.js";
-import { dateLabel, sendsPaused, timeLabel, type SendResult } from "./he-send.service.js";
+import { dateLabel, metaFlowNotifiedRecently, sendsPaused, timeLabel, type SendResult } from "./he-send.service.js";
+import { channelAllowed } from "./he-campaign-config.service.js";
 
 export const INVITE_EMAIL_KEY = "he_walkin_invite_email";
 const env = (k: string, d: string) => (process.env[k]?.trim() ? process.env[k]!.trim() : d);
@@ -79,7 +80,7 @@ ${c.optInUrl ? `<tr><td style="padding:12px 28px 0;font-size:13px;color:#475569"
 export async function sendInviteEmail(matchId: string, o: { dryRun?: boolean } = {}): Promise<SendResult> {
   const [mr] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.requisition_id, m.slot_at, m.token, d.id AS drive_id, d.drive_date, d.status AS drive_status,
-            l.full_name, l.email, l.status AS lead_status, l.mobile10,
+            l.full_name, l.email, l.status AS lead_status, l.mobile10, l.meta_lead_id,
             jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, bm.address, bm.latitude, bm.longitude
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id LEFT JOIN he_drive d ON d.id = m.drive_id
        JOIN job_requisition jr ON jr.id = m.requisition_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
@@ -88,6 +89,8 @@ export async function sendInviteEmail(matchId: string, o: { dryRun?: boolean } =
   if (!m) return { status: "blocked", reason: "match_not_found" };
   if (sendsPaused() || m.drive_status === "paused") return { status: "blocked", reason: "paused" };
   if (m.lead_status === "opted_out") return { status: "blocked", reason: "opted_out" };
+  if (await metaFlowNotifiedRecently(m.meta_lead_id as string | null)) return { status: "blocked", reason: "meta_flow_already_notified" };
+  if (!(await channelAllowed(m.lead_id as string, "email"))) return { status: "blocked", reason: "email_off_for_campaign" };
   const to = normaliseEmail(String(m.email ?? ""));
   if (!to) return { status: "blocked", reason: "no_email" };
   if (m.approval_status !== "approved" || !m.active_status || Number(m.fulfilled_headcount) >= Number(m.requested_headcount)) return { status: "blocked", reason: "requisition_closed" };

@@ -33,6 +33,8 @@ import { parseLead, normaliseMetaId, extractRoutingCode } from './meta-lead.pars
 import { screenLead } from './lead-screener.service.js';
 import { loadCampaignScreeningConfig } from './campaign-screening.js';
 import { notifyQualifiedLead } from './lead-outreach.service.js';
+import { heOwnsCampaign } from '../hiring-engine/he-campaign-config.service.js';
+import { bridgeOneMetaLead } from '../hiring-engine/he-meta-bridge.service.js';
 import { buildCanonicalFunnel, canonicalStage, CANONICAL_STAGE_LABEL, CANONICAL_STAGE_ORDER } from '../ats/ats-stage-model.js';
 import type {
   MetaCampaign,
@@ -679,6 +681,8 @@ export const metaCampaignService = {
       await this.createCandidateFromLead(id).catch((e: unknown) =>
         console.warn('[meta] createCandidateFromLead failed', e instanceof Error ? e.message : e)
       );
+      // A campaign handed to the Hiring Engine: the lead joins the engine's pool right away (it does the outreach, see notifyQualifiedLead).
+      if (campaign?.id && (await heOwnsCampaign(campaign.id).catch(() => false))) await bridgeOneMetaLead(id);
       // Outreach is suppressed for backfilled leads or when auto_notify is explicitly disabled.
       // Default: auto_notify = true (fire immediately on qualify).
       const autoNotify = screeningConfig?.auto_notify !== false;

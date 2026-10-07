@@ -9,7 +9,8 @@ import { logger } from "../../logger.js";
 import { addEvent, hasConsent } from "./he-lead.service.js";
 import { reserveSlot } from "./he-drive.service.js";
 import { istHour } from "./he-guardrails.js";
-import { dateLabel, sendsPaused, timeLabel } from "./he-send.service.js";
+import { dateLabel, metaFlowNotifiedRecently, sendsPaused, timeLabel } from "./he-send.service.js";
+import { configForLead } from "./he-campaign-config.service.js";
 import { buildVoiceSystemPrompt, canPlaceCall, VOICE_FIRST_MESSAGE, VOICE_RESULT_SCHEMA, type VoiceCtx } from "./he-voice.js";
 import { displayFirstName } from "./he-name.js";
 import { whatsappRequiresOptIn } from "./he-policy.service.js";
@@ -30,7 +31,7 @@ function toE164(mobile10: string): string { return `+91${mobile10}`; }
 export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = {}): Promise<CallPlacement> {
   const dryRun = o.dryRun !== false;
   const [mr] = await db.execute<RowDataPacket[]>(
-    `SELECT m.id, m.lead_id, m.requisition_id, m.state, m.slot_at, l.full_name, l.mobile10, l.status, jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status,
+    `SELECT m.id, m.lead_id, m.requisition_id, m.state, m.slot_at, l.full_name, l.mobile10, l.status, l.meta_lead_id, jr.designation_name, jr.branch_name, jr.approval_status, jr.active_status,
             jr.requested_headcount, jr.fulfilled_headcount, bm.address, d.drive_date, d.status AS drive_status
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id JOIN job_requisition jr ON jr.id = m.requisition_id
        LEFT JOIN he_drive d ON d.id = m.drive_id LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
@@ -41,6 +42,9 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   if (["opted_out", "arrived", "joined", "dead", "declined"].includes(String(m.status))) return { status: "blocked", reason: `lead_${m.status}` };
   if (m.approval_status !== "approved" || !m.active_status || Number(m.fulfilled_headcount) >= Number(m.requested_headcount)) return { status: "blocked", reason: "requisition_closed" };
   if (sendsPaused() || m.drive_status === "paused") return { status: "blocked", reason: "paused" };
+  if (await metaFlowNotifiedRecently(m.meta_lead_id as string | null)) return { status: "blocked", reason: "meta_flow_already_notified" };
+  const cfg = await configForLead(m.lead_id as string);
+  if (cfg && !cfg.voiceOn) return { status: "blocked", reason: "voice_off_for_campaign" };
   // WhatsApp needs an explicit opt-in; a confirmation call about the walk-in we already emailed them (their own application) does not,
   // which is what lets the email -> call path reach candidates who never opted in to WhatsApp. Opt-out above always wins.
   if (!(await hasConsent(m.lead_id as string, "whatsapp_contact"))) {
@@ -71,7 +75,7 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
 
   // Superbot is the voice provider when configured; Vapi stays as the fallback. Superbot gets the match id as reference_id so its feedback finds the match.
   if (await superbotConfig()) {
-    const q = await queueSuperbotCall({ referenceId: matchId, mobile10: String(m.mobile10),
+    const q = await queueSuperbotCall({ referenceId: matchId, campaignId: cfg?.superbotCampaign ?? undefined, mobile10: String(m.mobile10),
       params: { name: ctx.candidateName, role: ctx.role, interview_date: sbDate(String(m.drive_date)), interview_time: sbTime(String(m.slot_at).slice(11, 16)), branch_address: ctx.branchAddress } });
     if (!q.ok) {
       if (q.reason === "bad_number") await db.execute("UPDATE he_lead SET last_outcome = 'wrong_number' WHERE id = ?", [m.lead_id]);

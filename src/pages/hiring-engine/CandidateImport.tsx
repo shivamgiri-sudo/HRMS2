@@ -18,9 +18,10 @@ interface Preview {
   signature: string; savedMapping: boolean; headers: string[]; guesses: Guess[]; mapping: Record<string, string>;
   fields: Array<{ field: string; label: string }>;
   summary: { rows: number; valid: number; rejected: number; rejectedBy: Record<string, number>; alreadyKnown: number; newPeople: number };
+  blocked?: Record<string, number>;
   missingMobile: boolean;
 }
-interface Result { received: number; created: number; updated: number; rejected: Array<{ rowNo: number; reason: string }>; consentRecorded: number; mappingSaved: boolean }
+interface Result { received: number; created: number; updated: number; rejected: Array<{ rowNo: number; reason: string }>; consentRecorded: number; mappingSaved: boolean; batchId?: string | null; blocked?: Record<string, number> }
 
 export default function CandidateImport({ onDone }: { onDone?: () => void }) {
   const ref = useRef<HTMLInputElement>(null);
@@ -29,10 +30,12 @@ export default function CandidateImport({ onDone }: { onDone?: () => void }) {
   const [fileName, setFileName] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [colField, setColField] = useState<Record<string, string>>({}); // header -> field ("" = ignore)
+  const [label, setLabel] = useState("");
+  const [attested, setAttested] = useState(false);
   const [busy, setBusy] = useState<"read" | "import" | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const reset = () => { setRows([]); setPreview(null); setColField({}); setFileName(""); if (ref.current) ref.current.value = ""; };
+  const reset = () => { setLabel(""); setAttested(false); setRows([]); setPreview(null); setColField({}); setFileName(""); if (ref.current) ref.current.value = ""; };
 
   const onFile = async (f: File | undefined) => {
     if (!f) return;
@@ -72,10 +75,10 @@ export default function CandidateImport({ onDone }: { onDone?: () => void }) {
     if (!mapping.mobile) { setMsg({ ok: false, text: "Pick which column holds the mobile number." }); return; }
     setBusy("import"); setMsg(null);
     try {
-      const r = await hrmsApi.post<{ data: Result }>("/api/he/candidates/import", { rows, source, mapping, saveMapping: true }, 300000);
+      const r = await hrmsApi.post<{ data: Result }>("/api/he/candidates/import", { rows, source, mapping, saveMapping: true, label: label.trim() || undefined, fileName: fileName || undefined, consentAttested: attested }, 300000);
       const d = r.data;
       const bad = d.rejected.length ? ` · ${num(d.rejected.length)} skipped (${[...new Set(d.rejected.map((x) => x.reason.replace(/_/g, " ")))].join(", ")})` : "";
-      setMsg({ ok: true, text: `${num(d.created)} new candidates · ${num(d.updated)} already known and enriched${d.consentRecorded ? ` · ${num(d.consentRecorded)} with WhatsApp consent` : ""}${bad}.${d.mappingSaved ? " This column layout is remembered for next time." : ""}` });
+      setMsg({ ok: true, text: `${num(d.created)} new candidates · ${num(d.updated)} already known and enriched${d.consentRecorded ? ` · ${num(d.consentRecorded)} with WhatsApp consent` : ""}${bad}.${d.blocked && Object.keys(d.blocked).length ? ` The engine will never contact: ${Object.entries(d.blocked).map(([k, v]) => `${num(v)} ${k.replace(/_/g, " ")}`).join(", ")}.` : ""} Saved as an upload batch: launch it from "Launch a campaign" below.${d.mappingSaved ? " This column layout is remembered for next time." : ""}` });
       reset(); onDone?.();
     } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Could not import that file." }); }
     finally { setBusy(null); }
@@ -130,6 +133,16 @@ export default function CandidateImport({ onDone }: { onDone?: () => void }) {
                 })}
               </tbody>
             </table>
+          </div>
+          {preview.blocked && Object.keys(preview.blocked).length > 0 && <p className="text-xs text-amber-700">The engine will never contact: {Object.entries(preview.blocked).map(([k, v]) => `${num(v)} ${k.replace(/_/g, " ")}`).join(", ")}.</p>}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs text-slate-600">Name this upload (shown in launches)
+              <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={160} placeholder={`${fileName || "Upload"}`} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" />
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-700">
+              <input type="checkbox" checked={attested} onChange={(e) => setAttested(e.target.checked)} className="mt-0.5" />
+              <span>I confirm these people agreed to be contacted on WhatsApp (recorded as consent for this batch). Anyone who opted out is never re-enabled.</span>
+            </label>
           </div>
           {dupFields.size > 0 && <p className="text-xs text-rose-700">Two columns are set to the same field; only the first is used.</p>}
           <button type="button" disabled={busy != null || !mapping.mobile} onClick={() => void doImport()} className="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">

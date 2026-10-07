@@ -18,7 +18,8 @@ export type TemplateKey =
   | "he_winback"
   | "he_missed_call"
   | "he_optout_ack"
-  | "he_hr_arrival_alert";
+  | "he_hr_arrival_alert"
+  | "he_reinvite";
 
 export interface TemplateDef {
   key: TemplateKey;
@@ -269,6 +270,31 @@ export const HE_TEMPLATES: TemplateDef[] = [
     "buttons": {
       "hi": [],
       "en": []
+    }
+  },
+  {
+    "key": "he_reinvite",
+    "metaName": {
+      "en": null,
+      "hi": null
+    },
+    "category": "MARKETING",
+    "trigger": "Re-run campaign: someone who filled a lead form earlier but never booked (or missed an earlier date) is invited to a new walk-in. Draft until Meta approves it; the normal invite is sent meanwhile.",
+    "body": {
+      "hi": "Namaste {candidate_name} ji, aapne pehle {role} ke liye apply kiya tha. {company} mein {branch_name} par walk-in interview hai aur humne aapke liye slot rakha hai.\n\nDate: {drive_date}\nTime: {slot_time}\nJagah: {branch_address}\n\nKya aap aa payenge? Neeche se jawab dein.",
+      "en": "Hello {candidate_name},\n\nYou applied for the {role} position earlier. {company} is holding a walk-in interview at {branch_name} and we have reserved a slot for you.\n\nDate: {drive_date}\nTime: {slot_time}\nVenue: {branch_address}\n\nPlease confirm using the options below."
+    },
+    "buttons": {
+      "hi": [
+        "Haan, aaunga",
+        "Reschedule",
+        "Nahi aa paunga"
+      ],
+      "en": [
+        "Yes, I'll come",
+        "Reschedule",
+        "Can't come"
+      ]
     }
   }
 ];
