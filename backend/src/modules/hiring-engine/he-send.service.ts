@@ -38,7 +38,13 @@ export interface SendOpts {
   transactional?: boolean;
   /** Cadence follow-ups run an hour after the previous touch, below the 120 min default between unrelated sends. */
   minGapMinutes?: number;
-
+  /** Requisition context for a send with no match (the follow-up pipeline): he_message.requisition_id and the same open-requisition rule as a match. */
+  requisitionId?: string | null;
+  /** Follow-up pipeline step: consent is assumed unless a revoked whatsapp_contact consent exists; daily cap and min gap do not apply.
+   *  Quiet hours, pause, opt-out and a closed requisition still block. */
+  followupStep?: boolean;
+  /** Test mode: a 10-digit number that receives the message instead of the lead. Nothing is recorded (no he_message, event, contact time or status). */
+  redirectTo?: string | null;
 }
 
 const FIRST_CONTACT = new Set<TemplateKey>(["he_walkin_invite", "he_winback", "he_other_role_offer"]);
@@ -88,7 +94,13 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
         WHERE m.id = ? LIMIT 1`, [o.matchId]);
     m = mr[0];
   }
-  const requisitionOpen = m ? m.approval_status === "approved" && Boolean(m.active_status) && Number(m.fulfilled_headcount) < Number(m.requested_headcount) : true;
+  const isOpen = (r: RowDataPacket) => r.approval_status === "approved" && Boolean(r.active_status) && Number(r.fulfilled_headcount) < Number(r.requested_headcount);
+  let requisitionOpen = m ? isOpen(m) : true;
+  if (!m && o.requisitionId) {
+    const [rr] = await db.execute<RowDataPacket[]>(
+      "SELECT approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1", [o.requisitionId]);
+    requisitionOpen = rr[0] ? isOpen(rr[0]) : false;
+  }
 
   const [sent] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS today, MAX(created_at) AS last_at FROM he_message
@@ -99,13 +111,14 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   // on. Opt-out and a revoked consent (a STOP) always win. Live location is separate: it always needs the candidate's own tap.
   let consent = await hasConsent(o.leadId, "whatsapp_contact");
   let basis: "consent" | "applicant" = "consent";
-  if (!consent && !(await whatsappRequiresOptIn())) {
+  if (!consent && (o.followupStep || !(await whatsappRequiresOptIn()))) {
     const [refused] = await db.execute<RowDataPacket[]>("SELECT 1 FROM he_consent WHERE lead_id = ? AND consent_type = 'whatsapp_contact' AND revoked_at IS NOT NULL LIMIT 1", [o.leadId]);
     if (!refused.length) { consent = true; basis = "applicant"; }
   }
+  const noCaps = o.transactional || o.followupStep;
   const verdict = checkSendAllowed({
     now: new Date(), consent, optedOut: lead.status === "opted_out", paused: sendsPaused() || m?.drive_status === "paused",
-    sentToday: o.transactional ? 0 : Number(sent[0].today), lastSentAt: !o.transactional && lastAny[0].last_at ? new Date(String(lastAny[0].last_at).replace(" ", "T") + "+05:30") : null,
+    sentToday: noCaps ? 0 : Number(sent[0].today), lastSentAt: !noCaps && lastAny[0].last_at ? new Date(String(lastAny[0].last_at).replace(" ", "T") + "+05:30") : null,
     requisitionOpen, ...(o.minGapMinutes ? { minGapMinutes: o.minGapMinutes } : {}),
     ...(o.transactional ? { quietStartHour: 24, quietEndHour: 0 } : {}),
   });
@@ -149,11 +162,15 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
   catch (e) { return { status: "blocked", reason: (e as Error).message }; }
   const previewBody = renderBody(tplKey, lang, ctx);
 
+  const redirected = Boolean(o.redirectTo);
+  if (redirected && !/^\d{10}$/.test(String(o.redirectTo))) return { status: "blocked", reason: "invalid_redirect" };
+  const recipient = redirected ? String(o.redirectTo) : String(lead.mobile10);
+
   if (o.dryRun) return { status: "dry_run", body: previewBody, lang, params };
   if (!pinbot.isConfigured()) return { status: "blocked", reason: "whatsapp_not_configured" };
 
   const hasUrlButton = getTemplate(tplKey).buttons[lang].some((b) => b.startsWith("URL:"));
-  let res = await pinbot.sendTemplate(String(lead.mobile10), String(tr[0].pinbot_name), params, String(tr[0].language), hasUrlButton ? String(ctx.location_token ?? "") : undefined);
+  let res = await pinbot.sendTemplate(recipient, String(tr[0].pinbot_name), params, String(tr[0].language), hasUrlButton ? String(ctx.location_token ?? "") : undefined);
   let body = renderBody(tplKey, lang, ctx);
   let fellBack = false;
   // The invite (T1) can be rejected at Meta while its approved wording differs from ours (#132000 / #132001 / #132018). The approved
@@ -163,16 +180,20 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
     const [fb] = await db.execute<RowDataPacket[]>("SELECT pinbot_name, language FROM he_template WHERE template_key = 'he_missed_call:en' AND approval_state = 'approved' AND pinbot_name IS NOT NULL LIMIT 1");
     if (fb[0]) {
       try {
-        const r2 = await pinbot.sendTemplate(String(lead.mobile10), String(fb[0].pinbot_name), buildParams("he_missed_call", "en", ctx), String(fb[0].language));
+        const r2 = await pinbot.sendTemplate(recipient, String(fb[0].pinbot_name), buildParams("he_missed_call", "en", ctx), String(fb[0].language));
         if (r2.success) { res = r2; body = renderBody("he_missed_call", "en", ctx); fellBack = true; }
       } catch { /* keep the original failure */ }
     }
+  }
+  if (redirected) {
+    logger.info({ leadId: o.leadId, key: o.key, ok: res.success }, "[he-send] test redirect, nothing recorded");
+    return res.success ? { status: "sent", messageId: "", providerMessageId: res.message_id ?? "" } : { status: "failed", error: String(res.error ?? "unknown") };
   }
   const [idr] = await db.execute<RowDataPacket[]>("SELECT UUID() AS id");
   const messageId = idr[0].id as string;
   await db.execute(
     "INSERT INTO he_message (id, lead_id, mobile10, direction, channel, template_key, body, provider_message_id, delivery_status, error_message, requisition_id, drive_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-    [messageId, o.leadId, lead.mobile10, "out", "whatsapp", `${o.key}:${lang}`, body.slice(0, 2000), res.success ? res.message_id ?? null : null, res.success ? "sent" : "failed", res.success ? null : String(res.error ?? "").slice(0, 500), m?.requisition_id ?? null, m?.drive_id ?? null]);
+    [messageId, o.leadId, lead.mobile10, "out", "whatsapp", `${o.key}:${lang}`, body.slice(0, 2000), res.success ? res.message_id ?? null : null, res.success ? "sent" : "failed", res.success ? null : String(res.error ?? "").slice(0, 500), m?.requisition_id ?? o.requisitionId ?? null, m?.drive_id ?? null]);
   if (!res.success) {
     await addEvent(o.leadId, "send_failed", { channel: "whatsapp", detail: `${o.key}: ${res.error}`, driveId: m?.drive_id });
     logger.warn({ leadId: o.leadId, key: o.key, error: res.error }, "[he-send] failed");
