@@ -3,7 +3,7 @@
  * stored raw, mined into signals, applied to lead/match state, mirrored to meta_lead_raw so the existing
  * Meta inbox pages stay correct, then the lead insight is recomputed.
  */
-import { dequeueSuperbotCall } from "./he-superbot.service.js";
+import { dequeueSuperbotForMatch } from "./he-superbot.service.js";
 import { refreshLeadHistoryById } from "./he-master.service.js";
 import { answerCandidateQuestion, isLocationTap, sendLocationLink } from "./he-bot.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
@@ -72,7 +72,7 @@ async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPl
   if (plan.revokeConsent) await revokeConsent(leadId, "whatsapp_contact");
   await addEvent(leadId, plan.event, { channel: ctx.channel, detail: ctx.detail });
   // They answered somewhere else (button, reply, email tap): a call still waiting in Superbot's queue must not ring them. Best effort.
-  if (ctx.channel !== "voice" && ctx.matchId && (plan.matchState || plan.event === "opted_out")) void dequeueSuperbotCall(ctx.matchId);
+  if (ctx.channel !== "voice" && ctx.matchId && (plan.matchState || plan.event === "opted_out")) void dequeueSuperbotForMatch(ctx.matchId);
   if (plan.humanHandoff) await addEvent(leadId, "needs_human_followup", { channel: ctx.channel, detail: "second decline / declined offered slot" });
   await mirrorToMeta(ctx.metaLeadId, plan);
   // T2: appointment details + reference once the candidate confirms (button, email tap or bot call).

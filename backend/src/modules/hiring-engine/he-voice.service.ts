@@ -16,6 +16,7 @@ import { displayFirstName } from "./he-name.js";
 import { whatsappRequiresOptIn } from "./he-policy.service.js";
 import { superbotConfig, webhookToken } from "./he-secrets.service.js";
 import { queueSuperbotCall } from "./he-superbot.service.js";
+import { refForMatch } from "./he-call-ref.service.js";
 import { sbDate, sbTime } from "./he-superbot.js";
 
 const env = (k: string, d = "") => (process.env[k] && process.env[k]!.trim() ? process.env[k]!.trim() : d);
@@ -73,9 +74,9 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   const prompt = buildVoiceSystemPrompt(ctx);
   if (dryRun) return { status: "dry_run", promptPreview: prompt.slice(0, 400) };
 
-  // Superbot is the voice provider when configured; Vapi stays as the fallback. Superbot gets the match id as reference_id so its feedback finds the match.
+  // Superbot is the voice provider when configured; Vapi stays as the fallback. Superbot gets the HRMS-001 style reference so its feedback finds the match.
   if (await superbotConfig()) {
-    const q = await queueSuperbotCall({ referenceId: matchId, campaignId: cfg?.superbotCampaign ?? undefined, mobile10: String(m.mobile10),
+    const q = await queueSuperbotCall({ referenceId: await refForMatch(matchId), campaignId: cfg?.superbotCampaign ?? undefined, mobile10: String(m.mobile10),
       params: { name: ctx.candidateName, role: ctx.role, interview_date: sbDate(String(m.drive_date)), interview_time: sbTime(String(m.slot_at).slice(11, 16)), branch_address: ctx.branchAddress } });
     if (!q.ok) {
       if (q.reason === "bad_number") await db.execute("UPDATE he_lead SET last_outcome = 'wrong_number' WHERE id = ?", [m.lead_id]);

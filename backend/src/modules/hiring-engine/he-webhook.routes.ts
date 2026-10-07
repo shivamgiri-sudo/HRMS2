@@ -16,6 +16,7 @@ import { loadToolResult, toolNextSlot, toolReportResult } from "./he-voice.servi
 import { completeBulkJob } from "./he-bulk-call.service.js";
 import { ingestCandidates } from "./he-intake.service.js";
 import { webhookToken } from "./he-secrets.service.js";
+import { matchForRef } from "./he-call-ref.service.js";
 import { mapSuperbotFeedback, type SuperbotFeedback } from "./he-superbot.js";
 import { addEvent } from "./he-lead.service.js";
 
@@ -151,7 +152,7 @@ heWebhookRouter.post("/candidates", async (req, res) => {
 });
 
 /**
- * Superbot post-call feedback (reference_id = our match id). Always answers 200 for anything we cannot use so Superbot does not retry forever;
+ * Superbot post-call feedback (reference_id = our HRMS-001 style reference, mapped to the match by he_call_ref). Always answers 200 for anything we cannot use so Superbot does not retry forever;
  * 500 only when our own database failed, which is safe to redeliver (recordVoiceResult dedupes on reference_id:time).
  */
 heWebhookRouter.post("/superbot", async (req, res) => {
@@ -162,8 +163,9 @@ heWebhookRouter.post("/superbot", async (req, res) => {
     const mapped = mapSuperbotFeedback(f);
     let leadId: string | undefined;
     let matchId: string | undefined;
-    if (mapped.referenceId) {
-      const [r] = await db.execute<RowDataPacket[]>("SELECT id, lead_id FROM he_match WHERE id = ? LIMIT 1", [mapped.referenceId]);
+    const refMatch = await matchForRef(mapped.referenceId);
+    if (refMatch) {
+      const [r] = await db.execute<RowDataPacket[]>("SELECT id, lead_id FROM he_match WHERE id = ? LIMIT 1", [refMatch]);
       if (r[0]) { leadId = String(r[0].lead_id); matchId = String(r[0].id); }
     }
     const mobile = !leadId && mapped.phone ? mapped.phone.replace(/\D/g, "").slice(-10) : undefined;
@@ -186,7 +188,8 @@ heWebhookRouter.post("/superbot-rejected", async (req, res) => {
     const list = Array.isArray(b?.numbers) ? b.numbers : [b ?? {}];
     for (const n of list) {
       if (!n.reference_id) continue;
-      const [r] = await db.execute<RowDataPacket[]>("SELECT lead_id FROM he_match WHERE id = ? LIMIT 1", [n.reference_id]);
+      const rm = await matchForRef(n.reference_id);
+      const [r] = rm ? await db.execute<RowDataPacket[]>("SELECT lead_id FROM he_match WHERE id = ? LIMIT 1", [rm]) : [[] as RowDataPacket[]];
       if (r[0]) await addEvent(String(r[0].lead_id), "call_failed_to_place", { channel: "voice", detail: `superbot rejected: ${String(n.reason ?? "unknown").slice(0, 200)}` });
     }
   } catch (err) { logger.warn({ err: (err as Error).message }, "[he-hook] superbot-rejected failed"); }

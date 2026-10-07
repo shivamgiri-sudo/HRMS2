@@ -5,6 +5,7 @@
  */
 import axios from "axios";
 import { logger } from "../../logger.js";
+import { existingRef } from "./he-call-ref.service.js";
 import { superbotConfig } from "./he-secrets.service.js";
 import { classifyQueueError, sbPhone, type QueueFailure, type SuperbotParams } from "./he-superbot.js";
 
@@ -57,4 +58,9 @@ export async function testSuperbotConnection(): Promise<{ ok: boolean; message: 
     }
     return { ok: false, message: "Could not reach Superbot. If this server's IP is not whitelisted by Superbot, ask them to add it." };
   }
+}
+
+/** Dequeue by match: only if the match was ever given a reference (a call may be waiting under it). Never throws. */
+export async function dequeueSuperbotForMatch(matchId: string): Promise<boolean> {
+  try { const ref = await existingRef(matchId); return ref ? await dequeueSuperbotCall(ref) : false; } catch { return false; }
 }

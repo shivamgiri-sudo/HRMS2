@@ -6,7 +6,8 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { displayFirstName } from "./he-name.js";
-import { sbDate, sbPhone, sbTime } from "./he-superbot.js";
+import { sbDate, sbTime } from "./he-superbot.js";
+import { refsForMatches } from "./he-call-ref.service.js";
 
 export const SHEET_COLUMNS = ["phone", "name", "role", "interview_date", "interview_time", "branch_address", "reference_id"] as const;
 const cell = (v: unknown) => { const s = String(v ?? "").replace(/\r?\n/g, " "); return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
@@ -26,10 +27,13 @@ export async function buildSuperbotSheet(driveId: string, which: "pending" | "al
         AND l.mobile10 REGEXP '^[6-9][0-9]{9}$'
       ORDER BY m.slot_at, l.full_name`, [driveId]);
   let skipped = 0;
+  const callable = rows.filter((r) => r.address); // never read out an invented address
+  skipped = rows.length - callable.length;
+  const refs = await refsForMatches(callable.map((r) => String(r.id)));
   const out: string[] = [SHEET_COLUMNS.join(",")];
-  for (const r of rows) {
-    if (!r.address) { skipped++; continue; } // never read out an invented address
-    out.push([sbPhone(String(r.mobile10)), displayFirstName(r.full_name), r.designation_name, sbDate(String(r.drive_date)), sbTime(String(r.slot_at).slice(11, 16)), r.address, r.id].map(cell).join(","));
+  for (const r of callable) {
+    out.push([String(r.mobile10), displayFirstName(r.full_name), r.designation_name, sbDate(String(r.drive_date)), sbTime(String(r.slot_at).slice(11, 16)), r.address, refs.get(String(r.id)) ?? r.id].map(cell).join(","));
   }
-  return { csv: out.join("\r\n") + "\r\n", rows: out.length - 1, skippedNoAddress: skipped };
+  // The BOM makes Excel read the file as UTF-8 (otherwise "–" in an address shows as "â€“").
+  return { csv: "\uFEFF" + out.join("\r\n") + "\r\n", rows: out.length - 1, skippedNoAddress: skipped };
 }
