@@ -103,6 +103,11 @@
   "modules/hiring-engine/qualified-followup.whatsapp.ts": [
     "qualified_followup"
   ],
+  "modules/hiring-engine/requisition-stream.service.ts": [
+    "requisition_stream",
+    "requisition_stream_day",
+    "requisition_stream_event"
+  ],
   "modules/integrations/cosec/cosec-registration.service.ts": [
     "mx_usermst"
   ],
