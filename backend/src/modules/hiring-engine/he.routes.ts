@@ -45,7 +45,7 @@ import { engineAutoOn, engineMode, getCoolingOffDays, getDailyPlan, getPlanMetaO
 import { nextWorkingDay, planNextDay } from "./he-plan.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
 import { getInboxThread, listInbox, replyToCandidate } from "./he-inbox.service.js";
-import { resolveBranchScope } from "../meta-campaign/meta-access.js";
+import { branchScopeOf, registerStreamRoutes } from "./he-stream.routes.js";
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import { getFollowupAudit, listAttention, logAttentionError, markFollowupCalled, mobileOfFollowup, retryFollowupStep, type AttentionChannel } from "./qualified-followup.attention.js";
@@ -58,6 +58,7 @@ setTimeout(() => { void getMetaRecruitment().catch(() => undefined); }, 20_000).
 const VIEW_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr", "ceo"];
 const ADMIN_ROLES = ["super_admin", "admin"];
 const WRITE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr"];
+registerStreamRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES, admin: ADMIN_ROLES });
 
 heRouter.get("/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try {
@@ -754,21 +755,20 @@ heRouter.post("/plan/run", requireAuth, requireRole(...ADMIN_ROLES), async (req,
 });
 
 /** WhatsApp Inbox, Hiring Engine source: conversations with candidates the engine has messaged (branch-scoped like the Meta inbox). */
-const inboxScope = async (req: AuthenticatedRequest) => resolveBranchScope(req.authUser.id, ((req as unknown as { userRoles?: string[] }).userRoles?.length ? (req as unknown as { userRoles: string[] }).userRoles : [req.authUser.role ?? ""]).filter(Boolean));
 heRouter.get("/inbox", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
-  try { res.json({ success: true, ...(await listInbox(await inboxScope(req as AuthenticatedRequest), typeof req.query.search === "string" ? req.query.search : undefined)) }); }
+  try { res.json({ success: true, ...(await listInbox(await branchScopeOf(req as AuthenticatedRequest), typeof req.query.search === "string" ? req.query.search : undefined)) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] inbox failed"); res.status(500).json({ success: false, message: "Could not load the inbox" }); }
 });
 heRouter.get("/inbox/:leadId/messages", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
   try {
-    const t = await getInboxThread(String(req.params.leadId), await inboxScope(req as AuthenticatedRequest), (req as AuthenticatedRequest).authUser?.id ?? null);
+    const t = await getInboxThread(String(req.params.leadId), await branchScopeOf(req as AuthenticatedRequest), (req as AuthenticatedRequest).authUser?.id ?? null);
     if (!t) return res.status(404).json({ success: false, message: "Conversation not found or outside your branch" });
     res.json({ success: true, ...t });
   } catch (err) { logger.error({ err: (err as Error).message }, "[he] inbox thread failed"); res.status(500).json({ success: false, message: "Could not load the conversation" }); }
 });
 heRouter.post("/inbox/:leadId/reply", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
   try {
-    const r = await replyToCandidate(String(req.params.leadId), String((req.body ?? {}).message ?? ""), await inboxScope(req as AuthenticatedRequest), (req as AuthenticatedRequest).authUser?.id ?? null);
+    const r = await replyToCandidate(String(req.params.leadId), String((req.body ?? {}).message ?? ""), await branchScopeOf(req as AuthenticatedRequest), (req as AuthenticatedRequest).authUser?.id ?? null);
     res.status(r.ok ? 200 : r.status).json(r.ok ? { success: true, messageId: r.messageId } : { success: false, message: r.message });
   } catch (err) { logger.error({ err: (err as Error).message }, "[he] inbox reply failed"); res.status(500).json({ success: false, message: "Could not send the reply" }); }
 });
