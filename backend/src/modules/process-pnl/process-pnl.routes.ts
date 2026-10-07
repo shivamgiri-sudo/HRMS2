@@ -1513,6 +1513,20 @@ router.get(
       search: req.query.search ? String(req.query.search) : null,
     });
     const baseProcessIds = confinedProcess ? [confinedProcess] : requestedProcessIds;
+    // A branch-confined caller may only name processes / cost centres of their own branch: the
+    // focus panel would otherwise describe another branch's process or cost centre (its budget).
+    const requestedCostCentreIds = [
+      ...(req.query.costCentreId ? [String(req.query.costCentreId)] : []),
+      ...csv(req.query.costCentreIds),
+    ];
+    if (confinedBranch) {
+      for (const pid of [...requestedProcessIds, ...(processId ? [processId] : [])]) {
+        await asForbidden(assertProcessInScope(req, pid));
+      }
+      for (const ccId of requestedCostCentreIds) {
+        await asForbidden(assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(ccId)));
+      }
+    }
     const data = await getCeoOverview(period, {
       branchId: branchId ?? undefined,
       // Folded into processIds when a client/search filter applies: scopeOf() UNIONS the singular
@@ -1524,6 +1538,7 @@ router.get(
         ? narrowProcessScope([...baseProcessIds, ...(processId && !confinedProcess ? [processId] : [])], clientSearch)
         : baseProcessIds,
       costCentreIds: csv(req.query.costCentreIds),
+      visibleBranchIds: confinedBranch ? [confinedBranch] : undefined,
     });
     res.json({ success: true, data });
   })

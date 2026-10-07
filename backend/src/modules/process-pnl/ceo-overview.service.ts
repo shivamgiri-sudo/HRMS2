@@ -113,6 +113,12 @@ export interface CeoFilters {
   branchIds?: string[] | null;
   processIds?: string[] | null;
   costCentreIds?: string[] | null;
+  /**
+   * Set only by the route for a branch-confined caller (Branch Head): the branches they may see.
+   * Narrows the branch filter options and drops company-wide exceptions, which a global user
+   * comparing branches must still get.
+   */
+  visibleBranchIds?: string[] | null;
 }
 
 /** Filters after the singular and plural forms have been merged into one list each. */
@@ -1303,7 +1309,8 @@ async function buildFocus(
  */
 export function getCeoOverview(period: string, filters: CeoFilters = {}): Promise<CeoOverview> {
   const scope = scopeOf(filters);
-  return cachedPnlRead("ceo-overview", scopeKey(period, scope), () => buildCeoOverview(period, filters));
+  const confined = filters.visibleBranchIds ? [...filters.visibleBranchIds].sort().join(",") : "";
+  return cachedPnlRead("ceo-overview", { ...scopeKey(period, scope), confined }, () => buildCeoOverview(period, filters));
 }
 
 /**
@@ -1592,10 +1599,11 @@ async function buildCeoOverview(
       branches: traded
         .filter((t) => !t.hiddenAsClosed)
         .map((t) => ({ id: t.row.branchId ?? "", name: t.row.branchName }))
-        .filter((b) => b.id)
+        .filter((b) => b.id && (!filters.visibleBranchIds || filters.visibleBranchIds.includes(b.id)))
         .sort((a, b) => a.name.localeCompare(b.name)),
     },
-    exceptions: idcContamination
+    // Company-wide figure: not for a branch-confined caller.
+    exceptions: idcContamination && !filters.visibleBranchIds
       ? [{
           code: "PAYROLL_IDC_CODE_IN_MAS_HRMS",
           label: "IDC-coded payroll present in MAS Callnet's own P&L",

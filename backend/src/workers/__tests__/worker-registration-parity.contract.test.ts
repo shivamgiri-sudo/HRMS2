@@ -45,6 +45,8 @@ describe("worker registration parity", () => {
     "startFeedHealthCacheWarmer",
     "startOnfidoCacheWarmer",
     "startOpsSummaryWarmer",
+    // Warms the API process's in-memory P&L allocation summary cache (canonical-pnl.service.ts).
+    "startPnlSummaryWarmer",
     "startMetaLeadSyncScheduler",
     // Scheduled MIS emails (e93e050e1): gated by its own MIS_EMAIL_SCHEDULER_ENABLED,
     // started outside the guards, and toggled by mis-scheduler-enable.yml, which

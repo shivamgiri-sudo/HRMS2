@@ -183,7 +183,11 @@ const refreshInFlight = new Map<string, Promise<void>>();
 export async function getCachedAllocationSummary(
   filters: Partial<PnlQueryFilters>,
 ) {
-  const key = `pnl-allocation-summary:v1:${filters.period ?? ""}:${filters.branchId ?? ""}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
+  // branchIds is part of the scope: a user confined to several branches arrives with branchIds and
+  // no branchId, and without it in the key they were served the company-wide entry (the same one the
+  // boot warmer fills with { period }) — other branches' figures. Sorted so order cannot split keys.
+  const branchIdsKey = [...((filters as { branchIds?: string[] }).branchIds ?? [])].sort().join(",");
+  const key = `pnl-allocation-summary:v2:${filters.period ?? ""}:${filters.branchId ?? ""}:${branchIdsKey}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
   const fetcher = () =>
     bpoPnlAllocationOverlayService.getSummary(filters) as Promise<
       Record<string, unknown>

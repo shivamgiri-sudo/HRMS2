@@ -789,7 +789,14 @@ async function buildPnlReconciliation(
     readUnallocatedPayroll(period, filters.branchIds, filters.processIds),
     getSeatBillingEstimate(period, { branchIds: filters.branchIds, asOfDate }).catch(() => null),
   ]);
-  const { revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, forecasts, openBudget } = sources;
+  const { revenue, grn, grnCommitted, budgets, payroll, freshness, forecasts, openBudget } = sources;
+  // Below-the-line (company-level depreciation / finance cost / tax) and the exceptions list are
+  // company-wide. A branch- or client-narrowed view must not carry them: it exposed the company's
+  // figures to a branch-scoped caller and subtracted the whole company's D&A/tax from one branch's
+  // operating profit in truePat.
+  const narrowed = Boolean(filters.branchIds?.length) || filters.processIds !== undefined;
+  const belowTheLine = narrowed ? { depreciation: 0, financeCost: 0, taxProvision: 0 } : sources.belowTheLine;
+  const exceptionsOut = narrowed ? [] : sources.exceptionsOut;
 
   const payrollPosted = (freshness.find((item) => item.source === "Payroll")?.rows ?? 0) > 0;
   const seatByCc = new Map<string, CostCentreSeatBilling>(

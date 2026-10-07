@@ -184,6 +184,8 @@ function startServer() {
     // The P&L Trend reads years of payroll; fill its cache shortly after boot so the first user
     // request doesn't wait 90+ seconds on the cold 130K-row salary scan.
     setTimeout(() => { void import("./modules/process-pnl/pnl-trend.service.js").then((m) => m.warmPnlTrendCache()); }, 20_000).unref();
+    // P&L allocation summary (Statement / Process Matrix) is ~30-90 s cold; keep it warm so no one waits after a deploy (PNL_SUMMARY_WARM=false disables).
+    void import("./modules/process-pnl/pnl-summary-warmer.js").then((m) => m.startPnlSummaryWarmer());
     // Process Operations /feeds counts ~36 source tables; keep those counts warm so the page never waits on them.
     setTimeout(() => { void import("./modules/process-operations/feed-health.service.js").then((m) => m.startFeedHealthCacheWarmer()); }, 200_000).unref();
     // The Onfido Overview and Analyst reports take 20-26s cold; keep them in the response cache so the dashboard's first load is instant.

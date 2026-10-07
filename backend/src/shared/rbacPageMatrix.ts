@@ -550,6 +550,10 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
   branch_head: [
     // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
     "WFM_TEAM_ROSTER",
+    // Revenue Forecast (migration 2118) and the P&L Command Center, view only (migration 2120):
+    // the Branch Head raises the forecast and sees its effect; every /pnl read is branch-scoped.
+    "FINANCE_REVENUE_FORECAST",
+    "FINANCE_PROCESS_PNL",
     // The Branch Head / Payroll Head approval queue for gated bulk uploads. Its live
     // grants were seeded by migration 1522 but never added here, so the next run of
     // apply-rbac-page-matrix would have deactivated every one of them.

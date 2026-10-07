@@ -96,6 +96,7 @@ import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./r
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { startPayrollPrepReminderWorker, stopPayrollPrepReminderWorker } from "./payroll-prep-reminder.worker.js";
 import { startBudgetClosureReminderWorker, stopBudgetClosureReminderWorker } from "./budget-closure-reminder.worker.js";
+import { startRevenueForecastReminderWorker, stopRevenueForecastReminderWorker } from "./revenue-forecast-reminder.worker.js";
 import { startPayrollReadinessRefreshWorker, stopPayrollReadinessRefreshWorker } from "./payroll-readiness-refresh.worker.js";
 import { startAutoRosterSchedulerWorker, stopAutoRosterSchedulerWorker } from "./auto-roster-scheduler.worker.js";
 import { startUatJobRunner, stopUatJobRunner } from "../modules/uat-pipeline/uat-job-runner.js";
@@ -543,6 +544,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: startBudgetClosureReminderWorker,
   },
   {
+    // Owner requirement 2026-10-06: Branch Heads forecast next month's revenue by the 26th. Reminder
+    // only — 20th-26th to Branch Heads, 27th overdue to Finance Heads. See revenue-forecast-reminder.worker.ts.
+    name: "revenue-forecast-reminder",
+    start: startRevenueForecastReminderWorker,
+  },
+  {
     name: "payroll-readiness-refresh",
     start: startPayrollReadinessRefreshWorker,
   },
@@ -679,6 +686,7 @@ function shutdown(): void {
   stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();
   stopBudgetClosureReminderWorker();
+  stopRevenueForecastReminderWorker();
   stopPayrollReadinessRefreshWorker();
   stopAprVicidialSyncWorker();
   stopMolecularEmailSyncWorker();

@@ -719,9 +719,8 @@ describe("P&L reconciliation — below-the-line (depreciation, finance cost, tax
     );
     const { getPnlReconciliation } =
       await import("../pnl-reconciliation.service.js");
-    const out = await getPnlReconciliation("2026-08", {
-      branchIds: ["branch-noida"],
-    });
+    // Company view: below-the-line is company-level, so it belongs to the unfiltered P&L only.
+    const out = await getPnlReconciliation("2026-08", {});
     // Baseline: revenue 120, payroll 60, HRMS-raised GRN 25 (fed app-side; the mirror is ignored) -> operatingProfit 35 (unchanged, contribution margin).
     expect(out.totals.operatingProfit).toBe(L(35));
     expect(out.totals.marginPct).toBeCloseTo((35 / 120) * 100, 6);
@@ -735,6 +734,19 @@ describe("P&L reconciliation — below-the-line (depreciation, finance cost, tax
     // Never allocated to a row or branch.
     expect(out.rows.every((r) => !("depreciation" in r))).toBe(true);
     expect(out.branches.every((b) => !("depreciation" in b))).toBe(true);
+  });
+
+  it("a branch-scoped view carries no company-level below-the-line or exceptions (they are company-wide)", async () => {
+    withOverrides((q) =>
+      q.includes("FROM process_pnl_cost_component")
+        ? [{ cost_type: "depreciation", amount: L(10) }, { cost_type: "tax", amount: L(1) }]
+        : undefined,
+    );
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"] });
+    expect(out.totals.belowTheLineTotal).toBe(0);
+    expect(out.totals.truePat).toBe(out.totals.operatingProfit);
+    expect(out.exceptions).toEqual([]);
   });
 
   it("filters to company-wide rows only (process_id IS NULL AND branch_id IS NULL) — never the canonical engine's per-process rows", async () => {
