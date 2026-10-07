@@ -57,6 +57,9 @@ try {
   await show("audit trail of the newest request", "SELECT e.activity_at, e.event_type, e.error_code, LEFT(COALESCE(e.error_detail, e.message),200) msg FROM report_audit_event e WHERE e.report_request_id = (SELECT id FROM report_request ORDER BY requested_at DESC LIMIT 1) ORDER BY e.activity_at DESC, e.id DESC LIMIT 15");
   await show("generated files of newest request", "SELECT f.original_filename, f.file_size_bytes, f.generated_row_count, f.generated_at FROM report_generated_file f WHERE f.report_request_id = (SELECT id FROM report_request ORDER BY requested_at DESC LIMIT 1)");
   await show("db processlist (report-ish, long running)", "SELECT id, user, time, state, LEFT(info,160) q FROM information_schema.PROCESSLIST WHERE command <> 'Sleep' AND time > 20 ORDER BY time DESC LIMIT 8");
+  await show("open InnoDB transactions (oldest first)", "SELECT trx_mysql_thread_id thread, trx_state, trx_started, TIMESTAMPDIFF(MINUTE, trx_started, NOW()) age_min, trx_rows_locked locked, LEFT(trx_query,120) q FROM information_schema.INNODB_TRX ORDER BY trx_started LIMIT 10");
+  await show("locks held on report_request", "SELECT l.OBJECT_NAME tbl, l.LOCK_TYPE, l.LOCK_MODE, l.LOCK_STATUS, t.PROCESSLIST_ID thread FROM performance_schema.data_locks l LEFT JOIN performance_schema.threads t ON t.THREAD_ID = l.THREAD_ID WHERE l.OBJECT_NAME = 'report_request' LIMIT 10");
+  await show("advisory locks (report workers)", "SELECT IS_USED_LOCK('hrms:worker:e22d80d977de6ff41d9035273e873b75c8aa61c3') gen, IS_USED_LOCK('hrms:worker:0f67ab60512e281f5b29f92e436f83c53ef6371b') mail");
   await show("smtp env present (names only)", "SELECT 1 AS dummy");
   console.log("SMTP_HOST set:", !!process.env.SMTP_HOST, " SMTP_USER set:", !!process.env.SMTP_USER, " SMTP_FROM set:", !!process.env.SMTP_FROM);
 } finally {
