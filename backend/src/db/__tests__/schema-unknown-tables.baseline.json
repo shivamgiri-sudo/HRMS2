@@ -90,6 +90,9 @@
   "modules/hiring-engine/qualified-followup.stops.ts": [
     "qualified_followup"
   ],
+  "modules/hiring-engine/qualified-followup.whatsapp.ts": [
+    "qualified_followup"
+  ],
   "modules/integrations/cosec/cosec-registration.service.ts": [
     "mx_usermst"
   ],
