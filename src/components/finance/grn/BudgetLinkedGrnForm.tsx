@@ -64,6 +64,14 @@ import {
   useBranchBudgetAllocations,
 } from "@/hooks/useBranchBudget";
 import { useToast } from "@/hooks/use-toast";
+import {
+  BranchSplitSection,
+  branchSharesError,
+  branchSharesPayload,
+  newBranchShare,
+  type BranchShareDraft,
+} from "@/components/finance/grn/BranchSplitSection";
+import { useBranchSplitOptions } from "@/hooks/useBranchSplitOptions";
 import { useHasRole } from "@/hooks/useUserRole";
 import { GST_RATES } from "@/lib/gst";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -469,6 +477,10 @@ export function BudgetLinkedGrnForm({
   const [costCentreSplitMethod, setCostCentreSplitMethod] = useState<string>("equal_split");
   const [allocations, setAllocations] = useState<AllocationDraft[]>([newAllocation()]);
   const [costCentreSplits, setCostCentreSplits] = useState<CostCentreSplitDraft[]>([]);
+  // Head Office bill split across branches (Finance Head only, behind a server flag): shares per
+  // branch instead of cost-centre rows; each lands on that branch's Back Office cost centre.
+  const [branchSplitOn, setBranchSplitOn] = useState(false);
+  const [branchShares, setBranchShares] = useState<BranchShareDraft[]>([newBranchShare()]);
   const [invoiceComponents, setInvoiceComponents] = useState<InvoiceComponentDraft[]>([newInvoiceComponent()]);
   const [files, setFiles] = useState<File[]>([]);
   const [created, setCreated] = useState<CreatedGrn | null>(
@@ -488,6 +500,16 @@ export function BudgetLinkedGrnForm({
   const [monthSplit, setMonthSplit] = useState<MonthSplitValue>({ startPeriod: "", endPeriod: "" });
 
   const isVendor = form.grnType === "vendor";
+  const canRaiseBranchSplit = useHasRole("finance_head", "super_admin");
+  const branchSplitQuery = useBranchSplitOptions(isVendor && canRaiseBranchSplit);
+  const branchSplitOptions = branchSplitQuery.data;
+  // Offered only on a Head Office GRN, to the roles allowed to raise one, while the server flag is on.
+  const canBranchSplit = Boolean(
+    isVendor && canRaiseBranchSplit && branchSplitOptions?.enabled
+    && branchSplitOptions.branches.find((b) => b.branchId === form.branchId)?.isHeadOffice
+  );
+  const branchSplitActive = canBranchSplit && branchSplitOn;
+  useEffect(() => { if (!canBranchSplit && branchSplitOn) setBranchSplitOn(false); }, [canBranchSplit, branchSplitOn]);
   const period = form.billDate ? form.billDate.slice(0, 7) : "";
   // Finance Head / Accounts Head / Super Admin / Branch Admin may override the accounting month —
   // e.g. to book a late March invoice into February's period after month-end close. The override
@@ -1466,7 +1488,12 @@ export function BudgetLinkedGrnForm({
       if (!form.subHead) next.subHead = "Select a sub-head.";
       if (form.head && form.subHead) {
         // Block unbudgeted GRNs — require budget top-up approval first
-        if (isUnbudgetedExpense) {
+        if (branchSplitActive) {
+          // Head Office bill split across branches: Head Office's own budget and cost centres play
+          // no part; the server funds each share from that branch's budget and refuses by name.
+          const shareError = branchSharesError(branchShares, branchSplitOptions);
+          if (shareError) next.costCentreSplit = shareError;
+        } else if (isUnbudgetedExpense) {
           next.costCentreSplit = `No approved budget exists for "${form.head} → ${form.subHead}". Request a budget top-up first via Branch Budget → Top-ups tab (Branch Head → Finance Head approval required).`;
         } else if (!costCentreSplits.length) {
           next.costCentreSplit = "No approved budget line matches this Head/Sub-head yet.";
@@ -1484,7 +1511,7 @@ export function BudgetLinkedGrnForm({
         }
 
         // Client-side budget cap per cost-centre split — catches over-budget vendor GRNs before the API call.
-        if (!next.costCentreSplit && !next.components && costCentreSplits.length > 0 && componentsPreview.rawTotalGross > 0) {
+        if (!branchSplitActive && !next.costCentreSplit && !next.components && costCentreSplits.length > 0 && componentsPreview.rawTotalGross > 0) {
           const overBudgetMessages: string[] = [];
           // Vendor budget is checked against base (P&L cost), not gross — GST is ITC.
           const splitBasis = componentsPreview.rawTotalBase;
@@ -1570,6 +1597,9 @@ export function BudgetLinkedGrnForm({
     splitDifference,
     costCentreSplits,
     costCentreSplitTotal,
+    branchSplitActive,
+    branchShares,
+    branchSplitOptions,
     invoiceComponents,
     componentsPreview,
     vendorCostCentreGroups,
@@ -1910,7 +1940,9 @@ export function BudgetLinkedGrnForm({
       // unbudgeted cost centres, so this picks the first INCLUDED row that actually has a
       // budget line, not literally row [0] — an unbudgeted row happening to sit first must not
       // make an otherwise-budgeted GRN look like it has no line at all.
-      const firstLine = splitMode
+      const firstLine = branchSplitActive
+        ? undefined
+        : splitMode
         ? budgetLines.find((line) => line?.id === rows[0]?.budgetLineId)
         : isUnbudgetedExpense
           ? undefined
@@ -1921,7 +1953,7 @@ export function BudgetLinkedGrnForm({
        * rolled, a budget unapproved between load and save — lands here, and a named error is the
        * difference between the raiser fixing their selection and filing a bug about a TypeError.
        */
-      if (!firstLine && !isUnbudgetedFlow) {
+      if (!firstLine && !isUnbudgetedFlow && !branchSplitActive) {
         throw new Error(
           "The selected budget line is no longer available. Reload the page and pick the Head/Sub-head again."
         );
@@ -1945,14 +1977,17 @@ export function BudgetLinkedGrnForm({
             // just "firstLine.cost_centre_id is empty" — a budgeted branch-level line can
             // legitimately carry a null cost_centre_id too (see the cost-centre share caution
             // below), and that existing case must keep sending undefined exactly as it always has.
-            costCentreId: firstLine?.cost_centre_id
-              ?? (isUnbudgetedFlow ? unbudgetedCostCentreId : undefined),
+            costCentreId: branchSplitActive
+              ? undefined // no Head Office cost centre: every share lands on a branch's Back Office
+              : firstLine?.cost_centre_id ?? (isUnbudgetedFlow ? unbudgetedCostCentreId : undefined),
+            // Head Office bill split across branches (server re-checks who may and that it is Head Office).
+            branchSplit: branchSplitActive || undefined,
             // Tells the server to take the unbudgeted create path, and carries the Head/Sub-head
             // that a budget line would otherwise have supplied — saveInvoiceComponents() /
             // saveAllocations() read both back off the header to build synthetic lines.
-            isUnbudgeted: isUnbudgetedFlow ? true : undefined,
-            head: isUnbudgetedFlow ? form.head : undefined,
-            subHead: isUnbudgetedFlow ? form.subHead : undefined,
+            isUnbudgeted: isUnbudgetedFlow && !branchSplitActive ? true : undefined,
+            head: isUnbudgetedFlow || branchSplitActive ? form.head : undefined,
+            subHead: isUnbudgetedFlow || branchSplitActive ? form.subHead : undefined,
             vendorId: isVendor ? form.vendorId : undefined,
             // Vendor: a trivial placeholder — the follow-up invoice-components call below fully
             // overwrites every meaningful header column with the real N-cost-centre x M-component
@@ -2012,13 +2047,15 @@ export function BudgetLinkedGrnForm({
           // independently (budgetLineId if present, else costCentreId as an unbudgeted
           // allocation against that row's own cost centre), so a GRN can mix budgeted and
           // unbudgeted cost centres under one Head/Sub-head instead of being all-or-nothing.
-          costCentreSplits: costCentreSplits
-            .filter((row) => row.included)
-            .map((row) => ({
-              budgetLineId: row.budgetLineId || undefined, // undefined for an unbudgeted row
-              costCentreId: row.costCentreKey, // always sent — the server needs it either way
-              percentage: Number(row.percentage),
-            })),
+          costCentreSplits: branchSplitActive
+            ? branchSharesPayload(branchShares)
+            : costCentreSplits
+                .filter((row) => row.included)
+                .map((row) => ({
+                  budgetLineId: row.budgetLineId || undefined, // undefined for an unbudgeted row
+                  costCentreId: row.costCentreKey, // always sent — the server needs it either way
+                  percentage: Number(row.percentage),
+                })),
           // Legacy flag, kept for an older client; the server now derives this per row instead.
           isUnbudgeted: isUnbudgetedExpense || undefined,
           lateInvoiceReason: form.lateInvoiceReason.trim() || undefined,
@@ -3155,7 +3192,7 @@ export function BudgetLinkedGrnForm({
               "will be flagged as unbudgeted and require Finance Head approval" wording is no
               longer true — NO_BUDGET_FOR_HEAD and HEADROOM_EXCEEDED are hard blocks now, not a
               later approval step. */}
-          {isVendor && Boolean(form.branchId && effectivePeriod && form.head && form.subHead) && (
+          {isVendor && !branchSplitActive && Boolean(form.branchId && effectivePeriod && form.head && form.subHead) && (
             headroomLoading ? (
               <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-[12px] text-grn-ink-soft">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking budget headroom…
@@ -3238,7 +3275,34 @@ export function BudgetLinkedGrnForm({
             </div>
           )}
 
-          {Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && vendorCostCentreGroups.length > 0 && (
+          {canBranchSplit && Boolean(form.head) && Boolean(form.subHead) && (
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-[13px] font-medium text-grn-ink">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={branchSplitOn}
+                onChange={(e) => {
+                  setBranchSplitOn(e.target.checked);
+                  if (e.target.checked && !branchShares.length) setBranchShares([newBranchShare()]);
+                }}
+              />
+              Split this bill across branches (each share lands on the branch's Back Office cost centre)
+            </label>
+          )}
+
+          {branchSplitActive && branchSplitOptions && (
+            <BranchSplitSection
+              amount={Number(form.amount)}
+              options={branchSplitOptions}
+              shares={branchShares}
+              onChange={setBranchShares}
+              error={err("costCentreSplit")}
+              head={form.head}
+              subHead={form.subHead}
+            />
+          )}
+
+          {!branchSplitActive && Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && vendorCostCentreGroups.length > 0 && (
             <CostCentreSplitEditor
               groups={vendorCostCentreGroups}
               rows={costCentreSplits}
