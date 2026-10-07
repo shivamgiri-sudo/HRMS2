@@ -10,6 +10,7 @@ import { db } from "../../db/mysql.js";
 import { getMetaFunnel, type FunnelRow } from "./he-meta-funnel.service.js";
 import { listBatches, listLaunches, type BatchRow, type LaunchRow } from "./he-launch.service.js";
 import { getCampaignConfig } from "./he-campaign-config.service.js";
+import { getDriveGroupsDetailed, type DriveGroup } from "./he-drive-trend.service.js";
 
 export interface PoolSourceRow { source: string; people: number; contacted: number; invited: number; confirmed: number; arrived: number; noShow: number }
 export interface DriveDayRow { driveId: string; date: string; branch: string; requisition: string; role: string; status: string; wanted: number; lined: number; invited: number; confirmed: number; arrived: number; noShow: number; declined: number }
@@ -19,8 +20,14 @@ export interface CampaignDashboard {
   reruns: LaunchRow[];
   saved: { batches: Array<BatchRow & { launches: number }>; sources: PoolSourceRow[]; batchLaunches: LaunchRow[] };
   drives: DriveDayRow[];
+  /** The same drives grouped per requisition, branch and source type, zero-filled over the window. Plan 4 switches the card to this and drops `drives`. */
+  driveGroups: DriveGroup[];
+  /** Only present when the grouped read failed (driveGroups is then empty); the dashboard is not cached in that case. */
+  failedSections?: string[];
 }
 let cache: { at: number; data: CampaignDashboard } | null = null;
+/** Test hook. */
+export function clearCampaignDashboardCache(): void { cache = null; }
 
 async function poolSources(): Promise<PoolSourceRow[]> {
   const [people] = await db.execute<RowDataPacket[]>("SELECT primary_source AS s, COUNT(*) AS n FROM he_lead GROUP BY primary_source");
@@ -58,7 +65,7 @@ async function driveDays(): Promise<DriveDayRow[]> {
 
 export async function getCampaignDashboard(): Promise<CampaignDashboard> {
   if (cache && Date.now() - cache.at < 60_000) return cache.data;
-  const [funnel, launches, batches, sources, drives] = await Promise.all([getMetaFunnel(), listLaunches(100), listBatches(100), poolSources(), driveDays()]);
+  const [funnel, launches, batches, sources, drives, grouped] = await Promise.all([getMetaFunnel(), listLaunches(100), listBatches(100), poolSources(), driveDays(), getDriveGroupsDetailed()]);
   const live = await Promise.all(funnel.campaigns.filter((c) => c.status === "active" || c.leads > 0).map(async (c) => ({ ...c, owner: (await getCampaignConfig(c.campaignId)).owner })));
   live.sort((a, b) => Number(b.status === "active") - Number(a.status === "active") || b.leads - a.leads);
   const batchLaunches = launches.filter((l) => l.kind === "batch");
@@ -66,8 +73,9 @@ export async function getCampaignDashboard(): Promise<CampaignDashboard> {
     generatedAt: new Date().toISOString(), live,
     reruns: launches.filter((l) => l.kind === "campaign"),
     saved: { batches: batches.map((b) => ({ ...b, launches: batchLaunches.filter((l) => l.audienceNames.includes(b.label)).length })), sources, batchLaunches },
-    drives,
+    drives, driveGroups: grouped.groups,
+    ...(grouped.failedSections.length ? { failedSections: ["driveGroups"] } : {}),
   };
-  cache = { at: Date.now(), data };
+  if (!data.failedSections) cache = { at: Date.now(), data };
   return data;
 }

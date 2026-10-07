@@ -14,6 +14,7 @@ import { getRequisitionReadiness } from "./he-readiness.service.js";
 import { nextWorkingDay } from "./he-plan.service.js";
 import { planStreamsForDay } from "./he-stream-plan.service.js";
 import { getRequisitionSources } from "./he-requisition-sources.service.js";
+import { getDriveTrend } from "./he-drive-trend.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import {
   StreamError, getStream, listStreamEvents, listStreams, loadActiveStreams, toWindow, tryChangeStream, tryCreateStream,
@@ -163,6 +164,19 @@ export function registerStreamRoutes(r: Router, roles: StreamRoles): void {
       if (!data) return void res.status(404).json({ success: false, message: "Requisition not found" });
       res.json({ success: true, data });
     } catch (err) { sendError(res, err, "Could not load sources", "sources"); }
+  });
+
+  // Day-wise drive series of one requisition (counts and dates only). Outside the caller's branch answers 404.
+  r.get("/drive-trend", ...view, async (req, res) => {
+    try {
+      const { requisitionId: rid, sourceType: st, branch } = req.query;
+      if (typeof rid !== "string" || !ID_RE.test(rid)) return bad(res, "requisitionId is required");
+      if (st != null && (typeof st !== "string" || !SOURCES.includes(st))) return bad(res, "Unknown source type");
+      if (branch != null && (typeof branch !== "string" || !branch || branch.length > 150)) return bad(res, "Invalid branch");
+      const data = await getDriveTrend({ requisitionId: rid, branch: (branch as string | undefined) ?? null, sourceType: (st as SourceType | undefined) ?? null }, await branchScopeOf(req as AuthenticatedRequest));
+      if (!data) return void res.status(404).json({ success: false, message: "Requisition not found" });
+      res.json({ success: true, data });
+    } catch (err) { sendError(res, err, "Could not load the drive series", "drive trend"); }
   });
 
   r.post("/requisitions/:id/plan-now", ...write, async (req, res) => {

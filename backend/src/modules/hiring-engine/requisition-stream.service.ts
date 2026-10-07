@@ -364,6 +364,13 @@ export async function loadActiveStreams(o: { requisitionId?: string } = {}): Pro
   return attachDays(rows);
 }
 
+/** Streams of one source type for a requisition in any status but draft, with exception days (the drive series window). */
+export async function loadStreamsOfType(requisitionId: string, sourceType: SourceType): Promise<StreamRow[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT * FROM requisition_stream WHERE requisition_id = ? AND source_type = ? AND status <> 'draft' ORDER BY created_at, id", [requisitionId, sourceType]);
+  return attachDays(rows);
+}
+
 /** Closes open / paused streams whose window ended or whose requisition is filled or closed. Never throws (tick path). */
 export async function autoCloseStreams(date: string, dryRun: boolean): Promise<Array<{ streamId: string; requisitionId: string; reason: AutoCloseReason }>> {
   const out: Array<{ streamId: string; requisitionId: string; reason: AutoCloseReason }> = [];

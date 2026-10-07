@@ -35,6 +35,10 @@
   "modules/hiring-engine/he-campaign-config.service.ts": [
     "he_campaign_config"
   ],
+  "modules/hiring-engine/he-drive-trend.service.ts": [
+    "requisition_stream",
+    "requisition_stream_match"
+  ],
   "modules/hiring-engine/he-drive.service.ts": [
     "he_drive",
     "he_match"
