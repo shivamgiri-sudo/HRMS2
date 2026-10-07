@@ -24,7 +24,7 @@ vi.mock("../he-drive-insight-facts.service.js", async (orig) => {
 
 import { INSIGHT_DEFAULTS, type DriveInsight } from "../he-drive-insights.js";
 import { collectInsightFacts } from "../he-drive-insight-facts.service.js";
-import { clearDriveAnalyticsCache, getDriveAnalytics, type DriveAnalytics } from "../he-drive-analytics.service.js";
+import { clearDriveAnalyticsCache, driveAnalyticsCacheSize, getDriveAnalytics, type DriveAnalytics } from "../he-drive-analytics.service.js";
 
 const NOW = new Date("2026-10-14T06:00:00Z"); // 11:30 IST, Wednesday 2026-10-14; next working day 2026-10-15
 const ALL = { all: true } as never;
@@ -153,6 +153,24 @@ describe("collectInsightFacts", () => {
     expect(facts.streams).toEqual([{ streamId: "s1", requisitionId: "r1", code: "REQ-1", sourceType: "meta_old", cap: 50, remainingDays: 6, poolRemaining: 30 }]);
   });
 
+  it("skips a degraded plan: no tomorrow fact, section flagged", async () => {
+    getDrivePlan.mockImplementation(async (q: { requisitionId: string }) => ({ ...planFor(q.requisitionId), partial: true, failedSections: ["rates"] }));
+    const { facts, failedSections } = await collectInsightFacts(ctxOf({ streams: [stream("s1", "r1")] }), ALL);
+    expect(failedSections).toContain("insight:tomorrow");
+    expect(facts.tomorrow).toEqual([]);
+  });
+
+  it("passes the request's thresholds to every plan build", async () => {
+    await collectInsightFacts(ctxOf({ streams: [stream("s1", "r1")] }), ALL);
+    expect(getDrivePlan.mock.calls[0][3]).toBe(T);
+  });
+
+  it("measures the hour distance around midnight", async () => {
+    await collectInsightFacts(ctxOf(), ALL);
+    const c = sqls().find((s) => s.kind === "contact")!;
+    expect(c.sql).toContain("LEAST(ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED)), 24 - ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED)))");
+  });
+
   it("adds requisitions with a drive tomorrow even without a stream", async () => {
     rows.tomorrowDrives = [{ requisition_id: "r1" }];
     await collectInsightFacts(ctxOf(), ALL);
@@ -266,6 +284,39 @@ describe("insights in getDriveAnalytics", () => {
     const a = (await getDriveAnalytics(Q, ALL, NOW)) as DriveAnalytics;
     expect(a).toMatchObject({ partial: true, failedSections: ["insight:language"] });
     expect(a.insights).toEqual([ins]);
+  });
+
+  it("answers null for an unknown branch asked by an org-wide caller, and data for a known one", async () => {
+    wire();
+    const base = execute.getMockImplementation()!;
+    let known = false;
+    execute.mockImplementation(async (sql: string, p: unknown[]) => (String(sql).includes("FROM job_requisition WHERE branch_name") ? [known ? [{ 1: 1 }] : []] : base(sql, p)));
+    expect(await getDriveAnalytics({ ...Q, branch: "Nowhere" }, ALL, NOW)).toBeNull();
+    const probe = execute.mock.calls.find((c) => String(c[0]).includes("branch_name COLLATE utf8mb4_unicode_ci = ?"))!;
+    expect(probe[1]).toEqual(["Nowhere"]);
+    known = true;
+    expect(await getDriveAnalytics({ ...Q, branch: "Pune" }, ALL, NOW)).toMatchObject({ requisitionCount: 1 });
+  });
+
+  it("continues when the branch probe fails", async () => {
+    wire();
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, p: unknown[]) => { if (String(sql).includes("FROM job_requisition WHERE branch_name")) throw Object.assign(new Error("x"), { code: "ER_X" }); return base(sql, p); });
+    const a = (await getDriveAnalytics({ ...Q, branch: "Pune" }, ALL, NOW)) as DriveAnalytics;
+    expect(a.partial).toBe(false);
+  });
+
+  it("drops expired cache entries on every write", async () => {
+    wire();
+    vi.useFakeTimers({ now: NOW });
+    try {
+      await getDriveAnalytics({ from: "2026-10-01", to: "2026-10-10" }, ALL, NOW);
+      await getDriveAnalytics({ from: "2026-10-02", to: "2026-10-10" }, ALL, NOW);
+      expect(driveAnalyticsCacheSize()).toBe(2);
+      vi.setSystemTime(new Date(NOW.getTime() + 61_000));
+      await getDriveAnalytics({ from: "2026-10-03", to: "2026-10-10" }, ALL, NOW);
+      expect(driveAnalyticsCacheSize()).toBe(1);
+    } finally { vi.useRealTimers(); }
   });
 
   it("skips the facts when there are no requisitions", async () => {

@@ -27,7 +27,7 @@ const srcRow = (sourceType: string, leads: number, extra: object = {}) => ({ sou
 const head = (id: string, branch = "Pune", day = "2026-10-12") => ({ id, requisition_code: `REQ-${id}`, designation_name: "Agent", branch_name: branch, last_drive: day });
 const driveRow = (rid: string, o: Record<string, unknown> = {}) => ({ requisition_id: rid, requisition_code: `REQ-${rid}`, designation_name: "Agent", branch_name: "Pune", id: `d-${rid}`, drive_date: "2026-10-12", status: "active", target_shows: 10, stream_id: null, source_type: null, lined: 20, invited: 15, confirmed: 10, arrived: 6, no_show: 2, declined: 1, ...o });
 
-type Impl = { discovery?: unknown[]; header?: unknown[]; drives?: unknown[]; outcomes?: unknown[]; fail?: Record<string, string>; sources?: unknown };
+type Impl = { discovery?: unknown[]; header?: unknown[]; drives?: unknown[]; outcomes?: unknown[]; fail?: Record<string, string>; sources?: unknown; branchKnown?: boolean };
 let impl: Impl;
 const kindOf = (q: string): string =>
   q.includes("FROM job_requisition WHERE id") ? "header" : q.includes("FROM he_drive d WHERE d.drive_date BETWEEN") ? "discovery" : q.includes("LEFT JOIN he_drive d ON") ? "drives"
@@ -48,6 +48,7 @@ beforeEach(() => {
     const k = kindOf(String(sql));
     const code = impl.fail?.[k];
     if (code) throw Object.assign(new Error("SELECT boom WHERE mobile = 9876543210"), { code });
+    if (String(sql).includes("FROM job_requisition WHERE branch_name")) return [impl.branchKnown === false ? [] : [{ 1: 1 }]];
     if (k === "header") return [impl.header ?? []];
     if (k === "discovery") return [impl.discovery ?? []];
     if (k === "drives") return [impl.drives ?? []];
@@ -263,12 +264,13 @@ describe("getDriveAnalytics", () => {
       spy.mockRestore();
     });
     it("keeps at most 100 entries, evicting the oldest", async () => {
+      const reads = () => execute.mock.calls.filter((c) => !String(c[0]).includes("FROM job_requisition WHERE branch_name")).length; // the branch probe runs before the cache
       for (let i = 0; i < 101; i++) await getDriveAnalytics({ ...Q, branch: `B${i}` }, ALL, NOW);
-      const n = execute.mock.calls.length;
+      const n = reads();
       await getDriveAnalytics({ ...Q, branch: "B100" }, ALL, NOW);
-      expect(execute.mock.calls.length).toBe(n);
+      expect(reads()).toBe(n);
       await getDriveAnalytics({ ...Q, branch: "B0" }, ALL, NOW);
-      expect(execute.mock.calls.length).toBeGreaterThan(n);
+      expect(reads()).toBeGreaterThan(n);
     });
   });
 

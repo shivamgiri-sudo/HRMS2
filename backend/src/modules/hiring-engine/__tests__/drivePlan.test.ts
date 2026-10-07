@@ -217,6 +217,36 @@ describe("getDrivePlan", () => {
     expect(lined).not.toContain("sm.drive_id");
   });
 
+  it("counts uncredited people as used seats even when there is no Hiring Engine stream", async () => {
+    loadActiveStreams.mockResolvedValue([stream("s1")]);
+    impl.drives = [{ id: "d1", drive_date: "2026-10-15", status: "active", target_shows: 30, slot_start: "10:00:00", slot_end: "12:00:00", slot_minutes: 30, slot_capacity: 5 }];
+    impl.lined = [{ drive_id: "d1", stream_id: "s1", n: 12 }, { drive_id: "d1", stream_id: null, n: 3 }];
+    const day = ok(await getDrivePlan({ requisitionId: "r1", from: "2026-10-15", days: 1 }, ALL, NOW)).days[0];
+    expect(day.seatsUsed).toBe(15); // capacity 20: 5 seats left, not 8
+    expect(day.streams.map((x) => [x.streamId, x.lined])).toEqual([["s1", 12]]);
+    expect(day.streams[0].recommended).toBeLessThanOrEqual(5);
+  });
+
+  it("uses the thresholds it is given instead of loading them", async () => {
+    const t = { ...(await import("../he-drive-insights.js")).INSIGHT_DEFAULTS, "insight.plan_trailing_days": 3 };
+    ok(await getDrivePlan({ requisitionId: "r1", from: "2026-10-15", days: 1 }, ALL, NOW, t));
+    const rates = execute.mock.calls.find((c) => kindOf(String(c[0])) === "rates")!;
+    expect(rates[1]).toEqual(["r1", "2026-10-11", "2026-10-13"]); // today 14 Oct minus 3 days
+  });
+
+  it("returns copies from the cache so an edited result never leaks into the next one", async () => {
+    const q = { requisitionId: "r1", from: "2026-10-15", days: 1 };
+    const a = ok(await getDrivePlan(q, ALL, NOW));
+    a.days[0].target = 12345;
+    a.checklist.items.push({ kind: "readiness", text: "x" });
+    const b = ok(await getDrivePlan(q, ALL, NOW));
+    const c = ok(await getDrivePlan(q, ALL, NOW));
+    expect(b.days[0].target).not.toBe(12345);
+    expect(b.checklist.items.some((i) => i.text === "x")).toBe(false);
+    b.days[0].target = 7;
+    expect(c.days[0].target).not.toBe(7);
+  });
+
   it("uses the plan target and capacity when the day has no drive", async () => {
     const r = ok(await getDrivePlan({ requisitionId: "r1", from: "2026-10-15", days: 1 }, ALL, NOW));
     expect(r.days[0]).toMatchObject({ driveId: null, target: 100, capacity: 405 });

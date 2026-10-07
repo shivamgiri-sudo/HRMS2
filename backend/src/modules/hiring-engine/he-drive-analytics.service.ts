@@ -165,6 +165,7 @@ const discoverSql = (o: { streamIds: number; branch: boolean; requisition: boole
  GROUP BY jr.id, jr.requisition_code, jr.designation_name, jr.branch_name
  ORDER BY MAX(x.last_drive) IS NULL, MAX(x.last_drive) DESC, jr.id
  LIMIT ${MAX_REQUISITIONS + 1}`;
+const BRANCH_SQL = "SELECT 1 FROM job_requisition WHERE branch_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1";
 const HEADER_SQL = "SELECT branch_name FROM job_requisition WHERE id = ? LIMIT 1";
 
 // ---- reads ------------------------------------------------------------------------------------------------------------------------------
@@ -209,6 +210,7 @@ const inRange = (d: string, from: string, to: string): boolean => d >= from && d
 const cache = new Map<string, { at: number; data: DriveAnalytics }>();
 const scopeKey = (s: BranchScope): string => (s.all ? "all" : `b:${s.branchName ?? ""}`);
 export function clearDriveAnalyticsCache(): void { cache.clear(); }
+export function driveAnalyticsCacheSize(): number { return cache.size; }
 
 const text = (v: unknown, max: number): string | null | false => (v === undefined || v === null || v === "" ? null : typeof v === "string" && v.length <= max ? v : false);
 
@@ -231,6 +233,13 @@ export async function getDriveAnalytics(q: AnalyticsQuery, scope: BranchScope, n
     if (!scope.all && reqBranch !== scope.branchName) return null;
     if (branchIn && branchIn !== reqBranch) return null;
   }
+  if (scope.all && branchIn && !requisitionId) { // an org-wide caller naming a branch that does not exist: not found, never zeros
+    let exists = true; // a failing probe must not turn into a 404
+    try { exists = ((await db.execute<RowDataPacket[]>(BRANCH_SQL, [branchIn]))[0] ?? []).length > 0; } catch (err) {
+      logger.error({ section: "branch", code: (err as { code?: unknown })?.code ?? "unknown" }, "[he-drive-analytics] section failed");
+    }
+    if (!exists) return null;
+  }
   const key = `${scopeKey(scope)}|${w.from}|${w.to}|${requisitionId ?? "*"}|${branchIn ?? "*"}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return structuredClone(hit.data); // a copy: a caller may extend or edit the result
@@ -238,8 +247,10 @@ export async function getDriveAnalytics(q: AnalyticsQuery, scope: BranchScope, n
 
   const data = tidy(await build(w, requisitionId, branch, scope, now));
   if (!data.partial) {
+    const t = Date.now();
+    for (const [k, v] of cache) if (t - v.at >= CACHE_MS) cache.delete(k); // expired entries go on every write, not only on overflow
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
-    cache.set(key, { at: Date.now(), data: structuredClone(data) });
+    cache.set(key, { at: t, data: structuredClone(data) });
   }
   return data;
 }

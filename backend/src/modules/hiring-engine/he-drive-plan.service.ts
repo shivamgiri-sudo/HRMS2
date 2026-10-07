@@ -125,7 +125,7 @@ interface DriveRow { id: string; date: string; target: number; cfg: { date: stri
  * Null when the requisition is unknown or outside the caller's scope (never says which). `days` is clamped to 1..14 (default 7); a
  * malformed `from` falls back to the next working day. The scope check runs before the cache is read.
  */
-export async function getDrivePlan(q: { requisitionId: string; from?: string | null; days?: number | null }, scope: BranchScope, now: Date = new Date()): Promise<DrivePlan | null> {
+export async function getDrivePlan(q: { requisitionId: string; from?: string | null; days?: number | null }, scope: BranchScope, now: Date = new Date(), thresholds?: InsightThresholds): Promise<DrivePlan | null> {
   if (!scope.all && !scope.branchName) return null; // fail closed
   if (typeof q.requisitionId !== "string" || !q.requisitionId || q.requisitionId.length > 64) return null;
   const failed: string[] = [];
@@ -149,13 +149,13 @@ export async function getDrivePlan(q: { requisitionId: string; from?: string | n
   const days = Number.isFinite(n) && n >= 1 ? Math.min(MAX_DAYS, Math.floor(n)) : DEFAULT_DAYS;
   const key = `${requisitionId}|${from}|${days}|${scopeKey(scope)}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
+  if (hit && Date.now() - hit.at < CACHE_MS) return structuredClone(hit.data); // a copy: a caller may edit the result
   if (hit) cache.delete(key);
 
-  const data = await build({ requisitionId, from, days, head, failed }, now);
+  const data = await build({ requisitionId, from, days, head, failed, thresholds }, now);
   if (!data.partial) {
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
-    cache.set(key, { at: Date.now(), data });
+    cache.set(key, { at: Date.now(), data: structuredClone(data) });
   }
   return data;
 }
@@ -171,7 +171,7 @@ function planDates(from: string, days: number, open: StreamRow[]): string[] {
 }
 
 async function build(
-  o: { requisitionId: string; from: string; days: number; head: RowDataPacket | null; failed: string[] }, now: Date,
+  o: { requisitionId: string; from: string; days: number; head: RowDataPacket | null; failed: string[]; thresholds?: InsightThresholds }, now: Date,
 ): Promise<DrivePlan> {
   const { requisitionId, from, failed } = o;
   const today = istToday(now);
@@ -180,7 +180,7 @@ async function build(
   const dates = planDates(from, o.days, open);
   const last = dates[dates.length - 1] ?? from;
   const checkDate = nextWorkingDay(now);
-  const thresholds: InsightThresholds = await loadInsightThresholds().catch(() => ({ ...INSIGHT_DEFAULTS }));
+  const thresholds: InsightThresholds = o.thresholds ?? await loadInsightThresholds().catch(() => ({ ...INSIGHT_DEFAULTS }));
   const trailFrom = addDays(today, -Math.max(1, Math.floor(thresholds["insight.plan_trailing_days"])));
   const trailTo = addDays(today, -1);
 
@@ -227,6 +227,8 @@ async function build(
     const drive = driveBy.get(date) ?? null;
     const covering = open.filter((s) => coversDay(toWindow(s), date));
     const caps = streamCaps(covering, nums.invites);
+    // people lined up without a stream while the requisition has no Hiring Engine stream still hold seats
+    const orphanSeats = drive && !heStream ? (linedBy.get(`${drive.id}|`) ?? 0) : 0;
     const inputs: PlanStreamInput[] = streams.map((s) => {
       const covers = covering.some((c) => c.id === s.id);
       const credited = drive ? (linedBy.get(`${drive.id}|${s.id}`) ?? 0) : 0;
@@ -236,7 +238,7 @@ async function build(
     });
     const day = planDay({
       date, driveId: drive?.id ?? null, target: drive && drive.target > 0 ? drive.target : nums.targetShows,
-      capacity: drive ? driveCapacity(drive.cfg) : nums.capacity, streams: inputs,
+      capacity: drive ? driveCapacity(drive.cfg) : nums.capacity, streams: inputs, extraSeatsUsed: orphanSeats,
     });
     for (const l of day.streams) { const p = poolLeft.get(l.streamId); if (p != null) poolLeft.set(l.streamId, Math.max(0, p - l.recommended)); }
     return day;

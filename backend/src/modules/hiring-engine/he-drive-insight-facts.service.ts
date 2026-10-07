@@ -58,8 +58,8 @@ const SHOWED = "m.state IN ('arrived','selected')";
 const outboundJoin = (channels: string): string => `JOIN he_message o ON o.lead_id = m.lead_id AND o.direction = 'out' AND ${channels} AND o.created_at >= ? AND o.created_at < ?`;
 
 // Outbound walk-in invites of matched leads with a known best hour; outside = more than the tolerance away from that hour.
-// best_hour_ist is TINYINT UNSIGNED: cast before subtracting or an hour below it overflows.
-const contactSql = (n: number, s: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(s)} AS source_type, (ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED)) > ?) AS outside,
+// best_hour_ist is TINYINT UNSIGNED: cast before subtracting or an hour below it overflows. The distance is circular (23h vs 00h is 1).
+const contactSql = (n: number, s: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(s)} AS source_type, (LEAST(ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED)), 24 - ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED))) > ?) AS outside,
        COUNT(DISTINCT o.id) AS n, COUNT(DISTINCT CASE WHEN ${REPLY_24H} THEN o.id END) AS hits
   ${FROM_MATCH}
   ${creditJoin(s)}
@@ -323,13 +323,18 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
     const plans = new Map<string, DrivePlan>();
     await group("insight:tomorrow", failed, async () => {
       const got = await inChunks(chosen, PLAN_PARALLEL, async (id) => {
-        try { return [id, await getDrivePlan({ requisitionId: id, from: tomorrow, days: 1 }, scope, now)] as const; } catch (err) {
+        try { return [id, await getDrivePlan({ requisitionId: id, from: tomorrow, days: 1 }, scope, now, ctx.t)] as const; } catch (err) {
           if (!failed.includes("insight:tomorrow")) failed.push("insight:tomorrow");
           logger.error({ section: "insight:tomorrow", code: (err as { code?: unknown })?.code ?? "unknown" }, "[he-drive-insight-facts] section failed");
           return [id, null] as const;
         }
       });
-      for (const [id, p] of got) if (p) plans.set(id, p);
+      for (const [id, p] of got) {
+        if (!p) continue;
+        // a degraded plan (e.g. its rates fell back to the default) must not feed insights, and flags the response partial
+        if (p.partial) { if (!failed.includes("insight:tomorrow")) failed.push("insight:tomorrow"); continue; }
+        plans.set(id, p);
+      }
     }, () => undefined);
     for (const id of chosen) {
       const day = plans.get(id)?.days.find((d) => d.date === tomorrow);
