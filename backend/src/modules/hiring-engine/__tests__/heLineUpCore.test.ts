@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { calls, refresh, flags } = vi.hoisted(() => ({ calls: [] as Array<[string, unknown[]]>, refresh: vi.fn(async () => ({})), flags: { stale: false, night: false } }));
 
@@ -14,10 +14,14 @@ vi.mock("../../../db/mysql.js", () => ({
       if (/FROM he_drive WHERE id = \?/.test(sql)) return [[driveRow]];
       if (/FROM job_requisition jr/.test(sql)) return [[{ ...reqRow, night_shift_required: flags.night ? 1 : 0 }]];
       if (/FROM he_lead l LEFT JOIN he_lead_insight/.test(sql)) return [["1", "2"].map((i) => ({ ...lead(i), ...(flags.stale ? { history_refreshed_at: null } : {}), ...(flags.night ? { night_shift_ok: null } : {}) }))];
+      if (/^SELECT lead_id FROM he_match/.test(sql.trim())) { if (onDrive.fail) throw new Error("x"); return [onDrive.ids.map((lead_id) => ({ lead_id }))]; }
       return [[]];
     }),
   },
 }));
+const { matched, onDrive, warn } = vi.hoisted(() => ({ matched: vi.fn(async () => ({ enqueued: 0, exists: 0, handedOver: 0 })), onDrive: { ids: [] as string[], fail: false }, warn: vi.fn() }));
+vi.mock("../../../logger.js", () => ({ logger: { warn, info: vi.fn(), error: vi.fn() } }));
+vi.mock("../qualified-followup.service.js", () => ({ enqueueMatchedFollowups: matched }));
 vi.mock("../he-eligibility.service.js", () => ({
   applyEligibilityGate: vi.fn(async (leads: Array<{ id: string }>) => ({ verdicts: new Map(leads.map((l) => [l.id, { eligible: true, priority: 0 }])), blockedByReason: {} })),
 }));
@@ -29,7 +33,7 @@ vi.mock("../he-learn.js", () => ({ learnedBonus: () => ({ bonus: 0, reasons: [] 
 
 import { lineUpCandidates, suggestMatchesDetailed } from "../he-drive.service.js";
 
-beforeEach(() => { calls.length = 0; refresh.mockClear(); flags.stale = false; flags.night = false; });
+beforeEach(() => { matched.mockClear(); warn.mockClear(); onDrive.ids = []; onDrive.fail = false; calls.length = 0; refresh.mockClear(); flags.stale = false; flags.night = false; });
 
 describe("line-up SQL before the stream options (snapshot of today's behaviour)", () => {
   it("suggestMatchesDetailed(d1)", async () => {
@@ -89,5 +93,57 @@ describe("lineUpCandidates options", () => {
   it("without excludeOnDrive the clause is absent", async () => {
     await lineUpCandidates("d1", { audience });
     expect(cand()[0]).not.toContain("mx.drive_id");
+  });
+});
+
+describe("follow-up enqueue hook", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("mode unset: no extra SQL and no enqueue call (same calls as with the hook absent)", async () => {
+    await lineUpCandidates("d1");
+    expect(calls.some(([q]) => q.startsWith("SELECT lead_id FROM he_match"))).toBe(false);
+    expect(matched).not.toHaveBeenCalled();
+  });
+
+  it("mode off spelled out behaves like unset", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "off");
+    await lineUpCandidates("d1");
+    expect(calls.some(([q]) => q.startsWith("SELECT lead_id FROM he_match"))).toBe(false);
+    expect(matched).not.toHaveBeenCalled();
+  });
+
+  it("dry_run: one he_match pre-check before the INSERTs, enqueue called once with only the lead not already on the drive", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "dry_run");
+    onDrive.ids = ["1"];
+    await lineUpCandidates("d1", { followupStream: { streamId: "s1", sourceType: "meta_live", originId: "c9", originLabel: "Oct ads" } });
+    const sel = calls.findIndex(([q]) => q.startsWith("SELECT lead_id FROM he_match"));
+    const ins = calls.findIndex(([q]) => q.startsWith("INSERT INTO he_match"));
+    expect(sel).toBeGreaterThan(-1);
+    expect(sel).toBeLessThan(ins);
+    expect(calls.filter(([q]) => q.startsWith("SELECT lead_id FROM he_match"))).toHaveLength(1);
+    expect(matched).toHaveBeenCalledTimes(1);
+    expect(matched).toHaveBeenCalledWith({ id: "d1", requisitionId: "r1", sourceKind: "pool", runLabel: null, driveDate: "2026-10-08" }, ["2"],
+      { streamId: "s1", sourceType: "meta_live", originId: "c9", originLabel: "Oct ads" });
+  });
+
+  it("preview (write:false) never enqueues", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "dry_run");
+    await lineUpCandidates("d1", { write: false });
+    expect(matched).not.toHaveBeenCalled();
+    expect(calls.some(([q]) => q.startsWith("SELECT lead_id FROM he_match"))).toBe(false);
+  });
+
+  it("fail open: a rejecting enqueue or a failing pre-check never throws into the line-up", async () => {
+    vi.stubEnv("QUAL_FOLLOWUP_MODE", "dry_run");
+    matched.mockRejectedValueOnce(new Error("boom 9876543210"));
+    await expect(lineUpCandidates("d1")).resolves.toMatchObject({ suggested: 2 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls[0])).not.toMatch(/\d{10}/);
+    warn.mockClear(); matched.mockClear();
+    onDrive.fail = true;
+    await expect(lineUpCandidates("d1")).resolves.toMatchObject({ suggested: 2 });
+    expect(matched).not.toHaveBeenCalled(); // pre-check failed: nobody is enqueued as new, the line-up itself is untouched
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

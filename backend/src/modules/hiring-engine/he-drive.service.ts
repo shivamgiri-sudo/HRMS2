@@ -18,6 +18,9 @@ import { eduRank } from "../meta-campaign/lead-screener.service.js";
 import { industriesForProcess, rankRequisitions, scoreLead, type MatchRequisition } from "./he-matcher.js";
 import { driveCapacity, inviteTarget, invitesForTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
 import { addEvent } from "./he-lead.service.js";
+import { logger } from "../../logger.js";
+import { enqueueMatchedFollowups } from "./qualified-followup.service.js";
+import { followupMode } from "./qualified-followup.schedule.js";
 import type { FollowupStreamRef } from "./qualified-followup.types.js";
 
 /** Who a drive is lined up from. pool = everyone eligible; meta = anyone who filled a Meta form; campaign = those Meta campaigns' qualified leads; batch = those upload batches. */
@@ -318,6 +321,17 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
     // rankScore = fit weighted by how much of the JD we actually know, so a phone-only record does not outrank a proven fit.
     .sort((a, b) => (Number(b.consented) * 1000 - b.priority * 10 + b.res.rankScore + b.eng * 0.2) - (Number(a.consented) * 1000 - a.priority * 10 + a.res.rankScore + a.eng * 0.2))
     .slice(0, want);
+  // Follow-up records: only people newly on this drive, and only when the pipeline is switched on (mode off makes no extra query).
+  const trackFollowups = write && scored.length > 0 && followupMode() !== "off";
+  let newLeadIds: string[] = [];
+  if (trackFollowups) {
+    try {
+      const ids = scored.map((x) => x.id);
+      const [on] = await db.execute<RowDataPacket[]>(`SELECT lead_id FROM he_match WHERE drive_id = ? AND lead_id IN (${ids.map(() => "?").join(",")})`, [driveId, ...ids]);
+      const had = new Set(on.map((r) => String(r.lead_id)));
+      newLeadIds = ids.filter((id) => !had.has(id));
+    } catch (err) { logger.warn({ driveId, err: String((err as Error).message).replace(/\d{6,}/g, "#") }, "[qualified-followup] line-up pre-check failed"); }
+  }
   if (write) for (const s of scored) {
     await db.execute(
       `INSERT INTO he_match (lead_id, requisition_id, drive_id, score, reasons_json, distance_km, state, token)
@@ -330,6 +344,10 @@ export async function lineUpCandidates(driveId: string, o: LineUpOptions = {}): 
          state = IF(drive_id <=> VALUES(drive_id) OR state NOT IN ('invited','confirmed','slot_released','no_show'), state, 'suggested'),
          drive_id = VALUES(drive_id), score = VALUES(score), reasons_json = VALUES(reasons_json), distance_km = VALUES(distance_km)`,
       [s.id, drive.requisition_id, driveId, s.res.score, JSON.stringify({ reasons: s.res.reasons, unknown: s.res.unknown, confidence: s.res.confidence, priority: s.priority }), s.res.distanceKm, randomBytes(16).toString("hex")]);
+  }
+  if (trackFollowups && newLeadIds.length) {
+    void enqueueMatchedFollowups({ id: driveId, requisitionId: drive.requisition_id, sourceKind: drive.source_kind, runLabel: drive.run_label, driveDate: String(drive.drive_date).slice(0, 10) }, newLeadIds, o.followupStream ?? null)
+      .catch((err) => logger.warn({ driveId, err: String((err as Error).message).replace(/\d{6,}/g, "#") }, "[qualified-followup] matched enqueue failed"));
   }
   // Earlier suggestions that no longer qualify (e.g. before the location rule) are dropped; contacted people are kept.
   if (!write || o.keepOtherSuggestions) { /* preview, or other streams' suggestions stay */ } else if (scored.length) {

@@ -3,12 +3,12 @@
  * also_in_sources. With QUAL_FOLLOWUP_MODE off nothing touches the database. Enqueue functions never throw.
  */
 import { randomUUID } from "node:crypto";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
-import type { EnqueueInput, FollowupMode, SourceType } from "./qualified-followup.types.js";
+import type { EnqueueInput, FollowupMode, FollowupStreamRef, MatchedDriveRef, SourceType } from "./qualified-followup.types.js";
 import { readSwitches, rowTag } from "./qualified-followup.policy.js";
-import { dueTimes, followupMode, normaliseMobile10 } from "./qualified-followup.schedule.js";
+import { classifySource, dueTimes, followupMode, normaliseMobile10 } from "./qualified-followup.schedule.js";
 
 export type EnqueueStatus = "skipped_off" | "enqueued" | "exists" | "invalid";
 
@@ -27,12 +27,13 @@ export async function enqueueQualifiedFollowup(input: EnqueueInput, mode: Follow
     const id = randomUUID();
     await db.execute(
       `INSERT INTO qualified_followup (id, source_type, meta_lead_id, he_lead_id, ats_candidate_id, requisition_id, campaign_id, drive_id, origin_id, origin_label,
-         mobile10, email, full_name, branch_name, role_name, qualified_at, email_due_at, wa_due_at, call_due_at, mode_at_enqueue)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+         mobile10, email, full_name, branch_name, role_name, qualified_at, email_due_at, wa_due_at, owner, email_status, wa_status, call_state, call_due_at, mode_at_enqueue)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
        ON DUPLICATE KEY UPDATE id = id`,
       [id, input.sourceType, input.metaLeadId ?? null, input.heLeadId ?? null, input.atsCandidateId ?? null, input.requisitionId, input.campaignId ?? null,
        input.driveId ?? null, input.originId, input.originLabel, mobile10, email, input.fullName ?? null, input.branchName ?? null, input.roleName ?? null,
-       qualifiedAt, emailDueAt, waDueAt, tag]);
+       qualifiedAt, input.engineOwned ? null : emailDueAt, input.engineOwned ? null : waDueAt,
+       input.engineOwned ? "engine" : "pipeline", input.engineOwned ? "engine" : null, input.engineOwned ? "engine" : null, input.engineOwned ? "skipped" : "pending", tag]);
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, source_type, also_in_sources FROM qualified_followup WHERE mobile10 = ? AND requisition_id = ? LIMIT 1", [mobile10, input.requisitionId]);
     const row = rows[0];
@@ -125,4 +126,48 @@ export async function personOptedOut(mobile10: string): Promise<boolean> {
             AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = l.id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NULL)))
       LIMIT 1`, [mobile10]);
   return rows.length > 0;
+}
+
+/**
+ * Record people who were lined up on a drive (meta_old re-runs, the he pool, streams). The Hiring Engine sends to them, so the rows are
+ * engine-owned and record-only. A person the pipeline already holds is handed to the engine unless the first invite (T1) already went out;
+ * the guard sits in the UPDATE's WHERE, so it is idempotent and race-safe. Never throws; mode off makes no database call.
+ */
+export async function enqueueMatchedFollowups(
+  drive: MatchedDriveRef, leadIds: string[], stream: FollowupStreamRef | null = null, mode: FollowupMode = followupMode(),
+): Promise<{ enqueued: number; exists: number; handedOver: number }> {
+  const out = { enqueued: 0, exists: 0, handedOver: 0 };
+  if (mode === "off" || !leadIds.length) return out;
+  try {
+    const kind = (["pool", "meta", "campaign", "batch"] as const).find((k) => k === drive.sourceKind) ?? null;
+    const sourceType: SourceType = stream ? stream.sourceType : classifySource({ launchSourceKind: kind });
+    const originId = stream ? stream.originId : sourceType === "he" ? "pool" : drive.id;
+    const originLabel = stream ? stream.originLabel : sourceType === "he" ? "Pool: ATS history" : drive.runLabel ?? `Re-run ${drive.driveDate}`;
+    for (let i = 0; i < leadIds.length; i += 500) {
+      const chunk = leadIds.slice(i, i + 500);
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, mobile10, full_name, email, ats_candidate_id, meta_lead_id FROM he_lead WHERE id IN (${chunk.map(() => "?").join(",")})`, chunk);
+      for (const r of rows) {
+        const res = await enqueueQualifiedFollowup({
+          sourceType, originId, originLabel, phone: String(r.mobile10 ?? ""), email: r.email ?? null, fullName: r.full_name ?? null,
+          heLeadId: String(r.id), metaLeadId: r.meta_lead_id ?? null, atsCandidateId: r.ats_candidate_id ?? null,
+          requisitionId: drive.requisitionId, driveId: drive.id, engineOwned: true,
+        }, mode);
+        if (res.status === "enqueued") out.enqueued++;
+        else if (res.status === "exists" && res.id) {
+          out.exists++;
+          const [u] = await db.execute<ResultSetHeader>(
+            `UPDATE qualified_followup SET owner = 'engine', drive_id = COALESCE(drive_id, ?), email_status = COALESCE(email_status, 'engine'),
+                    wa_status = COALESCE(wa_status, 'engine'), call_state = IF(call_state = 'pending', 'skipped', call_state)
+              WHERE id = ? AND owner = 'pipeline' AND stopped_reason IS NULL
+                AND NOT (COALESCE(wa_template_key, '') = 'he_walkin_invite' AND COALESCE(wa_status, '') IN ('sent','test_sent'))
+                AND COALESCE(wa_status, '') <> 'sending'`, [drive.id, res.id]);
+          out.handedOver += u.affectedRows;
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn({ driveId: drive.id, err: String((err as Error).message).replace(/\d{6,}/g, "#"), ...out }, "[qualified-followup] matched enqueue failed");
+  }
+  return out;
 }

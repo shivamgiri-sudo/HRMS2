@@ -68,5 +68,5 @@ export function pipelineOwnsSends(env: NodeJS.ProcessEnv = process.env): boolean
 
 export function followupSkipSql(a: { mobileExpr: string; requisitionExpr: string }, env: NodeJS.ProcessEnv = process.env): string {
   if (!pipelineOwnsSends(env)) return "";
-  return ` AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND qf.requisition_id = ${a.requisitionExpr} AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = 'live')`;
+  return ` AND NOT EXISTS (SELECT 1 FROM qualified_followup qf WHERE qf.mobile10 = ${a.mobileExpr} COLLATE utf8mb4_unicode_ci AND qf.requisition_id = ${a.requisitionExpr} AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = 'live' AND qf.owner = 'pipeline')`;
 }

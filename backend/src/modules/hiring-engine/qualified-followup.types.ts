@@ -19,4 +19,9 @@ export interface EnqueueInput {
   branchName?: string | null;
   roleName?: string | null;
   qualifiedAt?: Date;
+  /** Record-only row: the Hiring Engine sends to this person, the pipeline never selects it. */
+  engineOwned?: boolean;
 }
+
+/** The drive a line-up ran for (what the enqueue hook needs to classify and label it). */
+export interface MatchedDriveRef { id: string; requisitionId: string; sourceKind: string; runLabel: string | null; driveDate: string }
