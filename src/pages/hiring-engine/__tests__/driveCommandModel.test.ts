@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   COMPARE_COLUMNS, SECTIONS, analyticsPath, changeArrow, commandHash, compareRows, countText, defaultFilters, drivePlanPath, istTodayClient,
-  kpiTiles, nextSectionByKey, parseCommandHash, pctText, sortCompareRows, toCsv, type Filters,
+  kpiTiles, nextSectionByKey, parseCommandHash, pctText, sectionLabels, sortCompareRows, toCsv, type Filters,
 } from "../command/driveCommandModel";
 import type { DriveAnalytics, StageCounts } from "../command/driveCommandTypes";
 import { tabFromHash } from "../hiringEngineTabs";
@@ -116,6 +116,16 @@ describe("KPI and compare rows", () => {
     expect(changeArrow(8, 8, 14)).toMatchObject({ delta: 0, direction: "flat", text: "no change vs previous 14 days" });
     expect(changeArrow(2, 1, 1).text).toBe("+1 vs previous 1 day");
     expect(changeArrow(Number.NaN, Infinity, 14).direction).toBe("flat");
+  });
+  it("shows a dash, not a change against zeros, when the previous period failed to load", () => {
+    const a = { ...analytics({ arrived: 20 }, {}), failedSections: ["previous"] } as DriveAnalytics;
+    for (const t of kpiTiles(a)) expect(t.arrivalsChange).toMatchObject({ delta: 0, direction: "flat", icon: "minus", text: "–" });
+    expect(kpiTiles({ ...a, failedSections: ["replies"] } as DriveAnalytics)[0].arrivalsChange.text).toBe("+20 vs previous 14 days");
+  });
+  it("names failed sections in words; unknown ids pass through, duplicates collapse", () => {
+    expect(sectionLabels(["insight:tomorrow", "previous", "rates", "pool", "something:new", "previous"]))
+      .toEqual(["tomorrow's plan", "previous period", "show rates", "remaining pool", "something:new"]);
+    expect(sectionLabels(undefined)).toEqual([]);
   });
   it("always three tiles in order with all stages", () => {
     const tiles = kpiTiles(analytics({ leads: 1234 }, {}));

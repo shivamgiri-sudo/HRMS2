@@ -6,7 +6,7 @@
  */
 import { useId, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock, History, Info, PlayCircle, RefreshCw } from "lucide-react";
-import { TYPE_LABEL } from "./driveCommandModel";
+import { TYPE_LABEL, sectionLabels } from "./driveCommandModel";
 import { useIsDark } from "./chartTheme";
 import { ShapeGlyph } from "./charts/TypePatterns";
 import DriveTrendChart from "./DriveTrendChart";
@@ -98,7 +98,7 @@ export function DetailView({ group, today, trend, trendError, loading, events, e
       )}
       {trend?.partial && (
         <p role="status" className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-          <Info className="h-4 w-4 shrink-0" aria-hidden /> Some numbers could not be loaded ({trend.failedSections.join(", ") || "unknown"}) and show as zero
+          <Info className="h-4 w-4 shrink-0" aria-hidden /> Some numbers could not be loaded ({sectionLabels(trend.failedSections).join(", ") || "unknown"}) and show as zero
         </p>
       )}
       {trend && (<><DayTable trend={trend} today={today} /><DriveTrendChart points={trend.points} type={group.sourceType} today={today} /></>)}

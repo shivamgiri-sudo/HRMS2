@@ -7,7 +7,8 @@
 import type { CalendarCell, PlanDay, PlanStreamLine, SourceType, StreamRate } from "./driveCommandTypes";
 
 export interface PlanStreamInput { streamId: string; sourceType: SourceType; label: string; cap: number; lined: number; rate: StreamRate; poolRemaining: number | null; covers: boolean }
-export interface PlanDayInput { date: string; driveId: string | null; target: number; capacity: number; streams: PlanStreamInput[]; /** Seats held by people no stream owns (they are never assigned to a stream). */ extraSeatsUsed?: number }
+export interface PlanDayInput { date: string; driveId: string | null; target: number; capacity: number; streams: PlanStreamInput[]; /** Seats held by people no stream owns (they are never assigned to a stream). */ extraSeatsUsed?: number;
+  /** Expected arrivals of those people (their count x the plan default show rate): they come whether or not a stream covers the day. */ extraExpected?: number }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 /** he-showup.ts invitesToClose: invites needed to close the gap at that show rate (floor 0.05, so never Infinity). */
@@ -41,7 +42,7 @@ export function planDay(o: PlanDayInput): PlanDay {
     poolRemaining: s.poolRemaining == null || !Number.isFinite(Number(s.poolRemaining)) ? null : whole(s.poolRemaining) }));
   const seatsUsed = ins.reduce((a, s) => a + s.lined, 0) + whole(o.extraSeatsUsed);
   const expectedOf = (s: (typeof ins)[number]): number => (s.covers ? s.lined * s.rate.rate : 0);
-  const expected = round1(ins.reduce((a, s) => a + expectedOf(s), 0));
+  const expected = round1(ins.reduce((a, s) => a + expectedOf(s), 0) + count(o.extraExpected));
   const gap = round1(Math.max(0, target - expected));
 
   const order = [...ins].sort((a, b) => (a.covers === b.covers ? 0 : a.covers ? -1 : 1) || b.rate.rate - a.rate.rate || a.streamId.localeCompare(b.streamId));

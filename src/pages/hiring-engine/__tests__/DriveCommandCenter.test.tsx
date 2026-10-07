@@ -80,6 +80,11 @@ describe("DriveCommandCenter", () => {
     expect(heView({ loading: true })).toContain('aria-busy="true"');
     expect(heView({ error: "boom" })).toContain("Retry");
   });
+  it("the partial banner names failed sections in words", () => {
+    const html = view({ analytics: { requisitionCount: 1, partial: true, failedSections: ["insight:tomorrow"], truncated: false } as never });
+    expect(html).toContain("tomorrow&#x27;s plan");
+    expect(html).not.toContain("insight:tomorrow");
+  });
   it("the Plan section shows no analytics skeleton or error", () => {
     const html = view({ section: "plan", error: "boom" }, null, <p>PLAN</p>);
     expect(html).toContain("PLAN");

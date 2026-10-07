@@ -117,7 +117,7 @@ vi.mock("../he-bulk-call.service.js", () => ({ runBulkCallJobs: vi.fn(async () =
 vi.mock("../he-reroute.service.js", () => ({ offerOtherRoles: vi.fn(async () => null) }));
 vi.mock("../he-followup-email.service.js", () => ({ sendFollowUpEmail: vi.fn(async () => ({ status: "skipped" })) }));
 
-import { planStreamsForDay, topUpStreamDrive } from "../he-stream-plan.service.js";
+import { planStreamsForDay, reasonOf, topUpStreamDrive } from "../he-stream-plan.service.js";
 import { planNextDay } from "../he-plan.service.js";
 import { runEngineTick } from "../he-engine.service.js";
 import { logger } from "../../../logger.js";
@@ -233,6 +233,18 @@ describe("group 6-7 review fixes", () => {
     const p = await planStreamsForDay({ date: "2026-10-09", dryRun: false });
     expect(h.setDriveStatus).not.toHaveBeenCalled();
     expect(p.plans[0].drive).toBe("exists");
+  });
+
+  it("final-review M1: an activation failure names the activation, and known business errors get fixed phrases", async () => {
+    h.streams = [stream("s3")];
+    h.setDriveStatus.mockRejectedValueOnce(new Error("socket hang up 9876543210"));
+    const r = await planStreamsForDay({ date: "2026-10-08", dryRun: false });
+    expect(r.plans[0].reason).toBe("drive created but not activated: could not activate the drive");
+    expect(reasonOf(new Error("Requisition is not open for hiring"))).toBe("the requisition is not open for hiring");
+    expect(reasonOf(new Error("Requisition has no open positions"))).toBe("the requisition has no open positions");
+    expect(reasonOf(new Error("Requisition not found"))).toBe("the requisition was not found");
+    expect(reasonOf(new Error("anything else"))).toBe("could not line up this stream");
+    expect(reasonOf(new Error("anything else"), "could not activate the drive")).toBe("could not activate the drive");
   });
 
   it("M9: activation failing after createDrive is reported; the next pass activates its own stream-fed draft, never an HR draft", async () => {

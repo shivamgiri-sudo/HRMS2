@@ -209,7 +209,9 @@ const inRange = (d: string, from: string, to: string): boolean => d >= from && d
 // ---- cache ------------------------------------------------------------------------------------------------------------------------------
 const cache = new Map<string, { at: number; data: DriveAnalytics }>();
 const scopeKey = (s: BranchScope): string => (s.all ? "all" : `b:${s.branchName ?? ""}`);
-export function clearDriveAnalyticsCache(): void { cache.clear(); }
+/** Single flight: concurrent calls with the same key (scope included) share one build; removed when it settles. */
+const inflight = new Map<string, Promise<DriveAnalytics>>();
+export function clearDriveAnalyticsCache(): void { cache.clear(); inflight.clear(); }
 export function driveAnalyticsCacheSize(): number { return cache.size; }
 
 const text = (v: unknown, max: number): string | null | false => (v === undefined || v === null || v === "" ? null : typeof v === "string" && v.length <= max ? v : false);
@@ -245,14 +247,23 @@ export async function getDriveAnalytics(q: AnalyticsQuery, scope: BranchScope, n
   if (hit && Date.now() - hit.at < CACHE_MS) return structuredClone(hit.data); // a copy: a caller may extend or edit the result
   if (hit) cache.delete(key);
 
-  const data = tidy(await build(w, requisitionId, branch, scope, now));
-  if (!data.partial) {
-    const t = Date.now();
-    for (const [k, v] of cache) if (t - v.at >= CACHE_MS) cache.delete(k); // expired entries go on every write, not only on overflow
-    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
-    cache.set(key, { at: t, data: structuredClone(data) });
+  let run = inflight.get(key);
+  if (!run) {
+    const p = (async () => {
+      const data = tidy(await build(w, requisitionId, branch, scope, now));
+      if (!data.partial) { // a partial result is shared with the callers already waiting, never cached
+        const t = Date.now();
+        for (const [k, v] of cache) if (t - v.at >= CACHE_MS) cache.delete(k); // expired entries go on every write, not only on overflow
+        if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
+        cache.set(key, { at: t, data: structuredClone(data) });
+      }
+      return data;
+    })();
+    run = p;
+    inflight.set(key, p);
+    p.then(() => undefined, () => undefined).finally(() => { if (inflight.get(key) === p) inflight.delete(key); });
   }
-  return data;
+  return structuredClone(await run); // every caller gets its own copy
 }
 
 async function build(

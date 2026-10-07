@@ -48,6 +48,10 @@ export function kpiView(a: DriveAnalytics): KpiView {
 }
 
 // ---- funnel ------------------------------------------------------------------------------------------------------------------------------
+/** Axis width and margins of the funnel. Below `sm` (a 375px phone leaves ~309px in the card) the plot keeps at least 160px. */
+export function funnelLayout(narrow: boolean): { yAxisWidth: number; margin: { top: number; right: number; bottom: number; left: number } } {
+  return narrow ? { yAxisWidth: 84, margin: { top: 4, right: 56, bottom: 4, left: 4 } } : { yAxisWidth: 112, margin: { top: 4, right: 104, bottom: 4, left: 4 } };
+}
 export interface FunnelRow {
   stage: Stage; label: string; convText: string;
   values: Record<SourceType, number | null>; text: Record<SourceType, string>; conversion: Record<SourceType, number | null>;

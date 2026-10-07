@@ -184,6 +184,14 @@ describe("overbooking", () => {
     expect(i).toMatchObject({ id: "overbooking:all:r1:d1/empty", effect: { value: 12, unit: "seats" } });
     expect(i.title).toContain("empty busy slots");
   });
+  it("empty busy slots only for the next working day's drive (people are lined up the evening before)", () => {
+    expect(ofRule(slot({ date: "2026-10-17", busyHourSeats: 18, busyHourBooked: 6 }), "overbooking")).toEqual([]); // 3 days ahead
+    expect(ofRule(slot({ date: "2026-10-14", busyHourSeats: 18, busyHourBooked: 6 }), "overbooking")).toHaveLength(1); // today
+    const sat = (date: string) => mod((f) => { f.today = "2026-10-17"; f.slots = [{ driveId: "d1", requisitionId: "r1", code: "R-1", date, capacity: 60, expected: 50, busyHourSeats: 18, busyHourBooked: 6 }]; });
+    expect(ofRule(sat("2026-10-19"), "overbooking")).toHaveLength(1); // Saturday: Monday is the next working day
+    expect(ofRule(sat("2026-10-20"), "overbooking")).toEqual([]);
+    expect(ofRule(slot({ date: "2026-10-17", expected: 70 }), "overbooking")).toHaveLength(1); // overbooking itself is not date-gated
+  });
   it("does not fire inside margins or on zeros", () => {
     expect(ofRule(slot({ expected: 66 }), "overbooking")).toEqual([]);
     expect(ofRule(slot({ busyHourSeats: 20, busyHourBooked: 10 }), "overbooking")).toEqual([]);

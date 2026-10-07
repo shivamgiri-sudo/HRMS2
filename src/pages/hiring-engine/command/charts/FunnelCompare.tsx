@@ -2,10 +2,10 @@
 import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { DriveAnalytics, SourceType } from "../driveCommandTypes";
 import { SOURCE_TYPES, TYPE_LABEL, pctText } from "../driveCommandModel";
-import { seriesColor, useIsDark, usePrefersReducedMotion } from "../chartTheme";
+import { seriesColor, useIsDark, useIsNarrow, usePrefersReducedMotion } from "../chartTheme";
 import ChartFrame, { Note, TOOLTIP_CURSOR, TooltipCard, axisTick, gridProps } from "./ChartFrame";
 import { SeriesLegend, patternFill, typePatternDefs, usePatternPrefix } from "./TypePatterns";
-import { UNTRACKED_NOTE, funnelView, presentTypes, type FunnelRow } from "./summaryView";
+import { UNTRACKED_NOTE, funnelLayout, funnelView, presentTypes, type FunnelRow } from "./summaryView";
 
 type Datum = { label: string; conv: string; row: FunnelRow } & Partial<Record<SourceType, number | null>> & Record<string, unknown>;
 
@@ -28,6 +28,7 @@ export default function FunnelCompare({ analytics }: { analytics: DriveAnalytics
   const dark = useIsDark();
   const reduced = usePrefersReducedMotion();
   const prefix = usePatternPrefix();
+  const layout = funnelLayout(useIsNarrow());
   const v = funnelView(analytics, { prefersReducedMotion: reduced });
   const data: Datum[] = v.rows.map((r, i) => {
     const d: Datum = { label: r.label, conv: r.convText, row: r };
@@ -43,11 +44,11 @@ export default function FunnelCompare({ analytics }: { analytics: DriveAnalytics
       note={<div className="space-y-1"><SeriesLegend dark={dark} present={presentTypes(analytics)} />{v.untracked && <Note>{UNTRACKED_NOTE}</Note>}</div>}
     >
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} layout="vertical" margin={{ top: 4, right: 104, bottom: 4, left: 4 }} barCategoryGap="16%" barGap={1}>
+        <BarChart data={data} layout="vertical" margin={layout.margin} barCategoryGap="16%" barGap={1}>
           {typePatternDefs(prefix, dark)}
           <CartesianGrid {...gridProps(dark)} horizontal={false} vertical />
           <XAxis type="number" tick={axisTick(dark)} axisLine={false} tickLine={false} allowDecimals={false} />
-          <YAxis type="category" dataKey="label" width={112} interval={0} axisLine={false} tickLine={false} tick={<StageTick rows={v.rows} dark={dark} />} />
+          <YAxis type="category" dataKey="label" width={layout.yAxisWidth} interval={0} axisLine={false} tickLine={false} tick={<StageTick rows={v.rows} dark={dark} />} />
           <Tooltip
             cursor={TOOLTIP_CURSOR}
             isAnimationActive={v.motion.animate}

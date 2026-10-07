@@ -14,7 +14,8 @@ export interface StreamRate { streamId: string; sourceType: SourceType; invited:
 export interface PlanStreamInput { streamId: string; sourceType: SourceType; label: string; cap: number; lined: number; rate: StreamRate; poolRemaining: number | null; covers: boolean }
 export interface PlanStreamLine { streamId: string; sourceType: SourceType; label: string; cap: number; lined: number; expected: number; rate: number; basis: StreamRate["basis"]; recommended: number; reasoning: string; /** The stream is open on this day (reasoning "Not open on this day" otherwise). */ covers: boolean }
 export interface PlanDay { date: string; driveId: string | null; target: number; capacity: number; seatsUsed: number; expected: number; gap: number; streams: PlanStreamLine[] }
-export interface PlanDayInput { date: string; driveId: string | null; target: number; capacity: number; streams: PlanStreamInput[]; /** Seats held by people no stream owns (they are never assigned to a stream). */ extraSeatsUsed?: number }
+export interface PlanDayInput { date: string; driveId: string | null; target: number; capacity: number; streams: PlanStreamInput[]; /** Seats held by people no stream owns (they are never assigned to a stream). */ extraSeatsUsed?: number;
+  /** Expected arrivals of those people (their count x the plan default show rate): they come whether or not a stream covers the day. */ extraExpected?: number }
 export interface CalendarCell { date: string; streamId: string; planned: number; cap: number; capacity: number; fill: number }
 
 /** A count: finite and not negative, else 0. */
@@ -41,7 +42,7 @@ export function planDay(o: PlanDayInput): PlanDay {
     poolRemaining: s.poolRemaining == null || !Number.isFinite(Number(s.poolRemaining)) ? null : whole(s.poolRemaining) }));
   const seatsUsed = ins.reduce((a, s) => a + s.lined, 0) + whole(o.extraSeatsUsed);
   const expectedOf = (s: (typeof ins)[number]): number => (s.covers ? s.lined * s.rate.rate : 0);
-  const expected = round1(ins.reduce((a, s) => a + expectedOf(s), 0));
+  const expected = round1(ins.reduce((a, s) => a + expectedOf(s), 0) + count(o.extraExpected));
   const gap = round1(Math.max(0, target - expected));
 
   const order = [...ins].sort((a, b) => (a.covers === b.covers ? 0 : a.covers ? -1 : 1) || b.rate.rate - a.rate.rate || a.streamId.localeCompare(b.streamId));

@@ -56,7 +56,7 @@ const stream = (id: string, req: string, openFrom = "2026-10-10", openDays = 10)
 });
 const planFor = (req: string, expected = 4) => ({
   requisitionId: req, code: `REQ-${req}`, partial: false, failedSections: [],
-  days: [{ date: "2026-10-15", driveId: null, target: 10, capacity: 40, seatsUsed: 0, expected, gap: 6, streams: [{ streamId: "s-" + req, sourceType: "meta_old", cap: 50, recommended: 7, lined: 0, expected: 0, rate: 0.3, basis: "plan_default", label: "L", reasoning: "" }] }],
+  days: [{ date: "2026-10-15", driveId: null, target: 10, capacity: 40, seatsUsed: 0, expected, gap: 6, streams: [{ streamId: "s-" + req, sourceType: "meta_old", cap: 50, recommended: 7, lined: 0, expected: 0, rate: 0.3, basis: "plan_default", label: "L", reasoning: "", covers: true }] }],
 });
 
 beforeEach(() => {
@@ -165,16 +165,55 @@ describe("collectInsightFacts", () => {
     expect(getDrivePlan.mock.calls[0][3]).toBe(T);
   });
 
+  it("does not count a FAILED reminder send as a reminder", async () => {
+    await collectInsightFacts(ctxOf(), ALL);
+    const r = sqls().find((x) => x.kind === "reminders")!;
+    expect(r.sql).toContain("(r1.delivery_status IS NULL OR r1.delivery_status <> 'failed')");
+    expect(r.sql).toContain("(r2.delivery_status IS NULL OR r2.delivery_status <> 'failed')");
+  });
+
   it("measures the hour distance around midnight", async () => {
     await collectInsightFacts(ctxOf(), ALL);
     const c = sqls().find((s) => s.kind === "contact")!;
     expect(c.sql).toContain("LEAST(ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED)), 24 - ABS(HOUR(o.created_at) - CAST(li.best_hour_ist AS SIGNED)))");
   });
 
-  it("adds requisitions with a drive tomorrow even without a stream", async () => {
+  it("builds NO plan and NO under_target for a requisition without an open stream, even with a drive tomorrow", async () => {
     rows.tomorrowDrives = [{ requisition_id: "r1" }];
-    await collectInsightFacts(ctxOf(), ALL);
-    expect(getDrivePlan).toHaveBeenCalledTimes(1);
+    const paused = { ...stream("s1", "r1"), status: "paused" };
+    const { facts } = await collectInsightFacts(ctxOf({ streams: [paused] }), ALL);
+    expect(getDrivePlan).not.toHaveBeenCalled();
+    expect(facts.tomorrow).toEqual([]);
+    expect(sqls().some((x) => x.kind === "tomorrowDrives")).toBe(false);
+    const { evaluateInsights } = await vi.importActual<typeof import("../he-drive-insights.js")>("../he-drive-insights.js");
+    expect(evaluateInsights(facts, T).filter((i) => i.rule === "under_target")).toEqual([]);
+  });
+
+  it("a requisition with 30 confirmed for tomorrow and no stream yields no critical insight", async () => {
+    // production today: drives without streams. A plan built for it would read expected 0 against the drive's target.
+    getDrivePlan.mockImplementation(async (q: { requisitionId: string }) => ({ ...planFor(q.requisitionId, 0), days: [{ date: "2026-10-15", driveId: "d1", target: 30, capacity: 60, seatsUsed: 30, expected: 0, gap: 30, streams: [] }] }));
+    rows.tomorrowDrives = [{ requisition_id: "r1" }];
+    const ctx = ctxOf({ agg: [{ requisitionId: "r1", branch: "Pune", date: "2026-10-15", driveId: "d1", streamType: null, wanted: 30, lined: 30, invited: 30, confirmed: 30, arrived: 0, noShow: 0, declined: 0 }] });
+    const { facts } = await collectInsightFacts(ctx, ALL);
+    const { evaluateInsights } = await vi.importActual<typeof import("../he-drive-insights.js")>("../he-drive-insights.js");
+    expect(evaluateInsights(facts, T).filter((i) => i.severity === "critical")).toEqual([]);
+  });
+
+  it("skips a tomorrow entry whose day no stream covers", async () => {
+    getDrivePlan.mockImplementation(async (q: { requisitionId: string }) => {
+      const p = planFor(q.requisitionId, 0);
+      return { ...p, days: p.days.map((d) => ({ ...d, streams: d.streams.map((l) => ({ ...l, covers: false, reasoning: "Not open on this day" })) })) };
+    });
+    const { facts } = await collectInsightFacts(ctxOf({ streams: [stream("s1", "r1")] }), ALL);
+    expect(facts.tomorrow).toEqual([]);
+  });
+
+  it("a stream-covered day below target still fires under_target", async () => {
+    const { facts } = await collectInsightFacts(ctxOf({ streams: [stream("s1", "r1")] }), ALL); // plan: target 10, expected 4
+    const { evaluateInsights } = await vi.importActual<typeof import("../he-drive-insights.js")>("../he-drive-insights.js");
+    const u = evaluateInsights(facts, T).filter((i) => i.rule === "under_target");
+    expect(u).toHaveLength(1);
+    expect(u[0]).toMatchObject({ severity: "critical", requisitionId: "r1" });
   });
 
   it("builds sources and weekdays from the drive aggregates", async () => {
@@ -209,10 +248,9 @@ describe("collectInsightFacts", () => {
   });
 
   it("starts every statement from he_drive and reaches messages and insights only by key through a JOIN", async () => {
-    rows.tomorrowDrives = [{ requisition_id: "r1" }];
     await collectInsightFacts(ctxOf({ streams: [stream("s1", "r1")] }), ALL);
     const all = sqls().filter((s) => !s.sql.includes("he_model_param")); // the learned show-up parameters are a plain parameter read
-    expect(all.length).toBeGreaterThanOrEqual(9);
+    expect(all.length).toBeGreaterThanOrEqual(8); // the drive-tomorrow probe is gone (plans need an open stream)
     // drop parenthesised subselects (EXISTS (...) probes are keyed by lead_id), then the first FROM is the statement's start
     const strip = (s: string): string => { let p = s; let n = ""; while (p !== n) { n = p; p = p.replace(/\((?:[^()]*)\)/g, (m) => (/SELECT/i.test(m) ? "" : m.replace(/[()]/g, "#"))); } return p; };
     for (const s of all) {
@@ -317,6 +355,31 @@ describe("insights in getDriveAnalytics", () => {
       await getDriveAnalytics({ from: "2026-10-03", to: "2026-10-10" }, ALL, NOW);
       expect(driveAnalyticsCacheSize()).toBe(1);
     } finally { vi.useRealTimers(); }
+  });
+
+  it("shares one in-flight build between concurrent calls with the same key, never across scopes", async () => {
+    wire();
+    const [a, b] = await Promise.all([getDriveAnalytics(Q, ALL, NOW), getDriveAnalytics(Q, ALL, NOW)]);
+    expect(thresholds).toHaveBeenCalledTimes(1);
+    expect(getSources).toHaveBeenCalledTimes(2); // current + previous period of ONE build
+    expect(a).toEqual(b);
+    expect(a).not.toBe(b); // each caller gets its own copy
+    clearDriveAnalyticsCache();
+    thresholds.mockClear();
+    await Promise.all([getDriveAnalytics(Q, ALL, NOW), getDriveAnalytics(Q, { all: false, branchName: "Pune" } as never, NOW)]);
+    expect(thresholds).toHaveBeenCalledTimes(2);
+  });
+
+  it("concurrent callers share a partial result, which is still not cached", async () => {
+    wire();
+    factsOverride.fn = async () => { throw Object.assign(new Error("x"), { code: "ER_BOOM" }); };
+    const [a, b] = await Promise.all([getDriveAnalytics(Q, ALL, NOW), getDriveAnalytics(Q, ALL, NOW)]);
+    expect((a as DriveAnalytics).partial).toBe(true);
+    expect((b as DriveAnalytics).partial).toBe(true);
+    expect(thresholds).toHaveBeenCalledTimes(1);
+    expect(driveAnalyticsCacheSize()).toBe(0);
+    await getDriveAnalytics(Q, ALL, NOW);
+    expect(thresholds).toHaveBeenCalledTimes(2); // the in-flight entry is gone and nothing was cached
   });
 
   it("skips the facts when there are no requisitions", async () => {

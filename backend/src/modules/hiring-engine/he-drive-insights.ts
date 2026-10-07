@@ -87,6 +87,13 @@ const tomorrowOf = (today: string): string => {
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
 };
+/** The day the evening pass lines up after `today` (Sundays skipped, as nextWorkingDay). */
+const nextWorkingDayOf = (today: string): string => {
+  const d = new Date(`${today}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return today;
+  d.setUTCDate(d.getUTCDate() + (d.getUTCDay() === 6 ? 2 : 1));
+  return d.toISOString().slice(0, 10);
+};
 
 type Ctx = { f: InsightFacts; t: InsightThresholds; D: number; min: number; ok: (n: number) => boolean };
 type Make = Omit<DriveInsight, "id"> & { key?: string };
@@ -272,6 +279,7 @@ function language({ f, t, D, ok }: Ctx): DriveInsight[] {
 
 function overbooking({ f, t }: Ctx): DriveInsight[] {
   const out: DriveInsight[] = [];
+  const lineUpDay = nextWorkingDayOf(f.today);
   for (const s of f.slots ?? []) {
     const cap = num(s.capacity), exp = num(s.expected), seats = num(s.busyHourSeats), booked = num(s.busyHourBooked);
     const action: InsightAction = { type: "open_plan", requisitionId: s.requisitionId, date: s.date };
@@ -285,7 +293,8 @@ function overbooking({ f, t }: Ctx): DriveInsight[] {
         effect: effectOf(exp - cap, "seats"), action,
       }));
     }
-    if (seats > 0 && booked / seats < t["insight.empty_slot_share"]) {
+    // People are lined up the evening before: a later drive's busy slots are empty by design, not a problem yet.
+    if (seats > 0 && s.date <= lineUpDay && booked / seats < t["insight.empty_slot_share"]) {
       out.push(mk({
         rule: "overbooking", severity: "warn", sourceType: null, requisitionId: s.requisitionId, key: `${s.driveId}/empty`,
         title: `${s.code} on ${s.date} has empty busy slots`,

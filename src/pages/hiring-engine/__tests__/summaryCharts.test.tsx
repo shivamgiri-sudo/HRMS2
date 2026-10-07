@@ -17,7 +17,7 @@ import CompareTable from "../command/charts/CompareTable";
 import { typePatternDefs } from "../command/charts/TypePatterns";
 import {
   CSV_COLUMNS, EMPTY_TEXT, UNTRACKED_NOTE, compareCsvName, compareCsvRows, cellInk, compareView, contrastRatio, conversionView, funnelView, inkOn,
-  kpiView, scatterView, timingView, waterfallView, yieldView,
+  funnelLayout, kpiView, scatterView, timingView, waterfallView, yieldView,
 } from "../command/charts/summaryView";
 import { sectionParts } from "../command/DriveCommandCenter";
 import { funnelChart } from "../command/driveChartModel";
@@ -268,5 +268,14 @@ describe("patterns, colours and the summary section", () => {
       expect(html).toContain(t);
     }
     expect(html).toContain("lg:grid-cols-2");
+  });
+});
+
+describe("funnel layout below sm", () => {
+  it("keeps the plot at least 160px wide on a 375px phone and leaves the desktop sizes unchanged", () => {
+    const card = 375 - 2 * 16 - 2 * 16 - 2; // viewport - page gutters - ChartFrame p-4 - borders
+    const narrow = funnelLayout(true);
+    expect(card - narrow.yAxisWidth - narrow.margin.left - narrow.margin.right).toBeGreaterThanOrEqual(160);
+    expect(funnelLayout(false)).toEqual({ yAxisWidth: 112, margin: { top: 4, right: 104, bottom: 4, left: 4 } });
   });
 });

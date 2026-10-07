@@ -171,14 +171,18 @@ export function changeArrow(current: number, previous: number, days: number): Ch
   return { delta: 0, direction: "flat", icon: "minus", text: `no change vs ${span}` };
 }
 
+/** The previous period could not be read: no comparison (a change against zeros would read as a rise). */
+const UNKNOWN_CHANGE: ChangeArrow = { delta: 0, direction: "flat", icon: "minus", text: DASH };
+
 export function kpiTiles(a: DriveAnalytics): KpiTile[] {
+  const noPrevious = Array.isArray(a?.failedSections) && a.failedSections.includes("previous");
   return SOURCE_TYPES.map((t) => {
     const ty = a.types?.[t];
     const cur = ty?.stages, prev = ty?.previous;
     return {
       sourceType: t, label: TYPE_LABEL[t],
       values: STAGES.map((stage) => { const value = safe(cur?.[stage]); return { stage, label: STAGE_LABEL[stage], value, text: countText(value) }; }),
-      arrivalsChange: changeArrow(safe(cur?.arrived), safe(prev?.arrived), safe(a.window?.days)),
+      arrivalsChange: noPrevious ? { ...UNKNOWN_CHANGE } : changeArrow(safe(cur?.arrived), safe(prev?.arrived), safe(a.window?.days)),
       sparkline: (ty?.sparkline ?? []).map(safe),
     };
   });
@@ -238,4 +242,19 @@ export function toCsv(columns: ReadonlyArray<{ key: string; label: string }>, ro
   const lines = [columns.map((c) => csvCell(c.label)).join(",")];
   for (const r of rows) lines.push(columns.map((c) => csvCell(r[c.key])).join(","));
   return `\uFEFF${lines.join("\r\n")}\r\n`;
+}
+
+// ---- failed sections --------------------------------------------------------------------------------------------------------------------
+/** Short words for the section ids the Command Center endpoints flag as failed; an unknown id is shown as it is. */
+const SECTION_LABEL: Record<string, string> = {
+  requisitions: "requisition list", sources: "lead sources", drives: "drive numbers", outcomes: "selections and joins", stops: "follow-up stops",
+  replies: "reply times", arrivals: "arrival times", previous: "previous period", insights: "suggestions", streams: "streams", groups: "drive rows",
+  header: "requisition details", lined: "people lined up", rates: "show rates", pool: "remaining pool", plan: "daily plan", preview: "tonight's dry run",
+  planned: "already planned days", readiness: "readiness checks",
+  "insight:contact": "contact timing", "insight:reminders": "reminders", "insight:distance": "travel distance", "insight:channel": "message delivery",
+  "insight:language": "message language", "insight:slots": "slot bookings", "insight:sources": "source comparison", "insight:plan": "planning facts",
+  "insight:tomorrow": "tomorrow's plan", "insight:streams": "stream pools",
+};
+export function sectionLabels(ids: readonly string[] | null | undefined): string[] {
+  return [...new Set((Array.isArray(ids) ? ids : []).filter((x) => typeof x === "string" && x !== "").map((x) => SECTION_LABEL[x] ?? x))];
 }

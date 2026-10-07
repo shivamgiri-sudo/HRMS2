@@ -63,6 +63,17 @@ export function usePrefersReducedMotion(): boolean {
   );
 }
 
+const NARROW = "(max-width: 639px)"; // below Tailwind's sm
+function subscribeNarrow(cb: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+  const mq = window.matchMedia(NARROW);
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+}
+export function useIsNarrow(): boolean {
+  return useSyncExternalStore(subscribeNarrow, () => (typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(NARROW).matches : false), () => false);
+}
+
 function subscribeDark(cb: () => void): () => void {
   if (typeof document === "undefined" || typeof MutationObserver === "undefined") return () => {};
   const mo = new MutationObserver(cb);

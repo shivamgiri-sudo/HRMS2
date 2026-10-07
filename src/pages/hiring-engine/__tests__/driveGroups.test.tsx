@@ -175,7 +175,7 @@ describe("static markup", () => {
     const err = detail({ trend: null, trendError: "boom" });
     expect(err).toContain("Could not load the trend: boom");
     expect(err).toContain("Retry");
-    expect(detail({ trend: trend({ partial: true, failedSections: ["drives"] }) })).toContain("Some numbers could not be loaded (drives)");
+    expect(detail({ trend: trend({ partial: true, failedSections: ["drives"] }) })).toContain("Some numbers could not be loaded (drive numbers)");
     expect(detail({ group: group() })).not.toContain("Extension history");
     expect(detail({ trend: trend({ points: [] }) })).toContain("No drive days in this window");
   });

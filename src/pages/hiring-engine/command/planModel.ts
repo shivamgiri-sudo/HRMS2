@@ -27,14 +27,17 @@ export interface Recomputed { expected: number; seatsUsed: number; gap: number; 
 
 /**
  * The day with the user's edits, through the same planDay maths as the server: without edits it reproduces the server's numbers
- * (expected, gap and seats, including seats held by people no stream owns). A stream's lined becomes its quota; its rate the show rate / 100.
+ * (expected, gap and seats, including the seats and expected arrivals of people no stream owns). A stream's lined becomes its quota; its rate the show rate / 100.
  */
 export function recomputeDay(d: PlanDay, overrides: Record<string, WhatIf>): Recomputed {
   const lines = Array.isArray(d?.streams) ? d.streams : [];
   const linedSum = lines.reduce((a, s) => a + (finite(s.lined) ?? 0), 0);
+  // The response does not carry the unowned people separately: their seats and arrivals are what the day holds beyond its streams.
+  const streamExpected = lines.reduce((a, s) => a + (coversDay(s) ? (finite(s.lined) ?? 0) * (finite(s.rate) ?? 0) : 0), 0);
   const input: PlanDayInput = {
     date: d.date, driveId: d.driveId, target: d.target, capacity: d.capacity,
     extraSeatsUsed: Math.max(0, (finite(d.seatsUsed) ?? 0) - linedSum),
+    extraExpected: Math.max(0, (finite(d.expected) ?? 0) - streamExpected),
     streams: lines.map((s) => {
       const o = overrides?.[s.streamId] ?? {};
       const quota = clampQuota(o.quota), show = clampShowRate(o.showRate);

@@ -96,6 +96,14 @@ describe("recomputeDay", () => {
     expect(withOrphans.seatsUsed).toBe(25);
     expect(recomputeDay(withOrphans, { A: { quota: 12 } }).seatsUsed).toBe(27);
   });
+  it("keeps the expected arrivals of people no stream owns (the server's extraExpected), with and without edits", () => {
+    const L = input({ streamId: "L", lined: 12, rate: rate("L", 0.25, "plan_default"), poolRemaining: 500 });
+    const d20 = planDay({ date: "x", driveId: "d1", target: 30, capacity: 40, streams: [L], extraSeatsUsed: 20, extraExpected: 5 });
+    expect(d20).toMatchObject({ expected: 8, gap: 22, seatsUsed: 32 });
+    expect(recomputeDay(d20, {})).toMatchObject({ expected: 8, gap: 22, seatsUsed: 32 });
+    expect(recomputeDay(d20, { L: { quota: 20 } })).toMatchObject({ expected: 10, gap: 20, seatsUsed: 40 });
+    expect(recomputeDay(d20, { L: { showRate: 0 } })).toMatchObject({ expected: 5, gap: 25 });
+  });
   it("clamps quota to 0..500 and show rate to 0..100; ignores NaN edits", () => {
     expect(recomputeDay(d, { A: { quota: 9999 } }).seatsUsed).toBe(510);
     expect(recomputeDay(d, { A: { quota: -4 } }).seatsUsed).toBe(10);
@@ -216,7 +224,7 @@ describe("Plan section markup", () => {
     expect(err).toContain("Retry");
     expect(view({ error: "timeout" })).toContain("Could not refresh: timeout. Showing the last result.");
     const partial = view({ plan: planOf([day1], { partial: true, failedSections: ["rates", "pool"] }) });
-    expect(partial).toContain("Partial plan: some parts failed to load (rates, pool)");
+    expect(partial).toContain("Partial plan: some parts failed to load (show rates, remaining pool)");
   });
   it("a plan: reasoning text, sliders, calendar cell, checklist, Plan now, stream actions", () => {
     const html = view();

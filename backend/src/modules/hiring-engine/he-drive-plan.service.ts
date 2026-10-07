@@ -239,6 +239,7 @@ async function build(
     const day = planDay({
       date, driveId: drive?.id ?? null, target: drive && drive.target > 0 ? drive.target : nums.targetShows,
       capacity: drive ? driveCapacity(drive.cfg) : nums.capacity, streams: inputs, extraSeatsUsed: orphanSeats,
+      extraExpected: orphanSeats * planRate, // they come at the plan default rate whether or not a stream covers the day
     });
     for (const l of day.streams) { const p = poolLeft.get(l.streamId); if (p != null) poolLeft.set(l.streamId, Math.max(0, p - l.recommended)); }
     return day;

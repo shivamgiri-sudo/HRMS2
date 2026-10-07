@@ -68,9 +68,10 @@ const contactSql = (n: number, s: boolean): string => `SELECT STRAIGHT_JOIN ${ty
  WHERE ${DRIVE_WHERE(n)}
  GROUP BY 1, 2`;
 
+// A reminder whose send FAILED is not a reminder (NULL status = not yet reported, still counted).
 const remindersSql = (n: number, s: boolean): string => `SELECT STRAIGHT_JOIN ${typeCol(s)} AS source_type,
-       (EXISTS (SELECT 1 FROM he_message r1 WHERE r1.lead_id = m.lead_id AND r1.drive_id = d.id AND r1.direction = 'out' AND r1.template_key LIKE 'he_reminder_1d%')
-        OR EXISTS (SELECT 1 FROM he_message r2 WHERE r2.lead_id = m.lead_id AND r2.drive_id = d.id AND r2.direction = 'out' AND r2.template_key LIKE 'he_reminder_2h%')) AS has_reminder,
+       (EXISTS (SELECT 1 FROM he_message r1 WHERE r1.lead_id = m.lead_id AND r1.drive_id = d.id AND r1.direction = 'out' AND r1.template_key LIKE 'he_reminder_1d%' AND (r1.delivery_status IS NULL OR r1.delivery_status <> 'failed'))
+        OR EXISTS (SELECT 1 FROM he_message r2 WHERE r2.lead_id = m.lead_id AND r2.drive_id = d.id AND r2.direction = 'out' AND r2.template_key LIKE 'he_reminder_2h%' AND (r2.delivery_status IS NULL OR r2.delivery_status <> 'failed'))) AS has_reminder,
        COUNT(DISTINCT m.id) AS n, COUNT(DISTINCT CASE WHEN ${SHOWED} THEN m.id END) AS hits
   ${FROM_MATCH}
   ${creditJoin(s)}
@@ -121,7 +122,6 @@ const slotMatchesSql = (n: number): string => `SELECT STRAIGHT_JOIN m.drive_id, 
   ${FROM_MATCH}
   JOIN he_lead hl ON hl.id = m.lead_id
  WHERE ${DRIVE_WHERE(n)} AND d.status <> 'closed' AND m.state IN ('invited','confirmed','arrived','selected')`;
-const tomorrowDrivesSql = (n: number): string => `SELECT DISTINCT d.requisition_id FROM he_drive d WHERE d.requisition_id IN (${ph(n)}) AND d.drive_date = ?`;
 
 // ---- plumbing ----------------------------------------------------------------------------------------------------------------------------
 type Failed = string[];
@@ -312,12 +312,11 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
     if (!ctx.streams) open = await group("insight:streams", failed, async () => { try { return await loadActiveStreams(); } catch (err) { if (noTable(err)) return []; throw err; } }, () => [] as StreamRow[]);
     const mine = new Set(ids);
     open = open.filter((s) => s.status === "open" && mine.has(s.requisitionId));
-    // earliest stream end first; requisitions with only a drive tomorrow follow
+    // Plans are built ONLY for requisitions with an open stream, earliest stream end first. A requisition whose drives have no stream
+    // (production before streams) gets no plan: its plan would read expected 0 against the drive's target and fire a false critical.
     const endOf = new Map<string, string>();
     for (const s of open) { const e = windowEnd(toWindow(s)); const cur = endOf.get(s.requisitionId); if (cur === undefined || e < cur) endOf.set(s.requisitionId, e); }
-    const withDrive = await group("insight:tomorrow", failed, async () => (await readPlain(ids, tomorrowDrivesSql, tomorrow)).map((r) => String(r.requisition_id)), () => [] as string[]);
     const ordered = [...endOf.entries()].sort((a, b) => (a[0] === b[0] ? 0 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : a[0] < b[0] ? -1 : 1)).map((x) => x[0]);
-    for (const id of [...new Set(withDrive)].sort()) if (!endOf.has(id) && mine.has(id)) ordered.push(id);
     const chosen = ordered.slice(0, MAX_PLAN_REQUISITIONS);
 
     const plans = new Map<string, DrivePlan>();
@@ -338,7 +337,7 @@ export async function collectInsightFacts(ctx: InsightFactsCtx, scope: BranchSco
     }, () => undefined);
     for (const id of chosen) {
       const day = plans.get(id)?.days.find((d) => d.date === tomorrow);
-      if (!day) continue;
+      if (!day || !day.streams.some((s) => s.covers)) continue; // no stream plans that day: nothing to project or recommend
       facts.tomorrow.push({
         requisitionId: id, code: codeOf(id), date: day.date, target: count(day.target), projected: day.expected,
         recommended: day.streams.filter((s) => s.recommended > 0).map((s) => ({ streamId: s.streamId, sourceType: s.sourceType, invites: s.recommended })),

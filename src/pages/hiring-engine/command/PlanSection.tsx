@@ -8,7 +8,7 @@ import { AlertTriangle, Inbox, Plus, RefreshCw, RotateCcw } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { createRequestSequencer, type RequisitionOption } from "./commandData";
 import { dayLabel } from "./driveChartModel";
-import { istTodayClient } from "./driveCommandModel";
+import { istTodayClient, sectionLabels } from "./driveCommandModel";
 import type { DriveGroup, DrivePlan, PlanDay, StreamView } from "./driveCommandTypes";
 import {
   EMPTY_PLAN_TEXT, PICK_LABEL, QUOTA_MAX, clampQuota, coversDay, clampShowRate, dayRows, hasEdits, planPickList, planState, recomputeDay, sliderValues, streamRows,
@@ -139,7 +139,7 @@ export function PlanSectionView(p: PlanSectionViewProps) {
       {plan?.partial && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
           <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
-          <span className="min-w-0 flex-1 break-words">Partial plan: some parts failed to load ({(plan.failedSections ?? []).join(", ") || "unknown"}). Numbers may be incomplete; show rates may be on the plan default.</span>
+          <span className="min-w-0 flex-1 break-words">Partial plan: some parts failed to load ({sectionLabels(plan.failedSections).join(", ") || "unknown"}). Numbers may be incomplete; show rates may be on the plan default.</span>
           <button type="button" onClick={p.onRetry} className={BTN}><RefreshCw className="h-4 w-4" aria-hidden /> Retry</button>
         </div>
       )}

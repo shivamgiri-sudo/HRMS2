@@ -9,7 +9,7 @@ import PipelineHealthStrip from "../PipelineHealthStrip";
 import FilterBar from "./FilterBar";
 import SectionNav, { PANEL_ID, tabDomId } from "./SectionNav";
 import { filtersKey, type RequisitionOption } from "./commandData";
-import { commandHash, istTodayClient, parseCommandHash, type Filters, type SectionId } from "./driveCommandModel";
+import { commandHash, istTodayClient, parseCommandHash, sectionLabels, type Filters, type SectionId } from "./driveCommandModel";
 import type { DriveAnalytics } from "./driveCommandTypes";
 import { useDriveAnalytics, useFilterOptions } from "./useCommandData";
 import KpiStrip from "./charts/KpiStrip";
@@ -86,7 +86,7 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
         {needs && analytics && error && (
           <p role="alert" className="text-xs text-rose-800 dark:text-rose-200">Could not refresh: {error}. Showing the last result.</p>
         )}
-        {needs && analytics?.partial && <DegradedBanner degraded={analytics.failedSections} onRetry={onRetry} />}
+        {needs && analytics?.partial && <DegradedBanner degraded={sectionLabels(analytics.failedSections)} onRetry={onRetry} />}
         {needs && analytics?.truncated && (
           <p className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
             <Info className="h-4 w-4 shrink-0" aria-hidden /> Showing the 200 most recent requisitions; narrow the filters to see the rest

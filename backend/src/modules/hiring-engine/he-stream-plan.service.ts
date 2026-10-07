@@ -37,6 +37,10 @@ export function reasonOf(err: unknown, fallback = "could not line up this stream
   const msg = typeof e.message === "string" ? e.message : "";
   if (code === "ER_LOCK_WAIT_TIMEOUT" || code === "ER_LOCK_DEADLOCK" || /lock wait|deadlock/i.test(msg)) return "lock wait";
   if (msg.startsWith("Drive not found")) return "the drive was not found";
+  // known business errors of createDrive / lineUpCandidates (he-drive.service.ts): fixed phrases, never the raw text
+  if (msg.startsWith("Requisition is not open for hiring")) return "the requisition is not open for hiring";
+  if (msg.startsWith("Requisition has no open positions")) return "the requisition has no open positions";
+  if (msg.startsWith("Requisition not found")) return "the requisition was not found";
   if (code.startsWith("ER_") || e.sqlState != null) return "a database error occurred";
   return fallback;
 }
@@ -242,7 +246,7 @@ async function planRequisition(requisitionId: string, streams: StreamRow[], c: C
           await setDriveStatus(d.id, "active");
         } catch (err) {
           logger.warn({ requisitionId, code: codeOf(err) }, "[he-streams] drive created but not activated");
-          return { ...base, driveId: d.id, drive: "created", reason: `drive created but not activated: ${reasonOf(err)}` };
+          return { ...base, driveId: d.id, drive: "created", reason: `drive created but not activated: ${reasonOf(err, "could not activate the drive")}` };
         }
         drive = "created";
       }

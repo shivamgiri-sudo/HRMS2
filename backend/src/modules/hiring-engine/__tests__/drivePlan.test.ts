@@ -75,6 +75,14 @@ describe("planDay", () => {
     expect(n).toMatchObject({ recommended: 0, reasoning: "Not open on this day", expected: 0 });
     expect(d.seatsUsed).toBe(14);
   });
+  it("adds the arrivals of people no stream owns (extraExpected) and marks which lines cover the day", () => {
+    const d = planDay({ date: "x", driveId: null, target: 20, capacity: 60, streams: [A, B], extraExpected: 5 });
+    expect(d).toMatchObject({ expected: 12, gap: 8 });
+    expect(d.streams[0]).toMatchObject({ streamId: "B", covers: true, recommended: 12, reasoning: "Gap 8 shows / 40% show rate (plan default) = 20 invites; pool has 12 left, so 12" });
+    expect(d.streams[1]).toMatchObject({ streamId: "A", covers: true, recommended: 11 }); // ceil(3.2 / 0.3)
+    expect(planDay({ date: "x", driveId: null, target: 20, capacity: 60, streams: [A], extraExpected: Number.NaN }).expected).toBe(3);
+    expect(planDay({ date: "x", driveId: null, target: 10, capacity: 60, streams: [input({ streamId: "N", covers: false })] }).streams[0].covers).toBe(false);
+  });
   it("is zero and NaN safe on garbage input", () => {
     const d = planDay({ date: "x", driveId: null, target: Number.NaN, capacity: -5, streams: [input({ streamId: "G", lined: Number.NaN, cap: Number.POSITIVE_INFINITY, poolRemaining: Number.NaN })] });
     expect(d).toMatchObject({ target: 0, capacity: 0, seatsUsed: 0, expected: 0, gap: 0 });
@@ -225,6 +233,16 @@ describe("getDrivePlan", () => {
     expect(day.seatsUsed).toBe(15); // capacity 20: 5 seats left, not 8
     expect(day.streams.map((x) => [x.streamId, x.lined])).toEqual([["s1", 12]]);
     expect(day.streams[0].recommended).toBeLessThanOrEqual(5);
+  });
+
+  it("counts the arrivals of unowned people at the plan default show rate when a Live Meta stream is open (20 orphans)", async () => {
+    loadActiveStreams.mockResolvedValue([stream("s1")]);
+    impl.drives = [{ id: "d1", drive_date: "2026-10-15", status: "active", target_shows: 30, slot_start: "10:00:00", slot_end: "12:00:00", slot_minutes: 30, slot_capacity: 10 }];
+    impl.lined = [{ drive_id: "d1", stream_id: "s1", n: 12 }, { drive_id: "d1", stream_id: null, n: 20 }];
+    const day = ok(await getDrivePlan({ requisitionId: "r1", from: "2026-10-15", days: 1 }, ALL, NOW)).days[0];
+    // 12 credited x 25% + 20 unowned x 25% (plan default) = 8; before the fix the 20 held seats but added nothing
+    expect(day).toMatchObject({ seatsUsed: 32, capacity: 40, expected: 8, gap: 22 });
+    expect(day.streams[0]).toMatchObject({ streamId: "s1", lined: 12, expected: 3, covers: true, recommended: 8 }); // 8 seats left
   });
 
   it("uses the thresholds it is given instead of loading them", async () => {
