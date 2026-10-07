@@ -14,6 +14,7 @@
 // 2026-09-22 — and the eSign figure independently matches appointmentLetterEligibility.
 // service.ts's own `idCreationSlaBreached: daysSinceIdCreated > 3`, the same employees.created_at
 // clock used there.
+import { DIGILOCKER_EVIDENCE_SQL } from "../ats/onboarding-bridge-heal.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
@@ -390,6 +391,7 @@ export async function getDigilockerPendingBlock(): Promise<CountBlock> {
        JOIN employees e ON e.id = b.employee_id
       WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => "?").join(",")}))
+        AND NOT ${DIGILOCKER_EVIDENCE_SQL}
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS, ...DIGILOCKER_DONE],
   );
@@ -418,6 +420,7 @@ export async function getDigilockerPendingDetail(
        JOIN employees e ON e.id = b.employee_id
       WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ${STILL_WITH_US}
         AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => "?").join(",")}))
+        AND NOT ${DIGILOCKER_EVIDENCE_SQL}
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [branchId, NEW_JOINER_WINDOW_DAYS, ...DIGILOCKER_DONE],

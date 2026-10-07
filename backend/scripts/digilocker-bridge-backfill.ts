@@ -1,42 +1,24 @@
 /**
- * Joiners who finished DigiLocker before the bridge sync shipped still read 'not_started' on
- * ats_onboarding_bridge, so the Ops Control Tower keeps listing them as pending. The reconciler skips
- * already-finished sessions, so nothing heals them. Dry run lists them; --apply moves the bridge
- * forward (never backwards) to documents_received.
+ * One pass of the bridge self-heal (the worker runs the same every 10 minutes): catches
+ * ats_onboarding_bridge up with DigiLocker / penny-drop completion recorded elsewhere. Local only.
+ * Dry run lists what would change; --apply writes.
  *
  *   npx tsx scripts/digilocker-bridge-backfill.ts [--apply]
  */
 import "dotenv/config";
 import { db } from "../src/db/mysql.js";
-import { syncBridgeDigilockerStatus } from "../src/modules/ats/onboarding-bridge-status.js";
+import { DIGILOCKER_EVIDENCE_SQL, healOnboardingBridge } from "../src/modules/ats/onboarding-bridge-heal.js";
 import type { RowDataPacket } from "mysql2";
-
-const APPLY = process.argv.includes("--apply");
 
 (async () => {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT b.candidate_id, e.employee_code, COALESCE(b.digilocker_status, 'null') AS bridge
-       FROM ats_onboarding_bridge b
-       LEFT JOIN employees e ON e.id = b.employee_id
-      WHERE (b.digilocker_status IS NULL OR b.digilocker_status <> 'documents_received')
-        AND (
-          EXISTS (SELECT 1 FROM ats_provider_transaction_log t
-                   WHERE t.candidate_id = b.candidate_id AND t.provider = 'luckpay' AND t.service_type = 'digilocker'
-                     AND t.status IN ('documents_received', 'completed'))
-          OR EXISTS (SELECT 1 FROM candidate_bgv_check c
-                      WHERE c.candidate_id = b.candidate_id AND c.check_type = 'digilocker' AND c.status = 'verified')
-          OR EXISTS (SELECT 1 FROM candidate_bgv_report r
-                      WHERE r.candidate_id = b.candidate_id AND r.digilocker_status = 'passed')
-          OR EXISTS (SELECT 1 FROM candidate_digilocker_sessions s
-                      WHERE s.candidate_id = b.candidate_id AND LOWER(COALESCE(s.status, '')) IN ('completed', 'documents_received'))
-        )`,
+    `SELECT e.employee_code, COALESCE(b.digilocker_status, 'null') AS bridge
+       FROM ats_onboarding_bridge b LEFT JOIN employees e ON e.id = b.employee_id
+      WHERE COALESCE(b.digilocker_status, '') <> 'documents_received' AND ${DIGILOCKER_EVIDENCE_SQL}`,
   );
-  const list = rows as RowDataPacket[];
-  console.log(`${APPLY ? "APPLY" : "DRY RUN"}: ${list.length} bridge row(s) with DigiLocker completion evidence but not documents_received`);
-  for (const r of list) console.log(`  ${r.employee_code ?? "(no employee)"}  bridge=${r.bridge}`);
-  if (APPLY) {
-    for (const r of list) await syncBridgeDigilockerStatus(db, String(r.candidate_id), "completed");
-    console.log(`APPLIED: ${list.length}`);
-  }
+  console.log(`${rows.length} DigiLocker bridge row(s) behind the evidence:`);
+  for (const r of rows as RowDataPacket[]) console.log(`  ${r.employee_code ?? "(no employee)"}  bridge=${r.bridge}`);
+  if (process.argv.includes("--apply")) console.log("APPLIED:", JSON.stringify(await healOnboardingBridge()));
+  else console.log("DRY RUN (pass --apply to write)");
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

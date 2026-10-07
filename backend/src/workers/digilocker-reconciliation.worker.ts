@@ -14,6 +14,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
 import { env } from "../config/env.js";
+import { healOnboardingBridge } from "../modules/ats/onboarding-bridge-heal.js";
 import { syncDigilockerStatus } from "../modules/integrations/luckpay/luckpay-status.service.js";
 
 const TICK_MS = 15 * 60 * 1000;
@@ -65,7 +66,24 @@ export async function runDigilockerReconciliationOnce(limit = BATCH_SIZE, lookba
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
 
+const HEAL_MS = 10 * 60 * 1000;
+let healHandle: ReturnType<typeof setInterval> | null = null;
+
+/** Local-only (no provider calls), so unlike the reconciler below it is always on. */
+async function healTick(): Promise<void> {
+  try {
+    const r = await healOnboardingBridge();
+    if (r.digilocker || r.pennyDrop || r.address) console.log(`[bridge-heal] digilocker=${r.digilocker} pennyDrop=${r.pennyDrop} address=${r.address}`);
+  } catch (error) {
+    console.warn("[bridge-heal] failed:", (error as Error)?.message);
+  }
+}
+
 export async function startDigilockerReconciliationWorker(): Promise<void> {
+  if (!healHandle) {
+    void healTick();
+    healHandle = setInterval(() => { void healTick(); }, HEAL_MS);
+  }
   if (!env.DIGILOCKER_RECONCILIATION_ENABLED) {
     console.log("[digilocker-reconciliation] disabled (DIGILOCKER_RECONCILIATION_ENABLED is not true)");
     return;
@@ -82,6 +100,10 @@ export async function startDigilockerReconciliationWorker(): Promise<void> {
 }
 
 export function stopDigilockerReconciliationWorker(): void {
+  if (healHandle) {
+    clearInterval(healHandle);
+    healHandle = null;
+  }
   if (intervalHandle) {
     clearInterval(intervalHandle);
     intervalHandle = null;
