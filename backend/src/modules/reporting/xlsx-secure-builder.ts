@@ -12,6 +12,10 @@
  * accumulating the full workbook in memory). This file uses the streaming API.
  */
 
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { randomUUID } from 'crypto';
 import ExcelJS from 'exceljs';
 import type { ExecResult } from './executors/types.js';
 
@@ -114,90 +118,100 @@ export async function buildSecureXlsxBuffer(params: XlsxBuildParams): Promise<Bu
     throw new XlsxRowLimitError(totalRows, MAX_XLSX_ROWS);
   }
 
-  const wb = new ExcelJS.Workbook();
+  // Streaming writer: rows are flushed to a temp file as they are added, so a 60,000-row
+  // report does not hold the whole workbook (4M+ cells) in memory or block the event loop.
+  // The previous in-memory ExcelJS.Workbook took 20+ minutes on the 59k-row employee master
+  // and was killed by the stale-job sweeper before it finished.
+  const tmpPath = path.join(os.tmpdir(), `report-${randomUUID()}.xlsx`);
+  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({
+    filename: tmpPath,
+    useStyles: true,
+    useSharedStrings: false,
+  });
   wb.creator = 'MAS PeopleOS';
 
-  // ── Sheet 1: REPORT DATA (streaming add) ────────────────────────────────────
-  const dataSheet = wb.addWorksheet('REPORT DATA');
+  try {
+    // ── Sheet 1: REPORT DATA ───────────────────────────────────────────────────
+    const dataSheet = wb.addWorksheet('REPORT DATA', {
+      views: [{ state: 'frozen', xSplit: 0, ySplit: 1 }],
+    });
 
-  if (rows.length > 0) {
-    const columnKeys = Object.keys(rows[0]);
+    if (rows.length > 0) {
+      const columnKeys = Object.keys(rows[0]);
 
-    // Column definitions with header formatting and text-cell enforcement
-    dataSheet.columns = columnKeys.map(key => ({
-      header: key.toUpperCase(),
-      key,
-      width: Math.max(key.length + 4, 18),
-      style: isTextColumn(key)
-        ? { numFmt: '@' } // @ = text format — preserves leading zeros
-        : undefined,
-    }));
+      dataSheet.columns = columnKeys.map(key => ({
+        header: key.toUpperCase(),
+        key,
+        width: Math.max(key.length + 4, 18),
+        style: isTextColumn(key)
+          ? { numFmt: '@' } // @ = text format — preserves leading zeros
+          : undefined,
+      }));
 
-    // Bold header row
-    if (dataSheet.getRow(1).getCell(1)) {
-      dataSheet.getRow(1).font = { bold: true };
-      dataSheet.getRow(1).fill = {
-        type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' },
-      };
-    }
+      const header = dataSheet.getRow(1);
+      header.font = { bold: true };
+      header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6E4F0' } };
+      header.commit();
 
-    // Freeze first row
-    dataSheet.views = [{ state: 'frozen', xSplit: 0, ySplit: 1 }];
-
-    // Stream rows — ExcelJS addRow is O(row) not O(total)
-    for (const row of rows) {
-      const sanitised: Record<string, unknown> = {};
-      for (const key of columnKeys) {
-        sanitised[key] = sanitiseCellValue(row[key], key);
+      for (const row of rows) {
+        const sanitised: Record<string, unknown> = {};
+        for (const key of columnKeys) {
+          sanitised[key] = sanitiseCellValue(row[key], key);
+        }
+        dataSheet.addRow(sanitised).commit();
       }
-      dataSheet.addRow(sanitised);
+    } else {
+      dataSheet.addRow(['NO DATA RETURNED FOR THE SELECTED FILTERS']).commit();
     }
-  } else {
-    dataSheet.addRow({ notice: 'NO DATA RETURNED FOR THE SELECTED FILTERS' });
-  }
+    await dataSheet.commit();
 
-  // ── Sheet 2: REPORT METADATA ─────────────────────────────────────────────────
-  const metaSheet = wb.addWorksheet('REPORT METADATA');
-  metaSheet.columns = [{ width: 36 }, { width: 62 }];
-  metaSheet.getRow(1).values = ['FIELD', 'VALUE'];
-  metaSheet.getRow(1).font = { bold: true };
+    // ── Sheet 2: REPORT METADATA ───────────────────────────────────────────────
+    const metaSheet = wb.addWorksheet('REPORT METADATA');
+    metaSheet.columns = [{ width: 36 }, { width: 62 }];
 
-  const now = new Date().toISOString();
-  const metaRows: [string, string][] = [
-    ['REPORT NAME',                  params.reportName],
-    ['REQUEST REFERENCE',            params.requestReference],
-    ['REQUESTER EMPLOYEE CODE',      params.requesterEmployeeCode],
-    ['GENERATED AT (UTC)',           now],
-    ['ROW COUNT',                    String(rows.length)],
-    ['CONFIDENTIALITY',              'CONFIDENTIAL — DO NOT FORWARD OUTSIDE AUTHORISED RECIPIENTS'],
-    ['',                             ''],
-    ['DATA SCOPE',                   params.scopeSummary],
-  ];
+    const now = new Date().toISOString();
+    const metaRows: [string, string][] = [
+      ['FIELD', 'VALUE'],
+      ['REPORT NAME',                  params.reportName],
+      ['REQUEST REFERENCE',            params.requestReference],
+      ['REQUESTER EMPLOYEE CODE',      params.requesterEmployeeCode],
+      ['GENERATED AT (UTC)',           now],
+      ['ROW COUNT',                    String(rows.length)],
+      ['CONFIDENTIALITY',              'CONFIDENTIAL — DO NOT FORWARD OUTSIDE AUTHORISED RECIPIENTS'],
+      ['',                             ''],
+      ['DATA SCOPE',                   params.scopeSummary],
+    ];
 
-  const filterEntries = Object.entries(params.filters);
-  if (filterEntries.length > 0) {
-    metaRows.push(['', ''], ['FILTERS APPLIED', '']);
-    for (const [k, v] of filterEntries) {
-      metaRows.push([k.toUpperCase(), sanitiseCellValue(v, k) as string]);
+    const filterEntries = Object.entries(params.filters);
+    if (filterEntries.length > 0) {
+      metaRows.push(['', ''], ['FILTERS APPLIED', '']);
+      for (const [k, v] of filterEntries) {
+        metaRows.push([k.toUpperCase(), String(sanitiseCellValue(v, k))]);
+      }
     }
+
+    metaRows.forEach(([field, value], i) => {
+      const r = metaSheet.getRow(i + 1);
+      r.values = [field, value];
+      if (i === 0) r.font = { bold: true };
+      r.commit();
+    });
+    await metaSheet.commit();
+
+    await wb.commit();
+    const buffer = await fs.promises.readFile(tmpPath);
+
+    // File size guard — only applies when the file is delivered as an email attachment.
+    // Link-delivery reports (restricted/highly_restricted) bypass this cap because the
+    // file is stored on disk and sent as a signed download URL, not an attachment.
+    if (!params.skipSizeCap && buffer.length > ATTACHMENT_MAX_BYTES) {
+      throw new XlsxFileSizeError(buffer.length, ATTACHMENT_MAX_BYTES);
+    }
+
+    return buffer;
+  } finally {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => undefined);
   }
-
-  let metaRowIdx = 2;
-  for (const [field, value] of metaRows) {
-    metaSheet.getRow(metaRowIdx++).values = [field, value];
-  }
-
-  // ── Write to buffer ──────────────────────────────────────────────────────────
-  const buffer = Buffer.from(await wb.xlsx.writeBuffer());
-
-  // File size guard — only applies when the file is delivered as an email attachment.
-  // Link-delivery reports (restricted/highly_restricted) bypass this cap because the
-  // file is stored on disk and sent as a signed download URL, not an attachment.
-  if (!params.skipSizeCap && buffer.length > ATTACHMENT_MAX_BYTES) {
-    throw new XlsxFileSizeError(buffer.length, ATTACHMENT_MAX_BYTES);
-  }
-
-  return buffer;
 }
 
 // ── ExecResult → XlsxBuildParams row accumulator ──────────────────────────────

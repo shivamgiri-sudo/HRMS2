@@ -294,21 +294,57 @@ export interface MyRequestRow {
   generationCompletedAt: string | null;
   emailSentAt: string | null;
   failureMessage: string | null;
+  failureCode: string | null;
+  retryCount: number;
+  expiresAt: string | null;
+  generatedRowCount: number | null;
+  fileSizeBytes: number | null;
 }
+
+export interface MyRequestsQuery {
+  page?: number;
+  pageSize?: number;
+  /** One status, or the group keys 'active' | 'failed'. */
+  status?: string;
+  /** Matches the request reference or the report name. */
+  q?: string;
+}
+
+const STATUS_GROUPS: Record<string, string[]> = {
+  active: ['REQUESTED', 'QUEUED', 'PROCESSING', 'GENERATED'],
+  failed: ['GENERATION_FAILED', 'DELIVERY_FAILED', 'FAILED'],
+};
 
 export async function getMyReportRequests(
   userId: string,
   page = 1,
-  pageSize = 20
+  pageSize = 20,
+  query: Pick<MyRequestsQuery, 'status' | 'q'> = {}
 ): Promise<{ rows: MyRequestRow[]; total: number }> {
   await ensureReportingSchemaAvailable();
   // Ensure page/pageSize are valid integers — NaN from query params causes ER_WRONG_ARGUMENTS
   const safePage = Math.max(1, Math.floor(Number.isFinite(page) ? page : 1));
   const safePageSize = Math.max(1, Math.min(Math.floor(Number.isFinite(pageSize) ? pageSize : 20), 200));
   const offset = (safePage - 1) * safePageSize;
+
+  const conditions: string[] = ['rr.requested_by_user_id = ?'];
+  const params: unknown[] = [userId];
+  const statusKey = String(query.status ?? '').trim();
+  if (statusKey) {
+    const statuses = STATUS_GROUPS[statusKey.toLowerCase()] ?? [statusKey.toUpperCase()];
+    conditions.push(`rr.status IN (${statuses.map(() => '?').join(',')})`);
+    params.push(...statuses);
+  }
+  const q = String(query.q ?? '').trim().slice(0, 100);
+  if (q) {
+    conditions.push('(rr.request_reference LIKE ? OR rr.report_name_snapshot LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  const where = conditions.join(' AND ');
+
   const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM report_request WHERE requested_by_user_id = ?`,
-    [userId]
+    `SELECT COUNT(*) AS total FROM report_request rr WHERE ${where}`,
+    params
   );
   const total = parseInt(String((countRows[0] as { total: unknown }).total ?? 0), 10);
 
@@ -316,16 +352,20 @@ export async function getMyReportRequests(
   const limitInt  = parseInt(String(safePageSize), 10);
   const offsetInt = parseInt(String(offset), 10);
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, request_reference, report_code, report_name_snapshot,
-            requested_filters_json, official_email, status,
-            requested_at, generation_completed_at, email_sent_at, failure_message
-     FROM report_request
-     WHERE requested_by_user_id = ?
-     ORDER BY requested_at DESC
+    `SELECT rr.id, rr.request_reference, rr.report_code, rr.report_name_snapshot,
+            rr.requested_filters_json, rr.official_email, rr.status,
+            rr.requested_at, rr.generation_completed_at, rr.email_sent_at,
+            rr.failure_message, rr.failure_code, rr.retry_count, rr.expires_at,
+            rgf.generated_row_count, rgf.file_size_bytes
+     FROM report_request rr
+     LEFT JOIN report_generated_file rgf ON rgf.report_request_id = rr.id
+     WHERE ${where}
+     ORDER BY rr.requested_at DESC
      LIMIT ${limitInt} OFFSET ${offsetInt}`,
-    [userId]
+    params
   );
 
+  const iso = (v: unknown): string | null => (v ? String(v) : null);
   return {
     total,
     rows: (rows as Array<Record<string, unknown>>).map(r => ({
@@ -341,11 +381,43 @@ export async function getMyReportRequests(
       officialEmailMasked: maskEmail(String(r.official_email)),
       status: String(r.status),
       requestedAt: String(r.requested_at),
-      generationCompletedAt: r.generation_completed_at ? String(r.generation_completed_at) : null,
-      emailSentAt: r.email_sent_at ? String(r.email_sent_at) : null,
+      generationCompletedAt: iso(r.generation_completed_at),
+      emailSentAt: iso(r.email_sent_at),
       failureMessage: r.failure_message ? String(r.failure_message) : null,
+      failureCode: r.failure_code ? String(r.failure_code) : null,
+      retryCount: Number(r.retry_count ?? 0),
+      expiresAt: iso(r.expires_at),
+      generatedRowCount: r.generated_row_count == null ? null : Number(r.generated_row_count),
+      fileSizeBytes: r.file_size_bytes == null ? null : Number(r.file_size_bytes),
     })),
   };
+}
+
+/** Re-submit a finished or failed request with the same report and filters. */
+export async function resubmitReportRequest(
+  userId: string,
+  requestId: string,
+  meta: { ip: string; userAgent: string; correlationId?: string }
+): Promise<CreateReportRequestResult> {
+  await ensureReportingSchemaAvailable();
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT report_code, requested_filters_json, status FROM report_request
+     WHERE id = ? AND requested_by_user_id = ?`,
+    [requestId, userId]
+  );
+  if (!rows.length) {
+    throw Object.assign(new Error('Report request not found'), { statusCode: 404 });
+  }
+  const row = rows[0] as { report_code: string; requested_filters_json: unknown; status: string };
+  if (['REQUESTED', 'QUEUED', 'PROCESSING', 'GENERATED'].includes(row.status)) {
+    throw Object.assign(new Error('This request is still in progress.'), { statusCode: 409 });
+  }
+  const filters = row.requested_filters_json
+    ? (typeof row.requested_filters_json === 'string'
+        ? JSON.parse(row.requested_filters_json)
+        : row.requested_filters_json) as Record<string, unknown>
+    : {};
+  return createReportRequest(userId, row.report_code, filters, meta);
 }
 
 export async function getMyReportRequestDetail(
