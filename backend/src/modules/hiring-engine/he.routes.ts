@@ -34,7 +34,7 @@ import { refreshExEmployees } from "./he-ex-employee.service.js";
 import { getMasterSummary, getRecruiterProductivity, listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import { getMetaFunnel } from "./he-meta-funnel.service.js";
-import { getCampaignDashboard } from "./he-campaign-dashboard.service.js";
+import { getCampaignDashboard, scopeDriveGroups } from "./he-campaign-dashboard.service.js";
 import { listCampaignConfigs, setCampaignConfig } from "./he-campaign-config.service.js";
 import { listBatches, listLaunches, previewLaunch, startLaunch, type LaunchInput } from "./he-launch.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -46,6 +46,7 @@ import { nextWorkingDay, planNextDay } from "./he-plan.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
 import { getInboxThread, listInbox, replyToCandidate } from "./he-inbox.service.js";
 import { branchScopeOf, registerStreamRoutes } from "./he-stream.routes.js";
+import { registerCommandRoutes } from "./he-command.routes.js";
 import { DRIVE_STREAM_FED, STREAM_CHECK_FAILED, driveStreamCheck } from "./he-stream-guard.service.js";
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
@@ -60,6 +61,7 @@ const VIEW_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr", 
 const ADMIN_ROLES = ["super_admin", "admin"];
 const WRITE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "recruitment_hr"];
 registerStreamRoutes(heRouter, { view: VIEW_ROLES, write: WRITE_ROLES, admin: ADMIN_ROLES });
+registerCommandRoutes(heRouter, { view: VIEW_ROLES }); // before /qualified-followup/:id, which would answer /qualified-followup/status with 400
 
 heRouter.get("/summary", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try {
@@ -927,7 +929,7 @@ for (const mode of ["preview", "import"] as const) {
 }
 
 // One dashboard for the three campaign types (live Meta, old Meta re-runs, saved data) plus the next few days' drives.
-heRouter.get("/campaign-dashboard", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
-  try { res.json({ success: true, data: await getCampaignDashboard() }); }
+heRouter.get("/campaign-dashboard", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
+  try { res.json({ success: true, data: scopeDriveGroups(await getCampaignDashboard(), await branchScopeOf(req as AuthenticatedRequest)) }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] campaign dashboard failed"); res.status(500).json({ success: false, message: "Could not load the campaign dashboard" }); }
 });

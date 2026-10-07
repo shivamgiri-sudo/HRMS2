@@ -28,7 +28,7 @@ export interface StreamRoles { view: readonly string[]; write: readonly string[]
 const ID_RE = /^[0-9a-f-]{36}$/i;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** A real calendar date: the round trip rejects values V8 would roll over (2026-11-31, 2027-02-29). */
-const isIsoDate = (x: unknown): x is string => {
+export const isIsoDate = (x: unknown): x is string => {
   if (typeof x !== "string" || !ISO_RE.test(x)) return false;
   const t = Date.parse(`${x}T00:00:00Z`);
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === x;

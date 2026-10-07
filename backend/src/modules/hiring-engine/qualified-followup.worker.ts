@@ -52,6 +52,18 @@ const MAX_FILE_ATTEMPTS = 3;
 const fileAttempts = new Map<string, number>();
 const reportAttempts = new Map<string, number>();
 
+// Last few daily-report outcomes (counts and slot keys only), kept in memory like the slots: empty after a restart.
+const reportOutcomes = new Map<string, { slot: string; ok: boolean; tries: number }>();
+const REPORT_KEEP = 5;
+function noteReport(slot: string, ok: boolean, tries: number): void {
+  reportOutcomes.set(slot, { slot, ok, tries });
+  while (reportOutcomes.size > REPORT_KEEP) reportOutcomes.delete([...reportOutcomes.keys()].sort()[0]);
+}
+/** Read-only view for the status route: the last 5 report slots this process ran, newest first. */
+export function followupWorkerStatus(): { running: boolean; reports: Array<{ slot: string; ok: boolean; tries: number }> } {
+  return { running: timer !== undefined, reports: [...reportOutcomes.values()].sort((a, b) => (a.slot < b.slot ? 1 : -1)).map((r) => ({ ...r })) };
+}
+
 let running = false;
 let timer: NodeJS.Timeout | undefined;
 
@@ -135,6 +147,7 @@ async function runSteps(s: FollowupSwitches, tag: RowTag, now: Date, deps: TickD
     // A failed report leaves the slot open for the next tick, capped like the calling file.
     r.report = await guarded("report", () => deps.runDailyReport(s, tag, now), false);
     if (r.report || tries >= MAX_FILE_ATTEMPTS) doneReportSlots.add(reportSlot);
+    noteReport(reportSlot, r.report, tries);
   }
   logger.info({ mode: s.mode, tag, stops: r.stops, email: r.email, whatsapp: r.whatsapp, call: r.call }, "[qualified-followup] tick");
   return r;

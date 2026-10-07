@@ -10,6 +10,7 @@ import { db } from "../../db/mysql.js";
 import { getMetaFunnel, type FunnelRow } from "./he-meta-funnel.service.js";
 import { listBatches, listLaunches, type BatchRow, type LaunchRow } from "./he-launch.service.js";
 import { getCampaignConfig } from "./he-campaign-config.service.js";
+import type { BranchScope } from "../meta-campaign/meta-access.js";
 import { getDriveGroupsDetailed, type DriveGroup } from "./he-drive-trend.service.js";
 
 export interface PoolSourceRow { source: string; people: number; contacted: number; invited: number; confirmed: number; arrived: number; noShow: number }
@@ -66,6 +67,15 @@ async function driveDays(): Promise<DriveDayRow[]> {
 /** The grouped rows never take the dashboard down: an unexpected throw becomes an empty list plus a failed section. */
 async function groupedSafe(): Promise<{ groups: DriveGroup[]; failedSections: string[] }> {
   try { return await getDriveGroupsDetailed(); } catch { return { groups: [], failedSections: ["driveGroups"] }; }
+}
+
+/**
+ * The caller's view of the cached (unscoped) dashboard: only `driveGroups` is filtered to their branch; every other field keeps its
+ * reference. Org-wide callers get the object itself. The cached object is never mutated. A branch user without a branch sees no groups.
+ */
+export function scopeDriveGroups(d: CampaignDashboard, scope: BranchScope): CampaignDashboard {
+  if (scope.all) return d;
+  return { ...d, driveGroups: scope.branchName ? d.driveGroups.filter((g) => g.branch === scope.branchName) : [] };
 }
 
 export async function getCampaignDashboard(): Promise<CampaignDashboard> {

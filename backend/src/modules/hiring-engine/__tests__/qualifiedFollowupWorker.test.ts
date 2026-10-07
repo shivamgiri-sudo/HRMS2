@@ -20,7 +20,7 @@ vi.mock("../he-send.service.js", () => ({ sendTemplateToLead: h.sendTemplate, da
 vi.mock("../he-voice.service.js", () => ({ placeVoiceCall: h.voice }));
 vi.mock("../../communication/email.service.js", () => ({ emailService: { send: h.emailSend } }));
 
-import { runQualifiedFollowupTick, startQualifiedFollowupWorker, stopQualifiedFollowupWorker, LOCK_NAME } from "../qualified-followup.worker.js";
+import { followupWorkerStatus, runQualifiedFollowupTick, startQualifiedFollowupWorker, stopQualifiedFollowupWorker, LOCK_NAME } from "../qualified-followup.worker.js";
 import { emptyCounts } from "../qualified-followup.context.js";
 
 const live = { QUAL_FOLLOWUP_MODE: "live" } as NodeJS.ProcessEnv;
@@ -146,6 +146,15 @@ describe("slots", () => {
     const ok = vi.fn(async () => true);
     for (const m of ["08:32", "08:37"]) await tick(live, at(m, "2026-11-13"), { runDailyReport: ok });
     expect(ok).toHaveBeenCalledTimes(1);
+  });
+  it("followupWorkerStatus records the report outcome per slot: fails twice then succeeds is 3 tries, ok", async () => {
+    let n = 0;
+    const runDailyReport = vi.fn(async () => ++n >= 3);
+    for (const m of ["08:32", "08:37", "08:42"]) await tick(live, at(m, "2026-10-08"), { runDailyReport });
+    expect(followupWorkerStatus().reports.find((r) => r.slot === "2026-10-08 08:30")).toEqual({ slot: "2026-10-08 08:30", ok: true, tries: 3 });
+    const slots = followupWorkerStatus().reports.map((r) => r.slot);
+    expect(slots.length).toBeLessThanOrEqual(5);
+    expect(slots).toEqual([...slots].sort().reverse()); // newest first
   });
   it("a lock that cannot be released destroys the connection instead of pooling it", async () => {
     h.conn.execute.mockImplementation(async (sql: string) => {
