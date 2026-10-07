@@ -392,28 +392,30 @@ export const employeeService = {
       } else if (words.length === 1 && term.length < 3) {
         filterConds.push("(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)");
         filterParams.push(`${term}%`, `${term}%`, `${term}%`);
-      } else if (longWords.length > 0 && (await employeeFulltextAvailable())) {
-        // MATCH alone gets the fulltext plan; words under the token floor are LIKE'd on the name.
-        filterConds.push("MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)");
-        filterParams.push(
-          words.length === 1 ? `${longWords[0]}*` : longWords.map((w) => `+${w}*`).join(" "),
-        );
-        for (const w of shortWords) {
-          filterConds.push("e.full_name LIKE ?");
-          filterParams.push(`%${w}%`);
-        }
       } else {
-        // No FULLTEXT index on this database (see employee-search-index.ts), or every word is
-        // under the token floor: plain LIKE per word, all of them required.
-        if (words.length === 1) {
-          filterConds.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)");
-          filterParams.push(`%${words[0]}%`, `%${words[0]}%`);
+        // Name search. Live, this took 20-25s per keystroke (a code search takes 0.2s), so the
+        // pickers' dropdown never filled and only employee codes seemed to work: with
+        // ORDER BY employee_code ... LIMIT the planner walks the employee_code index and runs the
+        // name filter against every row it passes. Resolving the matching ids FIRST, in a derived
+        // table with its own LIMIT (MySQL materialises it and cannot push the outer ORDER BY into
+        // it), keeps the name filter off the outer plan whichever access path it picks.
+        const nameConds: string[] = [];
+        const nameParams: unknown[] = [];
+        if (longWords.length > 0 && (await employeeFulltextAvailable())) {
+          nameConds.push("MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)");
+          nameParams.push(words.length === 1 ? `${longWords[0]}*` : longWords.map((w) => `+${w}*`).join(" "));
+          for (const w of shortWords) { nameConds.push("e.full_name LIKE ?"); nameParams.push(`%${w}%`); }
+        } else if (words.length === 1) {
+          // No FULLTEXT index on this database (see employee-search-index.ts): plain LIKE.
+          nameConds.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)");
+          nameParams.push(`%${words[0]}%`, `%${words[0]}%`);
         } else {
-          for (const w of words) {
-            filterConds.push("e.full_name LIKE ?");
-            filterParams.push(`%${w}%`);
-          }
+          for (const w of words) { nameConds.push("e.full_name LIKE ?"); nameParams.push(`%${w}%`); }
         }
+        filterConds.push(
+          `e.id IN (SELECT m.id FROM (SELECT e.id FROM employees e WHERE ${nameConds.join(" AND ")} LIMIT 2000) AS m)`,
+        );
+        filterParams.push(...nameParams);
       }
     }
 
