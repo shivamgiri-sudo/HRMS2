@@ -3,6 +3,7 @@
  * CSV + XLSX in the seven-column format HR already uses. A row is stamped with the batch id BEFORE the email goes out and unstamped
  * when the send fails, so it can never be in two sent files; a batch stuck 'pending' (crash mid-send) is cleared after 30 minutes.
  */
+import { randomUUID } from "node:crypto";
 import ExcelJS from "exceljs";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -17,6 +18,7 @@ import { followupRef } from "./qualified-followup.rules.js";
 
 const SELECT_CAP = 5000;
 const STALE_MIN = 30;
+const C = "COLLATE utf8mb4_unicode_ci";
 const IST_MS = 5.5 * 3600_000;
 
 export interface CallFileRow {
@@ -30,11 +32,13 @@ export interface CallFileRow {
 }
 export interface CallFile { filename: string; content: Buffer; contentType: string }
 
+/** Spreadsheet formula injection guard: text starting with = + - @ tab or CR is shown literally (apostrophe prefix). */
+const safe = (v: string) => (/^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
 const cell = (v: unknown) => { const s = String(v ?? "").replace(/\r?\n/g, " "); return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 const values = (r: CallFileRow, testPhone?: string | null): string[] => [
-  testPhone || r.mobile10, r.name, r.role,
+  testPhone || r.mobile10, safe(r.name), safe(r.role),
   r.interviewDate ? sbDate(r.interviewDate) : "", r.interviewTime ? sbTime(r.interviewTime) : "",
-  (r.branchAddress ?? "").replace(/\r?\n/g, " "), r.referenceId,
+  safe((r.branchAddress ?? "").replace(/\r?\n/g, " ")), safe(r.referenceId),
 ];
 
 /** BOM-prefixed so Excel reads UTF-8 (same as he-superbot-sheet.service.ts). */
@@ -80,28 +84,59 @@ export async function recoverStaleBatches(_now: Date): Promise<number> {
   return n;
 }
 
+/** One retry; if both fail the batch becomes 'sent_unrecorded' (not 'pending', so stale recovery never unstamps a delivered file). */
+async function recordSent(batchId: string, rowCount: number): Promise<void> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await db.execute("UPDATE qualified_followup_call_batch SET status = 'sent', row_count = ? WHERE id = ?", [rowCount, batchId]);
+      logger.info({ batchId, rows: rowCount }, "[qualified-followup] calling file sent");
+      return;
+    } catch (err) {
+      logger.error({ batchId, attempt, err: (err as Error).message }, "[qualified-followup] calling file sent but not recorded");
+    }
+  }
+  try {
+    await db.execute("UPDATE qualified_followup_call_batch SET status = 'sent_unrecorded' WHERE id = ?", [batchId]);
+  } catch (err) {
+    logger.error({ batchId, err: (err as Error).message }, "[qualified-followup] calling file batch left pending after send; needs manual check");
+  }
+}
+
 const istStamp = (d: Date) => new Date(d.getTime() + IST_MS).toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
 
 export async function runCallFileBatch(s: FollowupSwitches, tag: RowTag, now: Date): Promise<CallFileResult> {
-  await recoverStaleBatches(now);
-  const [found] = await db.execute<RowDataPacket[]>(
-    `SELECT qf.id, qf.source_type, qf.mobile10, qf.full_name, qf.role_name, bm.address,
-            CASE WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%Y-%m-%d') ELSE mr.interview_date END AS slot_date,
-            CASE WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%H:%i') ELSE mr.interview_time END AS slot_time
-       FROM qualified_followup qf
-       LEFT JOIN meta_lead_raw mr ON mr.id = qf.meta_lead_id
-       LEFT JOIN he_match hm ON hm.lead_id = qf.he_lead_id AND hm.drive_id = qf.drive_id
-       LEFT JOIN branch_master bm ON bm.branch_name = qf.branch_name AND bm.active_status = 1
-      WHERE qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ?
-      ORDER BY qf.created_at, qf.id LIMIT ${SELECT_CAP}`, [tag]);
-  if (found.length === 0) return { status: "empty", rows: 0, files: 0 };
-
+  if (tag === "test" && !s.testPhone) return { status: "failed", rows: 0, files: 0, error: "no test phone" };
   const to = tag === "test" ? s.testEmail : s.callFileTo;
+  let found: RowDataPacket[];
+  try {
+    await recoverStaleBatches(now);
+    [found] = await db.execute<RowDataPacket[]>(
+      `SELECT qf.id, qf.source_type, qf.mobile10, qf.full_name, qf.role_name,
+              (SELECT bm.address FROM branch_master bm WHERE bm.branch_name ${C} = qf.branch_name ${C} AND bm.active_status = 1 LIMIT 1) AS address,
+              CASE WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%Y-%m-%d') ELSE mr.interview_date END AS slot_date,
+              CASE WHEN qf.source_type = 'he' THEN DATE_FORMAT(hm.slot_at, '%H:%i') ELSE mr.interview_time END AS slot_time
+         FROM qualified_followup qf
+         LEFT JOIN meta_lead_raw mr ON mr.id ${C} = qf.meta_lead_id ${C}
+         LEFT JOIN he_match hm ON hm.lead_id ${C} = qf.he_lead_id ${C} AND hm.drive_id ${C} = qf.drive_id ${C}
+        WHERE qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ?
+        ORDER BY qf.created_at, qf.id LIMIT ${SELECT_CAP}`, [tag]);
+  } catch (err) {
+    const msg = String((err as Error)?.message ?? err).slice(0, 255);
+    logger.error({ err: msg }, "[qualified-followup] calling file selection failed");
+    return { status: "failed", rows: 0, files: 0, error: msg };
+  }
+  if (found.length === 0) return { status: "empty", rows: 0, files: 0 };
   if (tag !== "dry_run" && !to) return { status: "failed", rows: 0, files: 0, error: "no recipient" };
 
-  const batchId = crypto.randomUUID();
-  await db.execute("INSERT INTO qualified_followup_call_batch (id, row_count, sent_to, status) VALUES (?, ?, ?, 'pending')",
-    [batchId, found.length, tag === "dry_run" ? null : to]);
+  const batchId = randomUUID();
+  try {
+    await db.execute("INSERT INTO qualified_followup_call_batch (id, row_count, sent_to, status) VALUES (?, ?, ?, 'pending')",
+      [batchId, found.length, tag === "dry_run" ? null : to]);
+  } catch (err) {
+    const msg = String((err as Error)?.message ?? err).slice(0, 255);
+    logger.error({ err: msg }, "[qualified-followup] calling file batch insert failed");
+    return { status: "failed", rows: 0, files: 0, error: msg };
+  }
   const unstamp = () => db.execute("UPDATE qualified_followup SET call_file_batch_id = NULL WHERE call_file_batch_id = ?", [batchId]);
 
   try {
@@ -143,8 +178,8 @@ export async function runCallFileBatch(s: FollowupSwitches, tag: RowTag, now: Da
       html: `<p>${rows.length} qualified candidates need a confirmation call.</p><ul>${lines}</ul><p>${files.length} attachment(s), up to ${BULK_CALL_MAX_ROWS} rows each.${tag === "test" ? " TEST MODE: every phone number is the test number." : ""}</p>`,
       attachments: files.map((f) => ({ filename: f.filename, content: f.content, contentType: f.contentType })),
     });
-    await db.execute("UPDATE qualified_followup_call_batch SET status = 'sent', row_count = ? WHERE id = ?", [rows.length, batchId]);
-    logger.info({ batchId, rows: rows.length, files: files.length }, "[qualified-followup] calling file sent");
+    // The mail is out: from here the rows must stay stamped whatever happens to the bookkeeping.
+    await recordSent(batchId, rows.length);
     return { status: "sent", batchId, rows: rows.length, files: files.length };
   } catch (err) {
     const msg = String((err as Error)?.message ?? err).slice(0, 255);

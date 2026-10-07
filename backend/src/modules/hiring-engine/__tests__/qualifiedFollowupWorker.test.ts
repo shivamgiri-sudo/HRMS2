@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
   const calls: string[] = [];
-  const conn = { execute: vi.fn(), release: vi.fn() };
+  const conn = { execute: vi.fn(), release: vi.fn(), destroy: vi.fn() };
   return {
     calls, conn,
     getConnection: vi.fn(), execute: vi.fn(),
@@ -133,6 +133,20 @@ describe("slots", () => {
     const late = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));
     await tick(live, at("21:00", "2026-11-03"), { runCallFileBatch: late });
     expect(late).not.toHaveBeenCalled();
+  });
+  it("a failed batch leaves the slot open, capped at 3 attempts", async () => {
+    const runCallFileBatch = vi.fn(async () => ({ status: "failed" as const, rows: 0, files: 0, error: "smtp" }));
+    for (const m of ["10:02", "10:07", "10:12", "10:17", "10:22"]) await tick(live, at(m, "2026-11-10"), { runCallFileBatch });
+    expect(runCallFileBatch).toHaveBeenCalledTimes(3);
+  });
+  it("a lock that cannot be released destroys the connection instead of pooling it", async () => {
+    h.conn.execute.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("RELEASE_LOCK")) throw new Error("gone");
+      return String(sql).includes("GET_LOCK") ? [[{ got: 1 }]] : [[{ r: 1 }]];
+    });
+    await tick(live, at("11:00", "2026-11-11"));
+    expect(h.conn.destroy).toHaveBeenCalledTimes(1);
+    expect(h.conn.release).not.toHaveBeenCalled();
   });
   it("calling file and daily report still run while sends are paused", async () => {
     const runCallFileBatch = vi.fn(async () => ({ status: "empty" as const, rows: 0, files: 0 }));

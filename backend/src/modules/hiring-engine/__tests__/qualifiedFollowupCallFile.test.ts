@@ -130,6 +130,65 @@ describe("runCallFileBatch", () => {
   });
 });
 
+describe("hardening", () => {
+  it("a delivered file stays stamped when recording 'sent' fails, and the next slot sends nothing", async () => {
+    world({ rows: [dbRow(1)] });
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, p?: unknown[]) => {
+      if (/status = 'sent'/.test(String(sql))) throw new Error("db gone");
+      return base(sql, p);
+    });
+    const res = await runCallFileBatch(readSwitches(liveEnv), "live", now);
+    expect(res.status).toBe("sent");
+    expect(calls(/status = 'sent'/)).toHaveLength(2); // one retry
+    expect(calls(/status = 'sent_unrecorded'/)).toHaveLength(1);
+    expect(calls(/SET call_file_batch_id = NULL/)).toHaveLength(0);
+    expect(calls(/status = 'failed'/)).toHaveLength(0);
+    // next slot: stamped rows are no longer selected (the select requires call_file_batch_id IS NULL), only one email went out
+    expect(String(calls(/FROM qualified_followup qf/)[0][0])).toContain("call_file_batch_id IS NULL");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("the stale sweep only looks at pending batches", async () => {
+    world({ pending: [] });
+    await recoverStaleBatches(now);
+    expect(String(calls(/FROM qualified_followup_call_batch/)[0][0])).toContain("WHERE status = 'pending'");
+  });
+
+  it("a SELECT error returns failed without throwing; SQL has collations and a scalar address lookup", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("FROM qualified_followup qf")) throw new Error("Illegal mix of collations");
+      return [[]];
+    });
+    const res = await runCallFileBatch(readSwitches(liveEnv), "live", now);
+    expect(res).toMatchObject({ status: "failed", error: "Illegal mix of collations" });
+    const sql = String(calls(/FROM qualified_followup qf/)[0][0]);
+    expect(sql).toContain("COLLATE utf8mb4_unicode_ci");
+    expect(sql).not.toMatch(/JOIN branch_master/);
+    expect(sql).toMatch(/\(SELECT bm\.address FROM branch_master[^)]*LIMIT 1\)/);
+    expect(calls(/INSERT/)).toHaveLength(0);
+  });
+
+  it("test tag without a test phone fails before selecting", async () => {
+    world({ rows: [dbRow(1)] });
+    const res = await runCallFileBatch({ ...readSwitches(testEnv), testPhone: null }, "test", now);
+    expect(res.status).toBe("failed");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("neutralises formula-looking text in CSV and XLSX but not the phone", async () => {
+    const r = row({ name: "=cmd()", role: "+1", branchAddress: "@x", referenceId: "-2" });
+    const line = callFileCsv([r]).split("\r\n")[1];
+    expect(line).toBe("9876543210,'=cmd(),'+1,08/10/2026,10:30 AM,'@x,'-2".replace("08/10/2026,10:30 AM", "08/10/2026,10:30 AM"));
+    const [, xlsx] = await buildCallFiles([r], { stamp: "s" });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(xlsx.content);
+    const vals = (wb.getWorksheet("Calls")!.getRow(2).values as unknown[]).slice(1);
+    expect(vals[0]).toBe("9876543210");
+    expect(vals[1]).toBe("'=cmd()");
+  });
+});
+
 describe("recoverStaleBatches", () => {
   it("clears a 31-minute-old pending batch before selecting rows and leaves a 29-minute one", async () => {
     world({ pending: [{ id: "old", age_min: 31 }, { id: "fresh", age_min: 29 }] });

@@ -46,6 +46,9 @@ const defaultDeps: TickDeps = {
 // Slot keys are kept in memory: a restart inside the grace window can repeat one calling file or report.
 const doneCallSlots = new Set<string>();
 const doneReportSlots = new Set<string>();
+// A failed batch retries on the next tick, at most this many times per slot, so an outage cannot create a batch row every 5 minutes.
+const MAX_FILE_ATTEMPTS = 3;
+const fileAttempts = new Map<string, number>();
 
 let running = false;
 let timer: NodeJS.Timeout | undefined;
@@ -70,6 +73,7 @@ export async function runQualifiedFollowupTick(o: { env?: NodeJS.ProcessEnv; now
   running = true;
   let conn: PoolConnection | undefined;
   let locked = false;
+  let lockStuck = false;
   try {
     conn = await db.getConnection();
     const [lr] = await conn.execute<RowDataPacket[]>("SELECT GET_LOCK(?, 0) AS got", [LOCK_NAME]);
@@ -86,9 +90,11 @@ export async function runQualifiedFollowupTick(o: { env?: NodeJS.ProcessEnv; now
     try {
       if (conn && locked) await conn.execute("SELECT RELEASE_LOCK(?)", [LOCK_NAME]);
     } catch (err) {
+      lockStuck = true;
       logger.warn({ err: (err as Error).message }, "[qualified-followup] release lock failed");
     }
-    conn?.release();
+    // A connection that may still hold the advisory lock must not go back to the pool.
+    if (lockStuck) conn?.destroy(); else conn?.release();
     running = false;
   }
 }
@@ -113,8 +119,10 @@ async function runSteps(s: FollowupSwitches, tag: RowTag, now: Date, deps: TickD
   const fileSlot = dueSlot(now, CALL_FILE_SLOTS, doneCallSlots);
   if (fileSlot) {
     r.callFile = await guarded("call-file", async () => {
+      const tries = (fileAttempts.get(fileSlot) ?? 0) + 1;
+      fileAttempts.set(fileSlot, tries);
       const res = await deps.runCallFileBatch(s, tag, now);
-      doneCallSlots.add(fileSlot);
+      if (res.status !== "failed" || tries >= MAX_FILE_ATTEMPTS) doneCallSlots.add(fileSlot);
       return res;
     }, null);
   }
