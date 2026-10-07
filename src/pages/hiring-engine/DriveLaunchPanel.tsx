@@ -5,7 +5,7 @@
  * hours after the email when WhatsApp could not go out). Nothing is sent from Preview.
  */
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Mail, MessageCircle, PhoneCall, Send, XCircle, Eye, RefreshCcw } from "lucide-react";
+import { CheckCircle2, Download, Mail, MessageCircle, PhoneCall, Send, XCircle, Eye, RefreshCcw } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { num } from "@/components/analytics/analytics-kit";
@@ -63,6 +63,17 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
       setMsg({ ok: d.failed === 0, text: `${num(d.sent)} invites sent${d.failed ? ` · ${num(d.failed)} failed` : ""}${blocked ? ` · not sent: ${blocked}` : ""}.` });
       setPlan(null); await load(); onChanged();
     } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Sending failed" }); }
+    finally { setBusy(null); }
+  };
+  const downloadSheet = async (which: "pending" | "all") => {
+    setBusy("sheet"); setMsg(null);
+    try {
+      const blob = await hrmsApi.getBlob(`/api/he/drives/${driveId}/superbot-sheet?which=${which}`);
+      const lines = (await blob.text()).split("\n").filter((l) => l.trim()).length - 1;
+      if (lines <= 0) { setMsg({ ok: false, text: "Nobody to call yet: no one has a live slot that is still open." }); return; }
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `superbot-calls-${which}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      setMsg({ ok: true, text: `Call sheet downloaded: ${num(lines)} candidate${lines === 1 ? "" : "s"}. Upload it in the Superbot portal.` });
+    } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Could not build the call sheet" }); }
     finally { setBusy(null); }
   };
   const followUps = async () => {
@@ -206,6 +217,20 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
                   </div>
                 </div>
               )}
+            </section>
+
+            <section aria-label="Superbot call sheet" className="rounded-xl border border-slate-200 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1 text-sm text-slate-700">
+                  <div className="font-medium text-slate-900">Call sheet for the Superbot portal</div>
+                  <div className="text-xs text-slate-500">CSV with phone, name, role, interview date and time, branch address and a reference id, ready to upload. Anyone who opted out, declined or has a wrong number is left out.</div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {([["pending", "Not yet confirmed"], ["all", "Everyone with a slot"]] as const).map(([which, label]) => (
+                    <button key={which} type="button" disabled={busy != null} onClick={() => void downloadSheet(which)} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><Download className="h-4 w-4" aria-hidden /> {label}</button>
+                  ))}
+                </div>
+              </div>
             </section>
 
             <section aria-label="Follow-ups" className="rounded-xl border border-slate-200 p-3">

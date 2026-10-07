@@ -16,6 +16,7 @@ import { getBoard, runHrArrivalAlerts } from "./he-alert.service.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { generateWebhookToken, last4, saveSuperbot, superbotConfig, webhookToken } from "./he-secrets.service.js";
 import { testSuperbotConnection } from "./he-superbot.service.js";
+import { buildSuperbotSheet } from "./he-superbot-sheet.service.js";
 import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches, previewBulkCalls, runBulkCallJobs, startBulkBatch } from "./he-bulk-call.service.js";
 import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
 import { listPrepareCampaigns, prepareMissedWalkins, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
@@ -745,4 +746,18 @@ heRouter.put("/integrations/superbot", requireAuth, requireRole(...ADMIN_ROLES),
 });
 heRouter.post("/integrations/superbot/test", requireAuth, requireRole(...ADMIN_ROLES), async (_req, res) => {
   try { res.json({ success: true, ...(await testSuperbotConnection()) }); } catch { res.status(500).json({ success: false }); }
+});
+
+/** Call sheet (CSV) for uploading to the Superbot portal: pending = invited, not yet confirmed; all = also confirmed. */
+heRouter.get("/drives/:id/superbot-sheet", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  try {
+    const r = await buildSuperbotSheet(String(req.params.id), req.query.which === "all" ? "all" : "pending");
+    if (!r) return res.status(404).json({ message: "Drive not found" });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="superbot-calls-${String(req.params.id).slice(0, 8)}.csv"`);
+    res.setHeader("X-Rows", String(r.rows));
+    res.setHeader("X-Skipped-No-Address", String(r.skippedNoAddress));
+    logger.info({ drive: req.params.id, rows: r.rows, by: (req as AuthenticatedRequest).authUser?.id }, "[he] superbot call sheet downloaded");
+    res.send(r.csv);
+  } catch (err) { logger.error({ err: (err as Error).message }, "[he] superbot sheet failed"); res.status(500).json({ message: "Could not build the call sheet" }); }
 });
