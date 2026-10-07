@@ -40,6 +40,7 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -696,6 +697,15 @@ export default function AttendanceRegularization() {
     const start = (tablePage - 1) * TABLE_PAGE_SIZE;
     return filteredRequests.slice(start, start + TABLE_PAGE_SIZE);
   }, [filteredRequests, tablePage]);
+
+  // Approval Center deep link: show the pending-approval tab and the page holding the row.
+  const approvalFocusId = useApprovalFocus(firstLoadDone && !roleLoading);
+  useEffect(() => {
+    if (!approvalFocusId || !firstLoadDone || roleLoading) return;
+    if (viewTab !== "pending_approval") { setViewTab("pending_approval"); return; }
+    const idx = filteredRequests.findIndex((r) => r.id === approvalFocusId);
+    if (idx >= 0) setTablePage(Math.floor(idx / TABLE_PAGE_SIZE) + 1);
+  }, [approvalFocusId, firstLoadDone, roleLoading, viewTab, filteredRequests]);
 
   // Tab counts for navigation badges
   const tabCounts = useMemo(() => {
@@ -2036,7 +2046,7 @@ export default function AttendanceRegularization() {
                       const isException = request.request_type_code === "exception";
                       const isOwnRequest = currentEmployeeId && request.employee_id === currentEmployeeId;
                       return (
-                        <tr key={request.id} className="hover:bg-slate-50">
+                        <tr key={request.id} data-approval-id={request.id} className="hover:bg-slate-50">
                           <Td>
                             <input
                               type="checkbox"

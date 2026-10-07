@@ -24,6 +24,7 @@ import { formatIST, formatISTDate } from "@/lib/utils";
 import { PlusCircle, RefreshCw, History } from "lucide-react";
 import { EmployeePicker, type EmployeeSearchResult } from "@/components/payroll/EmployeePicker";
 import { INCREMENT_ACTIONS_FOR_STATUS } from "@/components/payroll/incrementActions";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 type IncrStatus =
   | "submitted"
@@ -148,6 +149,7 @@ export function IncrementRequestsPanel() {
   const requests = listData?.rows ?? [];
   const total = listData?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  useApprovalFocus(!isLoading);
 
   const createMutation = useMutation({
     mutationFn: (body: typeof form) =>
@@ -262,7 +264,7 @@ export function IncrementRequestsPanel() {
                 </TableRow>
               )}
               {requests.map((r: any) => (
-                <TableRow key={r.id} className="hover:bg-muted/40">
+                <TableRow key={r.id} data-approval-id={r.id} className="hover:bg-muted/40">
                   <TableCell>
                     <div className="font-medium">{r.employee_name}</div>
                     <div className="text-xs text-muted-foreground">{r.employee_code}</div>

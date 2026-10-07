@@ -19,7 +19,7 @@ export function RequestList({ requests, selectedKey, onSelect, checkedKeys, onTo
   return (
     <ul role="listbox" aria-label="Pending roster requests" className="divide-y rounded-lg border bg-white">
       {requests.map((r) => (
-        <li key={r.key} role="option" aria-selected={r.key === selectedKey}
+        <li key={r.key} data-approval-id={r.id} role="option" aria-selected={r.key === selectedKey}
             className={`cursor-pointer p-3 hover:bg-slate-50 ${r.key === selectedKey ? "bg-blue-50" : ""}`}
             onClick={() => onSelect(r)}>
           <div className="flex items-center justify-between gap-2">

@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { BatchCostCentreReview } from "@/components/bulk-upload/BatchCostCentreReview";
 import {
   pollBatchJob, isBatchJobStarted, describeProgress,
@@ -397,6 +398,8 @@ export default function BulkUploadApprovals() {
       setLoading(false);
     }
   }, []);
+
+  useApprovalFocus(!loading);
 
   useEffect(() => {
     void load();
@@ -855,6 +858,7 @@ export default function BulkUploadApprovals() {
                 {filteredPending.map((batch) => (
                   <tr
                     key={batch.id}
+                    data-approval-id={batch.id}
                     className="transition-colors duration-150 hover:bg-blue-50/40 cursor-pointer"
                     onClick={() => void openPreview(batch)}
                   >

@@ -32,7 +32,7 @@ export class ExitPassError extends Error {
   }
 }
 
-const UNRESTRICTED_ROLES = ['super_admin', 'admin', 'it_head'];
+export const UNRESTRICTED_ROLES = ['super_admin', 'admin', 'it_head'];
 // No dedicated 'security' role_key exists live (checked mas_hrms.user_roles
 // 2026-08-21). Reusing the role keys Visitor Management already grants to
 // physical-security staff (navConfig.tsx), plus 'it' and 'wfm' per owner

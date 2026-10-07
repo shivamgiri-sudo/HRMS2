@@ -48,6 +48,26 @@ async function logEmail(
   }
 }
 
+/**
+ * Append the full-request card + one-click Approve / Decline to an approver's email. The approver is found by
+ * login email; no login, nothing pending, or any failure leaves the html untouched.
+ */
+async function withApprovalBlock(to: string, html: string, kinds: string[]): Promise<string> {
+  try {
+    const [rows] = await db.execute<any[]>('SELECT id FROM auth_user WHERE email = ? LIMIT 1', [to]);
+    const userId = rows?.[0]?.id ? String(rows[0].id) : null;
+    if (!userId) return html;
+    // Lazy import: approval-center pulls a large module graph this service must not load eagerly.
+    const { buildApprovalBlock } = await import('../approval-center/approval-email.service.js');
+    const block = await buildApprovalBlock(userId, { kinds });
+    if (!block) return html;
+    const at = html.toLowerCase().lastIndexOf('</body>');
+    return at >= 0 ? html.slice(0, at) + block.html + html.slice(at) : html + block.html;
+  } catch {
+    return html;
+  }
+}
+
 async function send(
   to: string,
   subject: string,
@@ -240,10 +260,10 @@ export async function sendOfferReviewEmail(params: {
   return send(
     params.to,
     'New Employment Offer Awaiting Your Approval - MAS Callnet',
-    `<p>A new employment offer requires your approval.</p>
+    await withApprovalBlock(params.to, `<p>A new employment offer requires your approval.</p>
      <p><strong>Candidate:</strong> ${params.candidateName}</p>
      <p>${params.offerSummary}</p>
-     <p>Please log in to review and approve.</p>`,
+     <p>Please log in to review and approve.</p>`, ['ats_offer', 'ats_branch_head']),
     params.candidateId,
     'offer_review',
   );
@@ -480,7 +500,7 @@ export async function sendBranchHeadApprovalEmail(params: {
   return send(
     params.to,
     'Approval Request - MAS Callnet',
-    html,
+    await withApprovalBlock(params.to, html, ['ats_offer', 'ats_branch_head']),
     params.candidateId,
     'branch_head_approval',
   );

@@ -261,7 +261,7 @@ async function isPayrollFrozenForDate(sessionDate: string): Promise<boolean> {
  *   added to the shared constant so granting bulk authority cannot silently widen
  *   single-row approval as a side effect.
  */
-async function regularizationReviewRole(
+export async function regularizationReviewRole(
   userId: string,
   regularizationId: string,
   approvalScopeRoles: string[] = WFM_APPROVAL_SCOPE_ROLES,
@@ -335,7 +335,7 @@ const TERMINAL_REGULARIZATION_STATUSES = ["approved", "rejected", "discarded"];
  * Rejection is never deferred: any stage can reject outright, since rejecting changes no
  * payroll figure.
  */
-function nextRegularizationStatus(
+export function nextRegularizationStatus(
   role: "super_admin" | "manager" | "wfm" | "payroll",
   currentStatus: string,
   requestedStatus: string,

@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 // ── shared constants ─────────────────────────────────────────────────────────
 
@@ -258,6 +260,7 @@ function ApprovalsTab() {
   }, [statusFilter, monthFilter]);
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
+  useApprovalFocus(!loading && requests.length > 0);
 
   const submitAction = async (action: "approve" | "reject") => {
     if (!selectedId) return;
@@ -296,6 +299,7 @@ function ApprovalsTab() {
             {!loading && requests.map(req => (
               <tr
                 key={req.id}
+                data-approval-id={req.id}
                 className="border-t hover:bg-muted/30 cursor-pointer"
                 onClick={() => { setSelectedId(String(req.id)); setRemarks(""); setActionError(null); setActionSuccess(null); }}
               >
@@ -401,6 +405,8 @@ function ApprovalsTab() {
 
 export default function HolidayWork() {
   const { roleKeys } = useWorkforceAccess();
+  const [searchParams] = useSearchParams();
+  const wantsApprovals = searchParams.get("tab") === "approvals" || !!searchParams.get("approvalId");
   return (
     <DashboardLayout>
       <div className="p-6 max-w-7xl mx-auto space-y-5">
@@ -408,7 +414,7 @@ export default function HolidayWork() {
           <h1 className="text-2xl font-semibold text-slate-900">Holiday Work</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Submit requests for staff working on designated holidays and manage the multi-stage approval workflow.</p>
         </div>
-        <Tabs defaultValue="submit">
+        <Tabs defaultValue={wantsApprovals && APPROVAL_ROLES.some(r => roleKeys.includes(r)) ? "approvals" : "submit"}>
           <TabsList className="mb-4">
             <TabsTrigger value="submit">Submit Request</TabsTrigger>
             {APPROVAL_ROLES.some(r => roleKeys.includes(r)) && <TabsTrigger value="approvals">Approvals Queue</TabsTrigger>}

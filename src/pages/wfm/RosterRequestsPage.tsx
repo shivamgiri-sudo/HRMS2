@@ -24,6 +24,7 @@ import { useKeyboardNav } from "./roster-requests/useKeyboardNav";
 import { AutoRulesPanel } from "./roster-requests/AutoRulesPanel";
 import { findDeepLinked, parseDeepLink } from "./roster-requests/deepLink";
 import { useHasRole } from "@/hooks/useUserRole";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useToast } from "@/hooks/use-toast";
 import { useRosterRequests } from "./roster-requests/useRosterRequests";
 import { KIND_LABEL, type RequestKind, type RosterRequest } from "./roster-requests/types";
@@ -62,6 +63,7 @@ export default function RosterRequestsPage() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const canEditRules = useHasRole("admin", "hr", "wfm", "ho_wfm");
   const deepLinkDone = useRef(false);
+  useApprovalFocus(!isLoading);
   useEffect(() => {
     if (deepLinkDone.current || isLoading || !deepLink.id) return;
     deepLinkDone.current = true;

@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
+import { useApprovalFocus } from '@/hooks/useApprovalFocus';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -678,7 +679,7 @@ function RequestsTable({
         </thead>
         <tbody>
           {requests.map((r) => (
-            <tr key={r.id}
+            <tr key={r.id} data-approval-id={r.id}
               onClick={() => onRowClick(r)}
               className="border-b border-slate-50 hover:bg-blue-50/50 cursor-pointer transition-colors duration-150 group">
               <td className="px-4 py-3">
@@ -765,6 +766,7 @@ export default function SalaryRevisionPage() {
 
   const requests = listQuery.data ?? [];
   const pending  = requests.filter((r) => r.status === 'pending').length;
+  useApprovalFocus(!listQuery.isLoading);
 
   if (!isResolved) {
     return (

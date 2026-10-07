@@ -3,6 +3,8 @@ import { Package, Plus, Loader, RefreshCcw, X, CheckCircle2, XCircle, Undo2, Sen
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { StatusBadge, normalizeStatus } from "@/components/ui/status-badge";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 // --- Types -------------------------------------------------------------
 
@@ -162,7 +164,12 @@ function fmtShortDate(val?: string | null): string {
 // --- Page ----------------------------------------------------------------
 
 export default function NativeExitPass() {
-  const [tab, setTab] = useState<"mine" | "pending_bh" | "pending_admin" | "outside" | "bh_admin">("mine");
+  // Approval Center deep link: ?approvalId=<pass id>&tab=pending_bh|pending_admin opens that queue.
+  const [searchParams] = useSearchParams();
+  const linkedTab = searchParams.get("approvalId") ? searchParams.get("tab") : null;
+  const [tab, setTab] = useState<"mine" | "pending_bh" | "pending_admin" | "outside" | "bh_admin">(
+    linkedTab === "pending_bh" || linkedTab === "pending_admin" ? linkedTab : "mine",
+  );
   const [passes, setPasses] = useState<ExitPass[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -206,6 +213,7 @@ export default function NativeExitPass() {
   }, [tab, filterableTab, branchFilter]);
 
   useEffect(() => { void load(); }, [load]);
+  useApprovalFocus(!loading && passes.length > 0);
 
   return (
     <DashboardLayout>
@@ -328,6 +336,7 @@ export default function NativeExitPass() {
                     {passes.map((p) => (
                       <tr
                         key={p.id}
+                        data-approval-id={p.id}
                         onClick={() => setDetailPassId(p.id)}
                         className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
                       >

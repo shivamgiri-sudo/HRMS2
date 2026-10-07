@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   useQuery,
   useMutation,
@@ -144,7 +145,9 @@ export default function PayrollSignOff() {
   const canView =
     isFinanceRole || isCeoRole || roleKeys.includes("payroll") || roleKeys.includes("admin");
 
-  const [selectedRunId, setSelectedRunId] = useState<string>("");
+  // Approval Center deep link: ?approvalId=<runId> preselects that run (also covers a finance-approved run awaiting CEO).
+  const [searchParams] = useSearchParams();
+  const [selectedRunId, setSelectedRunId] = useState<string>(searchParams.get("approvalId") ?? "");
   const [dialog, setDialog] = useState<ActionDialog>(null);
   const [remarks, setRemarks] = useState<string>("");
 

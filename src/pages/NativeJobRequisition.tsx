@@ -4,6 +4,7 @@ import { HeadcountShortagePanel } from '@/components/workforce/HeadcountShortage
 import RequisitionMetaPanel from '@/components/ats/RequisitionMetaPanel';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
+import { useApprovalFocus } from '@/hooks/useApprovalFocus';
 import {
   Users, Target, Clock, CheckCircle, AlertCircle,
   Plus, Search, Briefcase, Calendar,
@@ -240,7 +241,10 @@ export default function NativeJobRequisition() {
   const [priorityFilter, setPriorityFilter] = useState<string>('');
   const [branchFilter, setBranchFilter] = useState<string>('');
   const [processFilter, setProcessFilter] = useState<string>('');
-  const [quickFilter, setQuickFilter] = useState<string>('');
+  // Approval Center deep link (?approvalId=) lands on the pending-approval quick filter so the row is visible.
+  const [quickFilter, setQuickFilter] = useState<string>(
+    new URLSearchParams(window.location.search).get('approvalId') ? 'pending_approval' : '',
+  );
   const [sortBy, setSortBy] = useState<SortKey>('deadline_asc');
 
   // Masters
@@ -797,6 +801,8 @@ export default function NativeJobRequisition() {
   const staleDraftCount = requisitions.filter(r => r.approval_status === 'draft' && r.aging_days >= 7).length;
   const readyHandoverCount = requisitions.filter(r => r.approval_status === 'approved' && r.fulfilled_headcount >= r.requested_headcount && r.handover_status !== 'handed_over').length;
 
+  useApprovalFocus(!loading && pageTab === 'requisitions');
+
   // ── Render ─────────────────────────────────────────────────────────────────────
 
   if (loading && !requisitions.length) {
@@ -1015,7 +1021,7 @@ export default function NativeJobRequisition() {
 
                   return (
                     <React.Fragment key={req.id}>
-                      <tr className={rowClass}>
+                      <tr className={rowClass} data-approval-id={req.id}>
                         <td className="px-4 py-3 text-sm font-medium text-blue-600">
                           {req.requisition_code}
                           {isOverdue && <span className="ml-1 text-red-500 text-xs">⚠</span>}

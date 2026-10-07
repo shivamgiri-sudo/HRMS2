@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Plus, RefreshCw, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useHasRole } from "@/hooks/useUserRole";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
@@ -150,6 +151,7 @@ export function ImprestAllocationPanel() {
 
   const managers = managersQuery.data ?? [];
   const allocations = allocationsQuery.data ?? [];
+  useApprovalFocus(!allocationsQuery.isLoading);
   const selectedManager = useMemo(
     () => managers.find((m) => m.id === draft.imprestManagerId) ?? null,
     [managers, draft.imprestManagerId],
@@ -472,7 +474,7 @@ export function ImprestAllocationPanel() {
               </thead>
               <tbody>
                 {allocations.map((row) => (
-                  <tr key={row.id} className={GRN_TR}>
+                  <tr key={row.id} data-approval-id={row.id} className={GRN_TR}>
                     <GrnTd>
                       <span className="font-mono">{row.allocation_no}</span>
                       <GrnCellSub>{dateLabel(row.allocation_date)}</GrnCellSub>

@@ -65,7 +65,7 @@ router.get("/pending", requireRole(...REVIEWER_ROLES), h(async (req: Authenticat
 // only matching flat top-level keys and silently passing PAN/Aadhaar through
 // unmasked for the nested case.
 const STATUTORY_SENSITIVE_KEYS = ["pan_number", "aadhaar_id", "aadhaar_number", "uan_number", "esi_number", "esic_number", "epf_number"];
-function maskStatutoryValues(values: Record<string, any> | undefined | null): Record<string, unknown> {
+export function maskStatutoryValues(values: Record<string, any> | undefined | null): Record<string, unknown> {
   if (!values) return {};
   const mask = (v: unknown) => (v == null || v === "" ? null : `${"*".repeat(Math.max(0, String(v).length - 4))}${String(v).slice(-4)}`);
   const maskLevel = (obj: Record<string, any>): Record<string, unknown> => {

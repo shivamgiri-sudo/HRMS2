@@ -15,6 +15,7 @@
  * (see `./shared.tsx`'s `money`/`GstBreakdown`), never computes it.
  */
 import { useEffect, useState } from "react";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, ArrowRight, Download, Eye, FileClock, FileText, Loader2, Plus, RefreshCw,
@@ -402,8 +403,12 @@ export default function ClientBillingWorkspacePage() {
 
   const [createProformaOpen, setCreateProformaOpen] = useState(false);
   const [createCreditNoteOpen, setCreateCreditNoteOpen] = useState(false);
-  const [detailInvoiceId, setDetailInvoiceId] = useState<string | null>(null);
-  const [detailCreditNoteId, setDetailCreditNoteId] = useState<string | null>(null);
+  // Approval Center deep link: ?tab=proformas|credit-notes&approvalId=<id> opens that record's detail.
+  const deepLinkParams = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const deepLinkId = deepLinkParams.get("approvalId");
+  const deepLinkTab = deepLinkParams.get("tab") === "credit-notes" ? "credit-notes" : "proformas";
+  const [detailInvoiceId, setDetailInvoiceId] = useState<string | null>(deepLinkId && deepLinkTab === "proformas" ? deepLinkId : null);
+  const [detailCreditNoteId, setDetailCreditNoteId] = useState<string | null>(deepLinkId && deepLinkTab === "credit-notes" ? deepLinkId : null);
   const [auditInvoice, setAuditInvoice] = useState<{ id: string; label: string } | null>(null);
   const [rejectInvoiceTarget, setRejectInvoiceTarget] = useState<{ id: string; label: string } | null>(null);
   const [approveTarget, setApproveTarget] = useState<{ id: string; label: string } | null>(null);
@@ -465,6 +470,7 @@ export default function ClientBillingWorkspacePage() {
   });
   const creditNoteRows: CreditNoteRow[] = creditNotesQuery.data?.data ?? [];
   const creditNoteTotal = creditNotesQuery.data?.total ?? 0;
+  useApprovalFocus(!proformasQuery.isLoading && !creditNotesQuery.isLoading);
 
   // A dedicated, unpaginated fetch for the "New Credit Note" picker — it needs every
   // approved invoice to search over, not just whatever page the Invoices tab happens to be
@@ -617,7 +623,7 @@ export default function ClientBillingWorkspacePage() {
           </div>
         )}
 
-        <Tabs defaultValue="proformas" className="flex flex-1 flex-col overflow-hidden">
+        <Tabs defaultValue={deepLinkTab} className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="mx-4 mt-3 w-fit">
             <TabsTrigger value="proformas">Proformas</TabsTrigger>
             <TabsTrigger value="invoices">Invoices</TabsTrigger>
@@ -675,7 +681,7 @@ export default function ClientBillingWorkspacePage() {
                       </TableRow>
                     ) : (
                       proformaRows.map((row) => (
-                        <TableRow key={row.id}>
+                        <TableRow key={row.id} data-approval-id={row.id}>
                           <TableCell className="font-medium">
                             <button
                               type="button"
@@ -878,7 +884,7 @@ export default function ClientBillingWorkspacePage() {
                       </TableRow>
                     ) : (
                       creditNoteRows.map((row) => (
-                        <TableRow key={row.id}>
+                        <TableRow key={row.id} data-approval-id={row.id}>
                           <TableCell className="font-medium">
                             <button
                               type="button"

@@ -16,6 +16,7 @@ import {
   type ExitStageKey,
 } from "@/components/exit/ExitStagePipeline";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { exitTypeBadgeClass, NOC_ELIGIBLE_STATUSES, Pill, reasonLabel, statusFlow, type CenterData } from "./shared";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,6 +85,9 @@ export function OverviewTab({
         .some((v) => v?.toLowerCase().includes(q));
     });
   }, [data, stage, search, typeFilter]);
+
+  // Approval Center deep link: ring the row once the list has rendered.
+  useApprovalFocus(!loading && filtered.length > 0);
 
   const moveStatus = async (id: string, nextStatus: string) => {
     try {
@@ -247,6 +251,7 @@ export function OverviewTab({
                 return (
                   <tr
                     key={r.id}
+                    data-approval-id={r.id}
                     className="border-t hover:bg-slate-50/80 transition-colors cursor-pointer"
                     onClick={() => setDrawerExitId(r.id)}
                   >

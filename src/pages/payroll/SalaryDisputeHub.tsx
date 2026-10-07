@@ -11,6 +11,7 @@
  */
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle, CheckCircle2, Clock, XCircle, ChevronRight,
@@ -618,6 +619,7 @@ function ReviewQueueTab() {
     staleTime: 30_000, refetchInterval: 60_000,
   });
   const disputes = unwrap<any[]>(raw) ?? [];
+  useApprovalFocus(!isLoading);
 
   const now = new Date();
   const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -659,7 +661,7 @@ function ReviewQueueTab() {
           {disputes.map((d: any) => {
             const typeBadge = DISPUTE_TYPE_BADGE[d.dispute_type] ?? DISPUTE_TYPE_BADGE["OTHER"];
             return (
-              <Card key={d.id} className="rounded-2xl border border-white/60 bg-white/95 shadow-sm hover:shadow-md transition-shadow cursor-pointer" onClick={() => setReviewing(d)}>
+              <Card key={d.id} data-approval-id={d.id} className="rounded-2xl border border-white/60 bg-white/95 shadow-sm hover:shadow-md transition-shadow cursor-pointer" onClick={() => setReviewing(d)}>
                 <CardContent className="p-4 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">

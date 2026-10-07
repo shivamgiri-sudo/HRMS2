@@ -1,6 +1,7 @@
 // src/pages/finance/PaymentVouchersPage.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { Download, IndianRupee, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,7 +86,9 @@ export function PaymentVouchersContent() {
   const [tab, setTab] = useState<"all" | "raised" | "ceo_approved" | "released" | "rejected" | "changes_requested">("all");
   const [raiseOpen, setRaiseOpen] = useState(false);
   const [raiseForm, setRaiseForm] = useState(emptyRaiseForm);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  // Approval Center deep link: ?tab=payments&approvalId=<voucher id> opens that voucher's drawer.
+  const [deepLinkParams] = useSearchParams();
+  const [detailId, setDetailId] = useState<string | null>(() => deepLinkParams.get("approvalId"));
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptForm, setReceiptForm] = useState(emptyReceiptForm);
 
@@ -353,7 +356,7 @@ export function PaymentVouchersContent() {
                   {vouchersQuery.isLoading && <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400">Loading…</td></tr>}
                   {!vouchersQuery.isLoading && vouchers.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400">No vouchers here</td></tr>}
                   {vouchers.map((v) => (
-                    <tr key={v.id} className="cursor-pointer transition-colors duration-150 hover:bg-blue-50/50" onClick={() => setDetailId(v.id)}>
+                    <tr key={v.id} data-approval-id={v.id} className="cursor-pointer transition-colors duration-150 hover:bg-blue-50/50" onClick={() => setDetailId(v.id)}>
                       <td className="px-4 py-2.5 font-mono font-semibold text-gray-800">{v.voucher_number}</td>
                       <td className="px-4 py-2.5 text-gray-600">
                         {v.voucher_type === "receipt"

@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { CandidateJourneyDrawer } from '@/components/ats/CandidateJourneyDrawer';
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { useSearchParams } from 'react-router-dom';
+import { useApprovalFocus } from '@/hooks/useApprovalFocus';
 import {
   Table,
   TableBody,
@@ -174,6 +175,7 @@ function OfferRow({
 
   return (
     <TableRow
+      data-approval-id={offer.offer_id}
       onClick={() => onOpenJourney(offer.candidate_id)}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpenJourney(offer.candidate_id); }}
       tabIndex={0}
@@ -505,6 +507,7 @@ export default function NativeBranchHeadApproval() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab') ?? 'pending';
   const journeyCandidate = searchParams.get('candidate');
+  useApprovalFocus(!loading && tab === 'pending');
 
   const [decisions, setDecisions] = useState<DecisionRow[]>([]);
   const [decisionsLoading, setDecisionsLoading] = useState(false);

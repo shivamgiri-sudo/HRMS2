@@ -573,6 +573,8 @@ export default function BranchBudgetManagementWorkspace() {
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<WorkspaceTab>(() => {
     const requested = searchParams.get("tab");
+    // Approval Center deep link: ?tab=approval&approvalId=<budget id>&branchId=..&period=.. opens that budget's review dialog.
+    if (requested === "approval" && searchParams.get("approvalId")) return "approval";
     return requested === "topups" ? "topups" : "plan";
   });
   const [period, setPeriod] = useState(() => searchParams.get("period") || currentPeriod());
@@ -594,7 +596,9 @@ export default function BranchBudgetManagementWorkspace() {
   /** Reviewer's per head/sub-head correction notes, keyed by correctionKey(line). */
   const [correctionNotes, setCorrectionNotes] = useState<Record<string, string>>({});
   /** Budget currently open in the review detail dialog. */
-  const [reviewingBudgetId, setReviewingBudgetId] = useState<string | null>(null);
+  const [reviewingBudgetId, setReviewingBudgetId] = useState<string | null>(() =>
+    searchParams.get("tab") === "approval" ? searchParams.get("approvalId") : null
+  );
   /** Per-line correction notes typed inside the review dialog (keyed by lineId or head|sub). */
   const [dialogLineNotes, setDialogLineNotes] = useState<Record<string, string>>({});
   const [dialogRemarks, setDialogRemarks] = useState("");

@@ -5,6 +5,7 @@ import { Eye, RefreshCw } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { useCostCentreApprovalQueue, type CostCentreRecord } from "@/hooks/useCostCentreManagement";
 import { formatDistanceToNow } from "date-fns";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 interface CostCentreApprovalQueueProps {
   onReview: (cc: CostCentreRecord) => void;
@@ -12,6 +13,7 @@ interface CostCentreApprovalQueueProps {
 
 export function CostCentreApprovalQueue({ onReview }: CostCentreApprovalQueueProps) {
   const { data: queue, isLoading, refetch } = useCostCentreApprovalQueue();
+  useApprovalFocus(!isLoading);
 
   return (
     <div className="space-y-4">
@@ -56,7 +58,7 @@ export function CostCentreApprovalQueue({ onReview }: CostCentreApprovalQueuePro
               </TableRow>
             ) : (
               queue.map((cc) => (
-                <TableRow key={cc.id}>
+                <TableRow key={cc.id} data-approval-id={cc.id}>
                   <TableCell className="font-medium">{cc.cost_centre_code}</TableCell>
                   <TableCell>{cc.cost_centre_name}</TableCell>
                   <TableCell>{cc.client_name ?? "-"}</TableCell>

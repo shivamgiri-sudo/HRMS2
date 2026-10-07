@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
+import { useApprovalFocus } from '@/hooks/useApprovalFocus';
 import {
   User, CheckCircle, XCircle, Clock, Search, Filter, TrendingUp, Award,
   FileText, Eye, ThumbsUp, ThumbsDown
@@ -50,6 +51,7 @@ export default function BranchHeadApproval() {
   const [actionLoading, setActionLoading] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  useApprovalFocus(!loading);
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -343,6 +345,7 @@ export default function BranchHeadApproval() {
                   {filteredApprovals.map((approval) => (
                     <tr
                       key={approval.id}
+                      data-approval-id={approval.id}
                       className="hover:bg-gray-50 transition-colors"
                     >
                       <td className="px-4 py-4">

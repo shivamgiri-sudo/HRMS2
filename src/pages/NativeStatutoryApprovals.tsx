@@ -11,6 +11,7 @@ import {
   useActOnStatutoryChangeRequest,
   type StatutoryChangeRequest,
 } from '@/hooks/useStatutoryApprovals';
+import { useApprovalFocus } from '@/hooks/useApprovalFocus';
 
 const FIELD_LABELS: Record<string, string> = {
   pan_number: 'PAN',
@@ -34,6 +35,7 @@ export default function NativeStatutoryApprovals() {
   const act = useActOnStatutoryChangeRequest();
   const [acting, setActing] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  useApprovalFocus(!isLoading && !!requests?.length);
 
   const handleAction = useCallback(
     async (req: StatutoryChangeRequest, decision: 'approved' | 'rejected') => {
@@ -83,7 +85,7 @@ export default function NativeStatutoryApprovals() {
         {requests?.map((req) => {
           const changedFields = Object.keys(req.new_values ?? {});
           return (
-            <Card key={req.id} className="border-l-4 border-l-amber-400">
+            <Card key={req.id} data-approval-id={req.id} className="border-l-4 border-l-amber-400">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-base">{req.employee_name}</CardTitle>
