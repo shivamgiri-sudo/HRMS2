@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import {
   Activity,
   ArrowLeft,
@@ -324,7 +326,9 @@ export default function UnifiedAccessControl() {
   const { role } = useIsAdminOrHR();
   const isAdmin = role === 'admin' || role === 'super_admin';
 
-  const [activeTab, setActiveTab] = useState<TabKey>("users");
+  // Approval Center deep link (?approvalId=<access request id>) opens the access-requests tab.
+  const [deepLinkParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<TabKey>(deepLinkParams.get("approvalId") ? "admin" : "users");
   const [userSearch, setUserSearch] = useState("");
   const [selectedUser, setSelectedUser] = useState<UserOption | null>(null);
   const [roleToAssign, setRoleToAssign] = useState("");
@@ -479,6 +483,7 @@ export default function UnifiedAccessControl() {
     enabled: activeTab === "admin" && isAdmin,
     retry: false,
   });
+  useApprovalFocus(activeTab === "admin" && !requestsLoading && accessRequests.length > 0);
 
   const { data: rbacStatus, isFetching: rbacLoading, refetch: refetchRbac, isError: rbacError } = useQuery<RbacStatus>({
     queryKey: ["access-control", "rbac-status"],
@@ -1855,7 +1860,7 @@ export default function UnifiedAccessControl() {
                   <EmptyState text={`No ${requestStatus} access requests.`} />
                 ) : (
                   accessRequests.map((request) => (
-                    <div key={request.id} className="rounded-xl border border-slate-200 p-4">
+                    <div key={request.id} data-approval-id={request.id} className="rounded-xl border border-slate-200 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                           <div className="font-bold text-slate-950">{request.user_email ?? request.user_id}</div>

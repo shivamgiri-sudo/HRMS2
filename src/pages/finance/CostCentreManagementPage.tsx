@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CostCentreListView } from "@/components/finance/cost-centre/CostCentreListView";
@@ -10,10 +11,13 @@ import { useHasRole } from "@/hooks/useUserRole";
 type SheetMode = "create" | "edit" | "view";
 
 export default function CostCentreManagementPage() {
-  const [tab, setTab] = useState("list");
-  const [sheetOpen, setSheetOpen] = useState(false);
+  // Approval Center deep link: ?approvalId=<cost centre id> opens the Approval Queue and that record's review sheet.
+  const [deepLinkParams] = useSearchParams();
+  const deepLinkId = deepLinkParams.get("approvalId");
+  const [tab, setTab] = useState(deepLinkId ? "queue" : "list");
+  const [sheetOpen, setSheetOpen] = useState(Boolean(deepLinkId));
   const [sheetMode, setSheetMode] = useState<SheetMode>("view");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(deepLinkId);
 
   const { data: selectedCostCentre, refetch } = useCostCentreDetail(selectedId);
 

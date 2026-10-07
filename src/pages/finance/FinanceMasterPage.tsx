@@ -1,3 +1,4 @@
+import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useHasRole } from "@/hooks/useUserRole";
@@ -12,6 +13,9 @@ export default function FinanceMasterPage() {
   // Branch Admin has no direct /vendors access (that route is finance-role gated); this is the
   // only place they can submit a vendor create/update request for a Finance Head to approve.
   const canRaise = useHasRole("branch_admin");
+  // Approval Center deep link: ?tab=approvals&approvalId=<request id>.
+  const [deepLinkParams] = useSearchParams();
+  const initialTab = deepLinkParams.get("tab") === "approvals" && canApprove ? "approvals" : "heads";
 
   return (
     <DashboardLayout>
@@ -23,7 +27,7 @@ export default function FinanceMasterPage() {
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="heads" className="flex flex-1 flex-col overflow-hidden">
+        <Tabs defaultValue={initialTab} className="flex flex-1 flex-col overflow-hidden">
           <div className="border-b px-4 pt-2 shrink-0">
             <TabsList className="h-8">
               <TabsTrigger value="heads" className="text-xs h-7">Expense Heads</TabsTrigger>

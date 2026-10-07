@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RefreshCcw, ShieldCheck, AlertTriangle, CheckCircle2, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { BGV_REPORT_ROLES } from "@/lib/bgvReportAccess";
 import { Button } from "@/components/ui/button";
@@ -230,6 +231,17 @@ export default function NativeBGVVerificationCenter() {
 
   useEffect(() => { void loadQueue(); }, []);
 
+  // Approval Center deep link: ?approvalId=<candidateId> ringed in the queue and opened once.
+  const focusId = useApprovalFocus(queue.length > 0);
+  const openedFocus = useRef(false);
+  useEffect(() => {
+    if (!openedFocus.current && focusId && queue.some((q) => q.candidate_id === focusId)) {
+      openedFocus.current = true;
+      void loadCandidate(focusId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, queue]);
+
   if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
     return <DashboardLayout><div className="p-8 text-center text-red-600 font-bold">You do not have access to this page.</div></DashboardLayout>;
   }
@@ -266,7 +278,7 @@ export default function NativeBGVVerificationCenter() {
                 <CardContent className="space-y-3">
                   {queue.length === 0 && <p className="text-sm text-slate-500">No candidates in BGV queue.</p>}
                   {queue.map((row) => (
-                    <button key={row.candidate_id} onClick={() => loadCandidate(row.candidate_id)}
+                    <button key={row.candidate_id} data-approval-id={row.candidate_id} onClick={() => loadCandidate(row.candidate_id)}
                       className={`w-full rounded-2xl border p-4 text-left transition hover:bg-slate-50 ${selectedId === row.candidate_id ? "border-blue-400 bg-blue-50" : "bg-white"}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div>

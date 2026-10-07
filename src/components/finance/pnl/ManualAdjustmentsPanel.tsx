@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useSeatRevenueForecast } from "@/hooks/useSeatRevenueForecast";
 import { AlertCircle, Check, X } from "lucide-react";
 import {
@@ -82,6 +83,7 @@ export function ManualAdjustmentsPanel({
   const suggested = forecastQuery.data?.byProcess.find((p) => p.processId === processId) ?? null;
 
   const listQuery = useManualAdjustments({ processId, period });
+  useApprovalFocus(!listQuery.isLoading);
   const createMutation = useCreateManualAdjustment();
   const reviewMutation = useReviewManualAdjustment();
 
@@ -234,7 +236,7 @@ export function ManualAdjustmentsPanel({
         ) : (
           <div className="space-y-2">
             {pending.map((entry) => (
-              <div key={entry.id} className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs">
+              <div key={entry.id} data-approval-id={entry.id} className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-slate-800">
                     {TYPE_LABEL[entry.adjustment_type]} — {currency(entry.amount)}

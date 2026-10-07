@@ -758,6 +758,44 @@ export async function listApplicationsForPosting(
   };
 }
 
+/**
+ * Applications waiting on this manager's own decision (status pending_manager, manager_id = the caller's
+ * employee id): exactly the rows PATCH /applications/:id/manager-action will accept from them.
+ */
+export async function listPendingManagerApplications(
+  managerEmployeeId: string,
+  limit = 100
+): Promise<IjpApplicationWithDetails[]> {
+  const capped = Math.min(Math.max(Math.trunc(limit) || 100, 1), 200);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT a.*,
+            e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+            e.email AS employee_email, e.mobile AS employee_mobile,
+            dm.dept_name AS current_department_name,
+            pm.process_name AS current_process_name,
+            dsm.designation_name AS current_designation_name,
+            bm.branch_name AS current_branch_name,
+            CONCAT(mgr.first_name, ' ', COALESCE(mgr.last_name, '')) AS manager_name,
+            p.posting_code, p.job_title
+     FROM ijp_application a
+     JOIN employees e ON e.id = a.employee_id
+     LEFT JOIN department_master dm ON dm.id = a.current_department_id
+     LEFT JOIN process_master pm ON pm.id = a.current_process_id
+     LEFT JOIN designation_master dsm ON dsm.id = a.current_designation_id
+     LEFT JOIN branch_master bm ON bm.id = a.current_branch_id
+     LEFT JOIN employees mgr ON mgr.id = a.manager_id
+     JOIN ijp_posting p ON p.id = a.posting_id
+     WHERE a.manager_id = ? AND a.status = 'pending_manager'
+     ORDER BY a.applied_at ASC
+     ${sqlLimitOffset(capped, 0)}`,
+    [managerEmployeeId]
+  );
+  return rows.map((row) => ({
+    ...row,
+    offer_details: parseJson(row.offer_details, null),
+  })) as IjpApplicationWithDetails[];
+}
+
 export async function listMyApplications(
   employeeId: string,
   filters: { limit?: number; offset?: number } = {}

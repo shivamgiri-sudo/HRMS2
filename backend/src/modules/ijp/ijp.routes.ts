@@ -335,6 +335,17 @@ router.delete(
 
 // ─── Manager Approval Route ─────────────────────────────────────────────────
 
+// Applications waiting on the caller as the assigned manager (read-only; own rows only).
+router.get(
+  '/applications/pending-manager',
+  h(async (req, res) => {
+    const emp = await getEmployeeForUser(req.authUser!.id);
+    if (!emp) return res.json({ applications: [], total: 0 });
+    const applications = await ijpService.listPendingManagerApplications(emp.id, Number(req.query.limit) || 100);
+    return res.json({ applications, total: applications.length });
+  })
+);
+
 // Manager approve/reject application (for their direct reports)
 router.patch(
   '/applications/:id/manager-action',

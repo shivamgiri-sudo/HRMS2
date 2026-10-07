@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1238,
-  "columnCount": 17987,
+  "tableCount": 1239,
+  "columnCount": 17997,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -452,6 +452,18 @@
       "payroll_month",
       "payroll_recalc_status",
       "discarded_at"
+    ],
+    "approval_email_action": [
+      "id",
+      "token_hash",
+      "user_id",
+      "approval_uid",
+      "kind",
+      "expires_at",
+      "used_at",
+      "used_action",
+      "used_ip",
+      "created_at"
     ],
     "approval_request": [
       "id",

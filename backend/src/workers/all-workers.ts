@@ -33,6 +33,7 @@ import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from "../modules/
 import { startCelebrationScheduler, stopCelebrationScheduler } from "../modules/engagement/celebration.cron.js";
 import { startFestivalGreetingScheduler, stopFestivalGreetingScheduler } from "../modules/engagement/festival-greeting.cron.js";
 import { startDailyGamesScheduler, stopDailyGamesScheduler } from "../modules/engagement/daily-games.cron.js";
+import { startApprovalDigestScheduler } from "../modules/approval-center/approval-digest.cron.js";
 import { startCommunicationCleanup, stopCommunicationCleanup } from "../modules/communication/cleanup.cron.js";
 import { startAttendanceEngineScheduler, stopAttendanceEngineScheduler } from "../modules/wfm/attendance-engine.cron.js";
 import { startAttendanceHealWorker, stopAttendanceHealWorker } from "../modules/wfm/attendance-heal.worker.js";
@@ -145,6 +146,11 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "communication-cleanup",
     start: () => { startCommunicationCleanup(); return Promise.resolve(); },
+  },
+  {
+    // Daily 09:00 IST approvals digest with one-click buttons; no-op unless APPROVAL_DIGEST_EMAIL_ENABLED=true.
+    name: "approval-digest",
+    start: () => { startApprovalDigestScheduler(); return Promise.resolve(); },
   },
   {
     name: "attendance-engine",

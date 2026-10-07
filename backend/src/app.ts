@@ -165,6 +165,8 @@ import ijpRouter from "./modules/ijp/ijp.routes.js";
 import { erpRouter } from "./modules/erp/erp.routes.js";
 import { clientBillingRouter } from "./modules/client-billing/client-billing.routes.js";
 import { inboxRouter } from "./modules/inbox/inbox.routes.js";
+import { approvalActionPublicRouter } from "./modules/approval-center/approval-action.public.routes.js";
+import { approvalCenterRouter } from "./modules/approval-center/approval-center.routes.js";
 import { itProvisioningRouter } from "./modules/it-provisioning/it-provisioning.routes.js";
 import { mobilityRouter } from "./modules/mobility/mobility.routes.js";
 import { goalsRouter } from "./modules/goals/goals.routes.js";
@@ -702,6 +704,7 @@ app.use("/api/test-report", testDailyReportRouter); // TEMP TEST - REMOVE AFTER 
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
 app.use("/api/public/login-info", loginInfoRouter); // public login page stats (no auth, aggregate only)
+app.use("/api/public/approval-action", kpiCaptureLimiter, approvalActionPublicRouter); // emailed one-click links (no login)
 // Open KPI capture page (/kpi-capture). Unauthenticated by design so process owners can fill it
 // from a link without an HRMS account; writes only to the kpi_capture_submission staging table,
 // never to live KPI config. Must stay ABOVE the "/api" clientRouter mount, which applies
@@ -893,6 +896,7 @@ app.use("/api/finance", processPnlRouter);
 // path-less middleware added to a router on the shared base would reintroduce the same problem.
 app.use("/api/finance/billability", billabilityRouter);
 app.use("/api/inbox", inboxRouter);
+app.use("/api/approval-center", approvalCenterRouter);
 app.use("/api/it-provisioning", itProvisioningRouter);
 app.use("/api/onboarding-provisioning", itProvisioningRouter);
 app.use("/api/mobility", mobilityRouter);

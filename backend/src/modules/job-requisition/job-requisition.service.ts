@@ -1483,10 +1483,35 @@ export const jobRequisitionService = {
         },
       });
 
+      const raisedSubject = rendered.subject ?? `Requisition Raised: ${requisition.requisition_code}`;
+      // Approvers with a login get their own copy carrying the full request + one-click Approve / Decline.
+      const { buildApprovalBlock } = await import("../approval-center/approval-email.service.js");
+      let sharedTo = recipients.to;
+      const personal: typeof recipients.to = [];
+      for (const r of recipients.to) {
+        const block = r.userId
+          ? await buildApprovalBlock(r.userId, { kinds: ["job_requisition"], entityId: String(requisition.id) })
+          : null;
+        if (!block) continue;
+        try {
+          await emailService.send({
+            to: r.email,
+            subject: raisedSubject,
+            html: (rendered.html ?? "") + block.html,
+            text: (rendered.text ?? "") + block.text,
+          });
+          personal.push(r);
+        } catch (e: unknown) {
+          console.warn("[JobRequisition notifyRequisitionRaised] personalised send failed:", e instanceof Error ? e.message : e);
+        }
+      }
+      sharedTo = recipients.to.filter((r) => !personal.includes(r));
+      const sharedCc = recipients.cc;
+      if (sharedTo.length === 0 && sharedCc.length === 0) return;
       await emailService.send({
-        to: recipients.to.map((r) => r.email).join(", "),
-        ...(recipients.cc.length ? { cc: recipients.cc.join(", ") } : {}),
-        subject: rendered.subject ?? `Requisition Raised: ${requisition.requisition_code}`,
+        to: (sharedTo.length ? sharedTo.map((r) => r.email) : sharedCc).join(", "),
+        ...(sharedTo.length && sharedCc.length ? { cc: sharedCc.join(", ") } : {}),
+        subject: raisedSubject,
         html: rendered.html,
         text: rendered.text,
       });

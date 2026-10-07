@@ -900,6 +900,25 @@ export const authService = {
     return { accessToken, refreshToken: rawRefresh };
   },
 
+  /**
+   * Short-lived access token to carry out ONE approval decision as `userId` (approval e-mail links).
+   * Same claims as a login token, so every route's own role / scope / read-only check applies unchanged.
+   */
+  async mintScopedAccessToken(userId: string, ttlSeconds = 120): Promise<string | null> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      'SELECT id, email, COALESCE(is_read_only, 0) AS is_read_only, COALESCE(is_blocked, 0) AS is_blocked FROM auth_user WHERE id = ? LIMIT 1',
+      [userId],
+    );
+    const u = rows[0] as any;
+    if (!u || Number(u.is_blocked) === 1) return null;
+    const role = await getUserPrimaryRole(userId);
+    return jwt.sign(
+      { sub: u.id, email: u.email, is_read_only: Boolean(u.is_read_only), role },
+      JWT_SECRET,
+      { expiresIn: ttlSeconds },
+    );
+  },
+
   verifyAccessToken(token: string): { id: string; email: string; scope?: string } | null {
     try {
       const payload = jwt.verify(token, JWT_SECRET) as { sub?: unknown; email?: unknown; scope?: unknown };

@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { formatIST } from "@/lib/utils";
 import { useHasRole } from "@/hooks/useUserRole";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -847,7 +848,7 @@ function TaskRow({
     : task.risk.charAt(0).toUpperCase() + task.risk.slice(1);
 
   return (
-    <tr className={`group border-b border-slate-100 last:border-0 hover:bg-slate-50/80 transition-colors ${rs.row} ${focused ? "ring-2 ring-inset ring-blue-500 bg-blue-50/30" : ""}`}>
+    <tr data-approval-id={task.id} className={`group border-b border-slate-100 last:border-0 hover:bg-slate-50/80 transition-colors ${rs.row} ${focused ? "ring-2 ring-inset ring-blue-500 bg-blue-50/30" : ""}`}>
       {/* Risk */}
       <td className="py-2.5 pl-3 pr-2 whitespace-nowrap w-24">
         <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${rs.badge}`}>
@@ -1314,6 +1315,14 @@ export default function NativeWorkInbox() {
   }, [load]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Approval Center deep link (?approvalId=<work item id>): open that item's drawer once loaded.
+  const focusId = useApprovalFocus(!loading && items.length > 0);
+  useEffect(() => {
+    if (!focusId) return;
+    const hit = items.find((i) => i.id === focusId);
+    if (hit) setSelected(hit);
+  }, [focusId, items]);
 
   const moduleCounts = summary?.by_module ?? {};
   const moduleList = Object.entries(moduleCounts).sort((a, b) => b[1] - a[1]);

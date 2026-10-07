@@ -1,6 +1,7 @@
 // src/components/finance/budget/BudgetTopupPanel.tsx
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { Ban, CheckCircle2, Circle, Clock, Pencil, PlusCircle, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -536,6 +537,7 @@ export function BudgetTopupPanel({
     enabled: Boolean(branchId),
   });
   const requests = listQuery.data ?? [];
+  useApprovalFocus(!listQuery.isLoading);
 
   const linesQuery = useQuery({
     queryKey: ["budget-lines-available-for-topup", branchId, period],
@@ -900,6 +902,7 @@ export function BudgetTopupPanel({
           return (
             <div
               key={request.id}
+              data-approval-id={request.id}
               className="rounded-2xl border border-slate-200 bg-white p-4 transition-shadow duration-200 hover:shadow-md"
             >
               {/* Two columns from lg up, stacked below it. The right column is what fills the

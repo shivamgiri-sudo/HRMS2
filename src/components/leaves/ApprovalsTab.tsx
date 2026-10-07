@@ -68,8 +68,8 @@ export function ApprovalsTab({ requests, loading, busy, onQuickApprove, onReview
         <>
           <div className="space-y-3">
             {pager.paginatedItems.map((r) => (
+              <div key={r.id} data-approval-id={r.id} className="rounded-2xl">
               <LeaveRequestRow
-                key={r.id}
                 request={r}
                 actions={
                   r.canReview ? (
@@ -87,6 +87,7 @@ export function ApprovalsTab({ requests, loading, busy, onQuickApprove, onReview
                   ) : undefined
                 }
               />
+              </div>
             ))}
           </div>
           <ListPager

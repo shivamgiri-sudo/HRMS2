@@ -151,7 +151,8 @@ export default function ProcessPnlDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const period = searchParams.get("period") ?? currentPeriod();
-  const [activeTab, setActiveTab] = useState("statement");
+  // Approval Center deep link (?approvalId=<adjustment id>) opens the Manual Adjustments tab.
+  const [activeTab, setActiveTab] = useState(() => (new URLSearchParams(window.location.search).get("approvalId") ? "adjustments" : "statement"));
   const detailQuery = useBpoProcessPnlDetail(processId, { period });
   const revenueQuery = useProcessPnlSection(processId, { period }, "revenue", activeTab === "revenue");
   const peopleCostQuery = useProcessPnlSection(processId, { period }, "people-cost", activeTab === "costs");

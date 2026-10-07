@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { usePayrollRunSummaries } from "@/hooks/usePayroll";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -956,6 +957,7 @@ function ApprovalQueueTab() {
   const pendingBatches = allBatches.filter(
     (b) => b.status === "pending_approval"
   );
+  useApprovalFocus(!isLoading);
 
   // Approve / Reject dialog
   const [actionOpen, setActionOpen] = useState(false);
@@ -1042,7 +1044,7 @@ function ApprovalQueueTab() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {pendingBatches.map((batch) => (
-            <Card key={batch.id}>
+            <Card key={batch.id} data-approval-id={batch.id}>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-semibold flex justify-between items-start">
                   <span>{batch.incentive_name ?? "Batch"}</span>
@@ -1492,7 +1494,7 @@ export default function NativeIncentives() {
           </p>
         </div>
 
-        <Tabs defaultValue="types">
+        <Tabs defaultValue={new URLSearchParams(window.location.search).has("approvalId") ? "approval" : "types"}>
           <TabsList>
             <TabsTrigger value="types">Incentive Types</TabsTrigger>
             <TabsTrigger value="upload">Monthly Upload</TabsTrigger>

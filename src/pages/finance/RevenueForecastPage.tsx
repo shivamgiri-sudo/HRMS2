@@ -7,7 +7,9 @@
  * counts it as revenue. After invoicing the Branch Head closes it with actuals and the P&L switches
  * to the closed amount; the table shows forecast vs closed. Backend: revenue-forecast.routes.ts.
  */
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { AlertTriangle, ChevronDown, ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
@@ -107,7 +109,12 @@ const approvalMark = (s: ApprovalState | null) => (s === "approved" ? "Approved"
 const approvalTone = (s: ApprovalState | null) => (s === "approved" ? "text-emerald-700" : s === "rejected" ? "text-rose-700" : "text-slate-600");
 
 export default function RevenueForecastPage() {
-  const [period, setPeriod] = useState(nextPeriod());
+  // Approval Center deep link: ?period=YYYY-MM&approvalId=<forecast id> opens that forecast for review.
+  const [deepLinkParams] = useSearchParams();
+  const [period, setPeriod] = useState(() => {
+    const p = deepLinkParams.get("period");
+    return p && /^\d{4}-\d{2}$/.test(p) ? p : nextPeriod();
+  });
   const [filter, setFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
@@ -169,6 +176,18 @@ export default function RevenueForecastPage() {
   }
 
   const groups = useMemo(() => groupByBranch(visible), [visible]);
+  const focusId = useApprovalFocus(!list.isLoading);
+  const [focusHandled, setFocusHandled] = useState(false);
+  useEffect(() => {
+    if (!focusId || focusHandled || list.isLoading) return;
+    const target = allRows.find((r) => r.forecastId === focusId);
+    if (!target) return;
+    setFocusHandled(true);
+    setBranchFilter("");
+    setExpanded(new Set([target.branchId ?? target.branchName ?? "—"]));
+    setSheet({ row: target, mode: awaitsMe(target) ? "review" : "view" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, focusHandled, list.isLoading, allRows]);
   const isExpanded = (key: string) => (expanded ? expanded.has(key) : groups.length === 1);
   const toggle = (key: string) => setExpanded((cur) => {
     const next = new Set(cur ?? (groups.length === 1 ? groups.map((g) => g.key) : []));
@@ -304,7 +323,7 @@ export default function RevenueForecastPage() {
                         <TableCell className="text-right text-xs text-blue-700">{open ? "Hide" : "Show"} cost centres</TableCell>
                       </TableRow>
                       {open && g.rows.map((r) => (
-                      <TableRow key={r.costCentreId} className="hover:bg-slate-50">
+                      <TableRow key={r.costCentreId} data-approval-id={r.forecastId ?? undefined} className="hover:bg-slate-50">
                         <TableCell className="pl-10 text-xs text-slate-600">{r.branchName ?? "—"}</TableCell>
                         <TableCell>
                           <p className="font-medium text-slate-900">{r.costCentreCode}</p>

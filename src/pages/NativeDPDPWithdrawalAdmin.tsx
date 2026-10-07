@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -377,6 +378,14 @@ export default function NativeDPDPWithdrawalAdmin() {
     } finally { setActionLoading(false); }
   };
 
+  // Approval Center deep link: jump to the page that holds ?approvalId=<request id>.
+  const focusId = useApprovalFocus(!loading && requests.length > 0);
+  useEffect(() => {
+    if (!focusId) return;
+    const idx = requests.findIndex((r) => r.id === focusId);
+    if (idx >= 0) setPage(Math.floor(idx / PAGE_SIZE) + 1);
+  }, [focusId, requests]);
+
   // Pagination
   const totalPages = Math.max(1, Math.ceil(requests.length / PAGE_SIZE));
   const pagedRequests = useMemo(
@@ -530,7 +539,7 @@ export default function NativeDPDPWithdrawalAdmin() {
                       {pagedRequests.map((r) => {
                         const sla = slaCountdown(r.sla_due_at);
                         return (
-                          <TableRow key={r.id} className="cursor-pointer hover:bg-slate-50/60"
+                          <TableRow key={r.id} data-approval-id={r.id} className="cursor-pointer hover:bg-slate-50/60"
                             onClick={() => void openDetail(r)}>
                             <TableCell className="font-mono text-xs text-slate-500">
                               {r.reference_number ?? r.id.slice(0, 8).toUpperCase()}

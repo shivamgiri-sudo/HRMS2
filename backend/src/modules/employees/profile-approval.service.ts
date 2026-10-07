@@ -42,9 +42,10 @@ async function findPendingApprovalId(employeeId: string, requestType: string): P
  * than dropped — the exclusion is specifically for someone confirmed to have left, not for
  * an account this table cannot identify.
  */
-async function getPayrollEmails(): Promise<string[]> {
+/** Payroll approvers (payroll, payroll_hr, payroll_head) with the login id so each approver can get a personal approve/decline block. */
+async function getPayrollApprovers(): Promise<Array<{ id: string; email: string }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT au.email
+    `SELECT DISTINCT au.id, au.email
      FROM user_roles ur
      JOIN auth_user au ON au.id = ur.user_id
      LEFT JOIN employees e ON e.user_id = au.id
@@ -54,7 +55,7 @@ async function getPayrollEmails(): Promise<string[]> {
        AND au.email IS NOT NULL
        AND au.email != ''`
   );
-  return (rows as any[]).map((r) => String(r.email)).filter(Boolean);
+  return (rows as any[]).map((r) => ({ id: String(r.id), email: String(r.email) })).filter((r) => r.email);
 }
 
 function buildPennyDropEmailHtml(opts: {
@@ -227,25 +228,40 @@ export const profileApprovalService = {
     const expiresAtStr = expiresAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
     const maskedAccount = acctRaw ? `****${acctRaw.slice(-4)}` : '****';
 
-    const payrollEmails = await getPayrollEmails().catch(() => [] as string[]);
-    if (payrollEmails.length > 0) {
-      emailService.send({
-        to: payrollEmails.join(', '),
-        subject: `[Action Required] Bank Change Verification — ${employeeName} (${employeeCode})`,
-        html: buildPennyDropEmailHtml({
-          employeeName,
-          employeeCode,
-          processName,
-          reportingManagerName,
-          bankName: newValues.bank_name ?? newValues.bankName ?? '—',
-          ifscCode: (newValues.ifsc_code ?? newValues.ifscCode ?? '').toUpperCase(),
-          accountType: newValues.account_type ?? newValues.accountType ?? 'savings',
-          maskedAccount,
-          verifyUrl,
-          expiresAt: expiresAtStr,
-        }),
-        text: `Bank Account Change Request\n\nEmployee: ${employeeName} (${employeeCode})\nBank: ${newValues.bank_name ?? '—'}\nIFSC: ${newValues.ifsc_code ?? '—'}\n\nVerify via penny drop: ${verifyUrl}\n\nThis link expires in ${PENNY_DROP_TOKEN_TTL_HOURS} hours.`,
-      }).catch((err) => {
+    const payrollApprovers = await getPayrollApprovers().catch(() => [] as Array<{ id: string; email: string }>);
+    if (payrollApprovers.length > 0) {
+      const pennySubject = `[Action Required] Bank Change Verification — ${employeeName} (${employeeCode})`;
+      const pennyHtml = buildPennyDropEmailHtml({
+        employeeName,
+        employeeCode,
+        processName,
+        reportingManagerName,
+        bankName: newValues.bank_name ?? newValues.bankName ?? '—',
+        ifscCode: (newValues.ifsc_code ?? newValues.ifscCode ?? '').toUpperCase(),
+        accountType: newValues.account_type ?? newValues.accountType ?? 'savings',
+        maskedAccount,
+        verifyUrl,
+        expiresAt: expiresAtStr,
+      });
+      const pennyText = `Bank Account Change Request\n\nEmployee: ${employeeName} (${employeeCode})\nBank: ${newValues.bank_name ?? '—'}\nIFSC: ${newValues.ifsc_code ?? '—'}\n\nVerify via penny drop: ${verifyUrl}\n\nThis link expires in ${PENNY_DROP_TOKEN_TTL_HOURS} hours.`;
+      void (async () => {
+        // Lazy import: approval-center pulls a large module graph that this service must not load eagerly.
+        const { buildApprovalBlock } = await import('../approval-center/approval-email.service.js');
+        const shared: string[] = [];
+        for (const a of payrollApprovers) {
+          const block = await buildApprovalBlock(a.id, { kinds: ['bank_change'], entityId: id });
+          if (!block) { shared.push(a.email); continue; }
+          try {
+            await emailService.send({ to: a.email, subject: pennySubject, html: pennyHtml + block.html, text: pennyText + block.text });
+          } catch (err) {
+            console.error('[bank-change] personalised penny drop email failed:', err instanceof Error ? err.message : String(err));
+            shared.push(a.email);
+          }
+        }
+        if (shared.length > 0) {
+          await emailService.send({ to: shared.join(', '), subject: pennySubject, html: pennyHtml, text: pennyText });
+        }
+      })().catch((err) => {
         console.error('[bank-change] penny drop email failed:', err instanceof Error ? err.message : String(err));
       });
     }

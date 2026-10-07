@@ -14,6 +14,7 @@
  *     cancelled attempts.
  */
 import { useState } from 'react';
+import { useApprovalFocus } from '@/hooks/useApprovalFocus';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HrmsModernShell } from '@/components/ui/hrms-modern';
@@ -100,6 +101,8 @@ export default function NativeVendorBankDetails() {
       return (r?.data ?? []) as PendingRequest[];
     },
   });
+  // Approval Center deep link: ?approvalId=<request id> opens the Approvals tab and rings that row.
+  useApprovalFocus(!pending.isLoading);
 
   const active = useQuery({
     queryKey: ['vendor-bank-active', vendorId],
@@ -163,7 +166,7 @@ export default function NativeVendorBankDetails() {
           </p>
         </div>
 
-        <Tabs defaultValue="maintain">
+        <Tabs defaultValue={new URLSearchParams(window.location.search).get('approvalId') ? 'approvals' : 'maintain'}>
           <TabsList>
             <TabsTrigger value="maintain">Maintain</TabsTrigger>
             <TabsTrigger value="approvals">
@@ -273,6 +276,7 @@ export default function NativeVendorBankDetails() {
                     return (
                       <TableRow
                         key={r.id}
+                        data-approval-id={r.id}
                         className="cursor-pointer"
                         onClick={() => setDrawerVendor(r.vendor_id)}
                       >

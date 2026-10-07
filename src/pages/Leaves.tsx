@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CalendarDays, ClipboardCheck, History, UserRound } from "lucide-react";
 
@@ -56,7 +57,8 @@ const Leaves = () => {
   const { canDiscard } = useCanDiscard();
 
   const [applyOpen, setApplyOpen] = useState(false);
-  const [tab, setTab] = useState<TabId>("my");
+  const approvalFocusId = new URLSearchParams(window.location.search).get("approvalId");
+  const [tab, setTab] = useState<TabId>(approvalFocusId ? "approvals" : "my");
   const [review, setReview] = useState<{ request: LeaveRequest; mode: ReviewMode } | null>(null);
   const [discardLeaveId, setDiscardLeaveId] = useState<string | null>(null);
 
@@ -118,6 +120,7 @@ const Leaves = () => {
     return list;
   }, [hasApprovals, hasTeamView, openCount]);
   const activeTab: TabId = tabs.some((t) => t.id === tab) ? tab : "my";
+  useApprovalFocus(!isLoading && activeTab === "approvals");
 
   const exportRows = async (startDate?: Date, endDate?: Date) => {
     try {

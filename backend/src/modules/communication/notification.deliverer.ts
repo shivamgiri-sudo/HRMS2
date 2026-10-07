@@ -24,6 +24,19 @@ import type { NotificationDeliverer } from './notification.gateway.js';
 import type { ResolvedRecipient } from '../../shared/recipient-resolver.types.js';
 import { resolveActionUrl, withActionLink } from './notification.links.js';
 import { inboxService } from '../inbox/inbox.service.js';
+import { buildApprovalBlock } from '../approval-center/approval-email.service.js';
+
+/** Gateway events that ask a person to approve something -> the Approval Center kinds that hold it. */
+export const APPROVAL_EVENT_KINDS: Record<string, string[]> = {
+  leave_submitted: ['leave'], leave_pending_branch_head: ['leave'], leave_approval_overdue: ['leave'],
+  regularization_submitted: ['regularization'], regularization_stage2_pending: ['regularization'],
+  grn_submitted: ['grn'], grn_accounts_head_pending: ['grn'], grn_approval_overdue: ['grn'],
+  exit_resignation_submitted: ['exit_resignation'], resignation_submitted: ['exit_resignation'],
+  rejoin_requested: ['rejoin'], rejoin_pending_reminder: ['rejoin'], rejoin_pending_escalation: ['rejoin'],
+  statutory_opt_out_submitted: ['statutory_optout'],
+  full_final_ready: ['exit_ff'],
+  payroll_run_under_review: ['payroll_signoff'], payroll_run_approved: ['payroll_signoff'],
+};
 
 /** More than this many CC addresses becomes BCC — recipients should not be exposed to
  *  each other on a broadcast. NOTIFICATION_CATALOGUE.md section 5. */
@@ -102,8 +115,38 @@ export const notificationDeliverer: NotificationDeliverer = {
 
     const attachments = (data.__attachments as EmailAttachment[] | undefined) ?? undefined;
 
+    // Approval emails: each approver gets their OWN copy carrying the full request and one-click
+    // Approve / Decline buttons (the links are personal, so they cannot ride in a shared envelope).
+    let toList = resolution.to;
+    const approvalKinds = APPROVAL_EVENT_KINDS[eventCode];
+    if (approvalKinds) {
+      const stillShared: ResolvedRecipient[] = [];
+      for (const r of resolution.to) {
+        const block = r.userId ? await buildApprovalBlock(r.userId, { kinds: approvalKinds, entityId }) : null;
+        if (!block) { stillShared.push(r); continue; }
+        try {
+          await emailService.send({
+            to: addressList([r]),
+            subject,
+            html: html + block.html,
+            text: (text ?? '') + block.text,
+            attachments,
+          });
+        } catch (err) {
+          console.error(`[notification-deliverer] personalised approval mail failed for ${eventCode}:`, (err as Error).message);
+          stillShared.push(r);   // never lose the notification: fall back to the plain shared copy
+        }
+      }
+      toList = stillShared;
+      if (toList.length === 0) {
+        if (cc.length === 0 && bcc.length === 0) return { dispatchLogId: randomUUID() };
+        toList = cc.length ? cc : bcc;
+        if (cc.length) cc = []; else bcc = [];
+      }
+    }
+
     const { messageId } = await emailService.send({
-      to: addressList(resolution.to),
+      to: addressList(toList),
       ...(cc.length ? { cc: addressList(cc) } : {}),
       ...(bcc.length ? { bcc: addressList(bcc) } : {}),
       subject,

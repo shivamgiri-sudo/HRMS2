@@ -46,7 +46,7 @@ async function notifyManagerOfResignation(
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.first_name, e.last_name, e.email AS emp_email,
-              m.first_name AS mgr_first, m.last_name AS mgr_last, m.email AS mgr_email
+              m.first_name AS mgr_first, m.last_name AS mgr_last, m.email AS mgr_email, m.user_id AS mgr_user_id
          FROM employees e
          LEFT JOIN employees m ON m.id = e.reporting_manager_id
         WHERE e.id = ? LIMIT 1`,
@@ -55,6 +55,10 @@ async function notifyManagerOfResignation(
     const emp = (rows as RowDataPacket[])[0];
     if (!emp?.mgr_email) return; // no manager email — skip silently
 
+    // Lazy import: approval-center loops back through the exit module.
+    const approvalBlock = emp.mgr_user_id
+      ? await (await import("../approval-center/approval-email.service.js")).buildApprovalBlock(String(emp.mgr_user_id), { kinds: ["exit_resignation"], entityId: exitRequestId })
+      : null;
     await mailer.sendMail({
       from: `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM}>`,
       to: emp.mgr_email,
@@ -64,7 +68,7 @@ async function notifyManagerOfResignation(
              <p>Please review and action this request in HRMS:</p>
              <p><a href="${buildAppLink("/exit/command-center")}" style="display:inline-block;background:#073f78;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600">Review resignation</a></p>
              <p style="font-size:12px;color:#6b7280">Or copy this link: ${buildAppLink("/exit/command-center")}</p>
-             <p style="color:#888;font-size:12px">Exit Request ID: ${exitRequestId}</p>`,
+             <p style="color:#888;font-size:12px">Exit Request ID: ${exitRequestId}</p>${approvalBlock?.html ?? ""}`,
     });
   } catch (err) {
     logger.error({ err }, "[exit] manager notification email failed");

@@ -15,6 +15,7 @@ import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js"
 import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
 import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
 import { startMetaLeadSyncScheduler, stopMetaLeadSyncScheduler } from "./cron/metaLeadSync.cron.js";
+import { startApprovalDigestScheduler } from "./modules/approval-center/approval-digest.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
@@ -277,6 +278,7 @@ function startServer() {
         startTenureBadgeScheduler();
         startCelebrationScheduler(); // birthday + work-anniversary posts & emails daily at 8 AM
         startCommunicationCleanup();
+        startApprovalDigestScheduler(); // no-op unless APPROVAL_DIGEST_EMAIL_ENABLED=true
         startAttendanceEngineScheduler();
         // Fills missing attendance records after every restart and every 6 h, so a deploy cannot leave a hole.
         startAttendanceHealWorker();

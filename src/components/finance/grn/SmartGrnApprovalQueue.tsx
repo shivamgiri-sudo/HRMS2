@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 import {
   AlertCircle,
   BadgeCheck,
@@ -139,7 +141,10 @@ export function SmartGrnApprovalQueue({
 }: { onReopenForEdit?: (grnId: string) => void } = {}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState("submitted");
+  // Approval Center deep link: `?approvalId=<grn id>&approvalStatus=<its stage status>` opens on that stage.
+  const [deepLinkParams] = useSearchParams();
+  const deepLinkStatus = deepLinkParams.get("approvalStatus");
+  const [status, setStatus] = useState(deepLinkStatus || "submitted");
   const [grnType, setGrnType] = useState("_all");
   const [search, setSearch] = useState("");
   const [backDated, setBackDated] = useState(false);
@@ -183,6 +188,7 @@ export function SmartGrnApprovalQueue({
   useEffect(() => {
     if (!capabilities || didSetInitialTab.current) return;
     didSetInitialTab.current = true;
+    if (deepLinkStatus) return;
     if (
       canReviewAccountsStage &&
       !capabilities.canReviewBranchStage &&
@@ -204,7 +210,7 @@ export function SmartGrnApprovalQueue({
       setMyGrnsOnly(true);
     }
     // branch stage reviewers stay on "submitted" — the default is already correct
-  }, [capabilities, canReviewAccountsStage]);
+  }, [capabilities, canReviewAccountsStage, deepLinkStatus]);
 
   const branchesQuery = useQuery({
     queryKey: ["grn-branches-list"],
@@ -786,6 +792,7 @@ export function SmartGrnApprovalQueue({
   const rows = listQuery.data ?? [];
   // Client-side back-dated filter: show only GRNs where accounting_period differs from
   // the invoice date month (period-end cut-off entries booked into a prior accounting month).
+  useApprovalFocus(!listQuery.isLoading);
   const displayRows = backDated
     ? rows.filter((row) => {
         const ap = row.accounting_period?.slice(0, 7);
@@ -961,6 +968,7 @@ export function SmartGrnApprovalQueue({
               {displayRows.map((row) => (
                 <tr
                   key={row.id}
+                  data-approval-id={row.id}
                   className={`${GRN_TR} cursor-pointer`}
                   onClick={() => {
                     setTarget(row);

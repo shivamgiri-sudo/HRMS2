@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -16,6 +16,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useToast } from "@/hooks/use-toast";
+import { useApprovalFocus } from "@/hooks/useApprovalFocus";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -572,6 +573,15 @@ export default function ReimbursementManagement() {
   });
   const branchHeadQueue = branchHeadQueueData?.data ?? [];
 
+  // Approval Center deep link: open the tab (Team / Branch Head) whose queue holds ?approvalId=<claimId>, then ring the row.
+  const [activeTab, setActiveTab] = useState("my");
+  const focusId = useApprovalFocus(!managerLoading && !branchHeadLoading);
+  useEffect(() => {
+    if (!focusId) return;
+    if (managerQueue.some((c) => c.id === focusId)) setActiveTab("team");
+    else if (branchHeadQueue.some((c) => c.id === focusId)) setActiveTab("branch-head");
+  }, [focusId, managerQueue, branchHeadQueue]);
+
   // ---------------------------------------------------------------------------
   // Conversion Queue query (branch_head_approved claims ready for GRN)
   // ---------------------------------------------------------------------------
@@ -736,7 +746,7 @@ export default function ReimbursementManagement() {
         {/* Stat Cards — use my claims for self; all claims for approvers */}
         <StatCards claims={isApprover ? allClaims : myClaims} />
 
-        <Tabs defaultValue="my">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="my">My Claims</TabsTrigger>
             {isManager && <TabsTrigger value="team">Team</TabsTrigger>}
@@ -870,7 +880,7 @@ export default function ReimbursementManagement() {
                       </TableRow>
                     )}
                     {managerQueue.map((claim) => (
-                      <TableRow key={claim.id}>
+                      <TableRow key={claim.id} data-approval-id={claim.id}>
                         <TableCell>
                           <div className="font-medium text-sm">{claim.employee_name ?? "—"}</div>
                           <div className="text-xs text-slate-500">{claim.employee_code}</div>
@@ -950,7 +960,7 @@ export default function ReimbursementManagement() {
                       </TableRow>
                     )}
                     {branchHeadQueue.map((claim) => (
-                      <TableRow key={claim.id}>
+                      <TableRow key={claim.id} data-approval-id={claim.id}>
                         <TableCell>
                           <div className="font-medium text-sm">{claim.employee_name ?? "—"}</div>
                           <div className="text-xs text-slate-500">{claim.employee_code}</div>
