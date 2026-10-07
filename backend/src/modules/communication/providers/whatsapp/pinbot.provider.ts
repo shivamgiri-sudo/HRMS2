@@ -16,6 +16,22 @@ interface PinbotSendResponse {
 }
 
 /**
+ * Meta rejects a template parameter that contains a newline or tab, or 4+ consecutive spaces, with
+ * (#132018) "issue with the parameters in your template". A branch address stored on several lines
+ * made every interview invitation fail that way, so line breaks become ", " and whitespace runs one
+ * space. A value that is empty after cleaning becomes "-" (Meta also rejects an empty parameter).
+ */
+export function sanitizeTemplateParam(value: string): string {
+  const cleaned = String(value ?? "")
+    .replace(/[ \t]*[\r\n]+[ \t]*/g, ", ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/(,\s*){2,}/g, ", ")
+    .replace(/^[,\s]+|[,\s]+$/g, "")
+    .slice(0, 1024);
+  return cleaned || "-";
+}
+
+/**
  * WhatsApp Business API through Pinbot (SmartPing WABA reseller; panel engage.dialdesk.in).
  *
  * Pinbot is a Meta Cloud API wrapper: same payload shape, but the URL is partnersv1.pinbot.ai and
@@ -62,7 +78,7 @@ export class PinbotWhatsAppProvider implements CommunicationProvider {
     const components: Array<Record<string, unknown>> = [
       {
         type: "body",
-        parameters: bodyParams.map((text) => ({ type: "text", text })),
+        parameters: bodyParams.map((text) => ({ type: "text", text: sanitizeTemplateParam(text) })),
       },
     ];
     if (urlButtonSuffix) {

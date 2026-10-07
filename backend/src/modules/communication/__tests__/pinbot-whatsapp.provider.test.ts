@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import axios from "axios";
 import {
   PinbotWhatsAppProvider,
+  sanitizeTemplateParam,
   toMsisdn,
 } from "../providers/whatsapp/pinbot.provider.js";
 
@@ -65,5 +66,26 @@ describe("toMsisdn", () => {
     expect(toMsisdn("99997 46258")).toBe("919999746258");
     expect(toMsisdn("+91 9999746258")).toBe("919999746258");
     expect(toMsisdn("whatsapp:+919999746258")).toBe("919999746258");
+  });
+});
+
+describe("template parameter sanitising (#132018)", () => {
+  it("turns a multi-line address into one line", () => {
+    expect(
+      sanitizeTemplateParam("Gate No. 01, F-15, Jal Darshan Commercial Building,\nAshram Road, Near Bank of Baroda,\nOpp. Old Natraj Theatre,\nAhmedabad, Gujarat – 380006"),
+    ).toBe("Gate No. 01, F-15, Jal Darshan Commercial Building, Ashram Road, Near Bank of Baroda, Opp. Old Natraj Theatre, Ahmedabad, Gujarat – 380006");
+  });
+
+  it("removes tabs and long space runs, trims, and never returns an empty parameter", () => {
+    expect(sanitizeTemplateParam("a\t\tb      c  ")).toBe("a b c");
+    expect(sanitizeTemplateParam("  \n ")).toBe("-");
+    expect(sanitizeTemplateParam("")).toBe("-");
+  });
+
+  it("sends sanitised values in the template body", async () => {
+    post.mockResolvedValue({ status: 200, data: { messages: [{ id: "wamid.2" }] } });
+    await new PinbotWhatsAppProvider().sendTemplate("9999746258", "t", ["Ravi", "line1\nline2"]);
+    const body = post.mock.calls[0]![1] as { template: { components: Array<{ parameters: Array<{ text: string }> }> } };
+    expect(body.template.components[0]!.parameters.map((p) => p.text)).toEqual(["Ravi", "line1, line2"]);
   });
 });
