@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS requisition_stream_plan (
   planned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (stream_id, drive_date),
-  KEY idx_rsp_drive (drive_id)
+  KEY idx_rsp_drive (drive_id),
+  KEY idx_rsp_date (drive_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS requisition_stream_match (
@@ -73,3 +74,5 @@ SET @s = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA 
 SET @s = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'requisition_stream' AND COLUMN_NAME = 'version') = 0, "ALTER TABLE requisition_stream ADD COLUMN version INT NOT NULL DEFAULT 0 AFTER closed_reason", 'SELECT 1'); PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
 SET @s = IF((SELECT DATETIME_PRECISION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'requisition_stream' AND COLUMN_NAME = 'created_at') = 0, "ALTER TABLE requisition_stream MODIFY COLUMN created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), MODIFY COLUMN updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)", 'SELECT 1'); PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @s = IF((SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'requisition_stream_plan' AND INDEX_NAME = 'idx_rsp_date') = 0, "ALTER TABLE requisition_stream_plan ADD KEY idx_rsp_date (drive_date)", 'SELECT 1'); PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;

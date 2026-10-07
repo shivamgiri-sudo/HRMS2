@@ -207,7 +207,9 @@ async function resolveOrigin(i: CreateStreamInput, branchName: string): Promise<
   if (i.sourceType === "meta_live") {
     const [c] = await db.execute<RowDataPacket[]>("SELECT id, campaign_name, requisition_id FROM meta_campaign WHERE id = ? LIMIT 1", [i.originId]);
     if (!c[0]) return notFound;
-    if (c[0].requisition_id != null && String(c[0].requisition_id) !== i.requisitionId) return fail("conflict", 409, "That campaign is linked to another requisition");
+    // meta_campaign has no branch of its own: only a campaign linked to this requisition is a safe audience for it
+    if (c[0].requisition_id == null) return fail("conflict", 409, "Link this campaign to the requisition first");
+    if (String(c[0].requisition_id) !== i.requisitionId) return fail("conflict", 409, "That campaign is linked to another requisition");
     return { ok: true, label: String(c[0].campaign_name ?? "Campaign") };
   }
   const [d] = await db.execute<RowDataPacket[]>("SELECT id, requisition_id, branch_name, run_label, drive_date FROM he_drive WHERE id = ? AND source_kind <> 'pool' LIMIT 1", [i.originId]);

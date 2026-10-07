@@ -51,7 +51,7 @@ export async function listAttention(limitPerGroup = 50): Promise<AttentionGroup[
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT qf.id, qf.full_name, qf.mobile10, qf.requisition_id, qf.source_type, qf.${d.errorCol} AS err, qf.${d.attemptsCol} AS attempts, qf.updated_at, ${d.sentExpr} AS already_sent, qf.call_file_batch_id AS batch_id
          FROM qualified_followup qf
-        WHERE qf.stopped_reason IS NULL AND ${d.where}
+        WHERE qf.stopped_reason IS NULL AND qf.owner = 'pipeline' AND ${d.where}
         ORDER BY qf.updated_at DESC LIMIT ${FETCH_CAP}`);
     const byCause = new Map<string, AttentionGroup>();
     for (const r of rows) {
@@ -79,11 +79,12 @@ const RESET_SQL: Record<AttentionChannel, string> = {
   call: "call_state = 'pending', call_error = NULL, call_attempts = 0, call_due_at = NOW(), call_file_batch_id = NULL",
 };
 // Same condition the reset repeats in its WHERE, so a concurrent change between read and write leaves the row alone.
+// A row handed to the engine (owner 'engine') is never re-armed: the engine already invites that person.
 const RETRYABLE_SQL: Record<AttentionChannel, string> = {
-  email: "email_status IN ('failed','test_sent')",
-  whatsapp: "wa_status IN ('failed','test_sent') AND wa_sent_at IS NULL",
+  email: "email_status IN ('failed','test_sent') AND owner = 'pipeline'",
+  whatsapp: "wa_status IN ('failed','test_sent') AND wa_sent_at IS NULL AND owner = 'pipeline'",
   // An in_file row is already stamped into a sent calling file: resetting it would queue a second call.
-  call: "call_error IS NOT NULL AND call_state IN ('pending','in_file') AND call_file_batch_id IS NULL",
+  call: "call_error IS NOT NULL AND call_state IN ('pending','in_file') AND call_file_batch_id IS NULL AND owner = 'pipeline'",
 };
 const ERROR_COL: Record<AttentionChannel, string> = { email: "email_error", whatsapp: "wa_error", call: "call_error" };
 

@@ -29,6 +29,7 @@ let days: Row[]; // committed exception rows
 let snapshot: { row: Row; days: Row[] } | null; // what the next loadStream sees (null => current)
 let events: unknown[][];
 let drive: Row | null;
+let campaignReq: string | null;
 
 const base = (): Row => ({
   id: "s-1", requisition_id: "r-1", branch_name: "Noida", source_type: "meta_live", origin_id: "c-1", origin_label: "Campaign",
@@ -42,7 +43,7 @@ function route(sql: string, p: unknown[]): unknown[] {
   if (s.includes("FROM requisition_stream_day")) return [view.days];
   if (s.startsWith("SELECT * FROM requisition_stream WHERE id")) return [[view.row]];
   if (s.includes("FROM job_requisition WHERE id")) return [[{ id: "r-1", branch_name: "Noida", approval_status: "approved", active_status: 1, requested_headcount: 5, fulfilled_headcount: 1 }]];
-  if (s.includes("FROM meta_campaign")) return [[{ id: "c-1", campaign_name: "Noida drive", requisition_id: null }]];
+  if (s.includes("FROM meta_campaign")) return [[{ id: "c-1", campaign_name: "Noida drive", requisition_id: campaignReq }]];
   if (s.includes("FROM he_drive")) return [drive && drive.id === p[0] ? [drive] : []];
   return [[]];
 }
@@ -76,7 +77,7 @@ function connRoute(sql: string, p: unknown[]): unknown[] {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  cur = base(); days = []; snapshot = null; events = []; drive = null;
+  cur = base(); days = []; snapshot = null; events = []; drive = null; campaignReq = "r-1";
   h.execute.mockImplementation(async (sql: string, p: unknown[] = []) => route(sql, p));
   h.connExecute.mockImplementation(async (sql: string, p: unknown[] = []) => connRoute(sql, p));
   h.readiness.mockResolvedValue({ ok: true, problems: [] });
@@ -219,9 +220,15 @@ describe("meta_old origin drive is tied to the requisition", () => {
     expect(inserts()).toHaveLength(0);
   });
 
-  it("an unlinked live campaign is still accepted (unchanged)", async () => {
-    const r = await tryCreateStream({ ...create(), sourceType: "meta_live", originId: "c-1" }, hr, NOW);
-    expect(r.ok).toBe(true);
+  it("a live campaign must be linked to this requisition: unlinked or another requisition answers 409, linked is accepted", async () => {
+    const live = { ...create(), sourceType: "meta_live" as const, originId: "c-1" };
+    campaignReq = null;
+    expect(await tryCreateStream(live, hr, NOW)).toMatchObject({ ok: false, statusCode: 409, message: "Link this campaign to the requisition first" });
+    campaignReq = "r-9";
+    expect(await tryCreateStream(live, hr, NOW)).toMatchObject({ ok: false, statusCode: 409, message: "That campaign is linked to another requisition" });
+    expect(inserts()).toHaveLength(0);
+    campaignReq = "r-1";
+    expect((await tryCreateStream(live, hr, NOW)).ok).toBe(true);
   });
 });
 
@@ -232,6 +239,9 @@ describe("creation order (first touch) does not depend on the random id", () => 
     expect(table).toContain("created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)");
     expect(table).toContain("updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)");
     expect(ddl).toMatch(/DATETIME_PRECISION[^;]*MODIFY COLUMN created_at DATETIME\(6\)/);
+    const plan = ddl.slice(ddl.indexOf("CREATE TABLE IF NOT EXISTS requisition_stream_plan"), ddl.indexOf("CREATE TABLE IF NOT EXISTS requisition_stream_match"));
+    expect(plan).toContain("KEY idx_rsp_date (drive_date)");
+    expect(ddl).toMatch(/information_schema\.STATISTICS[^;]*idx_rsp_date[^;]*ADD KEY idx_rsp_date \(drive_date\)/);
   });
 
   it("every stream read orders by created_at then id, and keeps the microseconds of created_at", async () => {

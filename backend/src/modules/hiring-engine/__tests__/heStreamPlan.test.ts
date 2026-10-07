@@ -333,12 +333,12 @@ describe("planNextDay with streams", () => {
     expect(r.streamsClosed).toEqual([]);
   });
 
-  it("when the stream ownership read fails: the legacy plan runs as before, streams is [], no throw", async () => {
+  it("when the stream ownership read fails: nothing is planned this tick (skipped with a reason), streams is [], no throw", async () => {
     h.streams = [stream("s3")];
     h.st.ownedFails = true;
     h.st.planReqs = ["r1"];
     const r = await planNextDay({ date: "2026-10-08" });
-    expect(r.days).toEqual([{ requisitionId: "r1", code: "REQ-1", role: "", branch: "Noida", date: "2026-10-08", invitesWanted: 30, lined: 2, status: "created", driveId: "new-2026-10-08" }]);
+    expect(r.days).toEqual([{ requisitionId: "r1", code: "r1", role: "", branch: "", date: "2026-10-08", invitesWanted: 30, lined: 0, status: "skipped", reason: "stream ownership read failed" }]);
     expect(r.streams).toEqual([]);
     expect(r.streamsClosed).toEqual([]);
     expect(h.lineUp).not.toHaveBeenCalled();

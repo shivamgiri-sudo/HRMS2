@@ -314,6 +314,26 @@ describe("campaign dashboard: driveGroups beside drives", () => {
     expect(d.failedSections).toEqual(["driveGroups"]);
   });
 
+  it("before 2135 is applied (no stream tables) the dashboard is complete and cached: no failed section", async () => {
+    const today = istToday();
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("requisition_stream")) throw Object.assign(new Error("Table 'mas_hrms.requisition_stream' doesn't exist"), { code: "ER_NO_SUCH_TABLE" });
+      if (q.includes("FROM job_requisition WHERE id")) return [[{ branch_name: "Pune" }]];
+      if (q.includes("SELECT DISTINCT d.requisition_id")) return [[{ requisition_id: RID, branch_name: "Pune" }]];
+      if (q.includes("FROM job_requisition jr")) return [[{ requisition_id: RID, branch_name: "Pune", requisition_code: "REQ-7", designation_name: "Agent", ...dbRow(today, { id: "dr1", lined: 4 }) }]];
+      return [[]];
+    });
+    const first = await getCampaignDashboard();
+    expect(first.failedSections ?? []).toEqual([]);
+    expect(first.driveGroups).toHaveLength(1);
+    const calls = execute.mock.calls.length;
+    await getCampaignDashboard();
+    expect(execute.mock.calls.length).toBe(calls);
+    const t = await getDriveTrend({ requisitionId: RID, sourceType: "he" }, ALL, new Date());
+    expect(t).toMatchObject({ partial: false, failedSections: [] });
+  });
+
   it("keeps drives working and reports failedSections when the grouped read fails", async () => {
     execute.mockImplementation(async (sql: string) => {
       const q = String(sql);

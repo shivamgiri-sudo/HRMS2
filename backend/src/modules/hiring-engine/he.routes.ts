@@ -46,6 +46,7 @@ import { nextWorkingDay, planNextDay } from "./he-plan.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
 import { getInboxThread, listInbox, replyToCandidate } from "./he-inbox.service.js";
 import { branchScopeOf, registerStreamRoutes } from "./he-stream.routes.js";
+import { DRIVE_STREAM_FED, STREAM_CHECK_FAILED, driveStreamCheck } from "./he-stream-guard.service.js";
 import { followupSummary } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 import { getFollowupAudit, listAttention, logAttentionError, markFollowupCalled, mobileOfFollowup, retryFollowupStep, type AttentionChannel } from "./qualified-followup.attention.js";
@@ -301,6 +302,10 @@ heRouter.post("/drives/:id/status", requireAuth, requireRole(...WRITE_ROLES), as
 });
 
 heRouter.post("/drives/:id/suggest", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+  // a stream-fed drive is lined up per stream (Plan now); the whole-audience line-up would delete the other streams' suggestions
+  const streams = await driveStreamCheck(String(req.params.id));
+  if (streams === "streams") return void res.status(409).json({ success: false, message: DRIVE_STREAM_FED });
+  if (streams === "unknown") return void res.status(503).json({ success: false, message: STREAM_CHECK_FAILED });
   try { res.json({ success: true, data: await suggestMatchesDetailed(String(req.params.id)) }); }
   catch (err) { res.status(400).json({ success: false, message: (err as Error).message }); }
 });

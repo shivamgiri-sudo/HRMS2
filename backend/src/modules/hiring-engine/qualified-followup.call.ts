@@ -29,7 +29,7 @@ export async function runCallStep(s: FollowupSwitches, tag: RowTag, now: Date, l
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.call_state = 'pending' AND qf.stopped_reason IS NULL
-        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ?
+        AND qf.call_due_at IS NOT NULL AND qf.call_due_at <= ? AND qf.owner = 'pipeline'
         AND (qf.email_due_at IS NULL OR (qf.email_status IS NOT NULL AND qf.email_status <> 'sending')) AND qf.wa_status IS NOT NULL AND qf.wa_status <> 'sending'
         ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
       ORDER BY qf.call_due_at LIMIT ${Math.max(1, Math.floor(limit))}`,
@@ -48,7 +48,7 @@ export async function runCallStep(s: FollowupSwitches, tag: RowTag, now: Date, l
 
 async function toFile(row: FollowupRow, error: string | null, counts: StepCounts, dry: boolean): Promise<void> {
   const [res] = await db.execute<any>(
-    "UPDATE qualified_followup SET call_state = 'in_file', call_error = ? WHERE id = ? AND call_state IN ('pending','queued') AND stopped_reason IS NULL", [error, row.id]);
+    "UPDATE qualified_followup SET call_state = 'in_file', call_error = ? WHERE id = ? AND call_state IN ('pending','queued') AND stopped_reason IS NULL AND owner = 'pipeline'", [error, row.id]);
   if (Number(res?.affectedRows ?? 0) === 0) return;
   counts.processed++;
   if (dry) counts.dryRun++;
@@ -74,7 +74,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
 
   // Claim before the provider call: a crash afterwards leaves 'queued', never a second bot call. Stop or another process wins the race otherwise.
   const [claim] = await db.execute<any>(
-    "UPDATE qualified_followup SET call_state = 'queued', call_error = NULL WHERE id = ? AND call_state = 'pending' AND stopped_reason IS NULL", [row.id]);
+    "UPDATE qualified_followup SET call_state = 'queued', call_error = NULL WHERE id = ? AND call_state = 'pending' AND stopped_reason IS NULL AND owner = 'pipeline'", [row.id]);
   if (Number(claim?.affectedRows ?? 0) === 0) { counts.held++; return; }
   counts.processed++;
 

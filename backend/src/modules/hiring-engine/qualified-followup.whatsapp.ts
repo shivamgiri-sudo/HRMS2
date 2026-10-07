@@ -37,7 +37,7 @@ export async function runWhatsappStep(s: FollowupSwitches, tag: RowTag, now: Dat
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.wa_status IS NULL AND qf.wa_sent_at IS NULL AND qf.stopped_reason IS NULL
-        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL)
+        AND qf.wa_due_at IS NOT NULL AND qf.wa_due_at <= ? AND (qf.email_due_at IS NULL OR qf.email_status IS NOT NULL) AND qf.owner = 'pipeline'
         ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
       ORDER BY qf.wa_due_at LIMIT ${take}`,
     [tag, now, ...paused]);
@@ -110,7 +110,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
   }
 
   const [claim] = await db.execute<any>(
-    "UPDATE qualified_followup SET wa_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL", [row.id]);
+    "UPDATE qualified_followup SET wa_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND wa_status IS NULL AND wa_sent_at IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'", [row.id]);
   if (Number(claim?.affectedRows ?? 0) === 0) { counts.held++; return; }
   counts.processed++;
 

@@ -51,7 +51,7 @@ function route(sql: string, p: unknown[]): unknown[] {
   if (s.startsWith("SELECT * FROM requisition_stream WHERE id")) return [stream && stream.id === p[0] ? [stream] : []];
   if (s.startsWith("SELECT branch_name FROM requisition_stream WHERE id")) return [stream ? [{ branch_name: stream.branch_name }] : []];
   if (s.includes("FROM job_requisition WHERE id")) return [requisition ? [requisition] : []];
-  if (s.includes("FROM meta_campaign")) return [[{ id: "c-1", campaign_name: "Noida drive", requisition_id: null }]];
+  if (s.includes("FROM meta_campaign")) return [[{ id: "c-1", campaign_name: "Noida drive", requisition_id: "r-1" }]];
   if (s.includes("FROM requisition_stream s LEFT JOIN")) return [autoRows];
   if (s.includes("FROM requisition_stream WHERE requisition_id")) return [stream ? [stream] : []];
   return [[]];

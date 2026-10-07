@@ -10,6 +10,7 @@ import { bridgeMetaLeads } from "./he-meta-bridge.service.js";
 import { createDrive, setDriveStatus, suggestMatchesDetailed, type SuggestResult } from "./he-drive.service.js";
 import { getDailyPlan } from "./he-policy.service.js";
 import { dailyPlanNumbers } from "./he-slots.js";
+import { launchStreamCheck, REQUISITION_STREAM_FED, STREAM_CHECK_FAILED } from "./he-stream-guard.service.js";
 
 export interface LaunchInput {
   kind: "campaign" | "batch"; ids: string[]; requisitionId: string; date: string;
@@ -35,6 +36,10 @@ async function validate(i: LaunchInput): Promise<{ requisition: RowDataPacket }>
   if (Number(ok[0].n) !== new Set(i.ids).size) throw fail(`One of the ${i.kind === "campaign" ? "campaigns" : "upload batches"} was not found`, 404);
   const [ex] = await db.execute<RowDataPacket[]>("SELECT status FROM he_drive WHERE requisition_id = ? AND drive_date = ? AND status <> 'closed' LIMIT 1", [i.requisitionId, i.date]);
   if (ex[0]) throw fail(`A ${ex[0].status} drive for this requisition on ${i.date} already exists. Pick another date, or close that drive first.`, 409);
+  // a launch's whole-audience line-up would undo the streams' caps and credits
+  const streams = await launchStreamCheck(i.requisitionId, i.date);
+  if (streams === "streams") throw fail(REQUISITION_STREAM_FED, 409);
+  if (streams === "unknown") throw fail(STREAM_CHECK_FAILED, 503);
   return { requisition: r };
 }
 

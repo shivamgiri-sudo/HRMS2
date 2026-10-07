@@ -27,7 +27,7 @@ import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
 import { offerOtherRoles, type RerouteSummary } from "./he-reroute.service.js";
 import { whatsappRequiresOptIn } from "./he-policy.service.js";
 import { planNextDay } from "./he-plan.service.js";
-import { streamDriveIds, topUpStreamDrive } from "./he-stream-plan.service.js";
+import { streamDriveIds, topUpStreamDrive, type StreamDayPlan } from "./he-stream-plan.service.js";
 import { sweepOwnedCampaigns } from "./he-meta-bridge.service.js";
 import { sendFollowUpEmail } from "./he-followup-email.service.js";
 import { followupSkipSql } from "./qualified-followup.policy.js";
@@ -298,6 +298,14 @@ export async function expireStaleLeadStatus(dryRun: boolean): Promise<number> {
   return u.affectedRows;
 }
 
+/** Stream days the evening pass did not plan (or streams it skipped): ids, dates and reasons only. */
+function logStreamGaps(date: string, plans: StreamDayPlan[]): void {
+  const gaps = plans
+    .map((p) => ({ requisitionId: p.requisitionId, date: p.date, reason: p.reason ?? null, skipped: p.streams.filter((s) => s.skipped).map((s) => ({ streamId: s.streamId, skipped: s.skipped })) }))
+    .filter((g) => g.reason || g.skipped.length);
+  if (gaps.length) logger.warn({ date, streams: gaps }, "[he-engine] daily plan: stream days not planned");
+}
+
 export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number } = {}): Promise<TickSummary> {
   const dryRun = o.dryRun !== false; // safe default: only an explicit false sends
   const s: TickSummary = { dryRun, paused: sendsPaused(), replacementSlots: counts(), invites: counts(), reminders: counts(), arrivals: 0, noShows: 0, recovery: counts(), calls: counts(), bulkCalls: null, otherRoles: null };
@@ -309,7 +317,7 @@ export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number }
   if (!s.paused) {
     await guard("meta-bridge", async () => { if (!dryRun) await sweepOwnedCampaigns(); });
     // Evening (17:00-20:00 IST): make sure the next working day has its drive, sized to the owner's daily plan. Idempotent.
-    if (!dryRun && istHour(new Date()) >= 17 && istHour(new Date()) < 20) await guard("daily-plan", async () => { const r = await planNextDay(); const made = r.days.filter((d) => d.status === "created"); if (made.length) logger.info({ date: r.date, made: made.map((d) => `${d.code}:${d.lined}`) }, "[he-engine] daily plan created drives"); });
+    if (!dryRun && istHour(new Date()) >= 17 && istHour(new Date()) < 20) await guard("daily-plan", async () => { const r = await planNextDay(); const made = r.days.filter((d) => d.status === "created"); if (made.length) logger.info({ date: r.date, made: made.map((d) => `${d.code}:${d.lined}`) }, "[he-engine] daily plan created drives"); logStreamGaps(r.date, r.streams); });
     await guard("replacement", () => replacementSlots(dryRun, s.replacementSlots, 50));
     await guard("invites", () => driveInvites(dryRun, s.invites, o.maxInvites ?? 100));
     await guard("whatsapp-follow-ups", () => whatsappFollowUps(dryRun, s.invites, o.maxInvites ?? 100));

@@ -56,26 +56,41 @@ const BUCKETS_SQL = `COUNT(m.id) AS lined,
        SUM(m.state IN ('invited','confirmed','slot_released','arrived','no_show','selected')) AS invited,
        SUM(m.state IN ('confirmed','arrived','selected')) AS confirmed, SUM(m.state IN ('arrived','selected')) AS arrived,
        SUM(m.state = 'no_show') AS no_show, SUM(m.state = 'declined') AS declined`;
-const JOINS_SQL = `LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id
+// `streams` false: the same read before 2135 is applied (no stream tables), every match counted as `he`.
+const joinsSql = (streams: boolean): string => `LEFT JOIN he_match m ON m.drive_id = d.id AND m.requisition_id = d.requisition_id${streams ? `
   LEFT JOIN requisition_stream_match sm ON sm.match_id = m.id
-  LEFT JOIN requisition_stream s ON s.id = sm.stream_id AND s.requisition_id = d.requisition_id`;
-const TREND_SQL = `SELECT d.id, d.drive_date, d.status, d.target_shows, s.id AS stream_id, s.source_type, ${BUCKETS_SQL}
+  LEFT JOIN requisition_stream s ON s.id = sm.stream_id AND s.requisition_id = d.requisition_id` : ""}`;
+const streamCols = (streams: boolean): string => (streams ? "s.id AS stream_id, s.source_type" : "NULL AS stream_id, NULL AS source_type");
+const trendSql = (streams: boolean): string => `SELECT d.id, d.drive_date, d.status, d.target_shows, ${streamCols(streams)}, ${BUCKETS_SQL}
   FROM he_drive d
-  ${JOINS_SQL}
+  ${joinsSql(streams)}
  WHERE d.requisition_id = ? AND d.branch_name = ? AND d.drive_date BETWEEN ? AND ?
- GROUP BY d.id, s.id
+ GROUP BY d.id${streams ? ", s.id" : ""}
  ORDER BY d.drive_date, d.id`;
 const HEADER_SQL = "SELECT branch_name FROM job_requisition WHERE id = ? LIMIT 1";
 // Open drives of the next days and yesterday decide which requisitions get a group (idx_he_drive_date: drive_date, status).
 const DISCOVER_SQL = "SELECT DISTINCT d.requisition_id, d.branch_name FROM he_drive d WHERE d.drive_date BETWEEN ? AND ? AND d.status <> 'closed'";
 // job_requisition is the driving side only to carry code and role; its id is compared with an explicit collation (mixed table collations) and he_drive keeps its own index side.
-const groupsSql = (n: number): string => `SELECT jr.id AS requisition_id, jr.requisition_code, jr.designation_name, d.branch_name,
-       d.id, d.drive_date, d.status, d.target_shows, s.id AS stream_id, s.source_type, ${BUCKETS_SQL}
+const groupsSql = (n: number, streams: boolean): string => `SELECT jr.id AS requisition_id, jr.requisition_code, jr.designation_name, d.branch_name,
+       d.id, d.drive_date, d.status, d.target_shows, ${streamCols(streams)}, ${BUCKETS_SQL}
   FROM job_requisition jr
   LEFT JOIN he_drive d ON d.requisition_id = jr.id COLLATE utf8mb4_unicode_ci AND d.drive_date BETWEEN ? AND ?
-  ${JOINS_SQL}
+  ${joinsSql(streams)}
  WHERE jr.id IN (${Array(n).fill("?").join(",")})
- GROUP BY jr.id, d.id, s.id`;
+ GROUP BY jr.id, d.id${streams ? ", s.id" : ""}`;
+
+const noTable = (err: unknown): boolean => (err as { code?: string })?.code === "ER_NO_SUCH_TABLE";
+/** The stream-attributed read; before 2135 is applied the stream-free form (a missing table is not a failed section). */
+async function readAgg(sqlOf: (streams: boolean) => string, params: unknown[]): Promise<RowDataPacket[]> {
+  try { return (await db.execute<RowDataPacket[]>(sqlOf(true), params))[0]; } catch (err) {
+    if (!noTable(err)) throw err;
+    return (await db.execute<RowDataPacket[]>(sqlOf(false), params))[0];
+  }
+}
+/** Stream reads that answer "no streams" while the stream tables do not exist yet. */
+const orNoStreams = async (fn: () => Promise<StreamRow[]>): Promise<StreamRow[]> => {
+  try { return await fn(); } catch (err) { if (noTable(err)) return []; throw err; }
+};
 
 function parseAgg(r: RowDataPacket): DriveAggRow {
   return {
@@ -203,11 +218,11 @@ export async function getDriveTrend(
 
   const today = istToday(now);
   const failed: string[] = [];
-  const streams = sourceType ? await section("streams", failed, () => loadStreamsOfType(q.requisitionId, sourceType), [] as StreamRow[]) : [];
+  const streams = sourceType ? await section("streams", failed, () => orNoStreams(() => loadStreamsOfType(q.requisitionId, sourceType)), [] as StreamRow[]) : [];
   const streamDays = streams.length ? streamWindowDates(streams, []) : [];
   const from = streamDays.length ? streamDays[0] : addDays(today, -DEFAULT_BACK);
   const to = streamDays.length ? streamDays[streamDays.length - 1] : addDays(today, DEFAULT_AHEAD);
-  const rows = await section("drives", failed, async () => (await db.execute<RowDataPacket[]>(TREND_SQL, [q.requisitionId, branch, from, to]))[0].map(parseAgg), [] as DriveAggRow[]);
+  const rows = await section("drives", failed, async () => (await readAgg(trendSql, [q.requisitionId, branch, from, to])).map(parseAgg), [] as DriveAggRow[]);
   const driveDates = rows.map((r) => r.date);
   const dates = streamDays.length ? streamWindowDates(streams, driveDates) : defaultTrendDates(from, to, driveDates);
   const points = zeroFillPoints(dates, rows, sourceType);
@@ -223,7 +238,7 @@ export async function getDriveTrend(
 export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ groups: DriveGroup[]; failedSections: string[] }> {
   const today = istToday(now);
   const failed: string[] = [];
-  const active = await section("streams", failed, () => loadActiveStreams(), [] as StreamRow[]);
+  const active = await section("streams", failed, () => orNoStreams(() => loadActiveStreams()), [] as StreamRow[]);
   const open = active.filter((s) => s.status === "open");
   const found = await section("drives", failed, async () => (await db.execute<RowDataPacket[]>(DISCOVER_SQL, [addDays(today, -1), addDays(today, DEFAULT_AHEAD)]))[0], [] as RowDataPacket[]);
   const keys = new Map<string, { requisitionId: string; branch: string }>();
@@ -235,7 +250,7 @@ export async function getDriveGroupsDetailed(now: Date = new Date()): Promise<{ 
   let from = addDays(today, -DEFAULT_BACK), to = addDays(today, DEFAULT_AHEAD);
   for (const s of active) { const d = windowDays(toWindow(s)); if (d.length) { if (d[0] < from) from = d[0]; if (d[d.length - 1] > to) to = d[d.length - 1]; } }
   const ids = [...new Set([...keys.values()].map((k) => k.requisitionId))];
-  const raw = await section("groups", failed, async () => (await db.execute<RowDataPacket[]>(groupsSql(ids.length), [from, to, ...ids]))[0], null as RowDataPacket[] | null);
+  const raw = await section("groups", failed, async () => await readAgg((st) => groupsSql(ids.length, st), [from, to, ...ids]), null as RowDataPacket[] | null);
   if (!raw) return { groups: [], failedSections: failed };
 
   const heads = new Map<string, { code: string; role: string }>();

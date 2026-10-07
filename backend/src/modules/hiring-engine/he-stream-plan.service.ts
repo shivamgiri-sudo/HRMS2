@@ -14,7 +14,7 @@ import { getDailyPlan } from "./he-policy.service.js";
 import { dailyPlanNumbers, type DailyPlan } from "./he-slots.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import { autoCloseStreams, loadActiveStreams, toWindow, type AutoCloseReason, type StreamRow } from "./requisition-stream.service.js";
-import { coversDay, istToday } from "./requisition-stream.window.js";
+import { coversDay, istToday, windowEnd } from "./requisition-stream.window.js";
 import { enqueueMatchedFollowups } from "./qualified-followup.service.js";
 import { followupMode } from "./qualified-followup.schedule.js";
 
@@ -37,14 +37,24 @@ export function streamCaps(streams: Array<{ id: string; dailyInvites: number | n
   return new Map(streams.map((s) => [s.id, s.dailyInvites ?? share]));
 }
 
-/** null when the stream tables could not be read (the caller decides how to fail). */
-export async function readStreamOwned(): Promise<Set<string> | null> {
+/**
+ * Requisitions with an open or paused stream; with `date`, only those with such a stream whose window has not ended before that date (a
+ * stream that ended yesterday no longer holds the requisition back from the legacy plan). Empty set when the table does not exist yet;
+ * null on any other read error (the caller decides how to fail).
+ */
+export async function readStreamOwned(date?: string): Promise<Set<string> | null> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>("SELECT DISTINCT requisition_id FROM requisition_stream WHERE status IN ('open','paused')");
-    return new Set(rows.map((r) => String(r.requisition_id)));
+    const owned = new Set(rows.map((r) => String(r.requisition_id)));
+    if (!date || !owned.size) return owned;
+    const active = await loadActiveStreams();
+    const running = new Set(active.filter((s) => windowEnd(toWindow(s)) >= date).map((s) => s.requisitionId));
+    const ended = new Set(active.filter((s) => windowEnd(toWindow(s)) < date).map((s) => s.requisitionId));
+    // a requisition the second read no longer lists (closed meanwhile) keeps the first read's answer
+    return new Set([...owned].filter((r) => running.has(r) || !ended.has(r)));
   } catch (err) {
     logger.warn({ code: codeOf(err) }, "[he-streams] could not read stream-owned requisitions");
-    return null;
+    return codeOf(err) === "ER_NO_SUCH_TABLE" ? new Set() : null;
   }
 }
 

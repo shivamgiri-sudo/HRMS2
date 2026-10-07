@@ -84,7 +84,9 @@ export function registerStreamRoutes(r: Router, roles: StreamRoles): void {
     try {
       const rid = req.query.requisitionId;
       if (typeof rid !== "string" || !ID_RE.test(rid)) return bad(res, "requisitionId is required");
-      res.json({ success: true, data: await listStreams(rid, await branchScopeOf(req as AuthenticatedRequest)) });
+      const scope = await branchScopeOf(req as AuthenticatedRequest);
+      if (!(await requisitionInScope(rid, scope))) return void res.status(404).json({ success: false, message: "Requisition not found" });
+      res.json({ success: true, data: await listStreams(rid, scope) });
     } catch (err) { sendError(res, err, "Could not load streams", "list"); }
   });
 

@@ -18,12 +18,14 @@ vi.mock("../requisition-stream.service.js", async (importOriginal) => {
 });
 vi.mock("../he-readiness.service.js", async (importOriginal) => ({ ...(await importOriginal<object>()), getRequisitionReadiness: vi.fn() }));
 vi.mock("../he-stream-plan.service.js", async (importOriginal) => ({ ...(await importOriginal<object>()), planStreamsForDay: vi.fn() }));
+vi.mock("../he-drive.service.js", async (importOriginal) => ({ ...(await importOriginal<object>()), suggestMatchesDetailed: vi.fn(async () => ({ suggested: 3, blockedByReason: {}, considered: 3, leadIds: [] })) }));
 vi.mock("../he-inbox.service.js", () => ({ listInbox: vi.fn(async () => ({ conversations: [] })), getInboxThread: vi.fn(), replyToCandidate: vi.fn() }));
 
 import { getStream, listStreamEvents, listStreams, loadActiveStreams, tryChangeStream, tryCreateStream } from "../requisition-stream.service.js";
 import { getRequisitionReadiness } from "../he-readiness.service.js";
 import { planStreamsForDay } from "../he-stream-plan.service.js";
 import { listInbox } from "../he-inbox.service.js";
+import { suggestMatchesDetailed } from "../he-drive.service.js";
 import { heRouter } from "../he.routes.js";
 import { istToday, addDays } from "../requisition-stream.window.js";
 
@@ -63,6 +65,18 @@ describe("stream reads", () => {
     const none = await request(appFor("ceo")).get("/api/he/requisition-streams");
     expect([none.status, none.body.message]).toEqual([400, "requisitionId is required"]);
     expect((await request(appFor("ceo")).get("/api/he/requisition-streams?requisitionId=zzz")).status).toBe(400);
+  });
+
+  it("404 for a requisition outside the caller's branch or unknown, before any stream read", async () => {
+    vi.mocked(listStreams).mockResolvedValue([] as never);
+    hrBranch = "Delhi";
+    const out = await request(appFor("hr")).get(`/api/he/requisition-streams?requisitionId=${RID}`);
+    expect([out.status, out.body.message]).toEqual([404, "Requisition not found"]);
+    const unknown = await request(appFor("ceo")).get(`/api/he/requisition-streams?requisitionId=${SID}`);
+    expect(unknown.status).toBe(404);
+    expect(listStreams).not.toHaveBeenCalled();
+    hrBranch = "Pune";
+    expect((await request(appFor("hr")).get(`/api/he/requisition-streams?requisitionId=${RID}`)).status).toBe(200);
   });
 
   it("403 for a role outside the view roles", async () => {
@@ -242,5 +256,42 @@ describe("inbox scope refactor", () => {
     expect(r.status).toBe(200);
     expect(listInbox).toHaveBeenCalledWith({ all: false, branchName: "Pune" }, undefined);
     expect(JSON.stringify(r.body)).not.toMatch(/\d{10}/);
+  });
+});
+
+describe("POST /drives/:id/suggest on a stream-fed drive", () => {
+  const route = (fed: "yes" | "no" | "no_table" | "error") => execute.mockImplementation(async (sql: string, params: unknown[]) => {
+    const q = String(sql);
+    if (q.includes("FROM requisition_stream_plan WHERE drive_id = ?")) {
+      if (fed === "no_table") throw Object.assign(new Error("Table 'x.requisition_stream_plan' doesn't exist"), { code: "ER_NO_SUCH_TABLE" });
+      if (fed === "error") throw Object.assign(new Error("lock wait"), { code: "ER_LOCK_WAIT_TIMEOUT" });
+      return [[{ hit: fed === "yes" && params[0] === "drive-1" ? 1 : 0 }]];
+    }
+    return [[]];
+  });
+
+  it("409 with no line-up when the drive has a stream plan row", async () => {
+    route("yes");
+    const r = await request(appFor("hr")).post("/api/he/drives/drive-1/suggest");
+    expect([r.status, r.body.message]).toEqual([409, "This drive is fed by streams; use Plan now"]);
+    expect(suggestMatchesDetailed).not.toHaveBeenCalled();
+  });
+
+  it("a drive without streams, or before the stream tables exist, lines up exactly as before", async () => {
+    for (const f of ["no", "no_table"] as const) {
+      route(f);
+      vi.mocked(suggestMatchesDetailed).mockClear();
+      const r = await request(appFor("hr")).post("/api/he/drives/drive-1/suggest");
+      expect(r.status).toBe(200);
+      expect(r.body).toEqual({ success: true, data: { suggested: 3, blockedByReason: {}, considered: 3, leadIds: [] } });
+      expect(suggestMatchesDetailed).toHaveBeenCalledWith("drive-1");
+    }
+  });
+
+  it("an unreadable stream table refuses (503) instead of running the legacy line-up", async () => {
+    route("error");
+    const r = await request(appFor("hr")).post("/api/he/drives/drive-1/suggest");
+    expect([r.status, r.body.message]).toEqual([503, "Could not check the requisition's streams; try again"]);
+    expect(suggestMatchesDetailed).not.toHaveBeenCalled();
   });
 });

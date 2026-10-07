@@ -121,7 +121,7 @@ export async function runCallFileBatch(s: FollowupSwitches, tag: RowTag, now: Da
          FROM qualified_followup qf
          LEFT JOIN meta_lead_raw mr ON mr.id ${C} = qf.meta_lead_id ${C}
          LEFT JOIN he_match hm ON hm.lead_id ${C} = qf.he_lead_id ${C} AND hm.drive_id ${C} = qf.drive_id ${C}
-        WHERE qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ?
+        WHERE qf.call_state = 'in_file' AND qf.call_file_batch_id IS NULL AND qf.stopped_reason IS NULL AND qf.mode_at_enqueue = ? AND qf.owner = 'pipeline'
           ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
         ORDER BY qf.created_at, qf.id LIMIT ${SELECT_CAP}`, [tag, ...paused]);
   } catch (err) {

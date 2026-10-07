@@ -9,7 +9,7 @@ const h = vi.hoisted(() => {
     calls: [] as Array<[string, unknown[]]>,
     lockCalls: [] as string[],
     st: {} as {
-      ownedFails: boolean; owned: string[]; req: Record<string, unknown> | null;
+      ownedFails: boolean; ownedCode?: string; owned: string[]; req: Record<string, unknown> | null;
       drives: Record<string, Record<string, unknown>>; origin: boolean; lockGot: number | null; releaseFails: boolean;
       topDrive: Record<string, unknown> | null; fed: string[]; planReqs: string[];
       plannedReqs: string[]; plannedFails: boolean; afterCreate: Record<string, unknown> | null; missingFollowup: string[];
@@ -49,7 +49,7 @@ vi.mock("../../../db/mysql.js", () => ({
       const q = sql.replace(/\s+/g, " ").trim();
       h.calls.push([q, params]);
       const st = h.st;
-      if (q.startsWith("SELECT DISTINCT requisition_id FROM requisition_stream")) { if (st.ownedFails) throw Object.assign(new Error("boom"), { code: "ER_LOCK_WAIT_TIMEOUT" }); return [st.owned.map((requisition_id) => ({ requisition_id }))]; }
+      if (q.startsWith("SELECT DISTINCT requisition_id FROM requisition_stream")) { if (st.ownedFails) throw Object.assign(new Error("boom"), { code: st.ownedCode ?? "ER_LOCK_WAIT_TIMEOUT" }); return [st.owned.map((requisition_id) => ({ requisition_id }))]; }
       if (q.startsWith("SELECT DISTINCT s.requisition_id FROM requisition_stream_plan")) { if (st.plannedFails) throw new Error("boom"); return [st.plannedReqs.map((requisition_id) => ({ requisition_id }))]; }
       if (q.includes("FROM requisition_stream_plan WHERE drive_id IN")) return [st.fed.map((drive_id) => ({ drive_id }))];
       if (q.includes("FROM requisition_stream_plan WHERE drive_id = ?")) return [st.fed.includes(String(params[0])) ? [{ hit: 1 }] : []];
@@ -119,6 +119,8 @@ vi.mock("../he-followup-email.service.js", () => ({ sendFollowUpEmail: vi.fn(asy
 
 import { planStreamsForDay, topUpStreamDrive } from "../he-stream-plan.service.js";
 import { planNextDay } from "../he-plan.service.js";
+import { runEngineTick } from "../he-engine.service.js";
+import { logger } from "../../../logger.js";
 
 const stream = (id: string, over: Partial<StreamRow> = {}): StreamRow => ({
   id, requisitionId: "r1", branchName: "Noida", sourceType: "he", originId: "pool", originLabel: id, openFrom: "2026-10-08", openDays: 3,
@@ -255,20 +257,29 @@ describe("group 6-7 review fixes", () => {
 });
 
 describe("planNextDay ownership fallbacks (M1)", () => {
-  it("ownership read failed: a requisition the stream pass already planned for the day is left out of the legacy loop", async () => {
+  it("ownership read failed: nothing is planned this tick; every requisition shows one skipped day with the reason, streams []", async () => {
     h.st.ownedFails = true;
     h.st.planReqs = ["r1", "r2"];
     h.st.plannedReqs = ["r1"];
     const r = await planNextDay({ date: "2026-10-08" });
-    expect(r.days.map((d) => d.requisitionId)).toEqual(["r2"]);
+    expect(r.days.map((d) => [d.requisitionId, d.status, d.reason])).toEqual([["r1", "skipped", "stream ownership read failed"], ["r2", "skipped", "stream ownership read failed"]]);
+    expect(r.streams).toEqual([]);
+    expect(h.createDrive).not.toHaveBeenCalled();
   });
 
   it("ownership and plan-row reads both failed: nothing is planned and each requisition shows one skipped day with a reason", async () => {
     h.st.ownedFails = true; h.st.plannedFails = true;
     h.st.planReqs = ["r1", "r2"];
     const r = await planNextDay({ date: "2026-10-08" });
-    expect(r.days.map((d) => [d.requisitionId, d.status, d.reason])).toEqual([["r1", "skipped", "planned-day read failed"], ["r2", "skipped", "planned-day read failed"]]);
+    expect(r.days.map((d) => [d.requisitionId, d.status, d.reason])).toEqual([["r1", "skipped", "stream ownership read failed"], ["r2", "skipped", "stream ownership read failed"]]);
     expect(h.createDrive).not.toHaveBeenCalled();
+  });
+
+  it("a missing stream table (2135 not applied) means no streams: the legacy plan runs", async () => {
+    h.st.ownedFails = true; h.st.ownedCode = "ER_NO_SUCH_TABLE";
+    h.st.planReqs = ["r1"];
+    const r = await planNextDay({ date: "2026-10-08" });
+    expect(r.days).toMatchObject([{ requisitionId: "r1", status: "created" }]);
   });
 
   it("only the plan-row read failed: still nothing planned, visible skipped day (stream-owned requisitions are not listed)", async () => {
@@ -285,5 +296,36 @@ describe("planNextDay ownership fallbacks (M1)", () => {
     h.st.plannedReqs = ["r1"];
     const r = await planNextDay({ date: "2026-10-08" });
     expect(r.days).toEqual([]);
+  });
+});
+
+describe("ownership ends with the window (M2) and the evening log (M3)", () => {
+  it("a stream whose window ends today does not own tomorrow: the legacy plan runs (no gap day)", async () => {
+    h.streams = [stream("s3", { openFrom: "2026-10-06", openDays: 2 })]; // Tue 6, Wed 7 (today)
+    h.st.owned = ["r1"];
+    h.st.planReqs = ["r1"];
+    const r = await planNextDay({ date: "2026-10-08" });
+    expect(r.days).toMatchObject([{ requisitionId: "r1", status: "created" }]);
+    expect(r.streams).toEqual([]);
+  });
+
+  it("a stream still covering the date keeps owning it", async () => {
+    h.streams = [stream("s3", { openFrom: "2026-10-06", openDays: 3 })]; // Tue 6 .. Thu 8
+    h.st.owned = ["r1"];
+    h.st.planReqs = ["r1"];
+    const r = await planNextDay({ date: "2026-10-08" });
+    expect(r.days).toEqual([]);
+    expect(r.streams.map((p) => p.requisitionId)).toEqual(["r1"]);
+  });
+
+  it("the evening engine pass logs every stream plan that was skipped, with ids and reasons only", async () => {
+    vi.setSystemTime(new Date("2026-10-07T18:00:00+05:30"));
+    h.streams = [stream("s3")];
+    h.st.owned = ["r1"];
+    h.st.req = { ...h.st.req, fulfilled_headcount: 10 };
+    vi.mocked(logger.warn).mockClear();
+    await runEngineTick({ dryRun: false });
+    const call = vi.mocked(logger.warn).mock.calls.find((c) => c[1] === "[he-engine] daily plan: stream days not planned");
+    expect(call?.[0]).toEqual({ date: "2026-10-08", streams: [{ requisitionId: "r1", date: "2026-10-08", reason: "requisition is closed or filled", skipped: [] }] });
   });
 });

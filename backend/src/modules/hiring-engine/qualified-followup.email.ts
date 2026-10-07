@@ -66,6 +66,7 @@ export async function runEmailStep(s: FollowupSwitches, tag: RowTag, now: Date, 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${ROW_COLUMNS} FROM qualified_followup qf
       WHERE qf.mode_at_enqueue = ? AND qf.email_status IS NULL AND qf.stopped_reason IS NULL AND qf.email_due_at IS NOT NULL AND qf.email_due_at <= ?
+        AND qf.owner = 'pipeline'
         ${paused.length ? `AND qf.source_type NOT IN (${paused.map(() => "?").join(",")})` : ""}
       ORDER BY qf.email_due_at LIMIT ${Math.max(1, Math.floor(limit))}`,
     [tag, now, ...paused]);
@@ -97,7 +98,7 @@ async function processRow(s: FollowupSwitches, tag: RowTag, now: Date, row: Foll
     return;
   }
   const [claim] = await db.execute<any>(
-    "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL", [row.id]);
+    "UPDATE qualified_followup SET email_status = 'sending', step_claimed_at = NOW() WHERE id = ? AND email_status IS NULL AND stopped_reason IS NULL AND owner = 'pipeline'", [row.id]);
   if (Number(claim?.affectedRows ?? 0) === 0) { counts.held++; return; }
   counts.processed++;
 
