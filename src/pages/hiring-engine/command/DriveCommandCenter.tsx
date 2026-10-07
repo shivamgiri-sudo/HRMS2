@@ -9,7 +9,7 @@ import PipelineHealthStrip from "../PipelineHealthStrip";
 import FilterBar from "./FilterBar";
 import SectionNav, { PANEL_ID, tabDomId } from "./SectionNav";
 import { filtersKey, type RequisitionOption } from "./commandData";
-import { commandHash, parseCommandHash, type Filters, type SectionId } from "./driveCommandModel";
+import { commandHash, istTodayClient, parseCommandHash, type Filters, type SectionId } from "./driveCommandModel";
 import type { DriveAnalytics } from "./driveCommandTypes";
 import { useDriveAnalytics, useFilterOptions } from "./useCommandData";
 import KpiStrip from "./charts/KpiStrip";
@@ -21,6 +21,7 @@ import ShowRateScatter from "./charts/ShowRateScatter";
 import DropOffWaterfall from "./charts/DropOffWaterfall";
 import CompareTable from "./charts/CompareTable";
 import InsightsPanel from "./InsightsPanel";
+import DriveTypeSection from "./DriveTypeSection";
 import { insightNavHash, type ActionTarget } from "./insightsPanelModel";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
@@ -136,7 +137,7 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
   if (section === "plan") return { gated: null, always: <Placeholder title="Plan" /> };
   if (section === "he") {
     return {
-      gated: <Placeholder title="Hiring Engine drives" />,
+      gated: analytics && <DriveTypeSection type="he" groups={analytics.groups ?? []} today={istTodayClient()} title="Hiring Engine drives" />,
       always: (
         <section aria-labelledby="all-drives-heading" className="space-y-2">
           <h3 id="all-drives-heading" className="text-base font-bold text-slate-900 dark:text-slate-100">All drives</h3>
@@ -145,7 +146,8 @@ export function sectionParts(section: SectionId, analytics?: DriveAnalytics | nu
       ),
     };
   }
-  return { gated: <Placeholder title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} />, always: null };
+  const type = section === "live" ? "meta_live" : "meta_old";
+  return { gated: analytics && <DriveTypeSection type={type} groups={analytics.groups ?? []} today={istTodayClient()} title={section === "live" ? "Live Meta drives" : "Old Meta data drives"} />, always: null };
 }
 
 export default function DriveCommandCenter() {
