@@ -13,6 +13,7 @@ import { resolveBranchScope, type BranchScope } from "../meta-campaign/meta-acce
 import { getRequisitionReadiness } from "./he-readiness.service.js";
 import { nextWorkingDay } from "./he-plan.service.js";
 import { planStreamsForDay } from "./he-stream-plan.service.js";
+import { getRequisitionSources } from "./he-requisition-sources.service.js";
 import type { SourceType } from "./qualified-followup.types.js";
 import {
   StreamError, getStream, listStreamEvents, listStreams, loadActiveStreams, toWindow, tryChangeStream, tryCreateStream,
@@ -151,6 +152,17 @@ export function registerStreamRoutes(r: Router, roles: StreamRoles): void {
       if (!data) return void res.status(404).json({ success: false, message: "Requisition not found" });
       res.json({ success: true, data: { ...data, neverOverride: [...NEVER_OVERRIDE] } });
     } catch (err) { sendError(res, err, "Could not load streams", "readiness"); }
+  });
+
+  // Per-requisition source funnel (counts, labels and ids only). Outside the caller's branch answers 404, like the other stream reads.
+  r.get("/requisition-sources", ...view, async (req, res) => {
+    try {
+      const rid = req.query.requisitionId;
+      if (typeof rid !== "string" || !ID_RE.test(rid)) return bad(res, "requisitionId is required");
+      const data = await getRequisitionSources(rid, await branchScopeOf(req as AuthenticatedRequest));
+      if (!data) return void res.status(404).json({ success: false, message: "Requisition not found" });
+      res.json({ success: true, data });
+    } catch (err) { sendError(res, err, "Could not load sources", "sources"); }
   });
 
   r.post("/requisitions/:id/plan-now", ...write, async (req, res) => {
