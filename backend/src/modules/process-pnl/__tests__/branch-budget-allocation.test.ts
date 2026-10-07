@@ -413,6 +413,23 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     ).rejects.toThrow(/not active for this branch/i);
   });
 
+  it("drops a scoped cost centre of this branch that has since closed instead of failing the save", async () => {
+    const base = fakeExecutor(THREE_COST_CENTRES);
+    const exec = {
+      async execute(sql: string, params?: unknown[]) {
+        if (sql.includes("WHERE branch_id = ? AND id IN")) return [[{ id: "cc-closed" }], []];
+        return base.execute(sql, params);
+      },
+    } as any;
+    const rows = await computeLineAllocations("branch-1", "2026-08", "equal_split", AMOUNTS, undefined,
+      exec, undefined, ["cc1", "cc2", "cc-closed"]);
+    expect(rows.map((r) => r.costCentreId).sort()).toEqual(["cc1", "cc2"]);
+    // only the closed one named -> nothing left to allocate to
+    await expect(
+      computeLineAllocations("branch-1", "2026-08", "equal_split", AMOUNTS, undefined, exec, undefined, ["cc-closed"])
+    ).rejects.toThrow(/at least one cost centre/i);
+  });
+
   it("requires manual percentages only for the selected cost centres", async () => {
     const rows = await computeLineAllocations(
       "branch-1", "2026-08", "manual", AMOUNTS,

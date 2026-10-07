@@ -526,12 +526,26 @@ export async function computeLineAllocations(
   if (scopeIds.length) {
     const activeIds = new Set(allActive.map((cc) => cc.id));
     const unknown = scopeIds.filter((id) => !activeIds.has(id));
+    // A line's saved scope outlives its cost centres: one that has since closed (or gone back to
+    // draft) is still named by older lines, and that used to fail the whole draft save. A closed
+    // cost centre of THIS branch simply receives nothing now, so it is dropped from the scope.
+    // An id that is not this branch's cost centre at all is still refused — that is a wrong scope,
+    // not a stale one.
+    let stale = new Set<string>();
     if (unknown.length) {
-      throw refuse(400, "COST_CENTRE_NOT_ACTIVE",
-        `Cost centre scope names ${unknown.length} cost centre(s) that are not active for this branch`
-      );
+      const [own] = (await executor.execute(
+        `SELECT id FROM cost_centre_master WHERE branch_id = ? AND id IN (${unknown.map(() => "?").join(",")})`,
+        [branchId, ...unknown]
+      )) as [Array<{ id: string }>, unknown];
+      stale = new Set((own ?? []).map((r) => String(r.id)));
+      const foreign = unknown.filter((id) => !stale.has(id));
+      if (foreign.length) {
+        throw refuse(400, "COST_CENTRE_NOT_ACTIVE",
+          `Cost centre scope names ${foreign.length} cost centre(s) that are not active for this branch`
+        );
+      }
     }
-    const wanted = new Set(scopeIds);
+    const wanted = new Set(scopeIds.filter((id) => !stale.has(id)));
     costCentres = allActive.filter((cc) => wanted.has(cc.id));
     if (costCentres.length === 0) {
       throw refuse(400, "COST_CENTRE_SCOPE_REQUIRED", "Select at least one cost centre for this branch-level line");
