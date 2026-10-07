@@ -26,6 +26,8 @@ import { placeVoiceCall } from "./he-voice.service.js";
 import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
 import { offerOtherRoles, type RerouteSummary } from "./he-reroute.service.js";
 import { whatsappRequiresOptIn } from "./he-policy.service.js";
+import { planNextDay } from "./he-plan.service.js";
+import { sendFollowUpEmail } from "./he-followup-email.service.js";
 
 export interface TickSummary {
   dryRun: boolean;
@@ -95,9 +97,10 @@ async function replacementSlots(dryRun: boolean, c: Counts, max: number): Promis
     if (!slot) { await addEvent(r.lead_id as string, "needs_human_followup", { detail: "no free slot to reschedule into" }); c.blocked.no_free_slot = (c.blocked.no_free_slot ?? 0) + 1; continue; }
     // Answers the candidate's own "reschedule" request, so the 2-hour spacing / daily cap meant for unprompted messages does not apply.
     const res = await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_reschedule_offer", matchId: r.match_id as string, transactional: true });
-    if (res.status === "sent") await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ?", [r.match_id]);
-    else await db.execute("UPDATE he_match SET slot_at = NULL WHERE id = ?", [r.match_id]); // not sent -> do not hold the seat
-    tally(c, res);
+    const em = await sendFollowUpEmail("reschedule_offer", r.match_id as string);
+    if (res.status === "sent" || em.status === "sent") await db.execute("UPDATE he_match SET state = 'invited' WHERE id = ?", [r.match_id]);
+    else await db.execute("UPDATE he_match SET slot_at = NULL WHERE id = ?", [r.match_id]); // not sent on any channel -> do not hold the seat
+    tally(c, res); if (em.status === "sent") c.sent++;
   }
 }
 
@@ -172,6 +175,7 @@ export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: 
   await replacementSlots(o.dryRun, out.replacement, 50);
   await whatsappFollowUps(o.dryRun, out.whatsapp, 200);
   await reminders(o.dryRun, out.reminders);
+  await followUpCatchUp(o.dryRun, out.recovery);
   await voiceCalls(o.dryRun, out.calls, 50);
   out.otherRoles = await offerOtherRoles({ dryRun: o.dryRun, max: 50 });
   return out;
@@ -209,10 +213,15 @@ async function reminders(dryRun: boolean, c: Counts): Promise<void> {
       `SELECT m.id, m.lead_id, m.drive_id FROM he_match m
         WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)`, [loMin, hiMin]);
     for (const r of rows) {
-      if (await eventExists(r.lead_id as string, r.drive_id as string, evt)) continue;
-      const res = await sendTemplateToLead({ leadId: r.lead_id as string, key, matchId: r.id as string, dryRun });
-      tally(c, res);
-      if (res.status === "sent") await addEvent(r.lead_id as string, evt, { driveId: r.drive_id as string, channel: "whatsapp" });
+      if (!(await eventExists(r.lead_id as string, r.drive_id as string, evt))) {
+        const res = await sendTemplateToLead({ leadId: r.lead_id as string, key, matchId: r.id as string, dryRun });
+        tally(c, res);
+        // Sent or rejected by Meta both count as handled (a rejected one must not be retried every five minutes); only a passing block
+        // such as quiet hours or message spacing is tried again on the next run.
+        if (!dryRun && (res.status === "sent" || res.status === "failed")) await addEvent(r.lead_id as string, evt, { driveId: r.drive_id as string, channel: "whatsapp", detail: res.status });
+      }
+      // The day-before reminder also goes by email (once per drive; the 2-hour one is WhatsApp-only because it carries the location button).
+      if (key === "he_reminder_1d") tally(c, await sendFollowUpEmail("reminder_1d", r.id as string, { dryRun }));
     }
   }
 }
@@ -248,9 +257,23 @@ async function noShows(dryRun: boolean, c: Counts): Promise<number> {
     await recomputeInsight(r.lead_id as string);
     // One recovery message for a first no-show only; the insight stops it after two.
     const [ns] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_match WHERE lead_id = ? AND state = 'no_show'", [r.lead_id]);
-    if (Number(ns[0].n) === 1) tally(c, await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_no_show_recovery", matchId: r.id as string }));
+    if (Number(ns[0].n) === 1) {
+      tally(c, await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_no_show_recovery", matchId: r.id as string }));
+      tally(c, await sendFollowUpEmail("no_show", r.id as string));
+    }
   }
   return rows.length;
+}
+
+/** A no-show email that could not go out when the no-show was marked (it was after 20:00) is sent the next morning, within two days. */
+async function followUpCatchUp(dryRun: boolean, c: Counts): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT m.id FROM he_match m JOIN he_lead l ON l.id = m.lead_id
+      WHERE m.state = 'no_show' AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY) AND l.email IS NOT NULL AND l.email <> ''
+        AND (SELECT COUNT(*) FROM he_match x WHERE x.lead_id = m.lead_id AND x.state = 'no_show') = 1
+        AND NOT EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = 'he_email_no_show' AND e.direction = 'out' AND e.delivery_status <> 'failed' AND (e.drive_id <=> m.drive_id))
+      LIMIT 100`);
+  for (const r of rows) tally(c, await sendFollowUpEmail("no_show", r.id as string, { dryRun }));
 }
 
 export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number } = {}): Promise<TickSummary> {
@@ -261,10 +284,13 @@ export async function runEngineTick(o: { dryRun?: boolean; maxInvites?: number }
   await guard("arrival", async () => { s.arrivals = await arrivalSync(dryRun); });
   await guard("noshow", async () => { s.noShows = await noShows(dryRun, s.recovery); });
   if (!s.paused) {
+    // Evening (17:00-20:00 IST): make sure the next working day has its drive, sized to the owner's daily plan. Idempotent.
+    if (!dryRun && istHour(new Date()) >= 17 && istHour(new Date()) < 20) await guard("daily-plan", async () => { const r = await planNextDay(); const made = r.days.filter((d) => d.status === "created"); if (made.length) logger.info({ date: r.date, made: made.map((d) => `${d.code}:${d.lined}`) }, "[he-engine] daily plan created drives"); });
     await guard("replacement", () => replacementSlots(dryRun, s.replacementSlots, 50));
     await guard("invites", () => driveInvites(dryRun, s.invites, o.maxInvites ?? 100));
     await guard("whatsapp-follow-ups", () => whatsappFollowUps(dryRun, s.invites, o.maxInvites ?? 100));
     await guard("reminders", () => reminders(dryRun, s.reminders));
+    await guard("followup-email-catch-up", () => followUpCatchUp(dryRun, s.recovery));
     await guard("voice", () => voiceCalls(dryRun, s.calls, 20));
     await guard("bulk-calls", async () => { s.bulkCalls = await runBulkCallJobs({ dryRun, max: 20 }); });
     await guard("other-role-offers", async () => { s.otherRoles = await offerOtherRoles({ dryRun, max: 50 }); });

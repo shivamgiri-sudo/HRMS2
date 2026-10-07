@@ -7,6 +7,7 @@ import { emailService } from "../communication/email.service.js";
 import { buildInviteEmail } from "./he-email.service.js";
 import { HE_TEMPLATES, renderBody, type TemplateDef } from "./he-template-catalog.js";
 import { DEMO_TOKEN } from "./he-location.service.js";
+import { buildFollowUpEmail, type FollowKind } from "./he-followup-email.service.js";
 import { VOICE_FIRST_MESSAGE, buildVoiceSystemPrompt, type VoiceCtx } from "./he-voice.js";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -92,6 +93,13 @@ export async function sendStageSamples(to: string): Promise<SampleResult[]> {
     const body = renderBody(key, "en", ctx);
     const label = SUBJECT[key];
     await send(stage, label, whatsappHtml(t, stage === "Stage 2" ? "Stage 2 of 3" : stage, when, body, t.buttons.en), `${stage}: ${t.metaName.en}\n${when}\n\n${body}\n\nButtons: ${t.buttons.en.join(" | ") || "none"}`);
+    // The email twin of this follow-up, where there is one.
+    const twin: Partial<Record<string, [FollowKind, string]>> = { he_walkin_confirmed: ["confirmed", "Confirmation after the candidate says Yes"], he_reminder_1d: ["reminder_1d", "Day-before reminder"], he_reschedule_offer: ["reschedule_offer", "New slot offered after Reschedule"], he_no_show_recovery: ["no_show", "After a missed interview"] };
+    const tw = twin[key];
+    if (tw) {
+      const fm = buildFollowUpEmail({ kind: tw[0], name: "Rahul", role: ctx.role, company, branch: ctx.branch_name, address: ctx.branch_address, date: ctx.drive_date, time: ctx.slot_time, maps: ctx.maps_link, docs: ctx.docs_list, reference: ctx.reference_id, contact: `${ctx.contact_name} ${ctx.contact_phone}`.trim(), answerUrl: `${base}/w/${"0".repeat(32)}` });
+      await send("Follow-up email", `Follow-up (email) - ${tw[1]}`, fm.html.replace(/(<body[^>]*>)/i, `$1${banner("Follow-up email: " + tw[1])}`), fm.text);
+    }
     if (key === "he_walkin_invite") {
       // Stage 3 sits right after the WhatsApp invite in the cadence: the bot call.
       const vctx: VoiceCtx = { candidateName: "Rahul", role: ctx.role, driveDate: ctx.drive_date, slotTime: ctx.slot_time, branchAddress: ctx.branch_address, contactName: ctx.contact_name, contactPhone: ctx.contact_phone, referenceId: ctx.reference_id };

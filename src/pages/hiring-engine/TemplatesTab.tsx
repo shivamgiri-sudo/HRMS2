@@ -73,9 +73,9 @@ export default function TemplatesTab() {
       <section className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Sample emails">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-slate-900">See exactly what candidates receive</p>
-          <p className="text-xs text-slate-600">Emails you one test message for every stage: the email invite, the WhatsApp invite, the bot call script and each follow-up. Sent only to your own address.</p>
+          <p className="text-xs text-slate-600">Emails you one test message for every stage: the email invite, the WhatsApp invite, the bot call script and each follow-up (WhatsApp and email). Sent only to your own address.</p>
         </div>
-        <button type="button" disabled={sampling} onClick={() => void sendSamples()} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><Mail className="h-4 w-4" aria-hidden /> {sampling ? "Sending 13 emails…" : "Email me a sample of every stage"}</button>
+        <button type="button" disabled={sampling} onClick={() => void sendSamples()} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white transition-colors duration-200 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"><Mail className="h-4 w-4" aria-hidden /> {sampling ? "Sending 17 emails…" : "Email me a sample of every stage"}</button>
         {sampleMsg && <p role={sampleMsg.ok ? "status" : "alert"} className={`basis-full text-sm ${sampleMsg.ok ? "text-emerald-700" : "text-rose-700"}`}>{sampleMsg.text}</p>}
         <div className="basis-full border-t border-slate-100 pt-3">
           <div className="flex flex-wrap items-center gap-3">

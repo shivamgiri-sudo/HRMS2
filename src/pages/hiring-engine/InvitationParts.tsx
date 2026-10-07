@@ -105,10 +105,12 @@ export function RsvpCard(p: {
   firstName: string; state: string | undefined; picked: Answer | null; answered: Answer | null; showOptions: boolean; busy: boolean; error: string | null;
   onPick: (a: Answer) => void; onSend: () => void; onChange: () => void;
 }) {
+  const missed = p.state === "no_show" && !p.answered; // after a missed interview only "new slot" or "not interested" make sense
   const known = p.answered ?? (p.state === "confirmed" ? "yes" : p.state === "declined" ? "no" : null);
+  const options = missed ? ANSWERS.filter((a) => a.k !== "yes").map((a) => (a.k === "later" ? { ...a, label: "I need a new slot", hint: "A recruiter will call you with a new time" } : { ...a, label: "Not interested", hint: "We will not contact you about this role" })) : ANSWERS;
   return (
     <section className={card} aria-label="Will you come">
-      <h2 className="text-lg font-semibold text-slate-900">Hi {p.firstName}, will you come?</h2>
+      <h2 className="text-lg font-semibold text-slate-900">{missed ? `Hi ${p.firstName}, we missed you. Would you still like to interview?` : `Hi ${p.firstName}, will you come?`}</h2>
       {!p.showOptions && known ? (
         <div className="mt-3 space-y-3">
           <div className={`flex gap-3 rounded-xl p-4 ${known === "yes" ? "bg-emerald-50 text-emerald-900" : known === "no" ? "bg-rose-50 text-rose-900" : "bg-blue-50 text-blue-900"}`} role="status">
@@ -120,7 +122,7 @@ export function RsvpCard(p: {
       ) : (
         <>
           <div role="radiogroup" aria-label="Your answer" className="mt-3 space-y-2">
-            {ANSWERS.map((a) => {
+            {options.map((a) => {
               const st = ANSWER_STYLE[a.k], Icon = st.icon, on = p.picked === a.k;
               return (
                 <button key={a.k} type="button" role="radio" aria-checked={on} onClick={() => p.onPick(a.k)}

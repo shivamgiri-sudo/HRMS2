@@ -48,7 +48,7 @@ export async function getContextByToken(token: string): Promise<LocationContext 
   if (token === DEMO_TOKEN) return demoContext();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.state, m.slot_at, l.full_name, jr.branch_name, jr.designation_name,
-            (m.state IN ('invited','confirmed','declined','slot_released') AND m.slot_at IS NOT NULL AND NOW() < m.slot_at) AS rsvp_open, bm.address, bm.latitude, bm.longitude,
+            ((m.state IN ('invited','confirmed','declined','slot_released') AND m.slot_at IS NOT NULL AND NOW() < m.slot_at) OR (m.state = 'no_show' AND m.slot_at > DATE_SUB(NOW(), INTERVAL 7 DAY))) AS rsvp_open, bm.address, bm.latitude, bm.longitude,
             (m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL
               AND NOW() BETWEEN DATE_SUB(m.slot_at, INTERVAL 6 HOUR) AND DATE_ADD(m.slot_at, INTERVAL 3 HOUR)) AS is_open,
             (m.state IN ('suggested','invited','confirmed') AND (m.slot_at IS NULL OR NOW() < DATE_ADD(m.slot_at, INTERVAL 3 HOUR))) AS optin_open, l.status AS lead_status

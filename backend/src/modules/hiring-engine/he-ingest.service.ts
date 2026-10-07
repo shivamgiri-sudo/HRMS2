@@ -18,6 +18,7 @@ import { addEvent, findLeadByMobile, persistSignals, revokeConsent, setLeadStatu
 import { recomputeInsight } from "./he-insight.service.js";
 import { sendTemplateToLead } from "./he-send.service.js";
 import type { TemplateKey } from "./he-template-catalog.js";
+import { sendFollowUpEmail } from "./he-followup-email.service.js";
 
 const isDuplicateKey = (e: unknown) => (e as { code?: string; errno?: number })?.code === "ER_DUP_ENTRY" || (e as { errno?: number })?.errno === 1062;
 
@@ -72,7 +73,10 @@ async function applyPlan(leadId: string, current: LeadStatus, plan: TransitionPl
   if (plan.humanHandoff) await addEvent(leadId, "needs_human_followup", { channel: ctx.channel, detail: "second decline / declined offered slot" });
   await mirrorToMeta(ctx.metaLeadId, plan);
   // T2: appointment details + reference once the candidate confirms (button, email tap or bot call).
-  if (plan.matchState === "confirmed" && ctx.matchId) await sendFollowUpTemplate(leadId, "he_walkin_confirmed", ctx.matchId);
+  if (plan.matchState === "confirmed" && ctx.matchId) {
+    await sendFollowUpTemplate(leadId, "he_walkin_confirmed", ctx.matchId);
+    try { await sendFollowUpEmail("confirmed", ctx.matchId); } catch (err) { logger.warn({ leadId, err: (err as Error).message }, "[he-ingest] confirmation email failed"); }
+  }
   // T9: the bot could not reach them twice -> ask on WhatsApp instead.
   if (plan.event === "call_no_answer" && ctx.matchId) {
     const [n] = await db.execute<RowDataPacket[]>(

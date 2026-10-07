@@ -10,6 +10,7 @@ import { EmptyState, num } from "@/components/analytics/analytics-kit";
 import Candidate360Drawer from "./Candidate360Drawer";
 import CandidateImport from "./CandidateImport";
 import PolicyCard from "./PolicyCard";
+import DailyPlanCard from "./DailyPlanCard";
 import RecruiterBoard from "./RecruiterBoard";
 
 interface Summary {
@@ -139,6 +140,7 @@ export default function MasterTab() {
 
       <RecruiterBoard />
 
+      <DailyPlanCard />
       <PolicyCard />
       <CandidateImport onDone={() => void load()} />
 

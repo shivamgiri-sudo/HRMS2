@@ -11,6 +11,7 @@ import { cadenceGapMin } from "./he-cadence.js";
 import { sendsPaused } from "./he-send.service.js";
 import { getRequisitionJd } from "./he-jd.service.js";
 import { loadRequisitionForMatching } from "./he-drive.service.js";
+import { engineAutoOn, engineMode } from "./he-policy.service.js";
 
 export interface Check { key: string; ok: boolean; label: string; detail: string; blocks: "email" | "whatsapp" | "voice" | "followups" | "all" | null }
 
@@ -37,7 +38,8 @@ export async function getDriveReadiness(driveId: string) {
       WHERE msg.drive_id = ? AND msg.direction = 'out' AND msg.delivery_status <> 'failed' GROUP BY msg.channel`, [driveId]);
   const pinbotOk = new PinbotWhatsAppProvider().isConfigured();
   const vapiOk = Boolean(process.env.VAPI_API_KEY && process.env.VAPI_PHONE_NUMBER_ID);
-  const engineOn = process.env.HE_ENGINE_ENABLED === "true", engineLive = process.env.HE_ENGINE_LIVE === "true";
+  const mode = engineMode(process.env, await engineAutoOn());
+  const engineOn = mode === "live", engineLive = mode === "live";
   const h = istHour(new Date());
   const reqOpen = d.approval_status === "approved" && Boolean(d.active_status) && Number(d.fulfilled_headcount) < Number(d.requested_headcount);
   const checks: Check[] = [
@@ -48,7 +50,7 @@ export async function getDriveReadiness(driveId: string) {
     { key: "address", ok: Boolean(d.address), label: "Branch address on file", detail: d.address ? "used in the email and the call" : "add the branch address in Branch master (the bot never invents one)", blocks: d.address ? null : "voice" },
     { key: "wa_template", ok: Number(inv[0]?.n ?? 0) > 0 && pinbotOk, label: "WhatsApp invite template approved", detail: !pinbotOk ? "WhatsApp provider not configured" : Number(inv[0]?.n ?? 0) > 0 ? "ok" : `${Number(tpl[0]?.approved ?? 0)} of ${Number(tpl[0]?.total ?? 0)} templates approved - WhatsApp step waits; the call follows the email instead`, blocks: Number(inv[0]?.n ?? 0) > 0 && pinbotOk ? null : "whatsapp" },
     { key: "voice", ok: vapiOk, label: "Voice bot set up", detail: vapiOk ? "ok" : "voice provider keys not configured", blocks: vapiOk ? null : "voice" },
-    { key: "engine", ok: engineOn && engineLive, label: "Automatic follow-ups on", detail: engineOn && engineLive ? `WhatsApp ${cadenceGapMin()} min after the email, call after another ${cadenceGapMin()} min` : "scheduler off: use 'Run follow-ups now' (or set HE_ENGINE_ENABLED and HE_ENGINE_LIVE on the server)", blocks: engineOn && engineLive ? null : "followups" },
+    { key: "engine", ok: engineOn && engineLive, label: "Automatic follow-ups on", detail: engineOn && engineLive ? `WhatsApp ${cadenceGapMin()} min after the email, call after another ${cadenceGapMin()} min` : "automatic follow-ups are switched off: turn them on in the Follow-ups section below, or use 'Run follow-ups now'", blocks: engineOn && engineLive ? null : "followups" },
   ];
   const jd = await getRequisitionJd(String(d.requisition_id));
   const rules = await loadRequisitionForMatching(String(d.requisition_id));

@@ -37,3 +37,13 @@ export function locationRegex(tokens: string[]): string | null {
   if (!t.length) return null;
   return `(^|[^a-z])(${t.map((x) => x.replace(/ /g, "[ -]?")).join("|")})([^a-z]|$)`;
 }
+
+/**
+ * Does this person's location evidence place them in the branch's area? Same rule the drive shortlist applies in SQL, for code that
+ * ranks requisitions in memory (the "Also fits" column, other-opening offers). No location evidence = no.
+ */
+export function placedInBranchArea(locationText: string | null | undefined, branchName: string | null | undefined, branchCity: string | null | undefined): boolean {
+  const re = locationRegex(branchLocationTokens(branchName, branchCity));
+  const text = String(locationText ?? "").toLowerCase();
+  return Boolean(re && text && new RegExp(re, "i").test(text));
+}

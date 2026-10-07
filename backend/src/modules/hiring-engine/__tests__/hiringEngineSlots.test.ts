@@ -51,3 +51,34 @@ describe("assignSlots", () => {
     expect(assignSlots(3, { ...day, start: "18:00", end: "10:00" })).toMatchObject({ times: [], overflow: 3 });
   });
 });
+
+describe("daily plan numbers", () => {
+  it("100 walk-ins at a 25% show rate = 400 invites over 15 slots of 27 (10:00-17:30, 30 min)", async () => {
+    const { dailyPlanNumbers, DEFAULT_DAILY_PLAN } = await import("../he-slots.js");
+    expect(dailyPlanNumbers(DEFAULT_DAILY_PLAN)).toEqual({ invites: 400, targetShows: 100, slots: 15, perSlot: 27, capacity: 405 });
+  });
+  it("the minimum outreach wins when it is larger than walk-ins / show rate", async () => {
+    const { dailyPlanNumbers, DEFAULT_DAILY_PLAN } = await import("../he-slots.js");
+    const n = dailyPlanNumbers({ ...DEFAULT_DAILY_PLAN, walkInsPerDay: 40, minOutreachPerDay: 400 });
+    expect(n.invites).toBe(400);
+    expect(n.targetShows).toBe(100);
+  });
+  it("a higher show rate needs fewer invites", async () => {
+    const { dailyPlanNumbers, DEFAULT_DAILY_PLAN } = await import("../he-slots.js");
+    expect(dailyPlanNumbers({ ...DEFAULT_DAILY_PLAN, minOutreachPerDay: 0, showRatePct: 50 }).invites).toBe(200);
+  });
+  it("seats per slot never exceed 50 and invites follow an explicit target, capped by the seats", async () => {
+    const { dailyPlanNumbers, invitesForTarget, DEFAULT_DAILY_PLAN } = await import("../he-slots.js");
+    expect(dailyPlanNumbers({ ...DEFAULT_DAILY_PLAN, minOutreachPerDay: 5000 }).perSlot).toBe(50);
+    expect(invitesForTarget({ targetShows: 100, showRatePct: 25, capacity: 405 })).toEqual({ targetShows: 100, invites: 400 });
+    expect(invitesForTarget({ targetShows: 100, showRatePct: 25, capacity: 112 }).invites).toBe(112);
+  });
+});
+
+describe("next working day", () => {
+  it("skips Sunday", async () => {
+    const { nextWorkingDay } = await import("../he-plan.service.js");
+    expect(nextWorkingDay(new Date("2026-10-07T06:00:00Z"))).toBe("2026-10-08"); // Wed -> Thu
+    expect(nextWorkingDay(new Date("2026-10-10T06:00:00Z"))).toBe("2026-10-12"); // Sat -> Mon (Sunday skipped)
+  });
+});

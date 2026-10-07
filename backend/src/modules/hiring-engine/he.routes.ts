@@ -32,7 +32,9 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendStageSamples } from "./he-samples.service.js";
 import { emailConfigured } from "./he-email.service.js";
 import { previewWhatsAppSamples, startWhatsAppSample, whatsAppSampleStatus } from "./he-whatsapp-sample.service.js";
-import { getCoolingOffDays, setCoolingOffDays, setWhatsappRequiresOptIn, whatsappRequiresOptIn } from "./he-policy.service.js";
+import { engineAutoOn, engineMode, getCoolingOffDays, getDailyPlan, getPlanRequisitions, lastEngineTick, setCoolingOffDays, setDailyPlan, setEngineAuto, setPlanRequisitions, setWhatsappRequiresOptIn, whatsappRequiresOptIn } from "./he-policy.service.js";
+import { nextWorkingDay, planNextDay } from "./he-plan.service.js";
+import { dailyPlanNumbers } from "./he-slots.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -195,6 +197,7 @@ heRouter.post("/drives", requireAuth, requireRole(...WRITE_ROLES), async (req, r
       requisitionId: b.requisitionId, driveDate: b.driveDate,
       slotStart: typeof b.slotStart === "string" ? b.slotStart : undefined, slotEnd: typeof b.slotEnd === "string" ? b.slotEnd : undefined,
       slotMinutes: Number(b.slotMinutes) || undefined, slotCapacity: Number(b.slotCapacity) || undefined, showRatePct: Number(b.showRatePct) || undefined,
+      targetShows: Number(b.targetShows) > 0 ? Math.min(2000, Math.floor(Number(b.targetShows))) : undefined,
       autoSend: b.autoSend === true, createdBy: (req as AuthenticatedRequest).authUser?.id ?? null,
     });
     res.json({ success: true, data: r });
@@ -608,21 +611,56 @@ heRouter.get("/templates/whatsapp-sample/status", requireAuth, requireRole(...WR
   res.json({ success: true, job: whatsAppSampleStatus(String((req as AuthenticatedRequest).authUser?.id ?? "")) });
 });
 
+async function policySnapshot() {
+  const auto = await engineAutoOn();
+  return { coolingOffDays: await getCoolingOffDays(), whatsappRequiresOptIn: await whatsappRequiresOptIn(), engineAuto: auto, engineMode: engineMode(process.env, auto), engineLastTick: await lastEngineTick() };
+}
 /** Owner-adjustable outreach policy (no deploy needed). */
 heRouter.get("/policy", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
-  try { res.json({ success: true, coolingOffDays: await getCoolingOffDays(), whatsappRequiresOptIn: await whatsappRequiresOptIn() }); } catch { res.status(500).json({ success: false }); }
+  try { res.json({ success: true, ...(await policySnapshot()) }); } catch { res.status(500).json({ success: false }); }
 });
 heRouter.put("/policy", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
   try {
-    const b = (req.body ?? {}) as { coolingOffDays?: unknown; whatsappRequiresOptIn?: unknown };
+    const b = (req.body ?? {}) as { coolingOffDays?: unknown; whatsappRequiresOptIn?: unknown; engineAuto?: unknown };
     if (b.coolingOffDays !== undefined) await setCoolingOffDays(Number(b.coolingOffDays));
     if (b.whatsappRequiresOptIn !== undefined) await setWhatsappRequiresOptIn(b.whatsappRequiresOptIn === true);
-    logger.info({ body: { coolingOffDays: b.coolingOffDays, whatsappRequiresOptIn: b.whatsappRequiresOptIn }, by: (req as AuthenticatedRequest).authUser?.id }, "[he] outreach policy changed");
-    res.json({ success: true, coolingOffDays: await getCoolingOffDays(), whatsappRequiresOptIn: await whatsappRequiresOptIn() });
+    if (b.engineAuto !== undefined) await setEngineAuto(b.engineAuto === true);
+    logger.info({ body: { coolingOffDays: b.coolingOffDays, whatsappRequiresOptIn: b.whatsappRequiresOptIn, engineAuto: b.engineAuto }, by: (req as AuthenticatedRequest).authUser?.id }, "[he] outreach policy changed");
+    res.json({ success: true, ...(await policySnapshot()) });
   } catch (err) {
     const e = err as Error & { statusCode?: number };
     res.status(e.statusCode ?? 500).json({ success: false, message: e.statusCode ? e.message : "Could not save" });
   }
+});
+
+/** The daily outreach plan: numbers, derived sizes, and which requisitions run on it. */
+heRouter.get("/plan", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
+  try {
+    const plan = await getDailyPlan();
+    res.json({ success: true, plan, numbers: dailyPlanNumbers(plan), requisitionIds: await getPlanRequisitions(), nextDay: nextWorkingDay() });
+  } catch { res.status(500).json({ success: false }); }
+});
+heRouter.put("/plan", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  try {
+    const b = (req.body ?? {}) as { plan?: Record<string, unknown>; requisitionIds?: unknown };
+    if (b.plan) await setDailyPlan({
+      walkInsPerDay: b.plan.walkInsPerDay === undefined ? undefined : Number(b.plan.walkInsPerDay), minOutreachPerDay: b.plan.minOutreachPerDay === undefined ? undefined : Number(b.plan.minOutreachPerDay),
+      showRatePct: b.plan.showRatePct === undefined ? undefined : Number(b.plan.showRatePct), slotStart: b.plan.slotStart === undefined ? undefined : String(b.plan.slotStart),
+      slotEnd: b.plan.slotEnd === undefined ? undefined : String(b.plan.slotEnd), slotMinutes: b.plan.slotMinutes === undefined ? undefined : Number(b.plan.slotMinutes),
+    } as never);
+    if (Array.isArray(b.requisitionIds)) await setPlanRequisitions(b.requisitionIds as string[]);
+    logger.info({ by: (req as AuthenticatedRequest).authUser?.id }, "[he] daily plan changed");
+    const plan = await getDailyPlan();
+    res.json({ success: true, plan, numbers: dailyPlanNumbers(plan), requisitionIds: await getPlanRequisitions(), nextDay: nextWorkingDay() });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    res.status(e.statusCode ?? 500).json({ success: false, message: e.statusCode ? e.message : "Could not save the plan" });
+  }
+});
+/** Create (or confirm) the next working day's drives for the plan's requisitions now. dryRun previews only. */
+heRouter.post("/plan/run", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
+  try { res.json({ success: true, ...(await planNextDay({ date: typeof (req.body ?? {}).date === "string" ? (req.body as { date: string }).date : undefined, dryRun: (req.body ?? {}).dryRun === true })) }); }
+  catch (err) { logger.error({ err: (err as Error).message }, "[he] plan run failed"); res.status(500).json({ success: false, message: "Could not plan the day" }); }
 });
 
 heRouter.get("/requisitions/:id/jd", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {

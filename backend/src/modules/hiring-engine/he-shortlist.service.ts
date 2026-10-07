@@ -5,7 +5,8 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { loadOpenRequisitionsForMatching } from "./he-drive.service.js";
+import { leadLocationTexts, loadOpenRequisitionsForMatching } from "./he-drive.service.js";
+import { placedInBranchArea } from "./he-location-match.js";
 import { rankRequisitions } from "./he-matcher.js";
 import { ratingFor } from "./he-jd-doc.js";
 import { loadProfiles } from "./he-profile.service.js";
@@ -57,12 +58,15 @@ export async function getDriveShortlist(driveId: string, o: { filter?: Shortlist
 
   // Cross-matching: the other open requisitions each person fits, ranked by the same matcher.
   const reqs = (await loadOpenRequisitionsForMatching()).filter((r) => r.id !== reqId);
+  const locOf = await leadLocationTexts(rows.map((r) => String(r.lead_id)));
   const profiles = await loadProfiles(rows.map((r) => String(r.lead_id)));
   const split = (v: unknown) => { const s = String(v ?? ""); if (!s) return null; const [a, b] = s.split("|"); return { status: a, at: b ?? null }; };
   const data = rows.map((r) => {
     const rj = parse(r.reasons_json) as { reasons?: string[]; unknown?: string[]; confidence?: number; priority?: number } | null;
     const lead = { age: r.age, educationRank: r.education_rank, experienceYears: r.experience_years == null ? null : Number(r.experience_years), nightShiftOk: r.night_shift_ok == null ? null : Boolean(r.night_shift_ok), lat: r.lat == null ? null : Number(r.lat), lng: r.lng == null ? null : Number(r.lng), city: r.locality ?? null, ...profiles.get(String(r.lead_id)) };
-    const also = rankRequisitions(lead, reqs, 3).map((x) => ({ code: x.req.code, role: x.req.role, process: x.req.process, branch: x.req.branch, score: x.result.score }));
+    // Only requisitions whose branch area the person is placed in (an Ahmedabad candidate is not shown Noida jobs).
+    const here = reqs.filter((q) => placedInBranchArea(locOf.get(String(r.lead_id)), q.branch, q.branchCity));
+    const also = rankRequisitions(lead, here, 3).map((x) => ({ code: x.req.code, role: x.req.role, process: x.req.process, branch: x.req.branch, score: x.result.score }));
     return {
       matchId: r.id, leadId: r.lead_id, name: cleanName(r.full_name) || r.full_name, mobile: String(r.mobile10).slice(0, 2) + "xxxxxx" + String(r.mobile10).slice(-2),
       hasEmail: Boolean(r.email), waConsent: Number(r.wa_consent) === 1, source: r.primary_source, effort: r.effort_tier, walkins: Number(r.walkin_count ?? 0),

@@ -1,10 +1,12 @@
 // Hiring Engine scheduler: every 5 minutes runs the engine tick (slots, invites, reminders, arrivals, no-shows)
-// and the branch HR arrival alert. Two independent switches, both OFF by default:
-//   HE_ENGINE_ENABLED=true  -> the scheduler runs at all (otherwise a no-op)
-//   HE_ENGINE_LIVE=true     -> it actually sends/writes; anything else is a DRY RUN that only logs what it would do
+// and the branch HR arrival alert. It is ON when the owner switches "Automatic follow-ups" on in the Hiring Engine screen, or via the environment:
+//   HE_ENGINE_ENABLED=true + HE_ENGINE_LIVE=true -> live;  HE_ENGINE_ENABLED=true alone -> a DRY RUN that only logs what it would do
 // HE_SENDS_PAUSED=true additionally stops every outbound message immediately (state hygiene still runs).
 import { logger } from "../../logger.js";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
 import { runEngineTick } from "./he-engine.service.js";
+import { engineAutoOn, engineMode, recordEngineTick } from "./he-policy.service.js";
 import { runHrArrivalAlerts } from "./he-alert.service.js";
 import { listPrefixes, refreshHistoryChunk } from "./he-master.service.js";
 import { refreshProfilesChunk } from "./he-profile.service.js";
@@ -18,15 +20,24 @@ let _running = false;
 export async function runHiringEngineTick(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   if (_running) return; // a slow tick must never overlap the next one
   _running = true;
+  let lock: Awaited<ReturnType<typeof db.getConnection>> | null = null;
   try {
-    const dryRun = env.HE_ENGINE_LIVE !== "true";
+    const mode = engineMode(env, await engineAutoOn());
+    if (mode === "off") return;
+    // The scheduler runs in the API process and in the worker process: one MySQL advisory lock makes sure only one of them ticks at a time.
+    lock = await db.getConnection();
+    const [got] = await lock.execute<RowDataPacket[]>("SELECT GET_LOCK('he_engine_tick', 0) AS ok");
+    if (Number(got[0]?.ok) !== 1) return;
+    const dryRun = mode !== "live";
     const tick = await runEngineTick({ dryRun });
     const alerts = await runHrArrivalAlerts({ dryRun });
+    if (!dryRun) await recordEngineTick();
     logger.info({ dryRun, tick, alerts }, "[he-engine] tick finished");
     await runNightlyMasterRefresh();
   } catch (err) {
     logger.error({ err: (err as Error).message }, "[he-engine] tick failed");
   } finally {
+    if (lock) { try { await lock.execute("SELECT RELEASE_LOCK('he_engine_tick')"); } catch { /* connection closing releases it */ } lock.release(); }
     _running = false;
   }
 }
@@ -53,7 +64,8 @@ export async function runNightlyMasterRefresh(force = false): Promise<void> {
 }
 
 export function startHiringEngineScheduler(env: NodeJS.ProcessEnv = process.env): void {
-  if (_timer || env.HE_ENGINE_ENABLED !== "true") return;
+  // Always started: each run first asks whether the engine is on (the screen switch or the HE_ENGINE_* flags) and does nothing when it is off.
+  if (_timer) return;
   _timer = setInterval(() => void runHiringEngineTick(env), INTERVAL_MS);
 }
 

@@ -10,13 +10,13 @@ import { loadProfiles } from "./he-profile.service.js";
 import { getRequisitionJd } from "./he-jd.service.js";
 import { parseJdText } from "./he-jd-parse.js";
 import { learnedBonus } from "./he-learn.js";
-import { branchLocationTokens, locationRegex } from "./he-location-match.js";
+import { branchLocationTokens, locationRegex , placedInBranchArea} from "./he-location-match.js";
 import { loadMatchParams } from "./he-showup.service.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { eduRank } from "../meta-campaign/lead-screener.service.js";
 import { industriesForProcess, rankRequisitions, scoreLead, type MatchRequisition } from "./he-matcher.js";
-import { driveCapacity, inviteTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
+import { driveCapacity, inviteTarget, invitesForTarget, nextFreeSlot, nowIst, type SlotConfig } from "./he-slots.js";
 import { addEvent } from "./he-lead.service.js";
 
 export interface DriveInput {
@@ -27,6 +27,8 @@ export interface DriveInput {
   slotMinutes?: number;
   slotCapacity?: number;
   showRatePct?: number;
+  /** Walk-ins wanted for the day. When given, invites = this / show rate (capped by the seats); otherwise it follows the open positions. */
+  targetShows?: number;
   autoSend?: boolean;
   createdBy?: string | null;
 }
@@ -127,7 +129,7 @@ export async function createDrive(i: DriveInput): Promise<{ id: string; invites:
   if (open <= 0) throw new Error("Requisition has no open positions");
   const cfg: SlotConfig = { date: i.driveDate, start: i.slotStart ?? "10:00", end: i.slotEnd ?? "17:30", minutes: i.slotMinutes ?? 30, capacity: i.slotCapacity ?? 6 };
   const cap = driveCapacity(cfg);
-  const { targetShows, invites } = inviteTarget({ openPositions: open, showRatePct: i.showRatePct ?? 40, capacity: cap });
+  const { targetShows, invites } = i.targetShows && i.targetShows > 0 ? invitesForTarget({ targetShows: i.targetShows, showRatePct: i.showRatePct ?? 40, capacity: cap }) : inviteTarget({ openPositions: open, showRatePct: i.showRatePct ?? 40, capacity: cap });
   const [r] = await db.execute<ResultSetHeader>(
     `INSERT INTO he_drive (requisition_id, branch_name, drive_date, slot_start, slot_end, slot_minutes, slot_capacity, target_shows, show_rate_pct, status, auto_send, created_by)
      VALUES (?,?,?,?,?,?,?,?,?, 'draft', ?, ?)
@@ -181,7 +183,10 @@ export async function suggestMatchesDetailed(driveId: string, limit?: number): P
     salaryMax: base.salaryMax ?? jd?.parsed.salaryMonthly ?? null,
   };
   const cfg = slotCfg(drive);
-  const { invites } = inviteTarget({ openPositions: Math.max(1, req.requested_headcount - req.fulfilled_headcount), showRatePct: drive.show_rate_pct, capacity: driveCapacity(cfg) });
+  // The drive remembers the walk-ins it was created for (from the owner's target or the open positions); invites follow from that.
+  const { invites } = drive.target_shows > 0
+    ? invitesForTarget({ targetShows: drive.target_shows, showRatePct: drive.show_rate_pct, capacity: Number.MAX_SAFE_INTEGER }) // lined up for the walk-ins wanted, as before; seats are enforced when sending
+    : inviteTarget({ openPositions: Math.max(1, req.requested_headcount - req.fulfilled_headcount), showRatePct: drive.show_rate_pct, capacity: driveCapacity(cfg) });
   const want = limit ?? invites;
 
   // Hard requirements go into the SQL pre-filter (unknown values still pass, same rule as the scorer), so the 5,000 rows
@@ -294,6 +299,19 @@ export async function loadOpenRequisitionsForMatching(): Promise<Array<ReturnTyp
   return reqs.map((r) => ({ ...toMatchRequisition(r), code: String(r.requisition_code ?? ""), process: r.process_name, branch: r.branch_name, role: r.designation_name }));
 }
 
+/** Everything the records say about where each lead lives or applied (lead, ATS, Meta form, recruiter calls), lower-cased. */
+export async function leadLocationTexts(leadIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!leadIds.length) return out;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT l.id, LOWER(CONCAT_WS(' ', l.locality, ac.applied_for_branch, ac.current_address, ac.address, ac.permanent_address, mr.parsed_location, jrm.branch_name,
+              (SELECT GROUP_CONCAT(CONCAT_WS(' ', a.branch_name, a.location_name, a.candidate_location) SEPARATOR ' ') FROM ats_recruiter_hiring_activity a WHERE a.mobile10 = l.mobile10))) AS loc
+       FROM he_lead l LEFT JOIN ats_candidate ac ON ac.id = l.ats_candidate_id LEFT JOIN meta_lead_raw mr ON mr.id = l.meta_lead_id LEFT JOIN job_requisition jrm ON jrm.id = mr.requisition_id
+      WHERE l.id IN (${leadIds.map(() => "?").join(",")})`, leadIds);
+  for (const r of rows) out.set(String(r.id), String(r.loc ?? ""));
+  return out;
+}
+
 export async function alternativeRequisitions(leadId: string, excludeRequisitionId: string, limit = 3): Promise<Array<{ requisitionId: string; score: number; reasons: string[] }>> {
   const [lr] = await db.execute<RowDataPacket[]>("SELECT age, education_rank, experience_years, night_shift_ok, lat, lng FROM he_lead WHERE id = ? LIMIT 1", [leadId]);
   const l = lr[0];
@@ -305,9 +323,12 @@ export async function alternativeRequisitions(leadId: string, excludeRequisition
        FROM job_requisition jr LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name AND bm.active_status = 1
       WHERE jr.approval_status = 'approved' AND jr.active_status = 1 AND jr.fulfilled_headcount < jr.requested_headcount AND jr.id <> ? LIMIT 200`, [excludeRequisitionId]);
   const prof = (await loadProfiles([leadId])).get(leadId) ?? {};
+  // A requisition is only an alternative when the candidate's records place them in that branch's area (same rule as the drive shortlist).
+  const loc = (await leadLocationTexts([leadId])).get(leadId) ?? "";
+  const inArea = reqs.filter((r) => placedInBranchArea(loc, r.branch_name, r.bcity));
   const ranked = rankRequisitions(
     { age: l.age, educationRank: l.education_rank, experienceYears: l.experience_years == null ? null : Number(l.experience_years), nightShiftOk: l.night_shift_ok == null ? null : Boolean(l.night_shift_ok), lat: l.lat == null ? null : Number(l.lat), lng: l.lng == null ? null : Number(l.lng), ...prof },
-    reqs.map(toMatchRequisition), limit);
+    inArea.map(toMatchRequisition), limit);
   return ranked.map((x) => ({ requisitionId: x.req.id, score: x.result.score, reasons: x.result.reasons }));
 }
 

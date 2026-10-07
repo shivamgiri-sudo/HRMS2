@@ -21,3 +21,21 @@ describe("drive location tokens", () => {
   });
   it("no usable tokens -> null", () => expect(locationRegex([])).toBeNull());
 });
+
+describe("placedInBranchArea (Also fits / other-opening offers)", () => {
+  it("an Ahmedabad candidate is not placed in Noida's area, and the reverse", async () => {
+    const { placedInBranchArea } = await import("../he-location-match.js");
+    expect(placedInBranchArea("naroda, ahmedabad", "NOIDA-2", "Noida")).toBe(false);
+    expect(placedInBranchArea("sector 62 noida", "AHMEDABAD-JALDARSHAN", null)).toBe(false);
+    expect(placedInBranchArea("naroda, ahmedabad", "AHMEDABAD-JALDARSHAN", null)).toBe(true);
+    expect(placedInBranchArea("sector 62 noida", "NOIDA-2", "Noida")).toBe(true);
+  });
+  it("NCR neighbours are in the same area; unknown or empty location is not", async () => {
+    const { placedInBranchArea } = await import("../he-location-match.js");
+    expect(placedInBranchArea("indirapuram ghaziabad", "NOIDA-Onfido-17", "Noida")).toBe(true);
+    expect(placedInBranchArea("gandhinagar", "AHMEDABAD-JALDARSHAN", null)).toBe(true);
+    expect(placedInBranchArea("", "NOIDA-2", "Noida")).toBe(false);
+    expect(placedInBranchArea(null, "NOIDA-2", "Noida")).toBe(false);
+    expect(placedInBranchArea("lucknow", "NOIDA-2", "Noida")).toBe(false);
+  });
+});

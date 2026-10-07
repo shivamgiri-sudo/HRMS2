@@ -26,7 +26,7 @@ export default function DrivesTab() {
   const [drives, setDrives] = useState<Drive[]>([]);
   const [reqs, setReqs] = useState<Req[]>([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ requisitionId: "", driveDate: "", slotStart: "10:00", slotEnd: "17:30", slotCapacity: 6, showRatePct: 40, autoSend: false });
+  const [form, setForm] = useState({ requisitionId: "", driveDate: "", slotStart: "10:00", slotEnd: "17:30", slotCapacity: 6, showRatePct: 40, targetShows: 0, autoSend: false });
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -114,6 +114,8 @@ export default function DrivesTab() {
               <label className="block"><span className="mb-1 block font-medium text-slate-700">Seats per 30-min slot</span><input type="number" min={1} max={50} className={field} value={form.slotCapacity} onChange={(e) => setForm({ ...form, slotCapacity: Number(e.target.value) })} /></label>
               <label className="block"><span className="mb-1 block font-medium text-slate-700">First slot</span><input type="time" className={field} value={form.slotStart} onChange={(e) => setForm({ ...form, slotStart: e.target.value })} /></label>
               <label className="block"><span className="mb-1 block font-medium text-slate-700">Last slot ends</span><input type="time" className={field} value={form.slotEnd} onChange={(e) => setForm({ ...form, slotEnd: e.target.value })} /></label>
+              <label className="block"><span className="mb-1 block font-medium text-slate-700">Walk-ins wanted that day</span><input type="number" min={0} max={2000} placeholder="from open positions" className={field} value={form.targetShows || ""} onChange={(e) => setForm({ ...form, targetShows: Number(e.target.value) })} />
+                <span className="mt-1 block text-xs text-slate-500">{form.targetShows > 0 ? `About ${Math.ceil(form.targetShows / (Math.max(5, form.showRatePct) / 100))} invites at a ${form.showRatePct}% show rate; the seats must cover them.` : "Leave empty to size it from the open positions."}</span></label>
               <label className="block"><span className="mb-1 block font-medium text-slate-700">Expected show rate %</span><input type="number" min={5} max={100} className={field} value={form.showRatePct} onChange={(e) => setForm({ ...form, showRatePct: Number(e.target.value) })} /></label>
               <label className="flex items-end gap-2 pb-2"><input type="checkbox" className="h-4 w-4 cursor-pointer" checked={form.autoSend} onChange={(e) => setForm({ ...form, autoSend: e.target.checked })} /><span className="font-medium text-slate-700">Auto-send invites</span></label>
             </div>

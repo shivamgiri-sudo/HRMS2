@@ -49,6 +49,13 @@ export function nowIst(now: Date = new Date()): string {
  * How many leads to invite so the drive is expected to meet demand:
  * open positions x candidates-per-hire (selection ratio) / show rate, capped by the drive's real capacity.
  */
+/** The owner states the walk-ins wanted for the day; invites follow from the show-up rate, never beyond the seats the drive has. */
+export function invitesForTarget(o: { targetShows: number; showRatePct: number; capacity: number }): { targetShows: number; invites: number } {
+  const show = Math.max(5, Math.min(100, o.showRatePct)) / 100;
+  const wanted = Math.max(1, Math.round(o.targetShows));
+  return { targetShows: wanted, invites: Math.min(o.capacity, Math.ceil(wanted / show)) };
+}
+
 export function inviteTarget(o: { openPositions: number; showRatePct: number; interviewToHirePct?: number; capacity: number }): { targetShows: number; invites: number } {
   const hire = (o.interviewToHirePct ?? 35) / 100;
   const show = Math.max(5, Math.min(100, o.showRatePct)) / 100;
@@ -72,4 +79,19 @@ export function assignSlots(count: number, c: { start: string; end: string; minu
   if (seats >= capacity) for (const t of times) for (let k = 0; k < c.perSlot; k++) out.push(t);
   else for (let i = 0; i < seats; i++) out.push(times[Math.min(times.length - 1, Math.floor((i * times.length) / seats))]);
   return { times: out, capacity, overflow: count - seats };
+}
+
+export interface DailyPlan { walkInsPerDay: number; minOutreachPerDay: number; showRatePct: number; slotStart: string; slotEnd: string; slotMinutes: number }
+export const DEFAULT_DAILY_PLAN: DailyPlan = { walkInsPerDay: 100, minOutreachPerDay: 400, showRatePct: 25, slotStart: "10:00", slotEnd: "17:30", slotMinutes: 30 };
+
+/**
+ * What one day's drive needs for the owner's numbers: people messaged = whichever is larger of (walk-ins wanted / show rate) and the
+ * minimum outreach per day; seats per slot are spread so every one of them has a slot.
+ */
+export function dailyPlanNumbers(p: DailyPlan): { invites: number; targetShows: number; slots: number; perSlot: number; capacity: number } {
+  const show = Math.max(5, Math.min(100, p.showRatePct)) / 100;
+  const invites = Math.max(Math.ceil(Math.max(1, p.walkInsPerDay) / show), Math.max(0, Math.floor(p.minOutreachPerDay)));
+  const slots = Math.max(1, generateSlots({ date: "x", start: p.slotStart, end: p.slotEnd, minutes: p.slotMinutes, capacity: 1 }).length);
+  const perSlot = Math.min(50, Math.max(1, Math.ceil(invites / slots)));
+  return { invites, targetShows: Math.max(1, Math.round(invites * show)), slots, perSlot, capacity: slots * perSlot };
 }

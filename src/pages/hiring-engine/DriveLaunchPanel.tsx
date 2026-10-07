@@ -35,6 +35,7 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
   const [r, setR] = useState<Readiness | null>(null);
   const [plan, setPlan] = useState<Launch | null>(null);
   const [limit, setLimit] = useState(50);
+  const [engine, setEngine] = useState<{ engineAuto: boolean; engineMode: "off" | "dry" | "live"; engineLastTick: string | null } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState(false);
@@ -86,6 +87,21 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
       await hrmsApi.post(`/api/he/requisitions/${reqIdOf(r)}/jd`, { fileName: f.name, base64: btoa(bin) }, 60000);
       setMsg({ ok: true, text: `JD "${f.name}" read. Click Find leads on the drive to re-shortlist against it.` }); await load();
     } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Could not read that JD" }); }
+    finally { setBusy(null); }
+  };
+  const loadEngine = useCallback(async () => {
+    try { const p = await hrmsApi.get<{ engineAuto: boolean; engineMode: "off" | "dry" | "live"; engineLastTick: string | null }>("/api/he/policy"); setEngine({ engineAuto: p.engineAuto, engineMode: p.engineMode, engineLastTick: p.engineLastTick }); } catch { /* the section still works manually */ }
+  }, []);
+  useEffect(() => { if (driveId) void loadEngine(); }, [driveId, loadEngine]);
+  const toggleAuto = async () => {
+    setBusy("auto"); setMsg(null);
+    try {
+      const turnOn = engine?.engineMode !== "live";
+      const p = await hrmsApi.put<{ engineAuto: boolean; engineMode: "off" | "dry" | "live"; engineLastTick: string | null }>("/api/he/policy", { engineAuto: turnOn });
+      setEngine({ engineAuto: p.engineAuto, engineMode: p.engineMode, engineLastTick: p.engineLastTick });
+      setMsg({ ok: true, text: turnOn ? "Automatic follow-ups are ON. The engine runs every 5 minutes and follows the plan above." : p.engineMode === "live" ? "The screen switch is off, but the server is configured to run follow-ups automatically." : "Automatic follow-ups are OFF. Use 'Run follow-ups now' to run them by hand." });
+      await load();
+    } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Only an admin can switch this" }); }
     finally { setBusy(null); }
   };
   const followNeeded = r?.checks.find((c) => c.key === "engine")?.ok === false;
@@ -193,13 +209,28 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
             </section>
 
             <section aria-label="Follow-ups" className="rounded-xl border border-slate-200 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm text-slate-700">
-                  <div className="font-medium text-slate-900">Follow-ups (WhatsApp, then bot call)</div>
-                  <div className="text-xs text-slate-500">Sent so far for this drive: {num(r.sent.email ?? 0)} email · {num(r.sent.whatsapp ?? 0)} WhatsApp. {followNeeded ? "Automatic follow-ups are off on the server, so run them here about every hour." : "These run automatically every 5 minutes."}</div>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1 text-sm text-slate-700">
+                  <div className="font-medium text-slate-900">Follow-ups: automatic and manual</div>
+                  <div className="text-xs text-slate-500">Sent so far for this drive: {num(r.sent.email ?? 0)} email · {num(r.sent.whatsapp ?? 0)} WhatsApp.</div>
+                  <div role="status" className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${engine?.engineMode === "live" ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-1 ring-amber-200"}`}>
+                    <span className={`h-2 w-2 rounded-full ${engine?.engineMode === "live" ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden />
+                    {engine?.engineMode === "live" ? `Automatic follow-ups are ON${engine.engineLastTick ? ` · last run ${new Date(engine.engineLastTick).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}` : " · first run within 5 minutes"}` : "Automatic follow-ups are OFF"}
+                  </div>
                 </div>
-                <button type="button" onClick={() => void followUps()} disabled={busy != null} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><RefreshCcw className={`h-4 w-4 ${busy === "follow" ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden /> Run follow-ups now</button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" role="switch" aria-checked={engine?.engineMode === "live"} disabled={busy != null || engine == null} onClick={() => void toggleAuto()} className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${engine?.engineMode === "live" ? "border-slate-300 bg-white text-slate-700 hover:bg-slate-50" : "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"}`}>{engine?.engineMode === "live" ? "Turn automatic OFF" : "Turn automatic ON"}</button>
+                  <button type="button" onClick={() => void followUps()} disabled={busy != null} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><RefreshCcw className={`h-4 w-4 ${busy === "follow" ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden /> Run follow-ups now</button>
+                </div>
               </div>
+              <ol className="mt-3 space-y-1 border-t border-slate-100 pt-3 text-xs leading-relaxed text-slate-600" aria-label="What happens automatically">
+                <li><b className="text-slate-800">Email</b> goes out first (09:00 to 20:00 IST).</li>
+                <li><b className="text-slate-800">WhatsApp invite</b> an hour later to anyone who has not replied, then the <b className="text-slate-800">bot call</b> an hour after that.</li>
+                <li><b className="text-slate-800">On a Yes:</b> confirmation email and WhatsApp with the reference.</li>
+                <li><b className="text-slate-800">The day before:</b> reminder email and WhatsApp. <b className="text-slate-800">Two hours before:</b> WhatsApp with the share-location button.</li>
+                <li><b className="text-slate-800">Another time asked:</b> new slot by email and WhatsApp. <b className="text-slate-800">Missed interview:</b> follow-up email and WhatsApp.</li>
+                <li><b className="text-slate-800">30 minutes before candidates are due:</b> branch HR gets the arrival alert.</li>
+              </ol>
             </section>
             {msg && <p role="status" className={`rounded-lg p-3 text-sm ${msg.ok ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"}`}>{msg.text}</p>}
           </div>
