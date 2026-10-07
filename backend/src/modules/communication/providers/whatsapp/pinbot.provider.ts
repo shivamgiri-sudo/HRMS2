@@ -73,15 +73,19 @@ export class PinbotWhatsAppProvider implements CommunicationProvider {
         parameters: [{ type: "text", text: urlButtonSuffix }],
       });
     }
-    return this.post({
+    const build = (c: Array<Record<string, unknown>>) => ({
       to: toMsisdn(recipient),
       type: "template",
-      template: {
-        name: templateName,
-        language: { code: languageCode },
-        components,
-      },
+      template: { name: templateName, language: { code: languageCode }, components: c },
     });
+    const first = await this.post(build(components));
+    // A URL button whose approved URL is static takes no parameter, and Meta answers a parameter it did not expect with #132018 / #132000:
+    // retry once without the button so the message still goes out.
+    if (!first.success && urlButtonSuffix && /132018|132000|parameter/i.test(String(first.error ?? ""))) {
+      const second = await this.post(build(components.slice(0, 1)));
+      if (second.success) return second;
+    }
+    return first;
   }
 
   private async post(
