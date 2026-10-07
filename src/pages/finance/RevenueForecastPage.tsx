@@ -31,6 +31,21 @@ function formatDate(iso: string): string {
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
+/** Whole days from today (IST) to the due date; negative once it has passed. */
+function daysLeft(due?: string): number | null {
+  if (!due) return null;
+  const today = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+  return Math.round((Date.parse(due) - Date.parse(today)) / 86_400_000);
+}
+function daysLeftText(due?: string): string {
+  const d = daysLeft(due);
+  if (d === null) return "";
+  if (d > 1) return `${d} days left`;
+  if (d === 1) return "Due tomorrow";
+  if (d === 0) return "Due today";
+  return "Past due";
+}
+
 function Tile({ label, value, hint, tone = "slate" }: { label: string; value: string; hint?: string; tone?: "slate" | "blue" | "emerald" | "amber" | "rose" }) {
   const tones = {
     slate: "border-slate-200 bg-white", blue: "border-blue-200 bg-blue-50/70", emerald: "border-emerald-200 bg-emerald-50/70",
@@ -182,7 +197,7 @@ export default function RevenueForecastPage() {
         </header>
 
         <div className="grid grid-cols-2 gap-2 border-b bg-slate-50/60 px-4 py-3 md:grid-cols-3 xl:grid-cols-6">
-          <Tile label="Due date" value={due ? formatDate(due) : "—"} hint={counts.overdue ? `${counts.overdue} overdue` : "On track"} tone={counts.overdue ? "rose" : "slate"} />
+          <Tile label="Due date" value={due ? formatDate(due) : "—"} hint={counts.overdue ? `${counts.overdue} overdue` : daysLeftText(due)} tone={counts.overdue ? "rose" : daysLeft(due) !== null && daysLeft(due)! <= 3 ? "amber" : "slate"} />
           <Tile label="Cost centres" value={String(rows.length)} hint={`${counts.missing ?? 0} not started`} />
           <Tile label="Awaiting approval" value={String(counts.submitted ?? 0)} hint={awaitingMe ? `${awaitingMe} need your approval` : undefined} tone={awaitingMe ? "amber" : "slate"} />
           <Tile label="Open in P&L" value={money(openTotal)} hint={`${counts.approved ?? 0} forecasts`} tone="blue" />
@@ -230,7 +245,10 @@ export default function RevenueForecastPage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto px-4 pb-6">
+        {/* Screen readers hear what a filter change did; the floating assistant button sits bottom-right,
+            so the list keeps room below its last row to scroll clear of it. */}
+        <p className="sr-only" aria-live="polite">{list.isLoading ? "" : `Showing ${visible.length} of ${allRows.length} cost centres`}</p>
+        <div className="flex-1 overflow-auto px-4 pb-24">
           {list.isLoading ? (
             <div className="flex items-center gap-2 py-12 text-sm text-slate-600"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading cost centres…</div>
           ) : list.isError ? (

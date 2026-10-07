@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, CircleDashed, Loader2, Plus, Trash2, XCircle } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,12 +80,18 @@ export function ForecastSheet({
   const [notes, setNotes] = useState("");
   const [note, setNote] = useState("");
   const [actuals, setActuals] = useState<Record<string, { quantity: string; rate: string; amount: string }>>({});
+  /** Inline validation shows once the user has tried to save (then live as they fix lines). */
+  const [showErrors, setShowErrors] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   const f = detail.data;
   // Seed the editor / close form from the saved forecast each time the sheet opens on one.
   useEffect(() => {
     if (!open) return;
     setNote("");
+    setShowErrors(false);
+    setDirty(false);
     if (!f) {
       setLines([newLine()]);
       setNotes("");
@@ -116,12 +126,17 @@ export function ForecastSheet({
     lineType: l.lineType, description: l.description, metricKey: l.lineType === "metric" ? l.metricKey : null,
     quantity: toNum(l.quantity), rate: toNum(l.rate), amount: toNum(l.amount),
   }));
-  const invalidLine = lines.findIndex((l, i) => !l.description.trim() || lineAmounts[i] === null);
+  const lineErrors = lines.map((l, i) => ({
+    description: !l.description.trim(),
+    amount: lineAmounts[i] === null,
+  }));
+  const invalidLines = lineErrors.flatMap((e, i) => (e.description || e.amount ? [i + 1] : []));
+  const invalidLine = invalidLines.length ? invalidLines[0] - 1 : -1;
 
   async function saveDraft(andSubmit: boolean) {
     if (!row) return;
     if (invalidLine >= 0) {
-      toast({ title: `Line ${invalidLine + 1} is incomplete`, description: "Every line needs a description and an amount (or quantity and rate).", variant: "destructive" });
+      setShowErrors(true);
       return;
     }
     try {
@@ -133,14 +148,25 @@ export function ForecastSheet({
     } catch (e) { fail(e); }
   }
 
-  const update = (key: string, patch: Partial<DraftLine>) => setLines((cur) => cur.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const update = (key: string, patch: Partial<DraftLine>) => {
+    setDirty(true);
+    setLines((cur) => cur.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  };
+  /** Closing an editor with unsaved changes asks first instead of silently dropping them. */
+  const requestClose = (o: boolean) => {
+    if (o || busy) return;
+    if (mode === "edit" && dirty) { setConfirmDiscard(true); return; }
+    onOpenChange(false);
+  };
+  const errClass = "border-rose-500 focus-visible:ring-rose-500";
   const editable = mode === "edit";
   const title = row
     ? [row.costCentreCode, row.costCentreName !== row.costCentreCode ? row.costCentreName : null].filter(Boolean).join(" · ")
     : "Forecast";
 
   return (
-    <Sheet open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
+    <>
+    <Sheet open={open} onOpenChange={requestClose}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-4xl">
         <SheetHeader>
           <SheetTitle className="flex flex-wrap items-center gap-2 text-base">
@@ -252,16 +278,16 @@ export function ForecastSheet({
                             )}
                           </td>
                           <td className="px-2 py-2">
-                            {editable ? <Input aria-label={`Line ${i + 1} description`} className="h-8 min-w-40 text-xs" value={l.description} placeholder={l.lineType === "seat" ? "e.g. 40 seats @ ₹25,000" : "Describe the line"} onChange={(e) => update(l.key, { description: e.target.value })} /> : l.description}
+                            {editable ? <Input aria-label={`Line ${i + 1} description`} aria-invalid={showErrors && lineErrors[i].description} className={`h-8 min-w-40 text-xs ${showErrors && lineErrors[i].description ? errClass : ""}`} value={l.description} placeholder={l.lineType === "seat" ? "e.g. 40 seats @ ₹25,000" : "Describe the line"} onChange={(e) => update(l.key, { description: e.target.value })} /> : l.description}
                           </td>
-                          <td className="px-2 py-2">{editable ? <Input aria-label={`Line ${i + 1} quantity`} className="h-8 w-24 text-xs" inputMode="decimal" value={l.quantity} onChange={(e) => update(l.key, { quantity: e.target.value })} /> : (l.quantity || "—")}</td>
-                          <td className="px-2 py-2">{editable ? <Input aria-label={`Line ${i + 1} rate`} className="h-8 w-24 text-xs" inputMode="decimal" value={l.rate} onChange={(e) => update(l.key, { rate: e.target.value })} /> : (l.rate || "—")}</td>
-                          <td className="px-2 py-2">{editable ? <Input aria-label={`Line ${i + 1} amount`} className="h-8 w-28 text-xs" inputMode="decimal" value={l.amount} disabled={usesQty} placeholder={usesQty ? "qty × rate" : ""} onChange={(e) => update(l.key, { amount: e.target.value })} /> : (usesQty ? "—" : money(Number(l.amount)))}</td>
+                          <td className="px-2 py-2">{editable ? <Input aria-label={`Line ${i + 1} quantity`} aria-invalid={showErrors && usesQty && lineErrors[i].amount} className={`h-8 w-24 text-xs ${showErrors && usesQty && lineErrors[i].amount ? errClass : ""}`} inputMode="decimal" value={l.quantity} onChange={(e) => update(l.key, { quantity: e.target.value })} /> : (l.quantity || "—")}</td>
+                          <td className="px-2 py-2">{editable ? <Input aria-label={`Line ${i + 1} rate`} aria-invalid={showErrors && usesQty && lineErrors[i].amount} className={`h-8 w-24 text-xs ${showErrors && usesQty && lineErrors[i].amount ? errClass : ""}`} inputMode="decimal" value={l.rate} onChange={(e) => update(l.key, { rate: e.target.value })} /> : (l.rate || "—")}</td>
+                          <td className="px-2 py-2">{editable ? <Input aria-label={`Line ${i + 1} amount`} aria-invalid={showErrors && !usesQty && lineErrors[i].amount} className={`h-8 w-28 text-xs ${showErrors && !usesQty && lineErrors[i].amount ? errClass : ""}`} inputMode="decimal" value={l.amount} disabled={usesQty} placeholder={usesQty ? "qty × rate" : ""} onChange={(e) => update(l.key, { amount: e.target.value })} /> : (usesQty ? "—" : money(Number(l.amount)))}</td>
                           <td className={`px-2 py-2 text-right font-semibold tabular-nums ${(lineAmounts[i] ?? 0) < 0 ? "text-rose-700" : "text-slate-900"}`}>{lineAmounts[i] === null ? "—" : money(lineAmounts[i]!)}</td>
                           {f?.status === "closed" ? <td className="px-2 py-2 text-right tabular-nums">{saved?.actual_amount === null || saved?.actual_amount === undefined ? "—" : money(Number(saved.actual_amount))}</td> : null}
                           {editable ? (
                             <td className="px-2 py-2">
-                              <Button type="button" size="icon" variant="ghost" className="h-8 w-8" aria-label={`Remove line ${i + 1}`} disabled={lines.length === 1} onClick={() => setLines((cur) => cur.filter((x) => x.key !== l.key))}>
+                              <Button type="button" size="icon" variant="ghost" className="h-8 w-8" aria-label={`Remove line ${i + 1}`} disabled={lines.length === 1} onClick={() => { setDirty(true); setLines((cur) => cur.filter((x) => x.key !== l.key)); }}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </td>
@@ -285,7 +311,7 @@ export function ForecastSheet({
             {editable ? (
               <div className="flex flex-wrap gap-2">
                 {(["seat", "metric", "fixed", "reward", "penalty"] as ForecastLineType[]).map((t) => (
-                  <Button key={t} type="button" size="sm" variant="outline" onClick={() => setLines((cur) => [...cur, newLine(t)])}>
+                  <Button key={t} type="button" size="sm" variant="outline" onClick={() => { setDirty(true); setLines((cur) => [...cur, newLine(t)]); }}>
                     <Plus className="mr-1 h-3.5 w-3.5" aria-hidden /> {LINE_TYPE_LABEL[t]}
                   </Button>
                 ))}
@@ -295,7 +321,7 @@ export function ForecastSheet({
             {editable ? (
               <div className="space-y-1">
                 <Label htmlFor="forecast-notes" className="text-xs">Notes for the approvers (optional)</Label>
-                <Textarea id="forecast-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+                <Textarea id="forecast-notes" rows={2} value={notes} onChange={(e) => { setDirty(true); setNotes(e.target.value); }} />
               </div>
             ) : f?.notes ? <p className="rounded-md bg-slate-50 p-3 text-xs text-slate-700"><span className="font-semibold">Notes: </span>{f.notes}</p> : null}
 
@@ -308,8 +334,19 @@ export function ForecastSheet({
               </div>
             ) : null}
 
+            {editable && showErrors && invalidLines.length ? (
+              <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                Line{invalidLines.length > 1 ? "s" : ""} {invalidLines.join(", ")} {invalidLines.length > 1 ? "are" : "is"} incomplete — each line needs a description and an amount (or, for seats and metrics, a quantity and a rate).
+              </p>
+            ) : null}
+            {mode === "close" && f && actualAmounts.some((a) => a === null) ? (
+              <p role="status" className="text-xs text-slate-700">Enter the actual for every line to close the forecast (quantity and rate for seats and metrics, the amount for the others).</p>
+            ) : null}
+            {mode === "review" && !note.trim() ? (
+              <p className="text-xs text-slate-600">To reject, write a comment for the Branch Head first.</p>
+            ) : null}
             <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
-              <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
+              <Button variant="ghost" onClick={() => requestClose(false)} disabled={busy}>Cancel</Button>
               {editable ? (
                 <>
                   <Button variant="outline" disabled={busy} onClick={() => void saveDraft(false)}>Save draft</Button>
@@ -350,5 +387,18 @@ export function ForecastSheet({
         )}
       </SheetContent>
     </Sheet>
+    <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Discard your changes?</AlertDialogTitle>
+          <AlertDialogDescription>The lines you edited have not been saved. Save a draft to keep them.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep editing</AlertDialogCancel>
+          <AlertDialogAction onClick={() => { setConfirmDiscard(false); setDirty(false); onOpenChange(false); }}>Discard</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

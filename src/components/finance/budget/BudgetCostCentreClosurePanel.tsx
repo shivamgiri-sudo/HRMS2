@@ -1,4 +1,9 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -45,6 +50,7 @@ export function BudgetCostCentreClosurePanel({ budgetId, canClose, canReopen }: 
     onError: (e: Error) => toast.error(e.message || "Could not reopen"),
   });
   const rows = query.data ?? [];
+  const [confirmRow, setConfirmRow] = useState<CostCentreClosureRow | null>(null);
   if (query.isLoading) return <p className="flex items-center gap-2 py-3 text-xs text-slate-600"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Loading cost centres…</p>;
   if (query.isError) return <p className="py-3 text-xs text-rose-700">Could not load cost-centre closure: {(query.error as Error)?.message}</p>;
   if (!rows.length) return null;
@@ -85,7 +91,7 @@ export function BudgetCostCentreClosurePanel({ budgetId, canClose, canReopen }: 
                 <td className="px-3 py-2 text-right">
                   {r.status === "open" && canClose ? (
                     <Button size="sm" variant="outline" className="h-7 text-xs" disabled={pending}
-                      onClick={() => { if (window.confirm(`Close ${r.costCentreCode ?? "this cost centre"}? Live P&L will count ${money(r.usedAmount)} instead of ${money(r.budgetAmount)}, and no new GRN can be raised against it.`)) close.mutate(r.costCentreId); }}>
+                      onClick={() => setConfirmRow(r)}>
                       Close
                     </Button>
                   ) : null}
@@ -98,6 +104,20 @@ export function BudgetCostCentreClosurePanel({ budgetId, canClose, canReopen }: 
           })}
         </tbody>
       </table>
+      <AlertDialog open={Boolean(confirmRow)} onOpenChange={(o) => !o && setConfirmRow(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close {confirmRow?.costCentreCode ?? "this cost centre"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Live P&amp;L will count its actual spend, {money(confirmRow?.usedAmount ?? 0)}, instead of the full budget of {money(confirmRow?.budgetAmount ?? 0)}, and no new GRN can be raised against it. Only the Finance Head can reopen it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep open</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { if (confirmRow) close.mutate(confirmRow.costCentreId); setConfirmRow(null); }}>Close cost centre</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
