@@ -1,0 +1,173 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`engine re-line-up before streams (snapshot of today's behaviour) > dry-run tick re-lines nothing > sql 1`] = `
+[
+  [
+    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m JOIN he_drive d ON d.id = m.drive_id AND d.drive_date = CURDATE() JOIN he_lead l ON l.id = m.lead_id JOIN ats_candidate c ON RIGHT(REGEXP_REPLACE(c.mobile, '[^0-9]', ''), 10) = l.mobile10 AND c.walk_in_date = CURDATE() WHERE m.state IN ('invited','confirmed')",
+    [],
+  ],
+  [
+    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE) AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)",
+    [],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM he_lead l WHERE l.status IN ('invited','confirmed','rescheduled') AND COALESCE(l.status_at, l.updated_at) < DATE_SUB(NOW(), INTERVAL 3 DAY) AND NOT EXISTS (SELECT 1 FROM he_match m WHERE m.lead_id = l.id AND m.state IN ('invited','confirmed','slot_released') AND (m.slot_at IS NULL OR m.slot_at >= DATE_SUB(NOW(), INTERVAL 3 HOUR)))",
+    [],
+  ],
+  [
+    "SELECT m.id AS match_id, m.lead_id FROM he_match m WHERE m.state = 'slot_released' AND m.drive_id IS NOT NULL AND (SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'reschedule_requested') > COALESCE((SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'slot_offered'), 0) LIMIT ?",
+    [
+      50,
+    ],
+  ],
+  [
+    "SELECT id FROM he_drive WHERE status = 'active' AND auto_send = 1 AND drive_date >= CURDATE() AND drive_date <= DATE_ADD(CURDATE(), INTERVAL 3 DAY)",
+    [],
+  ],
+  [
+    "SELECT m.id, m.lead_id, l.full_name, l.mobile10, (l.last_contact_at IS NOT NULL AND l.last_contact_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) AS dormant, (l.email IS NOT NULL AND l.email <> '') AS has_email, COALESCE((SELECT cfg.email_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS email_on, COALESCE((SELECT cfg.whatsapp_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS whatsapp_on, (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = m.lead_id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL))) AS has_consent FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out' ORDER BY has_email DESC, m.score DESC LIMIT ?",
+    [
+      0,
+      "d1",
+      100,
+    ],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'",
+    [],
+  ],
+  [
+    "SELECT m.id, m.lead_id, l.full_name, l.mobile10, (l.last_contact_at IS NOT NULL AND l.last_contact_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) AS dormant, (l.email IS NOT NULL AND l.email <> '') AS has_email, COALESCE((SELECT cfg.email_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS email_on, COALESCE((SELECT cfg.whatsapp_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS whatsapp_on, (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = m.lead_id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL))) AS has_consent FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out' ORDER BY has_email DESC, m.score DESC LIMIT ?",
+    [
+      0,
+      "d2",
+      100,
+    ],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'",
+    [],
+  ],
+  [
+    "SELECT m.id, m.lead_id, m.slot_at, e.created_at AS email_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m JOIN he_message e ON e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = ? AND e.direction = 'out' AND e.delivery_status <> 'failed' WHERE m.state = 'invited' AND m.slot_at > NOW() AND e.created_at <= DATE_SUB(NOW(), INTERVAL ? MINUTE) AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%' AND w.created_at >= e.created_at) AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at >= e.created_at) AND ( EXISTS (SELECT 1 FROM he_consent k WHERE k.lead_id = m.lead_id AND k.consent_type = 'whatsapp_contact' AND k.revoked_at IS NULL) -- owner-approved: people who applied for this role are messaged about it; anyone who revoked or opted out never is OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = m.lead_id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM he_lead lo WHERE lo.id = m.lead_id AND lo.status = 'opted_out')) ) ORDER BY m.slot_at LIMIT ?",
+    [
+      "he_walkin_invite_email",
+      60,
+      0,
+      100,
+    ],
+  ],
+  [
+    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)",
+    [
+      1320,
+      1560,
+    ],
+  ],
+  [
+    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)",
+    [
+      90,
+      150,
+    ],
+  ],
+  [
+    "SELECT m.id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.state = 'no_show' AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY) AND l.email IS NOT NULL AND l.email <> '' AND (SELECT COUNT(*) FROM he_match x WHERE x.lead_id = m.lead_id AND x.state = 'no_show') = 1 AND NOT EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = 'he_email_no_show' AND e.direction = 'out' AND e.delivery_status <> 'failed' AND (e.drive_id <=> m.drive_id)) LIMIT 100",
+    [],
+  ],
+  [
+    "SELECT m.id, m.slot_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m WHERE m.state = 'invited' AND m.slot_at > NOW() AND ( -- normal cadence: one gap after the WhatsApp invite EXISTS (SELECT 1 FROM he_message o WHERE o.lead_id = m.lead_id AND o.direction = 'out' AND o.template_key LIKE 'he_walkin_invite:%' AND o.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)) -- WhatsApp could not go out (template not approved / no opt-in): the call follows the email two gaps later OR (EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.direction = 'out' AND e.template_key = 'he_walkin_invite_email' AND e.delivery_status <> 'failed' AND e.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)) AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%')) ) AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > DATE_SUB(NOW(), INTERVAL 2 DAY)) ORDER BY m.slot_at LIMIT ?",
+    [
+      60,
+      120,
+      20,
+    ],
+  ],
+]
+`;
+
+exports[`engine re-line-up before streams (snapshot of today's behaviour) > live tick: every active auto-send drive is re-lined with suggestMatches > sql 1`] = `
+[
+  [
+    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m JOIN he_drive d ON d.id = m.drive_id AND d.drive_date = CURDATE() JOIN he_lead l ON l.id = m.lead_id JOIN ats_candidate c ON RIGHT(REGEXP_REPLACE(c.mobile, '[^0-9]', ''), 10) = l.mobile10 AND c.walk_in_date = CURDATE() WHERE m.state IN ('invited','confirmed')",
+    [],
+  ],
+  [
+    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state IN ('invited','confirmed') AND m.slot_at IS NOT NULL AND m.slot_at < DATE_SUB(NOW(), INTERVAL 120 MINUTE) AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY)",
+    [],
+  ],
+  [
+    "UPDATE he_lead l SET l.status = IF(EXISTS (SELECT 1 FROM he_match x WHERE x.lead_id = l.id AND x.state IN ('no_show')), 'no_show', 'contacted'), l.status_at = NOW() WHERE l.status IN ('invited','confirmed','rescheduled') AND COALESCE(l.status_at, l.updated_at) < DATE_SUB(NOW(), INTERVAL 3 DAY) AND NOT EXISTS (SELECT 1 FROM he_match m WHERE m.lead_id = l.id AND m.state IN ('invited','confirmed','slot_released') AND (m.slot_at IS NULL OR m.slot_at >= DATE_SUB(NOW(), INTERVAL 3 HOUR)))",
+    [],
+  ],
+  [
+    "SELECT m.id AS match_id, m.lead_id FROM he_match m WHERE m.state = 'slot_released' AND m.drive_id IS NOT NULL AND (SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'reschedule_requested') > COALESCE((SELECT MAX(id) FROM he_lead_event e WHERE e.lead_id = m.lead_id AND e.event_type = 'slot_offered'), 0) LIMIT ?",
+    [
+      50,
+    ],
+  ],
+  [
+    "SELECT id FROM he_drive WHERE status = 'active' AND auto_send = 1 AND drive_date >= CURDATE() AND drive_date <= DATE_ADD(CURDATE(), INTERVAL 3 DAY)",
+    [],
+  ],
+  [
+    "SELECT m.id, m.lead_id, l.full_name, l.mobile10, (l.last_contact_at IS NOT NULL AND l.last_contact_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) AS dormant, (l.email IS NOT NULL AND l.email <> '') AS has_email, COALESCE((SELECT cfg.email_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS email_on, COALESCE((SELECT cfg.whatsapp_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS whatsapp_on, (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = m.lead_id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL))) AS has_consent FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out' ORDER BY has_email DESC, m.score DESC LIMIT ?",
+    [
+      0,
+      "d1",
+      100,
+    ],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'",
+    [],
+  ],
+  [
+    "SELECT m.id, m.lead_id, l.full_name, l.mobile10, (l.last_contact_at IS NOT NULL AND l.last_contact_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) AS dormant, (l.email IS NOT NULL AND l.email <> '') AS has_email, COALESCE((SELECT cfg.email_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS email_on, COALESCE((SELECT cfg.whatsapp_on FROM he_lead_campaign lc JOIN he_campaign_config cfg ON cfg.campaign_id = lc.campaign_id WHERE lc.lead_id = m.lead_id ORDER BY lc.form_filled_at DESC LIMIT 1), 1) AS whatsapp_on, (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = m.lead_id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL))) AS has_consent FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out' ORDER BY has_email DESC, m.score DESC LIMIT ?",
+    [
+      0,
+      "d2",
+      100,
+    ],
+  ],
+  [
+    "SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'",
+    [],
+  ],
+  [
+    "SELECT m.id, m.lead_id, m.slot_at, e.created_at AS email_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m JOIN he_message e ON e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = ? AND e.direction = 'out' AND e.delivery_status <> 'failed' WHERE m.state = 'invited' AND m.slot_at > NOW() AND e.created_at <= DATE_SUB(NOW(), INTERVAL ? MINUTE) AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%' AND w.created_at >= e.created_at) AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at >= e.created_at) AND ( EXISTS (SELECT 1 FROM he_consent k WHERE k.lead_id = m.lead_id AND k.consent_type = 'whatsapp_contact' AND k.revoked_at IS NULL) -- owner-approved: people who applied for this role are messaged about it; anyone who revoked or opted out never is OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = m.lead_id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM he_lead lo WHERE lo.id = m.lead_id AND lo.status = 'opted_out')) ) ORDER BY m.slot_at LIMIT ?",
+    [
+      "he_walkin_invite_email",
+      60,
+      0,
+      100,
+    ],
+  ],
+  [
+    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)",
+    [
+      1320,
+      1560,
+    ],
+  ],
+  [
+    "SELECT m.id, m.lead_id, m.drive_id FROM he_match m WHERE m.state = 'confirmed' AND m.slot_at BETWEEN DATE_ADD(NOW(), INTERVAL ? MINUTE) AND DATE_ADD(NOW(), INTERVAL ? MINUTE)",
+    [
+      90,
+      150,
+    ],
+  ],
+  [
+    "SELECT m.id FROM he_match m JOIN he_lead l ON l.id = m.lead_id WHERE m.state = 'no_show' AND m.slot_at > DATE_SUB(NOW(), INTERVAL 2 DAY) AND l.email IS NOT NULL AND l.email <> '' AND (SELECT COUNT(*) FROM he_match x WHERE x.lead_id = m.lead_id AND x.state = 'no_show') = 1 AND NOT EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.requisition_id = m.requisition_id AND e.template_key = 'he_email_no_show' AND e.direction = 'out' AND e.delivery_status <> 'failed' AND (e.drive_id <=> m.drive_id)) LIMIT 100",
+    [],
+  ],
+  [
+    "SELECT m.id, m.slot_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m WHERE m.state = 'invited' AND m.slot_at > NOW() AND ( -- normal cadence: one gap after the WhatsApp invite EXISTS (SELECT 1 FROM he_message o WHERE o.lead_id = m.lead_id AND o.direction = 'out' AND o.template_key LIKE 'he_walkin_invite:%' AND o.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)) -- WhatsApp could not go out (template not approved / no opt-in): the call follows the email two gaps later OR (EXISTS (SELECT 1 FROM he_message e WHERE e.lead_id = m.lead_id AND e.direction = 'out' AND e.template_key = 'he_walkin_invite_email' AND e.delivery_status <> 'failed' AND e.created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)) AND NOT EXISTS (SELECT 1 FROM he_message w WHERE w.lead_id = m.lead_id AND w.direction = 'out' AND w.template_key LIKE 'he_walkin_invite:%')) ) AND NOT EXISTS (SELECT 1 FROM he_message i WHERE i.lead_id = m.lead_id AND i.direction = 'in' AND i.created_at > DATE_SUB(NOW(), INTERVAL 2 DAY)) ORDER BY m.slot_at LIMIT ?",
+    [
+      60,
+      120,
+      20,
+    ],
+  ],
+]
+`;

@@ -1,0 +1,622 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > a createDrive failure is reported as skipped > days 1`] = `
+[
+  {
+    "branch": "Noida",
+    "code": "REQ-1",
+    "date": "2026-10-08",
+    "invitesWanted": 400,
+    "lined": 0,
+    "reason": "Requisition has no open positions",
+    "requisitionId": "r1",
+    "role": "Agent",
+    "status": "skipped",
+  },
+  {
+    "branch": "Pune",
+    "code": "REQ-3",
+    "date": "2026-10-08",
+    "invitesWanted": 400,
+    "lined": 0,
+    "reason": "requisition is closed or filled",
+    "requisitionId": "r3",
+    "role": "Caller",
+    "status": "skipped",
+  },
+  {
+    "branch": "",
+    "code": "r9",
+    "date": "2026-10-08",
+    "invitesWanted": 400,
+    "lined": 0,
+    "reason": "requisition not found",
+    "requisitionId": "r9",
+    "role": "",
+    "status": "skipped",
+  },
+  {
+    "branch": "Noida",
+    "code": "REQ-2",
+    "date": "2026-10-08",
+    "driveId": "d-r2",
+    "invitesWanted": 400,
+    "lined": 7,
+    "requisitionId": "r2",
+    "role": "Agent",
+    "status": "created",
+  },
+  {
+    "branch": "Pune",
+    "code": "REQ-4",
+    "date": "2026-10-08",
+    "driveId": "d-r4",
+    "invitesWanted": 400,
+    "lined": 0,
+    "requisitionId": "r4",
+    "role": "Caller",
+    "status": "exists",
+  },
+]
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > a createDrive failure is reported as skipped > sql 1`] = `
+[
+  [
+    "SELECT c.requisition_id, c.id FROM meta_campaign c JOIN he_campaign_config cfg ON cfg.campaign_id = c.id AND cfg.owner = 'he' WHERE c.campaign_status = 'active' AND c.requisition_id IS NOT NULL",
+    [],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r1",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r3",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r9",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r2",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r2",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r4",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r4",
+      "2026-10-08",
+    ],
+  ],
+]
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > dry run > collaborators 1`] = `
+{
+  "bridgeAllMetaLeads": [],
+  "createDrive": [],
+  "setDriveStatus": [],
+  "suggestMatches": [],
+  "sweepOwnedCampaigns": 0,
+}
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > dry run > days 1`] = `
+[
+  {
+    "branch": "Noida",
+    "code": "REQ-1",
+    "date": "2026-10-08",
+    "invitesWanted": 400,
+    "lined": 0,
+    "reason": "dry run",
+    "requisitionId": "r1",
+    "role": "Agent",
+    "status": "created",
+  },
+  {
+    "branch": "Pune",
+    "code": "REQ-3",
+    "date": "2026-10-08",
+    "invitesWanted": 400,
+    "lined": 0,
+    "reason": "requisition is closed or filled",
+    "requisitionId": "r3",
+    "role": "Caller",
+    "status": "skipped",
+  },
+  {
+    "branch": "",
+    "code": "r9",
+    "date": "2026-10-08",
+    "invitesWanted": 400,
+    "lined": 0,
+    "reason": "requisition not found",
+    "requisitionId": "r9",
+    "role": "",
+    "status": "skipped",
+  },
+  {
+    "branch": "Noida",
+    "code": "REQ-2",
+    "date": "2026-10-08",
+    "invitesWanted": 400,
+    "lined": 0,
+    "reason": "dry run",
+    "requisitionId": "r2",
+    "role": "Agent",
+    "status": "created",
+  },
+  {
+    "branch": "Pune",
+    "code": "REQ-4",
+    "date": "2026-10-08",
+    "driveId": "d-r4",
+    "invitesWanted": 400,
+    "lined": 0,
+    "requisitionId": "r4",
+    "role": "Caller",
+    "status": "exists",
+  },
+]
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > dry run > sql 1`] = `
+[
+  [
+    "SELECT c.requisition_id, c.id FROM meta_campaign c JOIN he_campaign_config cfg ON cfg.campaign_id = c.id AND cfg.owner = 'he' WHERE c.campaign_status = 'active' AND c.requisition_id IS NOT NULL",
+    [],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r1",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r3",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r9",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r2",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r2",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r4",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r4",
+      "2026-10-08",
+    ],
+  ],
+]
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only plan, live > collaborators 1`] = `
+{
+  "bridgeAllMetaLeads": [
+    [],
+  ],
+  "createDrive": [
+    [
+      {
+        "audience": {
+          "kind": "meta",
+        },
+        "autoSend": true,
+        "driveDate": "2026-10-08",
+        "requisitionId": "r1",
+        "showRatePct": 25,
+        "slotCapacity": 27,
+        "slotEnd": "17:30",
+        "slotMinutes": 30,
+        "slotStart": "10:00",
+        "targetShows": 100,
+      },
+    ],
+    [
+      {
+        "audience": {
+          "ids": [
+            "c2",
+            "c2b",
+          ],
+          "kind": "campaign",
+        },
+        "autoSend": true,
+        "driveDate": "2026-10-08",
+        "requisitionId": "r2",
+        "showRatePct": 25,
+        "slotCapacity": 27,
+        "slotEnd": "17:30",
+        "slotMinutes": 30,
+        "slotStart": "10:00",
+        "targetShows": 100,
+      },
+    ],
+  ],
+  "setDriveStatus": [
+    [
+      "d-r1",
+      "active",
+    ],
+    [
+      "d-r2",
+      "active",
+    ],
+  ],
+  "suggestMatches": [
+    [
+      "d-r1",
+    ],
+    [
+      "d-r2",
+    ],
+  ],
+  "sweepOwnedCampaigns": 1,
+}
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only plan, live > days 1`] = `
+[
+  {
+    "branch": "Noida",
+    "code": "REQ-1",
+    "date": "2026-10-08",
+    "driveId": "d-r1",
+    "invitesWanted": 400,
+    "lined": 7,
+    "requisitionId": "r1",
+    "role": "Agent",
+    "status": "created",
+  },
+  {
+    "branch": "Pune",
+    "code": "REQ-3",
+    "date": "2026-10-08",
+    "invitesWanted": 400,
+    "lined": 0,
+    "reason": "requisition is closed or filled",
+    "requisitionId": "r3",
+    "role": "Caller",
+    "status": "skipped",
+  },
+  {
+    "branch": "",
+    "code": "r9",
+    "date": "2026-10-08",
+    "invitesWanted": 400,
+    "lined": 0,
+    "reason": "requisition not found",
+    "requisitionId": "r9",
+    "role": "",
+    "status": "skipped",
+  },
+  {
+    "branch": "Noida",
+    "code": "REQ-2",
+    "date": "2026-10-08",
+    "driveId": "d-r2",
+    "invitesWanted": 400,
+    "lined": 7,
+    "requisitionId": "r2",
+    "role": "Agent",
+    "status": "created",
+  },
+  {
+    "branch": "Pune",
+    "code": "REQ-4",
+    "date": "2026-10-08",
+    "driveId": "d-r4",
+    "invitesWanted": 400,
+    "lined": 0,
+    "requisitionId": "r4",
+    "role": "Caller",
+    "status": "exists",
+  },
+]
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > meta-only plan, live > sql 1`] = `
+[
+  [
+    "SELECT c.requisition_id, c.id FROM meta_campaign c JOIN he_campaign_config cfg ON cfg.campaign_id = c.id AND cfg.owner = 'he' WHERE c.campaign_status = 'active' AND c.requisition_id IS NOT NULL",
+    [],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r1",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r3",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r9",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r2",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r2",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r4",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r4",
+      "2026-10-08",
+    ],
+  ],
+]
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > plan list + engine-owned campaigns, live > collaborators 1`] = `
+{
+  "bridgeAllMetaLeads": [],
+  "createDrive": [
+    [
+      {
+        "audience": undefined,
+        "autoSend": true,
+        "driveDate": "2026-10-08",
+        "requisitionId": "r1",
+        "showRatePct": 25,
+        "slotCapacity": 27,
+        "slotEnd": "17:30",
+        "slotMinutes": 30,
+        "slotStart": "10:00",
+        "targetShows": 100,
+      },
+    ],
+    [
+      {
+        "audience": {
+          "ids": [
+            "c2",
+            "c2b",
+          ],
+          "kind": "campaign",
+        },
+        "autoSend": true,
+        "driveDate": "2026-10-08",
+        "requisitionId": "r2",
+        "showRatePct": 25,
+        "slotCapacity": 27,
+        "slotEnd": "17:30",
+        "slotMinutes": 30,
+        "slotStart": "10:00",
+        "targetShows": 100,
+      },
+    ],
+  ],
+  "setDriveStatus": [
+    [
+      "d-r1",
+      "active",
+    ],
+    [
+      "d-r2",
+      "active",
+    ],
+  ],
+  "suggestMatches": [
+    [
+      "d-r1",
+    ],
+    [
+      "d-r2",
+    ],
+  ],
+  "sweepOwnedCampaigns": 1,
+}
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > plan list + engine-owned campaigns, live > result 1`] = `
+{
+  "date": "2026-10-08",
+  "days": [
+    {
+      "branch": "Noida",
+      "code": "REQ-1",
+      "date": "2026-10-08",
+      "driveId": "d-r1",
+      "invitesWanted": 400,
+      "lined": 7,
+      "requisitionId": "r1",
+      "role": "Agent",
+      "status": "created",
+    },
+    {
+      "branch": "Pune",
+      "code": "REQ-3",
+      "date": "2026-10-08",
+      "invitesWanted": 400,
+      "lined": 0,
+      "reason": "requisition is closed or filled",
+      "requisitionId": "r3",
+      "role": "Caller",
+      "status": "skipped",
+    },
+    {
+      "branch": "",
+      "code": "r9",
+      "date": "2026-10-08",
+      "invitesWanted": 400,
+      "lined": 0,
+      "reason": "requisition not found",
+      "requisitionId": "r9",
+      "role": "",
+      "status": "skipped",
+    },
+    {
+      "branch": "Noida",
+      "code": "REQ-2",
+      "date": "2026-10-08",
+      "driveId": "d-r2",
+      "invitesWanted": 400,
+      "lined": 7,
+      "requisitionId": "r2",
+      "role": "Agent",
+      "status": "created",
+    },
+    {
+      "branch": "Pune",
+      "code": "REQ-4",
+      "date": "2026-10-08",
+      "driveId": "d-r4",
+      "invitesWanted": 400,
+      "lined": 0,
+      "requisitionId": "r4",
+      "role": "Caller",
+      "status": "exists",
+    },
+  ],
+  "invitesPerDay": 400,
+  "seatsPerSlot": 27,
+}
+`;
+
+exports[`planNextDay before streams (snapshot of today's behaviour) > plan list + engine-owned campaigns, live > sql 1`] = `
+[
+  [
+    "SELECT c.requisition_id, c.id FROM meta_campaign c JOIN he_campaign_config cfg ON cfg.campaign_id = c.id AND cfg.owner = 'he' WHERE c.campaign_status = 'active' AND c.requisition_id IS NOT NULL",
+    [],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r1",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r1",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r3",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r9",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r2",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r2",
+      "2026-10-08",
+    ],
+  ],
+  [
+    "SELECT id, requisition_code, designation_name, branch_name, approval_status, active_status, requested_headcount, fulfilled_headcount FROM job_requisition WHERE id = ? LIMIT 1",
+    [
+      "r4",
+    ],
+  ],
+  [
+    "SELECT id, status FROM he_drive WHERE requisition_id = ? AND drive_date = ? LIMIT 1",
+    [
+      "r4",
+      "2026-10-08",
+    ],
+  ],
+]
+`;
