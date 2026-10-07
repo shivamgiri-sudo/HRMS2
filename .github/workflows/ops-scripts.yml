@@ -122,7 +122,7 @@ on:
           - budget-driver-diagnose
           - payslip-diagnose
           - meta-whatsapp-diagnose
-          - meta-reinvite-unnotified
+          - wa-template-diagnose
           - backend-log-grep
           - apply-aug-increments-from-dbbill
           - salary-package-sources-audit
@@ -542,10 +542,9 @@ jobs:
               # Read-only: greps backend logs for the phrase given in employee_codes.
               npx tsx scripts/backend-log-grep.ts "${INPUT_EMPLOYEE_CODES}"
               ;;
-            meta-reinvite-unnotified)
-              # Dry-runs unless --apply (apply SENDS invites). employee_codes = optional YYYY-MM-DD floor.
-              FLAG=""; [ "$MODE" = "apply" ] && FLAG="--apply"
-              npx tsx scripts/meta-reinvite-unnotified.ts $FLAG ${INPUT_EMPLOYEE_CODES:+--since ${INPUT_EMPLOYEE_CODES// /}}
+            wa-template-diagnose)
+              # Read-only in both modes: env presence, GET probes, SELECTs. Sends nothing.
+              npx tsx scripts/wa-template-diagnose.ts
               ;;
             meta-whatsapp-diagnose)
               # Read-only in both modes: SELECTs and GET probes only; prints booleans and counts, never secrets.
