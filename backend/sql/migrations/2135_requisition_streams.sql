@@ -2,6 +2,8 @@
 -- for N working days; exception days, an event log, planned days and first-touch match credits hang off it. Adds qualified_followup.owner
 -- (pipeline | engine). No foreign keys. Additive and re-runnable (CREATE TABLE IF NOT EXISTS; the ALTERs are guarded through information_schema + PREPARE).
 -- requisition_stream.version is the optimistic-lock counter bumped by every stream change (also added by ALTER for a table created before it existed).
+-- requisition_stream.created_at is DATETIME(6): streams line up in creation order (ORDER BY created_at, id), so two streams created in the same
+-- second must not fall back to the random id (also MODIFYed for a table created with second precision).
 CREATE TABLE IF NOT EXISTS requisition_stream (
   id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
   requisition_id CHAR(36) NOT NULL,
@@ -16,8 +18,8 @@ CREATE TABLE IF NOT EXISTS requisition_stream (
   closed_reason VARCHAR(40) NULL,
   version INT NOT NULL DEFAULT 0,
   created_by CHAR(36) NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   UNIQUE KEY uq_rs_origin (requisition_id, source_type, origin_id),
   KEY idx_rs_status (status, open_from)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -69,3 +71,5 @@ CREATE TABLE IF NOT EXISTS requisition_stream_match (
 SET @s = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'qualified_followup' AND COLUMN_NAME = 'owner') = 0, "ALTER TABLE qualified_followup ADD COLUMN owner ENUM('pipeline','engine') NOT NULL DEFAULT 'pipeline'", 'SELECT 1'); PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
 SET @s = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'requisition_stream' AND COLUMN_NAME = 'version') = 0, "ALTER TABLE requisition_stream ADD COLUMN version INT NOT NULL DEFAULT 0 AFTER closed_reason", 'SELECT 1'); PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
+SET @s = IF((SELECT DATETIME_PRECISION FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'requisition_stream' AND COLUMN_NAME = 'created_at') = 0, "ALTER TABLE requisition_stream MODIFY COLUMN created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6), MODIFY COLUMN updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)", 'SELECT 1'); PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;

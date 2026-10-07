@@ -17,7 +17,8 @@ vi.mock("../../../db/mysql.js", () => ({
 }));
 vi.mock("../he-readiness.service.js", () => ({ getRequisitionReadiness: h.readiness }));
 
-import { autoCloseStreams, tryChangeStream, tryCreateStream, type StreamActor } from "../requisition-stream.service.js";
+import { readFileSync } from "node:fs";
+import { autoCloseStreams, listStreams, loadActiveStreams, loadStreamsOfType, tryChangeStream, tryCreateStream, type StreamActor } from "../requisition-stream.service.js";
 import { windowEnd } from "../requisition-stream.window.js";
 
 const NOW = new Date("2026-10-07T05:30:00Z"); // 11:00 IST Wed 7 Oct
@@ -221,5 +222,30 @@ describe("meta_old origin drive is tied to the requisition", () => {
   it("an unlinked live campaign is still accepted (unchanged)", async () => {
     const r = await tryCreateStream({ ...create(), sourceType: "meta_live", originId: "c-1" }, hr, NOW);
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("creation order (first touch) does not depend on the random id", () => {
+  it("2135 stores requisition_stream.created_at with microseconds", () => {
+    const ddl = readFileSync(new URL("../../../../sql/migrations/2135_requisition_streams.sql", import.meta.url), "utf8");
+    const table = ddl.slice(ddl.indexOf("CREATE TABLE IF NOT EXISTS requisition_stream ("), ddl.indexOf("CREATE TABLE IF NOT EXISTS requisition_stream_day"));
+    expect(table).toContain("created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)");
+    expect(table).toContain("updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)");
+    expect(ddl).toMatch(/DATETIME_PRECISION[^;]*MODIFY COLUMN created_at DATETIME\(6\)/);
+  });
+
+  it("every stream read orders by created_at then id, and keeps the microseconds of created_at", async () => {
+    const a = { ...base(), id: "s-b", created_at: "2026-10-07 10:00:00.000001" };
+    const b = { ...base(), id: "s-a", source_type: "he", origin_id: "pool", created_at: "2026-10-07 10:00:00.000002" };
+    h.execute.mockImplementation(async (sql: string, p: unknown[] = []) => /^SELECT \* FROM requisition_stream WHERE/.test(sql) ? [[a, b]] : route(sql, p));
+    const act = await loadActiveStreams();
+    expect(act.map((x) => [x.id, x.createdAt])).toEqual([["s-b", "2026-10-07 10:00:00.000001"], ["s-a", "2026-10-07 10:00:00.000002"]]);
+    await loadActiveStreams({ requisitionId: "r-1" });
+    await loadStreamsOfType("r-1", "he");
+    await listStreams("r-1", { all: true }, NOW);
+    await autoCloseStreams("2026-10-08", true);
+    const reads = h.execute.mock.calls.map((c) => String(c[0]).replace(/\s+/g, " ")).filter((q) => /FROM requisition_stream (s )?(LEFT JOIN|WHERE)/.test(q) && !q.includes("_day"));
+    expect(reads.length).toBeGreaterThanOrEqual(5);
+    for (const q of reads) expect(q).toMatch(/ORDER BY (s\.)?created_at, (s\.)?id$/);
   });
 });
