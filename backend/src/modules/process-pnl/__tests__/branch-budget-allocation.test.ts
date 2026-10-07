@@ -406,11 +406,14 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     ).resolves.toHaveLength(1);
   });
 
-  it("rejects a scope naming a cost centre that is not active for the branch", async () => {
+  it("ignores scoped cost centres that are not active for the branch, and refuses a scope with none valid", async () => {
+    const rows = await computeLineAllocations("branch-1", "2026-08", "equal_split", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES), undefined, ["cc1", "cc-not-here"]);
+    expect(rows.map((r) => r.costCentreId)).toEqual(["cc1"]);
     await expect(
       computeLineAllocations("branch-1", "2026-08", "equal_split", AMOUNTS, undefined,
-        fakeExecutor(THREE_COST_CENTRES), undefined, ["cc1", "cc-not-here"])
-    ).rejects.toThrow(/not active for this branch/i);
+        fakeExecutor(THREE_COST_CENTRES), undefined, ["cc-a", "cc-b", "cc-c", "cc-d"])
+    ).rejects.toThrow(/at least one cost centre/i);
   });
 
   it("drops a scoped cost centre of this branch that has since closed instead of failing the save", async () => {

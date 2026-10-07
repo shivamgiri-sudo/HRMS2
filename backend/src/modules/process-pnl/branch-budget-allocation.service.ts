@@ -525,26 +525,12 @@ export async function computeLineAllocations(
   let costCentres = allActive;
   if (scopeIds.length) {
     const activeIds = new Set(allActive.map((cc) => cc.id));
-    const unknown = scopeIds.filter((id) => !activeIds.has(id));
-    // A line's saved scope outlives its cost centres: one that has since closed (or gone back to
-    // draft) is still named by older lines, and that used to fail the whole draft save. A closed
-    // cost centre of THIS branch simply receives nothing now, so it is dropped from the scope.
-    // An id that is not this branch's cost centre at all is still refused — that is a wrong scope,
-    // not a stale one.
-    let stale = new Set<string>();
-    if (unknown.length) {
-      const [own] = (await executor.execute(
-        `SELECT id FROM cost_centre_master WHERE branch_id = ? AND id IN (${unknown.map(() => "?").join(",")})`,
-        [branchId, ...unknown]
-      )) as [Array<{ id: string }>, unknown];
-      stale = new Set((own ?? []).map((r) => String(r.id)));
-      const foreign = unknown.filter((id) => !stale.has(id));
-      if (foreign.length) {
-        throw refuse(400, "COST_CENTRE_NOT_ACTIVE",
-          `Cost centre scope names ${foreign.length} cost centre(s) that are not active for this branch`
-        );
-      }
-    }
+    // A line's saved scope can name cost centres that are not active for this branch: ones that have
+    // since closed or gone back to draft, and ones carried over with a line copied from another month
+    // or branch. Refusing the whole save over them left the Branch Head unable to save a draft they
+    // could not even see the cause of. They are dropped from the scope — the line spreads across the
+    // active cost centres that remain — and only a scope with NOTHING valid left is refused below.
+    const stale = new Set(scopeIds.filter((id) => !activeIds.has(id)));
     const wanted = new Set(scopeIds.filter((id) => !stale.has(id)));
     costCentres = allActive.filter((cc) => wanted.has(cc.id));
     if (costCentres.length === 0) {
