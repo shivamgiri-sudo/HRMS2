@@ -369,7 +369,7 @@ export function ApprovalCenterPopup() {
                 <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                   <span className="inline-flex items-center gap-1">
                     <Inbox className="h-3.5 w-3.5" aria-hidden />
-                    {data?.failed?.length ? `${data.failed.length} queue(s) could not be loaded — check the pages directly` : "Decisions here are the same as on each module's page"}
+                    {data?.failed?.length ? `${data.failed.length} queue(s) did not load` : "Same rules as each module's page"}
                   </span>
                   <button type="button" className="cursor-pointer underline-offset-2 hover:underline" onClick={() => setOpen(false)}>Later</button>
                 </div>
