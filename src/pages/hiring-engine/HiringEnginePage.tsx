@@ -6,6 +6,7 @@ import { lazy, Suspense, startTransition, useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import MetaRecruitmentStrip from "./MetaRecruitmentStrip";
+import { tabFromHash } from "./hiringEngineTabs";
 
 const loaders = {
   board: () => import("./BoardTab"),
@@ -34,7 +35,8 @@ const TABS = [
   { id: "templates", label: "Templates" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
-const fromHash = (): TabId => (TABS.find((t) => `#${t.id}` === window.location.hash)?.id ?? "board");
+const TAB_IDS = TABS.map((t) => t.id);
+const fromHash = (): TabId => tabFromHash(window.location.hash, TAB_IDS, "board");
 
 export default function HiringEnginePage() {
   const [tab, setTab] = useState<TabId>(fromHash);
