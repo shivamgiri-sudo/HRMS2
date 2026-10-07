@@ -60,7 +60,7 @@ export const HE_TEMPLATES: TemplateDef[] = [
   {
     "key": "he_walkin_confirmed",
     "metaName": {
-      "en": "t2_he_appointment_confirmation",
+      "en": "t2_he_appointment_confirmed",
       "hi": null
     },
     "category": "UTILITY",

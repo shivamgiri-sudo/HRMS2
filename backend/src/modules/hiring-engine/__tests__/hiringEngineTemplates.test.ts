@@ -31,7 +31,7 @@ describe("params", () => {
 
 describe("Meta-approved English templates (T1-T11)", () => {
   it("every English template carries its approved name, in T-order", () => {
-    expect(HE_TEMPLATES.map((t) => t.metaName.en)).toEqual(["t1_he_walkin_invitation", "t2_he_appointment_confirmation", "t3_he_reminder_1d", "t4_he_reminder_2h_location",
+    expect(HE_TEMPLATES.map((t) => t.metaName.en)).toEqual(["t1_he_walkin_invitation", "t2_he_appointment_confirmed", "t3_he_reminder_1d", "t4_he_reminder_2h_location",
       "t5_he_reschedule_offer", "t6_he_no_show_recovery", "t7_he_other_role_offer", "t8_he_winback", "t9_he_missed_call", "t10_he_optout_ack", "t11_he_hr_arrival_alert"]);
   });
   it("{{n}} order follows the approved body text (T1 {{1}} is the candidate name, 9 variables)", () => {
