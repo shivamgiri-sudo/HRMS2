@@ -26,6 +26,7 @@ const {
   requeueTransientFailures,
   AUTO_RETRY_SAFE_RPCS,
   MAX_AUTO_RETRIES,
+  MAX_RESTART_RETRIES,
   STUCK_SESSION_SECONDS,
 } = await import("../batch-auto-recovery.service.js");
 
@@ -154,6 +155,32 @@ describe("requeueTransientFailures", () => {
     expect(r.needsHuman).toHaveLength(1);
     expect(execute).not.toHaveBeenCalled();
     expect(alertAdmins).toHaveBeenCalledOnce();
+  });
+
+  it("keeps retrying a batch whose job was lost to a restart, well past the ordinary cap", async () => {
+    // BATCH-1791372390102 (Bla Bli Blu overall sales, 2026-10-07): lost to deploy restarts twice, ran out of
+    // its two retries and stayed failed although nothing was wrong with the file or the import.
+    const lost = failed({
+      retries: MAX_AUTO_RETRIES,
+      rpc: "import_bla_bli_blu_overall_sales_batch",
+      error_summary: "Import stopped without completing. The job tracking it was lost - most likely a server restart",
+    });
+    query.mockResolvedValueOnce([[lost]]);
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([{}]);
+    const r = await requeueTransientFailures();
+    expect(r.requeued).toEqual(["BATCH-1"]);
+    expect(r.needsHuman).toEqual([]);
+    expect(MAX_RESTART_RETRIES).toBeGreaterThan(MAX_AUTO_RETRIES);
+  });
+
+  it("still stops a restart-lost batch at its own, larger cap", async () => {
+    query.mockResolvedValueOnce([[failed({
+      retries: MAX_RESTART_RETRIES,
+      error_summary: "The job tracking it was lost",
+    })]]);
+    const r = await requeueTransientFailures();
+    expect(r.requeued).toEqual([]);
+    expect(r.needsHuman).toHaveLength(1);
   });
 
   it("does not re-run an import that is not marked safe, and alerts", async () => {

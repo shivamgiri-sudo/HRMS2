@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { emailService } from "../communication/email.service.js";
@@ -19,6 +20,15 @@ interface AdminRow extends RowDataPacket {
   email: string | null;
 }
 
+/**
+ * work_inbox_item.entity_id is CHAR(36). A dedupe key longer than that (`needs-human-<uuid>` is 48)
+ * made every INSERT fail with "Data too long", so no admin was ever told a batch needed attention.
+ * Keys that fit are stored as-is; longer ones are replaced by a stable 36-char digest.
+ */
+export function inboxEntityKey(dedupeKey: string): string {
+  return dedupeKey.length <= 36 ? dedupeKey : createHash("sha256").update(dedupeKey).digest("hex").slice(0, 36);
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -36,7 +46,7 @@ export async function alertAdmins(alert: RecoveryAlert): Promise<boolean> {
     const [existing] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM work_inbox_item
         WHERE type = ? AND entity_id = ? AND is_actioned = 0 LIMIT 1`,
-      [RECOVERY_ALERT_TYPE, alert.dedupeKey],
+      [RECOVERY_ALERT_TYPE, inboxEntityKey(alert.dedupeKey)],
     );
     if (existing.length > 0) return false;
 
@@ -57,7 +67,7 @@ export async function alertAdmins(alert: RecoveryAlert): Promise<boolean> {
           RECOVERY_ALERT_TYPE,
           alert.title,
           alert.message,
-          alert.dedupeKey,
+          inboxEntityKey(alert.dedupeKey),
           alert.actionUrl ?? "/bulk-upload",
         ],
       );
