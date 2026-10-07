@@ -12,7 +12,9 @@ import { cadenceGapMin } from "./he-cadence.js";
 import { sendsPaused } from "./he-send.service.js";
 import { getRequisitionJd } from "./he-jd.service.js";
 import { loadRequisitionForMatching } from "./he-drive.service.js";
-import { engineAutoOn, engineMode } from "./he-policy.service.js";
+import { engineAutoOn, engineMode, getDailyPlan } from "./he-policy.service.js";
+import { evaluateRequisitionReadiness, isBlocking, type ReadinessProblem } from "./requisition-readiness.js";
+import type { SourceType } from "./qualified-followup.types.js";
 
 export interface Check { key: string; ok: boolean; label: string; detail: string; blocks: "email" | "whatsapp" | "voice" | "followups" | "all" | null }
 
@@ -67,4 +69,27 @@ export async function getDriveReadiness(driveId: string) {
     canSendEmailNow: reqOpen && !sendsPaused() && h >= 9 && h < 20 && emailConfigured(),
     gapMinutes: cadenceGapMin(),
   };
+}
+
+export interface RequisitionReadiness { requisitionId: string; code: string; branch: string; ok: boolean; problems: ReadinessProblem[] }
+
+/** Can a source stream be opened on this requisition? Null when the requisition does not exist. */
+export async function getRequisitionReadiness(requisitionId: string, sourceType?: SourceType | null): Promise<RequisitionReadiness | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT jr.requisition_code, jr.branch_name, jr.approval_status, jr.active_status, jr.requested_headcount, jr.fulfilled_headcount, jr.bmi_assessment_url,
+            (SELECT bm.address FROM branch_master bm WHERE bm.branch_name = jr.branch_name COLLATE utf8mb4_unicode_ci AND bm.active_status = 1 LIMIT 1) AS branch_address
+       FROM job_requisition jr WHERE jr.id = ? LIMIT 1`, [requisitionId]);
+  const r = rows[0];
+  if (!r) return null;
+  const [t] = await db.execute<RowDataPacket[]>(
+    `SELECT SUM(template_key LIKE 'he_walkin_invite:%') AS t1, SUM(template_key LIKE 'he_winback:%') AS t8 FROM he_template WHERE approval_state = 'approved'`);
+  const plan = await getDailyPlan();
+  const problems = evaluateRequisitionReadiness({
+    approvalStatus: r.approval_status == null ? null : String(r.approval_status), activeStatus: r.active_status == null ? null : Number(r.active_status),
+    requested: Number(r.requested_headcount ?? 0), fulfilled: Number(r.fulfilled_headcount ?? 0),
+    branchAddress: r.branch_address == null ? null : String(r.branch_address), bmiLink: r.bmi_assessment_url == null ? null : String(r.bmi_assessment_url),
+    slotStart: plan.slotStart, slotEnd: plan.slotEnd, slotMinutes: plan.slotMinutes,
+    t1Approved: Number(t[0]?.t1 ?? 0), t8Approved: Number(t[0]?.t8 ?? 0), sourceType: sourceType ?? null,
+  });
+  return { requisitionId, code: String(r.requisition_code), branch: String(r.branch_name), ok: !isBlocking(problems), problems };
 }
