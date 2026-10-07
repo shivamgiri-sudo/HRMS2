@@ -139,6 +139,14 @@ describe("slots", () => {
     for (const m of ["10:02", "10:07", "10:12", "10:17", "10:22"]) await tick(live, at(m, "2026-11-10"), { runCallFileBatch });
     expect(runCallFileBatch).toHaveBeenCalledTimes(3);
   });
+  it("a failed daily report leaves the 08:30 slot open, capped at 3 attempts a day", async () => {
+    const runDailyReport = vi.fn(async () => false);
+    for (const m of ["08:32", "08:37", "08:42", "08:47"]) await tick(live, at(m, "2026-11-12"), { runDailyReport });
+    expect(runDailyReport).toHaveBeenCalledTimes(3);
+    const ok = vi.fn(async () => true);
+    for (const m of ["08:32", "08:37"]) await tick(live, at(m, "2026-11-13"), { runDailyReport: ok });
+    expect(ok).toHaveBeenCalledTimes(1);
+  });
   it("a lock that cannot be released destroys the connection instead of pooling it", async () => {
     h.conn.execute.mockImplementation(async (sql: string) => {
       if (String(sql).includes("RELEASE_LOCK")) throw new Error("gone");

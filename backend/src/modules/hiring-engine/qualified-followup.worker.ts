@@ -14,6 +14,7 @@ import { runEmailStep } from "./qualified-followup.email.js";
 import { pipelineWaSentToday, runWhatsappStep } from "./qualified-followup.whatsapp.js";
 import { runCallStep } from "./qualified-followup.call.js";
 import { runCallFileBatch } from "./qualified-followup.callfile.js";
+import { runDailyReport } from "./qualified-followup.report.js";
 import type { FollowupMode } from "./qualified-followup.types.js";
 
 export const LOCK_NAME = "qualified_followup_tick";
@@ -36,10 +37,10 @@ export interface TickDeps {
   getPinbotQuality: () => Promise<PinbotQuality | null>;
 }
 
-// Stubs until the daily report and Pinbot quality lookup land (Tasks 10, 13).
+// Stub until the Pinbot quality lookup lands (Task 13).
 const defaultDeps: TickDeps = {
   runCallFileBatch,
-  runDailyReport: async () => false,
+  runDailyReport,
   getPinbotQuality: async () => null,
 };
 
@@ -49,6 +50,7 @@ const doneReportSlots = new Set<string>();
 // A failed batch retries on the next tick, at most this many times per slot, so an outage cannot create a batch row every 5 minutes.
 const MAX_FILE_ATTEMPTS = 3;
 const fileAttempts = new Map<string, number>();
+const reportAttempts = new Map<string, number>();
 
 let running = false;
 let timer: NodeJS.Timeout | undefined;
@@ -128,11 +130,11 @@ async function runSteps(s: FollowupSwitches, tag: RowTag, now: Date, deps: TickD
   }
   const reportSlot = dueSlot(now, DAILY_REPORT_SLOTS, doneReportSlots);
   if (reportSlot) {
-    r.report = await guarded("report", async () => {
-      const sent = await deps.runDailyReport(s, tag, now);
-      doneReportSlots.add(reportSlot);
-      return sent;
-    }, false);
+    const tries = (reportAttempts.get(reportSlot) ?? 0) + 1;
+    reportAttempts.set(reportSlot, tries);
+    // A failed report leaves the slot open for the next tick, capped like the calling file.
+    r.report = await guarded("report", () => deps.runDailyReport(s, tag, now), false);
+    if (r.report || tries >= MAX_FILE_ATTEMPTS) doneReportSlots.add(reportSlot);
   }
   logger.info({ mode: s.mode, tag, stops: r.stops, email: r.email, whatsapp: r.whatsapp, call: r.call }, "[qualified-followup] tick");
   return r;
