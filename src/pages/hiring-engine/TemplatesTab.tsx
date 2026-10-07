@@ -31,27 +31,36 @@ export default function TemplatesTab() {
     } catch (e: unknown) { setSampleMsg({ ok: false, text: (e as { message?: string })?.message || "Could not send the samples" }); }
     finally { setSampling(false); }
   };
-  const [wa, setWa] = useState<{ configured: boolean; to: string | null; templates: number } | null>(null);
+  interface WaPlan { configured: boolean; to: string | null; gaps: number[]; scenarios: Array<{ id: string; label: string; steps: Array<{ key: string; name: string; approved: boolean }> }>; active?: WaJob | null }
+  interface WaJob { to: string; gapMin: number; scenario: string; done: boolean; steps: Array<{ key: string; name: string; status: "waiting" | "sent" | "failed"; error?: string }> }
+  const [wa, setWa] = useState<WaPlan | null>(null);
+  const [waScenario, setWaScenario] = useState("happy");
+  const [waGap, setWaGap] = useState(2);
+  const [waJob, setWaJob] = useState<WaJob | null>(null);
   const [waBusy, setWaBusy] = useState(false);
-  const [waMsg, setWaMsg] = useState<{ ok: boolean; text: string; fails: string[] } | null>(null);
+  const [waErr, setWaErr] = useState<string | null>(null);
   const waAsk = async () => {
-    setWaBusy(true); setWaMsg(null);
+    setWaBusy(true); setWaErr(null);
     try {
-      const r = await hrmsApi.post<{ configured: boolean; to: string | null; templates: number }>("/api/he/templates/whatsapp-sample", { confirm: false });
-      if (!r.configured) setWaMsg({ ok: false, text: "WhatsApp (Pinbot) is not configured on the server, so nothing can be sent yet.", fails: [] });
-      else if (!r.to) setWaMsg({ ok: false, text: "There is no mobile number on your employee profile, so a sample cannot be sent to you.", fails: [] });
-      else setWa(r);
-    } catch (e: unknown) { setWaMsg({ ok: false, text: (e as { message?: string })?.message || "Could not check", fails: [] }); }
+      const r = await hrmsApi.post<WaPlan>("/api/he/templates/whatsapp-sample", { confirm: false });
+      if (!r.configured) setWaErr("WhatsApp (Pinbot) is not configured on the server, so nothing can be sent yet.");
+      else if (!r.to) setWaErr("There is no mobile number on your employee profile, so a sample cannot be sent to you.");
+      else { setWa(r); if (r.active) setWaJob(r.active); }
+    } catch (e: unknown) { setWaErr((e as { message?: string })?.message || "Could not check"); }
     finally { setWaBusy(false); }
   };
-  const waSend = async () => {
-    setWaBusy(true); setWaMsg(null);
-    try {
-      const r = await hrmsApi.post<{ to: string; sent: number; failed: number; results: Array<{ name: string; ok: boolean; error?: string }> }>("/api/he/templates/whatsapp-sample", { confirm: true }, 240000);
-      setWaMsg({ ok: r.failed === 0, text: `${r.sent} of ${r.sent + r.failed} WhatsApp messages accepted for ${r.to}. They arrive in order within a minute.`, fails: r.results.filter((x) => !x.ok).map((x) => `${x.name}: ${x.error}`) });
-    } catch (e: unknown) { setWaMsg({ ok: false, text: (e as { message?: string })?.message || "Could not send the WhatsApp samples", fails: [] }); }
-    finally { setWaBusy(false); setWa(null); }
+  const waStart = async () => {
+    setWaBusy(true); setWaErr(null);
+    try { const r = await hrmsApi.post<{ job: WaJob }>("/api/he/templates/whatsapp-sample", { confirm: true, scenario: waScenario, gapMinutes: waGap }); setWaJob(r.job); }
+    catch (e: unknown) { setWaErr((e as { message?: string })?.message || "Could not start the sample"); }
+    finally { setWaBusy(false); }
   };
+  // While a journey is running, poll its progress so each message shows as it goes out.
+  useEffect(() => {
+    if (!waJob || waJob.done) return;
+    const t = setInterval(() => { void hrmsApi.get<{ job: WaJob | null }>("/api/he/templates/whatsapp-sample/status").then((r) => { if (r.job) setWaJob(r.job); }).catch(() => undefined); }, 5000);
+    return () => clearInterval(t);
+  }, [waJob]);
   const update = async (key: string, body: { approvalState?: string; pinbotName?: string; language?: string }) => {
     try { await hrmsApi.patch(`/api/he/templates/${encodeURIComponent(key)}`, body); await load(); }
     catch (e: unknown) { setErr((e as { message?: string })?.message || "Only an admin can change this"); }
@@ -70,17 +79,46 @@ export default function TemplatesTab() {
         {sampleMsg && <p role={sampleMsg.ok ? "status" : "alert"} className={`basis-full text-sm ${sampleMsg.ok ? "text-emerald-700" : "text-rose-700"}`}>{sampleMsg.text}</p>}
         <div className="basis-full border-t border-slate-100 pt-3">
           <div className="flex flex-wrap items-center gap-3">
-            <p className="min-w-0 flex-1 text-xs text-slate-600">Also WhatsApp you each approved template with sample values, to the mobile on your own profile. This is the real route through Pinbot and Meta, so it shows right away if a template or language code is rejected.</p>
-            <button type="button" disabled={waBusy || wa !== null} onClick={() => void waAsk()} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-emerald-600 px-3.5 py-2 text-sm font-semibold text-emerald-700 transition-colors duration-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><MessageCircle className="h-4 w-4" aria-hidden /> {waBusy ? "Working…" : "WhatsApp me a sample of every template"}</button>
+            <p className="min-w-0 flex-1 text-xs text-slate-600">Also WhatsApp yourself a real candidate journey, one message at a time with a gap between them, to the mobile on your own profile. It goes through Pinbot and Meta, so it also shows right away if a template is rejected.</p>
+            <button type="button" disabled={waBusy || wa !== null} onClick={() => void waAsk()} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-emerald-600 px-3.5 py-2 text-sm font-semibold text-emerald-700 transition-colors duration-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"><MessageCircle className="h-4 w-4" aria-hidden /> {waBusy && !wa ? "Checking…" : "WhatsApp me a sample journey"}</button>
           </div>
-          {wa && (
-            <div role="alertdialog" aria-label="Confirm WhatsApp samples" className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              <span className="min-w-0 flex-1">This sends <b>{wa.templates} WhatsApp messages</b> to <b>{wa.to}</b>, the mobile on your profile. Nobody else receives anything.</span>
-              <button type="button" disabled={waBusy} onClick={() => void waSend()} className="cursor-pointer rounded-md bg-emerald-700 px-3 py-1.5 font-semibold text-white hover:bg-emerald-800 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">Yes, send them</button>
-              <button type="button" disabled={waBusy} onClick={() => setWa(null)} className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Cancel</button>
+          {waErr && <p role="alert" className="mt-3 text-sm text-rose-700">{waErr}</p>}
+          {wa && !waJob && (
+            <div role="group" aria-label="Choose a sample journey" className="mt-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+              <fieldset className="space-y-1.5">
+                <legend className="mb-1 font-semibold text-slate-900">Which journey?</legend>
+                {wa.scenarios.map((sc) => (
+                  <label key={sc.id} className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 hover:bg-white">
+                    <input type="radio" name="wa-scenario" value={sc.id} checked={waScenario === sc.id} onChange={() => setWaScenario(sc.id)} className="mt-1" />
+                    <span className="min-w-0"><span className="block text-slate-900">{sc.label}</span><span className="mt-0.5 flex flex-wrap gap-1">{sc.steps.map((st) => <span key={st.key} className={`rounded-full px-2 py-0.5 text-[11px] ${st.approved ? "bg-white text-slate-600 ring-1 ring-slate-200" : "bg-rose-50 text-rose-700 ring-1 ring-rose-200"}`}>{st.name.replace(/^t(\d+)_he_/, "T$1 ").replace(/_/g, " ")}</span>)}</span></span>
+                  </label>
+                ))}
+              </fieldset>
+              <label className="flex flex-wrap items-center gap-2">Gap between messages
+                <select value={waGap} onChange={(e) => setWaGap(Number(e.target.value))} className="rounded-lg border border-slate-300 bg-white px-2 py-1">{wa.gaps.map((g) => <option key={g} value={g}>{g} min</option>)}</select>
+              </label>
+              {(() => { const n = wa.scenarios.find((x) => x.id === waScenario)?.steps.length ?? 0; return <p className="text-slate-700">The first message goes <b>now</b>, then one every <b>{waGap} min</b> ({n} message{n === 1 ? "" : "s"}, about {Math.max(0, (n - 1) * waGap)} min in total) to <b>{wa.to}</b>, the mobile on your profile. Nobody else receives anything.</p>; })()}
+              <div className="flex gap-2">
+                <button type="button" disabled={waBusy} onClick={() => void waStart()} className="cursor-pointer rounded-md bg-emerald-700 px-3 py-1.5 font-semibold text-white hover:bg-emerald-800 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500">{waBusy ? "Starting…" : "Start the journey"}</button>
+                <button type="button" disabled={waBusy} onClick={() => setWa(null)} className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Cancel</button>
+              </div>
             </div>
           )}
-          {waMsg && <div role={waMsg.ok ? "status" : "alert"} className={`mt-3 text-sm ${waMsg.ok ? "text-emerald-700" : "text-rose-700"}`}><p>{waMsg.text}</p>{waMsg.fails.length > 0 && <ul className="mt-1 list-disc pl-5 text-xs">{waMsg.fails.map((f) => <li key={f}>{f}</li>)}</ul>}</div>}
+          {waJob && (
+            <div role="status" aria-label="Sample journey progress" className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+              <p className="font-semibold text-slate-900">{waJob.done ? "Finished" : "Running"}: one message every {waJob.gapMin} min to {waJob.to}</p>
+              <ol className="space-y-1">
+                {waJob.steps.map((st) => (
+                  <li key={st.key} className="flex flex-wrap items-baseline gap-2">
+                    <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${st.status === "sent" ? "bg-emerald-100 text-emerald-700" : st.status === "failed" ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-500"}`} aria-hidden>{st.status === "sent" ? "✓" : st.status === "failed" ? "!" : "…"}</span>
+                    <span className="text-slate-900">{st.name}</span>
+                    <span className="text-xs text-slate-500">{st.status === "sent" ? "sent" : st.status === "failed" ? `rejected: ${st.error}` : "waiting"}</span>
+                  </li>
+                ))}
+              </ol>
+              {waJob.done && <button type="button" onClick={() => { setWaJob(null); setWa(null); }} className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Done</button>}
+            </div>
+          )}
         </div>
       </section>
       <p className="text-sm text-slate-600">Submit each template to Meta/Pinbot, then record the decision here. Only <b>approved</b> templates can be sent.</p>

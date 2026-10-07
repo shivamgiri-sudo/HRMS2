@@ -31,7 +31,7 @@ import { getMetaRecruitment } from "./he-meta-recruitment.service.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendStageSamples } from "./he-samples.service.js";
 import { emailConfigured } from "./he-email.service.js";
-import { previewWhatsAppSamples, sendWhatsAppSamples } from "./he-whatsapp-sample.service.js";
+import { previewWhatsAppSamples, startWhatsAppSample, whatsAppSampleStatus } from "./he-whatsapp-sample.service.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -589,19 +589,22 @@ heRouter.post("/templates/send-samples", requireAuth, requireRole(...WRITE_ROLES
   }
 });
 
-/** WhatsApp samples of the approved templates to the signed-in user's own mobile. confirm:false only previews where it would go. */
+/** WhatsApp sample journey to the signed-in user's own mobile, one message at a time. confirm:false only previews where it would go. */
 heRouter.post("/templates/whatsapp-sample", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
   const userId = String((req as AuthenticatedRequest).authUser?.id ?? "");
+  const b = (req.body ?? {}) as { confirm?: unknown; scenario?: unknown; gapMinutes?: unknown };
   try {
-    if ((req.body ?? {}).confirm !== true) return res.json({ success: true, ...(await previewWhatsAppSamples(userId)) });
-    const r = await sendWhatsAppSamples(userId);
-    res.json({ success: true, to: r.to, sent: r.results.filter((x) => x.ok).length, failed: r.results.filter((x) => !x.ok).length, results: r.results });
+    if (b.confirm !== true) return res.json({ success: true, ...(await previewWhatsAppSamples(userId)) });
+    res.json({ success: true, job: await startWhatsAppSample(userId, String(b.scenario ?? "happy"), Number(b.gapMinutes ?? 2)) });
   } catch (err) {
     const e = err as Error & { statusCode?: number };
     if (e.statusCode) return res.status(e.statusCode).json({ success: false, message: e.message });
     logger.error({ err: e.message }, "[he] whatsapp samples failed");
-    res.status(500).json({ success: false, message: "Could not send the WhatsApp samples" });
+    res.status(500).json({ success: false, message: "Could not start the WhatsApp sample" });
   }
+});
+heRouter.get("/templates/whatsapp-sample/status", requireAuth, requireRole(...WRITE_ROLES), (req, res) => {
+  res.json({ success: true, job: whatsAppSampleStatus(String((req as AuthenticatedRequest).authUser?.id ?? "")) });
 });
 
 heRouter.get("/requisitions/:id/jd", requireAuth, requireRole(...VIEW_ROLES), async (req, res) => {
