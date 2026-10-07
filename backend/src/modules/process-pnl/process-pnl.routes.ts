@@ -910,6 +910,20 @@ const CLOSURE_READ_ROLES = ["super_admin", "admin", "branch_admin", "branch_head
 const CLOSURE_CLOSE_ROLES = ["super_admin", "branch_admin", "finance_head"] as const;
 const CLOSURE_REOPEN_REQUEST_ROLES = ["super_admin", "admin", "branch_admin", "finance_head"] as const;
 const CLOSURE_REVIEW_ROLES = ["super_admin", "finance_head"] as const;
+/**
+ * The branches a P&L read covers, for views that take a list: undefined = every branch (a global
+ * user who asked for none); otherwise a validated list — the one requested branch (must be in the
+ * caller's scope, else 403), or the caller's whole entitlement (one branch or several).
+ */
+async function scopedBranchList(req: AuthenticatedRequest, requestedBranchId?: string): Promise<string[] | undefined> {
+  const user = actor(req);
+  const scope = await asForbidden(resolveFinanceBranchScopeSet({
+    userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    requestedBranchId: requestedBranchId || undefined,
+  }));
+  return scope.mode === "all" ? undefined : scope.branchIds;
+}
+
 /** The role a closure action runs under: the strongest closure role the user holds (primary role
  *  first), so a Finance Head whose primary role is something else is not refused. */
 function closureRole(user: { role: string; roles: string[] }) {
@@ -1487,15 +1501,11 @@ router.get(
     // resolvers treat undefined and [] alike, so this is the same set as before. Read through
     // actor() like /pnl/ytd-summary and /pnl/reconciliation so one page load can never be scoped
     // from two differently-named sources (audit item 26).
-    const branchId = await resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
-    });
-    const confinedBranch = await resolveFinanceBranchScope({
-      userId: user.id, primaryRole: user.role, userRoles: user.roles,
-    });
+    // Lists, so a user entitled to several branches is served all of them (this used to throw).
+    const requestedBranch = req.query.branchId ? String(req.query.branchId) : undefined;
+    const branchId = requestedBranch ? (await scopedBranchList(req, requestedBranch))?.[0] ?? requestedBranch : undefined;
+    const confinedBranches = await scopedBranchList(req);
+    const confinedBranch = confinedBranches?.length ? confinedBranches : undefined;
     const period = req.query.period ? String(req.query.period) : "";
     const processId = await resolveFinanceProcessScope({
       userId: user.id,
@@ -1533,12 +1543,14 @@ router.get(
       // with the list, which would otherwise re-widen past the intersection.
       processId: clientSearch ? undefined : processId ?? undefined,
       costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
-      branchIds: confinedBranch ? [confinedBranch] : requestedBranchIds,
+      branchIds: confinedBranch
+        ? (requestedBranchIds.length ? requestedBranchIds.filter((b) => confinedBranch.includes(b)) : confinedBranch)
+        : requestedBranchIds,
       processIds: clientSearch
         ? narrowProcessScope([...baseProcessIds, ...(processId && !confinedProcess ? [processId] : [])], clientSearch)
         : baseProcessIds,
       costCentreIds: csv(req.query.costCentreIds),
-      visibleBranchIds: confinedBranch ? [confinedBranch] : undefined,
+      visibleBranchIds: confinedBranch,
     });
     res.json({ success: true, data });
   })
@@ -1587,15 +1599,12 @@ router.get(
     // request can narrow a scoped user's view, never widen it. With no request, the user's own
     // confinement applies exactly as before.
     const requestedBranchId = req.query.branchId ? String(req.query.branchId).trim() : "";
-    const branchFilter = await resolveFinanceBranchScope({
-      userId: user.id, primaryRole: user.role, userRoles: user.roles,
-      requestedBranchId: requestedBranchId || undefined,
-    });
+    const branchList = await scopedBranchList(req, requestedBranchId || undefined);
     const confinedProcess = await resolveFinanceProcessScope({
       userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
     const filters: CeoFilters = {};
-    if (branchFilter !== undefined) filters.branchId = branchFilter;
+    if (branchList) filters.branchIds = branchList;
     // Client / Search, as process ids, intersected with any process confinement (audit item 19).
     const clientSearch = await resolveClientSearchProcessIds({
       clientId: req.query.clientId ? String(req.query.clientId) : null,
@@ -1619,22 +1628,14 @@ router.get(
     const requestedBranchIds = csv(req.query.branchIds);
     const user = actor(req);
     const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
-    const confinedRequestedBranch = await resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-      requestedBranchId,
-    });
-    const hardBranchScope = await resolveFinanceBranchScope({
-      userId: user.id,
-      primaryRole: user.role,
-      userRoles: user.roles,
-    });
-    const branchIds = hardBranchScope
-      ? [hardBranchScope]
-      : confinedRequestedBranch
-        ? [confinedRequestedBranch]
-        : requestedBranchIds;
+    void user;
+    // A list, so a user entitled to several branches sees all of them (it used to throw).
+    const requested = requestedBranchId ? await scopedBranchList(req, requestedBranchId) : undefined;
+    const entitled = await scopedBranchList(req);
+    const branchIds = requested
+      ?? (entitled
+        ? (requestedBranchIds.length ? requestedBranchIds.filter((b) => entitled.includes(b)) : entitled)
+        : requestedBranchIds);
     // Client / Search, as the process ids they match (audit item 19). Live P&L's grain is the cost
     // centre, so it narrows to the cost centres those processes' staff are posted to — the same
     // rule CEO Overview uses for a process filter.

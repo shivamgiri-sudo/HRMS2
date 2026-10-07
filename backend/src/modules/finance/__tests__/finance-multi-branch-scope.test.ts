@@ -235,8 +235,10 @@ describe("resolveFinanceBranchScope — the single-branch adapter", () => {
       ],
     });
     const { resolveFinanceBranchScope } = await import("../finance-access-scope.js");
+    // Still fails closed — now as a 400 "select a branch" rather than a 500.
+    await expect(resolveFinanceBranchScope(BRANCH_USER)).rejects.toMatchObject({ statusCode: 400, code: "BRANCH_SELECTION_REQUIRED" });
     await expect(resolveFinanceBranchScope(BRANCH_USER)).rejects.toThrow(
-      /does not support multi-branch access yet/i,
+      /more than one branch/i,
     );
   });
 });
