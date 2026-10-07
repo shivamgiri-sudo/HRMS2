@@ -73,6 +73,7 @@ on:
           - process-code-search
           - ops-nudge-stats
           - ops-pending-audit
+          - ops-pending-evidence
           - bank-manual-approve
           - digilocker-pending-diagnose
           - digilocker-sync-pending
@@ -379,6 +380,10 @@ jobs:
             digilocker-pending-diagnose)
               # Read-only in both modes: SELECTs only, codes and counts.
               npx tsx scripts/digilocker-pending-diagnose.ts
+              ;;
+            ops-pending-evidence)
+              # Read-only: per tower list, who is listed although other tables show the step done.
+              npx tsx scripts/ops-pending-evidence.ts
               ;;
             ops-pending-audit)
               # Read-only: status distributions behind the Ops Control Tower joiner lists.
