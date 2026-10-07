@@ -1,6 +1,7 @@
 /**
- * Meta lead WhatsApp messages stuck in 'queued' (Wassenger accepted them but no device ever sent them)
- * — list them, and with --apply re-send through Pinbot.
+ * Meta lead WhatsApp messages Wassenger accepted but never sent (its live status is still 'queued' — no
+ * device is linked) — list them, and with --apply re-send through Pinbot. The same selection the sync's
+ * delivery reconcile uses (DB status empty/queued/sent), narrowed to what Wassenger itself says is queued.
  *
  *   npx tsx scripts/meta-queued-resend.ts                 # dry run: counts + per-message table, sends nothing
  *   npx tsx scripts/meta-queued-resend.ts --apply         # send via Pinbot
@@ -22,6 +23,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { PinbotWhatsAppProvider } from "../src/modules/communication/providers/whatsapp/pinbot.provider.js";
 import { saveMessage, updateDeliveryStatus } from "../src/modules/meta-campaign/meta-messages.service.js";
+import { fetchMessageDeliveryStatus, isWassengerConfigured } from "../src/modules/meta-campaign/wassenger.provider.js";
 
 const args = process.argv.slice(2);
 const apply = args.includes("--apply");
@@ -46,6 +48,8 @@ interface Row extends RowDataPacket {
   screening_result: string;
   inbound_24h: number;
   superseded: number;
+  delivery_status: string | null;
+  live?: string | null;
 }
 
 (async () => {
@@ -56,8 +60,8 @@ interface Row extends RowDataPacket {
     process.exit(1);
   }
 
-  const [rows] = await db.execute<Row[]>(
-    `SELECT m.id, m.lead_id, m.message_text, m.sender_type, m.sender_name, m.wassenger_message_id, m.created_at,
+  const [candidates] = await db.execute<Row[]>(
+    `SELECT m.id, m.lead_id, m.message_text, m.sender_type, m.sender_name, m.wassenger_message_id, m.created_at, m.delivery_status,
             l.parsed_phone, l.screening_result,
             (SELECT COUNT(*) FROM meta_lead_messages i
                WHERE i.lead_id = m.lead_id AND i.direction = 'inbound' AND i.created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS inbound_24h,
@@ -66,12 +70,30 @@ interface Row extends RowDataPacket {
                  AND o.delivery_status IN ('sent', 'delivered', 'read')) AS superseded
        FROM meta_lead_messages m
        JOIN meta_lead_raw l ON l.id = m.lead_id
-      WHERE m.direction = 'outbound' AND m.delivery_status = 'queued'
+      WHERE m.direction = 'outbound' AND (m.delivery_status IS NULL OR m.delivery_status IN ('queued', 'sent'))
         AND m.wassenger_message_id IS NOT NULL AND m.wassenger_message_id <> 'sent'
         AND m.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
       ORDER BY m.created_at ASC`,
     [days]
   );
+
+  // Only a message Wassenger itself still reports as queued is stuck; anything else was really sent.
+  const rows: Row[] = [];
+  const liveCounts: Record<string, number> = {};
+  const dbCounts: Record<string, number> = {};
+  for (const r of candidates) {
+    dbCounts[String(r.delivery_status)] = (dbCounts[String(r.delivery_status)] ?? 0) + 1;
+    let live: string | null = null;
+    try {
+      live = isWassengerConfigured() ? await fetchMessageDeliveryStatus(r.wassenger_message_id) : null;
+    } catch {
+      live = "lookup-failed";
+    }
+    r.live = live;
+    liveCounts[String(live)] = (liveCounts[String(live)] ?? 0) + 1;
+    if (live === "queued") rows.push(r);
+  }
+  console.log("CANDIDATES", candidates.length, "dbStatus", JSON.stringify(dbCounts), "wassengerLive", JSON.stringify(liveCounts));
 
   const byAge: Record<string, number> = {};
   for (const r of rows) {
