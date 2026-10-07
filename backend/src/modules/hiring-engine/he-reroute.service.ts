@@ -8,8 +8,9 @@ import { db } from "../../db/mysql.js";
 import { addEvent } from "./he-lead.service.js";
 import { alternativeRequisitions } from "./he-drive.service.js";
 import { applyEligibilityGate, type LeadFactsRow } from "./he-eligibility.service.js";
-import { normProcess } from "./he-eligibility.js";
+import { isHardReject, normProcess } from "./he-eligibility.js";
 import { sendTemplateToLead, type SendResult } from "./he-send.service.js";
+import { whatsappRequiresOptIn } from "./he-policy.service.js";
 
 export interface RerouteSummary { considered: number; offered: number; noAlternative: number; blocked: Record<string, number>; dryRun: number }
 
@@ -17,19 +18,23 @@ export async function offerOtherRoles(o: { dryRun?: boolean; max?: number } = {}
   const out: RerouteSummary = { considered: 0, offered: 0, noAlternative: 0, blocked: {}, dryRun: 0 };
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT l.id, l.mobile10, l.ats_candidate_id, l.status, l.final_status, l.is_employee, l.age, l.last_attempt_date, l.walkin_count, l.last_outcome,
-            x.process AS rejected_process
+            x.process AS rejected_process, x.reason AS rejection_reason
        FROM he_lead l JOIN (
-         SELECT s.candidate_id, s.interviewed_for_process AS process FROM ats_interview_submission s
+         SELECT s.candidate_id, s.interviewed_for_process AS process,
+                COALESCE(NULLIF(s.round3_remarks,''), NULLIF(s.round2_remarks,''), NULLIF(s.round1_remarks,'')) AS reason FROM ats_interview_submission s
           WHERE s.final_decision LIKE '%reject%' AND s.submitted_at > DATE_SUB(NOW(), INTERVAL 3 DAY)
          UNION ALL
-         SELECT jrc.candidate_id, jr.process_name FROM job_requisition_candidate jrc JOIN job_requisition jr ON jr.id = jrc.requisition_id
+         SELECT jrc.candidate_id, jr.process_name, jrc.remarks FROM job_requisition_candidate jrc JOIN job_requisition jr ON jr.id = jrc.requisition_id
           WHERE jrc.outcome = 'rejected' AND jrc.outcome_at > DATE_SUB(NOW(), INTERVAL 3 DAY)
        ) x ON x.candidate_id = l.ats_candidate_id
       WHERE l.status NOT IN ('opted_out','joined','dead') AND l.is_employee = 0
-        AND EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
+        AND (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = l.id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
+             OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = l.id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL)))
         AND NOT EXISTS (SELECT 1 FROM he_lead_event e WHERE e.lead_id = l.id AND e.event_type = 'other_role_offered' AND e.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY))
-      LIMIT ?`, [o.max ?? 50]);
+      LIMIT ?`, [(await whatsappRequiresOptIn()) ? 1 : 0, o.max ?? 50]);
   for (const r of rows) {
+    // Someone turned down for misconduct, fake documents or the like is not offered anything else, whatever the consent policy says.
+    if (isHardReject(r.rejection_reason as string | null)) { out.blocked.hard_rejected = (out.blocked.hard_rejected ?? 0) + 1; continue; }
     out.considered++;
     const alts = (await alternativeRequisitions(r.id as string, "", 10));
     const [procs] = alts.length ? await db.execute<RowDataPacket[]>(`SELECT id, process_name FROM job_requisition WHERE id IN (${alts.map(() => "?").join(",")})`, alts.map((a) => a.requisitionId)) : [[] as RowDataPacket[]];

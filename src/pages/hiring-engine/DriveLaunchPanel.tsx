@@ -35,7 +35,6 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
   const [r, setR] = useState<Readiness | null>(null);
   const [plan, setPlan] = useState<Launch | null>(null);
   const [limit, setLimit] = useState(50);
-  const [applicant, setApplicant] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState(false);
@@ -68,7 +67,7 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
   const followUps = async () => {
     setBusy("follow"); setMsg(null);
     try {
-      const x = await hrmsApi.post<{ data: { whatsapp: Cnt; reminders: Cnt; calls: Cnt; recovery?: Cnt; replacement?: Cnt; noShows?: number; otherRoles?: { offered?: number } | null; alerts?: { alerted?: number } } }>("/api/he/engine/follow-ups", { dryRun: false, applicantBasis: applicant }, 300000);
+      const x = await hrmsApi.post<{ data: { whatsapp: Cnt; reminders: Cnt; calls: Cnt; recovery?: Cnt; replacement?: Cnt; noShows?: number; otherRoles?: { offered?: number } | null; alerts?: { alerted?: number } } }>("/api/he/engine/follow-ups", { dryRun: false }, 300000);
       const f = x.data; const why = (c: Cnt) => Object.entries(c.blocked).map(([k, v]) => `${v} ${k.replace(/_/g, " ")}`).join(", ");
       const more = [f.noShows ? `${f.noShows} marked no-show (${f.recovery?.sent ?? 0} follow-up messages)` : "", f.replacement?.sent ? `${f.replacement.sent} new-slot offers` : "", f.otherRoles?.offered ? `${f.otherRoles.offered} other-role offers` : "", f.alerts?.alerted ? `${f.alerts.alerted} branch HR alerts` : ""].filter(Boolean).join(" · ");
       setMsg({ ok: true, text: `Follow-ups: ${f.whatsapp.sent} WhatsApp${why(f.whatsapp) ? ` (waiting: ${why(f.whatsapp)})` : ""} · ${f.calls.sent} calls${why(f.calls) ? ` (waiting: ${why(f.calls)})` : ""} · ${f.reminders.sent} reminders${more ? ` · ${more}` : ""}.` });
@@ -199,10 +198,6 @@ export default function DriveLaunchPanel({ driveId, onClose, onChanged }: { driv
                   <div className="font-medium text-slate-900">Follow-ups (WhatsApp, then bot call)</div>
                   <div className="text-xs text-slate-500">Sent so far for this drive: {num(r.sent.email ?? 0)} email · {num(r.sent.whatsapp ?? 0)} WhatsApp. {followNeeded ? "Automatic follow-ups are off on the server, so run them here about every hour." : "These run automatically every 5 minutes."}</div>
                 </div>
-                <label className="flex basis-full cursor-pointer items-start gap-2 rounded-lg bg-slate-50 p-2.5 text-xs text-slate-700">
-                  <input type="checkbox" checked={applicant} onChange={(e) => setApplicant(e.target.checked)} className="mt-0.5 h-4 w-4 cursor-pointer" />
-                  <span><b className="text-slate-900">Also WhatsApp qualified candidates who have not opted in.</b> They applied for this role and were emailed an invite, so the WhatsApp message is about that application. Anyone who sent STOP or opted out is always skipped.</span>
-                </label>
                 <button type="button" onClick={() => void followUps()} disabled={busy != null} className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><RefreshCcw className={`h-4 w-4 ${busy === "follow" ? "animate-spin motion-reduce:animate-none" : ""}`} aria-hidden /> Run follow-ups now</button>
               </div>
             </section>

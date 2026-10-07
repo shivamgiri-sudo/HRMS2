@@ -12,6 +12,7 @@ import { istHour } from "./he-guardrails.js";
 import { dateLabel, sendsPaused, timeLabel } from "./he-send.service.js";
 import { buildVoiceSystemPrompt, canPlaceCall, VOICE_FIRST_MESSAGE, VOICE_RESULT_SCHEMA, type VoiceCtx } from "./he-voice.js";
 import { displayFirstName } from "./he-name.js";
+import { whatsappRequiresOptIn } from "./he-policy.service.js";
 
 const env = (k: string, d = "") => (process.env[k] && process.env[k]!.trim() ? process.env[k]!.trim() : d);
 
@@ -42,7 +43,7 @@ export async function placeVoiceCall(matchId: string, o: { dryRun?: boolean } = 
   if (!(await hasConsent(m.lead_id as string, "whatsapp_contact"))) {
     const [emailed] = await db.execute<RowDataPacket[]>(
       "SELECT 1 FROM he_message WHERE lead_id = ? AND requisition_id = ? AND template_key = 'he_walkin_invite_email' AND direction = 'out' AND delivery_status <> 'failed' LIMIT 1", [m.lead_id, m.requisition_id]);
-    if (!emailed.length) return { status: "blocked", reason: "no_consent" };
+    if (!emailed.length && (await whatsappRequiresOptIn())) return { status: "blocked", reason: "no_consent" };
   }
   if (!m.address) return { status: "blocked", reason: "missing_branch_address" }; // never read out an invented address
 

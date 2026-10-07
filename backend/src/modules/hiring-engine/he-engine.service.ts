@@ -25,6 +25,7 @@ import { cleanName } from "./he-name.js";
 import { placeVoiceCall } from "./he-voice.service.js";
 import { runBulkCallJobs, type RunSummary } from "./he-bulk-call.service.js";
 import { offerOtherRoles, type RerouteSummary } from "./he-reroute.service.js";
+import { whatsappRequiresOptIn } from "./he-policy.service.js";
 
 export interface TickSummary {
   dryRun: boolean;
@@ -128,10 +129,11 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
     `SELECT m.id, m.lead_id, l.full_name, l.mobile10,
             (l.last_contact_at IS NOT NULL AND l.last_contact_at < DATE_SUB(NOW(), INTERVAL 30 DAY)) AS dormant,
             (l.email IS NOT NULL AND l.email <> '') AS has_email,
-            EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL) AS has_consent
+            (EXISTS (SELECT 1 FROM he_consent c WHERE c.lead_id = m.lead_id AND c.consent_type = 'whatsapp_contact' AND c.revoked_at IS NULL)
+              OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent c2 WHERE c2.lead_id = m.lead_id AND c2.consent_type = 'whatsapp_contact' AND c2.revoked_at IS NOT NULL))) AS has_consent
        FROM he_match m JOIN he_lead l ON l.id = m.lead_id
       WHERE m.drive_id = ? AND m.state = 'suggested' AND l.status <> 'opted_out'
-      ORDER BY has_email DESC, m.score DESC LIMIT ?`, [driveId, Math.max(1, Math.min(2000, Math.floor(o.max)))]);
+      ORDER BY has_email DESC, m.score DESC LIMIT ?`, [(await whatsappRequiresOptIn()) ? 1 : 0, driveId, Math.max(1, Math.min(2000, Math.floor(o.max)))]);
   const [tpl] = await db.execute<RowDataPacket[]>("SELECT COUNT(*) AS n FROM he_template WHERE template_key LIKE 'he_walkin_invite:%' AND approval_state = 'approved'");
   const waTemplateOk = Number(tpl[0]?.n ?? 0) > 0;
   const quiet = istHour(new Date()) >= 20 || istHour(new Date()) < 9;
@@ -163,12 +165,12 @@ export async function inviteForDrive(driveId: string, o: { dryRun: boolean; max:
  * the scheduler is off: WhatsApp step, reminders (T3/T4), bot calls, no-shows + recovery (T6), replacement slots after a
  * reschedule (T5) and other-role offers (T7).
  */
-export async function runFollowUps(o: { dryRun: boolean; applicantBasis?: boolean }): Promise<{ whatsapp: Counts; reminders: Counts; calls: Counts; recovery: Counts; replacement: Counts; noShows: number; otherRoles: RerouteSummary | null }> {
+export async function runFollowUps(o: { dryRun: boolean }): Promise<{ whatsapp: Counts; reminders: Counts; calls: Counts; recovery: Counts; replacement: Counts; noShows: number; otherRoles: RerouteSummary | null }> {
   const out = { whatsapp: counts(), reminders: counts(), calls: counts(), recovery: counts(), replacement: counts(), noShows: 0, otherRoles: null as RerouteSummary | null };
   out.noShows = await noShows(o.dryRun, out.recovery); // state hygiene runs even while sends are paused
   if (sendsPaused()) return out;
   await replacementSlots(o.dryRun, out.replacement, 50);
-  await whatsappFollowUps(o.dryRun, out.whatsapp, 200, o.applicantBasis === true);
+  await whatsappFollowUps(o.dryRun, out.whatsapp, 200);
   await reminders(o.dryRun, out.reminders);
   await voiceCalls(o.dryRun, out.calls, 50);
   out.otherRoles = await offerOtherRoles({ dryRun: o.dryRun, max: 50 });
@@ -176,7 +178,8 @@ export async function runFollowUps(o: { dryRun: boolean; applicantBasis?: boolea
 }
 
 /** Step 2: matches whose invite EMAIL went out a cadence gap ago and have no WhatsApp invite yet get the WhatsApp invite now. */
-async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number, applicantBasis = false): Promise<void> {
+async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number): Promise<void> {
+  const reqOptIn = await whatsappRequiresOptIn();
   const gap = cadenceGapMin();
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.lead_id, m.slot_at, e.created_at AS email_at, (SELECT best_hour_ist FROM he_lead_insight i WHERE i.lead_id = m.lead_id) AS best_hour FROM he_match m
@@ -187,16 +190,16 @@ async function whatsappFollowUps(dryRun: boolean, c: Counts, max: number, applic
         AND (
           EXISTS (SELECT 1 FROM he_consent k WHERE k.lead_id = m.lead_id AND k.consent_type = 'whatsapp_contact' AND k.revoked_at IS NULL)
           -- owner-approved: people who applied for this role are messaged about it; anyone who revoked or opted out never is
-          OR (? = 1 AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = m.lead_id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NOT NULL)
+          OR (? = 0 AND NOT EXISTS (SELECT 1 FROM he_consent k2 WHERE k2.lead_id = m.lead_id AND k2.consent_type = 'whatsapp_contact' AND k2.revoked_at IS NOT NULL)
               AND NOT EXISTS (SELECT 1 FROM he_lead lo WHERE lo.id = m.lead_id AND lo.status = 'opted_out'))
         )
-      ORDER BY m.slot_at LIMIT ?`, [INVITE_EMAIL_KEY, gap, applicantBasis ? 1 : 0, max]);
+      ORDER BY m.slot_at LIMIT ?`, [INVITE_EMAIL_KEY, gap, reqOptIn ? 1 : 0, max]);
   for (const r of rows) {
     if (dryRun) { c.dryRun++; continue; }
     const step = nextCadenceStep({ now: new Date(), gapMin: gap, canEmail: true, waConsent: true, emailSentAt: new Date(String(r.email_at).replace(" ", "T") + "+05:30"), waSentAt: null, voiceAt: null, repliedAfterFirstTouch: false, quietHours: false, bestHourIst: r.best_hour == null ? null : Number(r.best_hour), slotAt: r.slot_at ? new Date(String(r.slot_at).replace(" ", "T") + "+05:30") : null });
     if (step.reason === "waiting_best_hour") { c.blocked.waiting_best_hour = (c.blocked.waiting_best_hour ?? 0) + 1; continue; }
     if (step.step !== "whatsapp") continue;
-    tally(c, await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_walkin_invite", matchId: r.id as string, minGapMinutes: gap, applicantBasis }));
+    tally(c, await sendTemplateToLead({ leadId: r.lead_id as string, key: "he_walkin_invite", matchId: r.id as string, minGapMinutes: gap }));
   }
 }
 

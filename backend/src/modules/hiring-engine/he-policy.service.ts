@@ -1,6 +1,9 @@
 /**
  * Outreach policy the owner can change without a deploy. Stored in he_model_param under "policy.*" (the nightly learning jobs only
  * rewrite "show.*" and "match.*", so these survive them).
+ *   policy.whatsapp_requires_optin : 1 = only message people who ticked WhatsApp; 0 (the default, owner decision 2026-10-07) = message qualified
+ *                             candidates about their own application without an opt-in. A STOP / revoked consent is ALWAYS honoured. Live location
+ *                             always needs the candidate's own tap, whatever this is set to.
  *   policy.cooling_off_days : days before someone rejected in a process can be lined up for it again. 90 by default; 0 switches
  *                             the cooling-off off (permanent blocks such as hard rejections, ex-employees, joined and opted-out stay).
  */
@@ -21,4 +24,14 @@ export async function setCoolingOffDays(days: number): Promise<number> {
   const d = Math.round(days);
   await db.execute("INSERT INTO he_model_param (param_key, value, sample) VALUES (?,?,0) ON DUPLICATE KEY UPDATE value = VALUES(value)", [KEY, d]);
   return d;
+}
+
+const OPTIN_KEY = "policy.whatsapp_requires_optin";
+export async function whatsappRequiresOptIn(): Promise<boolean> {
+  const [r] = await db.execute<RowDataPacket[]>("SELECT value FROM he_model_param WHERE param_key = ? LIMIT 1", [OPTIN_KEY]);
+  return r[0] ? Number(r[0].value) === 1 : false;
+}
+export async function setWhatsappRequiresOptIn(on: boolean): Promise<boolean> {
+  await db.execute("INSERT INTO he_model_param (param_key, value, sample) VALUES (?,?,0) ON DUPLICATE KEY UPDATE value = VALUES(value)", [OPTIN_KEY, on ? 1 : 0]);
+  return on;
 }

@@ -12,6 +12,7 @@ import { checkSendAllowed } from "./he-guardrails.js";
 import { buildParams, getTemplate, renderBody, type Lang, type TemplateKey } from "./he-template-catalog.js";
 import type { LeadStatus } from "./he-state.js";
 import { cleanName, displayFirstName } from "./he-name.js";
+import { whatsappRequiresOptIn } from "./he-policy.service.js";
 
 const pinbot = new PinbotWhatsAppProvider();
 
@@ -36,11 +37,7 @@ export interface SendOpts {
   transactional?: boolean;
   /** Cadence follow-ups run an hour after the previous touch, below the 120 min default between unrelated sends. */
   minGapMinutes?: number;
-  /**
-   * Owner-approved basis for people who applied for this role but never ticked WhatsApp: they are messaged about THAT application
-   * without an opt-in. Anyone who opted out or revoked consent is still skipped, always.
-   */
-  applicantBasis?: boolean;
+
 }
 
 const FIRST_CONTACT = new Set<TemplateKey>(["he_walkin_invite", "he_winback", "he_other_role_offer"]);
@@ -91,9 +88,11 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
       WHERE lead_id = ? AND direction = 'out' AND channel = 'whatsapp' AND created_at >= CURDATE()`, [o.leadId]);
   const [lastAny] = await db.execute<RowDataPacket[]>("SELECT MAX(created_at) AS last_at FROM he_message WHERE lead_id = ? AND direction = 'out'", [o.leadId]);
 
+  // Owner policy: qualified candidates are messaged about their own application without a WhatsApp opt-in unless that setting is turned back
+  // on. Opt-out and a revoked consent (a STOP) always win. Live location is separate: it always needs the candidate's own tap.
   let consent = await hasConsent(o.leadId, "whatsapp_contact");
   let basis: "consent" | "applicant" = "consent";
-  if (!consent && o.applicantBasis) {
+  if (!consent && !(await whatsappRequiresOptIn())) {
     const [refused] = await db.execute<RowDataPacket[]>("SELECT 1 FROM he_consent WHERE lead_id = ? AND consent_type = 'whatsapp_contact' AND revoked_at IS NOT NULL LIMIT 1", [o.leadId]);
     if (!refused.length) { consent = true; basis = "applicant"; }
   }
@@ -163,7 +162,7 @@ export async function sendTemplateToLead(o: SendOpts): Promise<SendResult> {
     logger.warn({ leadId: o.leadId, key: o.key, error: res.error }, "[he-send] failed");
     return { status: "failed", error: String(res.error ?? "unknown") };
   }
-  await addEvent(o.leadId, `sent_${o.key}`, { channel: "whatsapp", driveId: m?.drive_id, detail: `${lang}${basis === "applicant" ? " (applicant basis, no opt-in)" : ""}${fellBack ? " (sent as the appointment-confirmation template)" : ""}` });
+  await addEvent(o.leadId, `sent_${o.key}`, { channel: "whatsapp", driveId: m?.drive_id, detail: `${lang}${basis === "applicant" ? " (no opt-in needed by policy)" : ""}${fellBack ? " (sent as the appointment-confirmation template)" : ""}` });
   await db.execute("UPDATE he_lead SET last_contact_at = NOW() WHERE id = ?", [o.leadId]);
   const after = LEAD_STATUS_AFTER[o.key];
   if (after && ["new", "contacted", "interested", "declined", "no_show"].includes(String(lead.status))) await setLeadStatus(o.leadId, after);

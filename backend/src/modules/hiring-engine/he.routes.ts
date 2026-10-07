@@ -32,7 +32,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { sendStageSamples } from "./he-samples.service.js";
 import { emailConfigured } from "./he-email.service.js";
 import { previewWhatsAppSamples, startWhatsAppSample, whatsAppSampleStatus } from "./he-whatsapp-sample.service.js";
-import { getCoolingOffDays, setCoolingOffDays } from "./he-policy.service.js";
+import { getCoolingOffDays, setCoolingOffDays, setWhatsappRequiresOptIn, whatsappRequiresOptIn } from "./he-policy.service.js";
 
 export const heRouter = Router();
 // Master tab rollups: cached a minute (they only change on refresh/import, which clear it).
@@ -560,7 +560,7 @@ heRouter.post("/engine/follow-ups", requireAuth, requireRole(...WRITE_ROLES), as
   try {
     const dryRun = (req.body ?? {}).dryRun !== false;
     // T11 branch-HR arrival alert rides along, so the button covers every scheduled step.
-    res.json({ success: true, data: { ...(await runFollowUps({ dryRun, applicantBasis: (req.body ?? {}).applicantBasis === true })), alerts: await runHrArrivalAlerts({ dryRun }) } }); }
+    res.json({ success: true, data: { ...(await runFollowUps({ dryRun })), alerts: await runHrArrivalAlerts({ dryRun }) } }); }
   catch (err) { logger.error({ err: (err as Error).message }, "[he] follow-ups failed"); res.status(500).json({ message: "Could not run follow-ups" }); }
 });
 
@@ -610,13 +610,15 @@ heRouter.get("/templates/whatsapp-sample/status", requireAuth, requireRole(...WR
 
 /** Owner-adjustable outreach policy (no deploy needed). */
 heRouter.get("/policy", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
-  try { res.json({ success: true, coolingOffDays: await getCoolingOffDays() }); } catch { res.status(500).json({ success: false }); }
+  try { res.json({ success: true, coolingOffDays: await getCoolingOffDays(), whatsappRequiresOptIn: await whatsappRequiresOptIn() }); } catch { res.status(500).json({ success: false }); }
 });
 heRouter.put("/policy", requireAuth, requireRole(...ADMIN_ROLES), async (req, res) => {
   try {
-    const days = await setCoolingOffDays(Number((req.body ?? {}).coolingOffDays));
-    logger.info({ days, by: (req as AuthenticatedRequest).authUser?.id }, "[he] cooling-off policy changed");
-    res.json({ success: true, coolingOffDays: days });
+    const b = (req.body ?? {}) as { coolingOffDays?: unknown; whatsappRequiresOptIn?: unknown };
+    if (b.coolingOffDays !== undefined) await setCoolingOffDays(Number(b.coolingOffDays));
+    if (b.whatsappRequiresOptIn !== undefined) await setWhatsappRequiresOptIn(b.whatsappRequiresOptIn === true);
+    logger.info({ body: { coolingOffDays: b.coolingOffDays, whatsappRequiresOptIn: b.whatsappRequiresOptIn }, by: (req as AuthenticatedRequest).authUser?.id }, "[he] outreach policy changed");
+    res.json({ success: true, coolingOffDays: await getCoolingOffDays(), whatsappRequiresOptIn: await whatsappRequiresOptIn() });
   } catch (err) {
     const e = err as Error & { statusCode?: number };
     res.status(e.statusCode ?? 500).json({ success: false, message: e.statusCode ? e.message : "Could not save" });
