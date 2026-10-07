@@ -529,13 +529,14 @@ export async function computeLineAllocations(
     // since closed or gone back to draft, and ones carried over with a line copied from another month
     // or branch. Refusing the whole save over them left the Branch Head unable to save a draft they
     // could not even see the cause of. They are dropped from the scope — the line spreads across the
-    // active cost centres that remain — and only a scope with NOTHING valid left is refused below.
+    // active cost centres that remain — and a scope with NOTHING valid left falls back to every active cost centre.
     const stale = new Set(scopeIds.filter((id) => !activeIds.has(id)));
     const wanted = new Set(scopeIds.filter((id) => !stale.has(id)));
-    costCentres = allActive.filter((cc) => wanted.has(cc.id));
-    if (costCentres.length === 0) {
-      throw refuse(400, "COST_CENTRE_SCOPE_REQUIRED", "Select at least one cost centre for this branch-level line");
-    }
+    // None of the named cost centres is active here (all closed, or all carried over from another
+    // branch's line): the scope no longer means anything, so the line falls back to the long-standing
+    // default — every active cost centre — rather than failing the whole draft. Reviewers still see
+    // and approve the resulting split.
+    costCentres = wanted.size ? allActive.filter((cc) => wanted.has(cc.id)) : allActive;
   }
 
   let shares: AllocationShare[];
