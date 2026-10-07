@@ -37,79 +37,93 @@ export function windowText(g: Pick<DriveGroup, "window">, today: string): string
 export const STATE_LABEL: Record<WindowState, string> = { upcoming: "Upcoming", running: "Running", ended: "Ended" };
 
 // ---- collapsed row ----------------------------------------------------------------------------------------------------------------------
-export function collapsedCells(g: DriveGroup): Array<{ label: string; value: string }> {
+/** Window totals, except the show rate: arrived over confirmed on the days up to `today` only (later days have confirmations but no arrivals yet). */
+export function collapsedCells(g: DriveGroup, today: string): Array<{ label: string; value: string }> {
   const t = g?.totals;
-  const arrived = safe(t?.arrived);
-  const confirmed = safe(t?.confirmed);
+  let arrivedSoFar = 0;
+  let confirmedSoFar = 0;
+  for (const d of Array.isArray(g?.days) ? g.days : []) {
+    if (d.date > today) continue;
+    arrivedSoFar += safe(d.arrived);
+    confirmedSoFar += safe(d.confirmed);
+  }
   return [
     { label: "Wanted", value: countText(safe(t?.wanted)) },
     { label: "Lined up", value: countText(safe(t?.lined)) },
     { label: "Invited", value: countText(safe(t?.invited)) },
-    { label: "Confirmed", value: countText(confirmed) },
-    { label: "Arrived", value: countText(arrived) },
+    { label: "Confirmed", value: countText(safe(t?.confirmed)) },
+    { label: "Arrived", value: countText(safe(t?.arrived)) },
     { label: "Did not come", value: countText(safe(t?.noShow)) },
     { label: "Declined", value: countText(safe(t?.declined)) },
-    { label: "Show rate", value: pctText(rate(arrived, confirmed)) },
+    { label: "Show rate so far", value: pctText(rate(arrivedSoFar, confirmedSoFar)) },
   ];
 }
 
 // ---- day table --------------------------------------------------------------------------------------------------------------------------
-export const DAY_COLUMNS = ["Date", "Wanted", "Lined up", "Invited", "Confirmed", "Arrived", "Did not come", "Declined", "Show rate"] as const;
+export const DAY_COLUMNS = ["Date", "Status", "Wanted", "Lined up", "Invited", "Confirmed", "Arrived", "Did not come", "Declined", "Show rate"] as const;
 
 export interface DayRow { date: string; label: string; isToday: boolean; future: boolean; cells: string[] }
-/** One line per drive date across the whole window. A future day shows only lined up and invited; every other cell is an en dash. */
+const statusText = (v: unknown): string => (typeof v === "string" && v ? v.split("_").join(" ") : DASH);
+/** One line per drive date across the whole window. A future day shows wanted, lined up, invited and confirmed; arrived, did not come, declined and the show rate are en dashes. */
 export function dayRows(points: TrendPoint[], today: string): DayRow[] {
   return (Array.isArray(points) ? points : []).map((p) => {
     const future = p.date > today;
-    const count = (v: unknown): string => (future ? DASH : countText(safe(v)));
+    const past = (v: unknown): string => (future ? DASH : countText(safe(v)));
     return {
       date: p.date, label: dayLabel(p.date), isToday: p.date === today, future,
       cells: [
-        count(p.wanted), countText(safe(p.lined)), countText(safe(p.invited)), count(p.confirmed), count(p.arrived), count(p.noShow), count(p.declined),
-        future ? DASH : pctText(rate(safe(p.arrived), safe(p.confirmed))),
+        statusText(p.status), countText(safe(p.wanted)), countText(safe(p.lined)), countText(safe(p.invited)), countText(safe(p.confirmed)),
+        past(p.arrived), past(p.noShow), past(p.declined), future ? DASH : pctText(rate(safe(p.arrived), safe(p.confirmed))),
       ],
     };
   });
 }
 
 // ---- trend series -----------------------------------------------------------------------------------------------------------------------
-export interface CountPoint { date: string; label: string; invited: number; confirmed: number; arrived: number; wanted: number }
+export interface CountPoint { date: string; label: string; invited: number; confirmed: number; arrived: number | null; wanted: number }
 export interface RatePoint { date: string; label: string; pct: number }
-/** One entry per point (zero-filled days included); pct is a whole percent, 0 when nobody confirmed. */
-export function trendSeries(points: TrendPoint[]): { counts: CountPoint[]; showRate: RatePoint[] } {
+export interface RateChartPoint { date: string; label: string; pct: number | null }
+/** One entry per point (zero-filled days included); pct is a whole percent, 0 when nobody confirmed. With `today`, arrived is null on days still to come. */
+export function trendSeries(points: TrendPoint[], today?: string): { counts: CountPoint[]; showRate: RatePoint[] } {
   const list = Array.isArray(points) ? points : [];
   return {
-    counts: list.map((p) => ({ date: p.date, label: dayLabel(p.date), invited: safe(p.invited), confirmed: safe(p.confirmed), arrived: safe(p.arrived), wanted: safe(p.wanted) })),
+    counts: list.map((p) => ({
+      date: p.date, label: dayLabel(p.date), invited: safe(p.invited), confirmed: safe(p.confirmed),
+      arrived: today !== undefined && p.date > today ? null : safe(p.arrived), wanted: safe(p.wanted),
+    })),
     showRate: list.map((p) => ({ date: p.date, label: dayLabel(p.date), pct: Math.round((rate(safe(p.arrived), safe(p.confirmed)) ?? 0) * 100) })),
   };
 }
 
 export interface TrendView {
   empty: boolean;
+  /** Drive days exist but none has happened yet. */
+  noneYet: boolean;
   type: SourceType;
   counts: CountPoint[];
-  /** Past days and today only: a day that has not happened has no show rate. */
-  showRate: RatePoint[];
+  /** Past days and today only; a day with nobody confirmed has pct null (a gap in the line, a dash in the table). */
+  showRate: RateChartPoint[];
   motion: ReturnType<typeof chartMotion>;
   countsTable: TextTable;
   rateTable: TextTable;
 }
 /** Chart inputs and their text alternatives, all derived from trendSeries so the tables show exactly what the charts draw. */
 export function trendView(points: TrendPoint[], type: SourceType, today: string, opts?: ChartOpts): TrendView {
-  const s = trendSeries(points);
-  const showRate = s.showRate.filter((r) => r.date <= today);
+  const s = trendSeries(points, today);
+  const confirmedBy = new Map((Array.isArray(points) ? points : []).map((p) => [p.date, safe(p.confirmed)]));
+  const showRate: RateChartPoint[] = s.showRate.filter((r) => r.date <= today).map((r) => ({ ...r, pct: (confirmedBy.get(r.date) ?? 0) > 0 ? r.pct : null }));
   const label = TYPE_LABEL[type] ?? "Drive";
   return {
-    empty: s.counts.length === 0, type, counts: s.counts, showRate, motion: chartMotion(opts?.prefersReducedMotion === true),
+    empty: s.counts.length === 0, noneYet: s.counts.length > 0 && showRate.length === 0, type, counts: s.counts, showRate, motion: chartMotion(opts?.prefersReducedMotion === true),
     countsTable: {
       caption: `${label}: invited, confirmed and arrived each drive day, with the wanted number`,
       columns: ["Date", "Invited", "Confirmed", "Arrived", "Wanted"],
-      rows: s.counts.map((c) => [c.label, String(c.invited), String(c.confirmed), String(c.arrived), String(c.wanted)]),
+      rows: s.counts.map((c) => [c.label, String(c.invited), String(c.confirmed), c.arrived === null ? DASH : String(c.arrived), String(c.wanted)]),
     },
     rateTable: {
       caption: `${label}: show rate (arrived of confirmed) each drive day so far`,
       columns: ["Date", "Show rate"],
-      rows: showRate.map((r) => [r.label, `${r.pct}%`]),
+      rows: showRate.map((r) => [r.label, r.pct === null ? DASH : `${r.pct}%`]),
     },
   };
 }

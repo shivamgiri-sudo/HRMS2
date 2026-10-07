@@ -38,15 +38,22 @@ describe("windowText", () => {
 });
 
 describe("collapsedCells", () => {
-  const labels = ["Wanted", "Lined up", "Invited", "Confirmed", "Arrived", "Did not come", "Declined", "Show rate"];
+  const labels = ["Wanted", "Lined up", "Invited", "Confirmed", "Arrived", "Did not come", "Declined", "Show rate so far"];
   it("lists the eight totals with the show rate as a percent", () => {
-    const c = collapsedCells(group());
+    const c = collapsedCells(group(), TODAY);
     expect(c.map((x) => x.label)).toEqual(labels);
-    expect(c.map((x) => x.value)).toEqual(["40", "60", "55", "30", "21", "7", "3", "70%"]);
+    expect(c.map((x) => x.value)).toEqual(["40", "60", "55", "30", "21", "7", "3", "–"]);
+  });
+  const dayOf = (date: string, confirmed: number, arrived: number) => ({ driveId: "d", date, branch: "Pune", requisition: "R", role: "r", status: "open", wanted: 10, lined: 10, invited: 10, confirmed, arrived, noShow: 0, declined: 0 });
+  it("show rate counts only days up to today: 20 of 20 so far plus 30 later confirmations is 100%, not 40%", () => {
+    const g = group({ totals: totals({ confirmed: 50, arrived: 20 }), days: [dayOf("2026-10-11", 20, 20), dayOf("2026-10-13", 30, 0)] });
+    expect(collapsedCells(g, TODAY).at(-1)).toEqual({ label: "Show rate so far", value: "100%" });
+    expect(collapsedCells(g, TODAY)[3].value).toBe("50");
+    expect(collapsedCells(g, "2026-10-13").at(-1)?.value).toBe("40%");
   });
   it("shows an en dash when nobody confirmed and survives broken numbers", () => {
-    expect(collapsedCells(group({ totals: totals({ confirmed: 0, arrived: 0 }) })).at(-1)?.value).toBe("–");
-    const bad = collapsedCells(group({ totals: { wanted: NaN, lined: undefined, invited: -3, confirmed: Infinity } as unknown as DriveGroup["totals"] }));
+    expect(collapsedCells(group({ totals: totals({ confirmed: 0, arrived: 0 }) }), TODAY).at(-1)?.value).toBe("–");
+    const bad = collapsedCells(group({ totals: { wanted: NaN, lined: undefined, invited: -3, confirmed: Infinity } as unknown as DriveGroup["totals"] }), TODAY);
     expect(bad.map((x) => x.value).join(" ")).not.toMatch(/NaN|undefined|Infinity/);
   });
 });
@@ -56,12 +63,12 @@ describe("dayRows", () => {
   it("marks today and keeps zero-filled days", () => {
     expect(rows.map((r) => r.date)).toEqual(["2026-10-09", "2026-10-10", "2026-10-12", "2026-10-13"]);
     expect(rows.map((r) => r.isToday)).toEqual([false, false, true, false]);
-    expect(rows[1].cells).toEqual(["0", "0", "0", "0", "0", "0", "0", "–"]);
+    expect(rows[1].cells).toEqual(["open", "0", "0", "0", "0", "0", "0", "0", "–"]);
     expect(rows[2].label).toBe("Mon 12 Oct");
   });
-  it("a future day shows only lined up and invited", () => {
+  it("a future day shows wanted, lined up, invited and confirmed", () => {
     expect(rows[3].future).toBe(true);
-    expect(rows[3].cells).toEqual(["–", "12", "11", "–", "–", "–", "–", "–"]);
+    expect(rows[3].cells).toEqual(["open", "10", "12", "11", "5", "–", "–", "–", "–"]);
   });
   it("a past day shows its show rate", () => expect(rows[0].cells.at(-1)).toBe("75%"));
 });
@@ -72,16 +79,34 @@ describe("trendSeries and trendView", () => {
     expect(s.counts).toHaveLength(4);
     expect(s.showRate).toHaveLength(4);
     expect(s.showRate.map((r) => r.pct)).toEqual([75, 0, 75, 0]);
+    expect(s.counts.every((c) => c.arrived !== null)).toBe(true);
     expect(s.counts[1]).toMatchObject({ invited: 0, confirmed: 0, arrived: 0, wanted: 0 });
     expect(trendSeries([])).toEqual({ counts: [], showRate: [] });
   });
   it("tables carry exactly the numbers the charts draw; the rate chart stops at today", () => {
     const v = trendView(points, "he", TODAY);
-    expect(v.counts.map((c) => [c.label, String(c.invited), String(c.confirmed), String(c.arrived), String(c.wanted)])).toEqual(v.countsTable.rows);
-    expect(v.showRate.map((r) => [r.label, `${r.pct}%`])).toEqual(v.rateTable.rows);
+    expect(v.counts.map((c) => [c.label, String(c.invited), String(c.confirmed), c.arrived === null ? "–" : String(c.arrived), String(c.wanted)])).toEqual(v.countsTable.rows);
+    expect(v.showRate.map((r) => [r.label, r.pct === null ? "–" : `${r.pct}%`])).toEqual(v.rateTable.rows);
     expect(v.showRate.map((r) => r.date)).toEqual(["2026-10-09", "2026-10-10", "2026-10-12"]);
     expect(trendView([], "he", TODAY).empty).toBe(true);
+    expect(trendView([pt("2026-10-20")], "he", TODAY)).toMatchObject({ empty: false, noneYet: true });
     expect(trendView(points, "he", TODAY, { prefersReducedMotion: true }).motion.animate).toBe(false);
+  });
+});
+
+describe("zero-confirmed day and future days agree across chart, tables and day table", () => {
+  const v = trendView(points, "he", TODAY);
+  it("10 Oct (nobody confirmed) is null in the chart series and a dash in both tables", () => {
+    const i = v.showRate.findIndex((r) => r.date === "2026-10-10");
+    expect(v.showRate[i].pct).toBeNull();
+    expect(v.rateTable.rows[i]).toEqual(["Sat 10 Oct", "–"]);
+    expect(dayRows(points, TODAY)[1].cells.at(-1)).toBe("–");
+    expect(v.showRate.map((r) => r.pct)).toEqual([75, null, 75]);
+  });
+  it("a future day has arrived null in the counts series and a dash in its table, wanted and confirmed kept", () => {
+    const last = v.counts.at(-1)!;
+    expect(last).toMatchObject({ arrived: null, wanted: 10, confirmed: 5 });
+    expect(v.countsTable.rows.at(-1)).toEqual(["Tue 13 Oct", "11", "5", "–", "10"]);
   });
 });
 
@@ -116,7 +141,8 @@ describe("static markup", () => {
     const h = row(group());
     expect(h).toContain('aria-expanded="false"');
     expect(h).toMatch(/aria-controls="group-[a-zA-Z0-9]+"/);
-    for (const t of ["day 3 of 5, ends Wed 14 Oct", "REQ-100", "Sales Executive", "Pune", "Hiring Engine", "Running", "Did not come", "70%"]) expect(h).toContain(t);
+    expect(h).toContain("Show rate so far");
+    for (const t of ["day 3 of 5, ends Wed 14 Oct", "REQ-100", "Sales Executive", "Pune", "Hiring Engine", "Running", "Did not come"]) expect(h).toContain(t);
     expect(h).not.toMatch(/NaN|undefined|Infinity/);
   });
   it("confirmed 0 shows the dash for the show rate", () => {
@@ -137,6 +163,7 @@ describe("static markup", () => {
     const h = detail({ events: [{ id: "e1", action: "extend", changedBy: null, changedAt: "2026-10-10 11:00:00", oldOpenFrom: null, oldOpenDays: 5, newOpenDays: 7, oldStatus: null, newStatus: null, day: null, reason: "Low turnout" }], children: <div>ACTION-SLOT</div> });
     expect(h).toContain('aria-current="date"');
     expect(h).toContain(">today<");
+    expect(h).toContain(">Status<");
     for (const d of ["Fri 9 Oct", "Sat 10 Oct", "Mon 12 Oct", "Tue 13 Oct"]) expect(h).toContain(d);
     expect(h).toContain("Sat 10 Oct · Extended · 5 to 7 days · Low turnout");
     expect(h).toContain("ACTION-SLOT");
@@ -151,6 +178,15 @@ describe("static markup", () => {
     expect(detail({ trend: trend({ partial: true, failedSections: ["drives"] }) })).toContain("Some numbers could not be loaded (drives)");
     expect(detail({ group: group() })).not.toContain("Extension history");
     expect(detail({ trend: trend({ points: [] }) })).toContain("No drive days in this window");
+  });
+  it("every SVG pattern id in an expanded row is unique", () => {
+    const h = renderToStaticMarkup(<ul><DriveGroupRow group={group()} today={TODAY} initiallyOpen /></ul>) + detail();
+    const ids = h.split(" id=\"").slice(1).map((x) => x.split("\"")[0]);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+  it("an all-future window says no drive day has happened yet", () => {
+    expect(detail({ trend: trend({ points: [pt("2026-10-20")] }) })).toContain("No drive day has happened yet");
   });
   it("section: only its type, per-type empty state, one type missing", () => {
     const groups = [group({ requisition: "REQ-1" }), group({ requisition: "REQ-2", sourceType: "meta_live", types: ["meta_live"] })];
@@ -172,6 +208,7 @@ describe("static markup", () => {
 
 describe("Master-tab drives box", () => {
   const box = (groups: DriveGroup[] | undefined, failed = false) => renderToStaticMarkup(<DrivesBox groups={groups} failed={failed} today={TODAY} />);
+  // Fixture only: the backend already groups; this checks the card renders each group once, whatever its days hold.
   it("one requisition over two days renders one row, the full-comparison button and no flat Drive header", () => {
     const g = group({ days: [
       { driveId: "d1", date: "2026-10-11", branch: "Pune", requisition: "REQ-100", role: "Sales", status: "open", wanted: 5, lined: 5, invited: 5, confirmed: 4, arrived: 3, noShow: 1, declined: 0 },
@@ -182,6 +219,7 @@ describe("Master-tab drives box", () => {
     expect(h).toContain("Open full comparison");
     expect(h).not.toContain(">Drive</th>");
     expect(h).not.toContain("<table");
+    expect(h).toContain("Drives: yesterday to the next 3 days");
   });
   it("empty groups and a missing driveGroups give sensible messages", () => {
     expect(box([])).toContain("No open drives in this window.");

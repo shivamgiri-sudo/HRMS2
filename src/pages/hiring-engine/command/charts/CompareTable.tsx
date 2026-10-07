@@ -1,5 +1,5 @@
 /** Sortable comparison of the three drive types with a CSV export (formula-safe toCsv; the file name carries the date range). */
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Download } from "lucide-react";
 import type { DriveAnalytics } from "../driveCommandTypes";
 import { COMPARE_COLUMNS, sortCompareRows, toCsv } from "../driveCommandModel";
@@ -24,16 +24,17 @@ function download(name: string, text: string) {
 
 export default function CompareTable({ analytics }: { analytics: DriveAnalytics }) {
   const dark = useIsDark();
+  const titleId = `compare-types-title-${useId().replaceAll(":", "")}`;
   const [sort, setSort] = useState<{ key: string; dir: Dir } | null>(null);
   const v = compareView(analytics);
   const rows = sort ? sortCompareRows(v.rows, sort.key, sort.dir) : v.rows;
   const range = `${analytics?.window?.from ?? ""} to ${analytics?.window?.to ?? ""}`;
   const toggle = (key: string) => setSort((s) => (s?.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" }));
   return (
-    <section aria-labelledby="compare-types-title" className="min-w-0 space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+    <section aria-labelledby={titleId} className="min-w-0 space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 id="compare-types-title" className="text-sm font-bold text-slate-900 dark:text-slate-100">Compare drive types</h3>
+          <h3 id={titleId} className="text-sm font-bold text-slate-900 dark:text-slate-100">Compare drive types</h3>
           <p className="text-xs text-slate-600 dark:text-slate-300">{`${range}. Show rate is arrived of confirmed; lead to join is joined of leads. Select a column heading to sort.`}</p>
         </div>
         <button type="button" className={BTN} aria-label={`Export the comparison as CSV for ${range}`}

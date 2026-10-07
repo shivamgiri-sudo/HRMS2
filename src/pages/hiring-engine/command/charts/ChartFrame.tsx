@@ -76,11 +76,11 @@ export function Note({ children }: { children: ReactNode }) {
   );
 }
 
-export function EmptyBlock({ size = "standard" }: { size?: keyof typeof HEIGHT }) {
+export function EmptyBlock({ size = "standard", text = EMPTY_TEXT }: { size?: keyof typeof HEIGHT; text?: string }) {
   return (
     <div className={`flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 text-center dark:border-slate-600 ${HEIGHT[size]}`}>
       <Inbox className="h-5 w-5 text-slate-500 dark:text-slate-400" aria-hidden />
-      <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{EMPTY_TEXT}</p>
+      <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{text}</p>
     </div>
   );
 }
@@ -90,6 +90,8 @@ export interface ChartFrameProps {
   subtitle?: string;
   table: TextTable;
   empty: boolean;
+  /** Replaces the default empty-state wording. */
+  emptyText?: string;
   /** Summary read out for the role="img" chart body. */
   aria: string;
   defaultTableOpen?: boolean;
@@ -104,14 +106,14 @@ export interface ChartFrameProps {
   children: ReactNode;
 }
 
-export default function ChartFrame({ title, subtitle, table, empty, aria, defaultTableOpen = false, controls, note, kind = "image", size = "standard", loading = false, className, children }: ChartFrameProps) {
+export default function ChartFrame({ title, subtitle, table, empty, emptyText, aria, defaultTableOpen = false, controls, note, kind = "image", size = "standard", loading = false, className, children }: ChartFrameProps) {
   const [open, setOpen] = useState(defaultTableOpen);
   const uid = useId().replaceAll(":", "");
   const titleId = `chart-title-${uid}`;
   const tableId = `chart-table-${uid}`;
   let body: ReactNode;
   if (loading) body = <div aria-busy="true" className={`animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none dark:bg-slate-800 ${HEIGHT[size]}`} />;
-  else if (empty) body = <EmptyBlock size={size} />;
+  else if (empty) body = <EmptyBlock size={size} text={emptyText} />;
   else if (kind === "grid") body = children;
   else body = <div role="img" aria-label={aria} className={`w-full min-w-0 ${HEIGHT[size]}`}>{children}</div>;
   return (

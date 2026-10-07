@@ -21,9 +21,9 @@ const BTN = "inline-flex min-h-11 cursor-pointer items-center justify-center gap
 const PRIMARY = `${BTN} border-blue-700 bg-blue-700 text-white hover:bg-blue-800 dark:border-blue-400 dark:bg-blue-500 dark:text-slate-950 dark:hover:bg-blue-400`;
 const QUIET = `${BTN} border-slate-300 bg-white text-slate-800 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800`;
 
-function Card({ card, dark, onAction, onDismiss }: { card: InsightCard; dark: boolean; onAction: (t: ActionTarget) => void; onDismiss: (id: string) => void }) {
+function Card({ card, index, dark, onAction, onDismiss }: { card: InsightCard; index: number; dark: boolean; onAction: (t: ActionTarget) => void; onDismiss: (id: string) => void }) {
   const Icon = ICON[card.severity];
-  const hid = `insight-${card.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+  const hid = `insight-${index}-${card.id.split("").map((ch) => (ch.toLowerCase() !== ch.toUpperCase() || (ch >= "0" && ch <= "9") ? ch : "-")).join("")}`;
   return (
     <li className="list-none">
       <article aria-labelledby={hid} data-insight-id={card.id} data-severity={card.severity}
@@ -96,7 +96,7 @@ export default function InsightsPanel({ analytics, dismissed, onDismiss, onResto
         )}
       </div>
       {v.message && (
-        <p role={v.state === "unavailable" || v.incomplete ? "alert" : "status"} className="flex flex-wrap items-center gap-2 text-sm text-slate-800 dark:text-slate-100">
+        <p role={v.state === "unavailable" ? "alert" : "status"} className="flex flex-wrap items-center gap-2 text-sm text-slate-800 dark:text-slate-100">
           {v.state === "empty" ? <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden /> : <Info className="h-4 w-4 shrink-0" aria-hidden />}
           <span className="min-w-0 flex-1">{v.message}</span>
           {(v.state === "unavailable" || v.incomplete) && onRetry && <button type="button" className={QUIET} onClick={onRetry}>Retry</button>}
@@ -104,7 +104,7 @@ export default function InsightsPanel({ analytics, dismissed, onDismiss, onResto
       )}
       {v.cards.length > 0 && (
         <ul className="grid gap-3 lg:grid-cols-2" aria-label="Suggestions, most urgent first">
-          {v.cards.map((c) => <Card key={c.id} card={c} dark={dark} onAction={onAction} onDismiss={dismissAndKeepFocus} />)}
+          {v.cards.map((c, i) => <Card key={c.id} card={c} index={i} dark={dark} onAction={onAction} onDismiss={dismissAndKeepFocus} />)}
         </ul>
       )}
     </section>

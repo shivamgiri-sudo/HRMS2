@@ -6,7 +6,7 @@
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Symbols, Tooltip, XAxis, YAxis } from "recharts";
 import { TARGET_COLOR, TYPE_SHAPE, seriesColor, useIsDark, usePrefersReducedMotion } from "./chartTheme";
 import { TYPE_LABEL } from "./driveCommandModel";
-import { trendView, type CountPoint, type RatePoint } from "./driveGroupModel";
+import { trendView, type CountPoint, type RateChartPoint } from "./driveGroupModel";
 import type { SourceType, TrendPoint } from "./driveCommandTypes";
 import ChartFrame, { TOOLTIP_CURSOR, TooltipCard, axisTick, gridProps } from "./charts/ChartFrame";
 import { ShapeGlyph, patternFill, typePatternDefs, usePatternPrefix } from "./charts/TypePatterns";
@@ -17,6 +17,7 @@ export default function DriveTrendChart({ points, type, today }: { points: Trend
   const dark = useIsDark();
   const reduced = usePrefersReducedMotion();
   const prefix = usePatternPrefix();
+  const legendPrefix = usePatternPrefix();
   const v = trendView(points, type, today, { prefersReducedMotion: reduced });
   const color = seriesColor(type, dark);
   const target = dark ? TARGET_COLOR.dark : TARGET_COLOR.light;
@@ -28,7 +29,7 @@ export default function DriveTrendChart({ points, type, today }: { points: Trend
     <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-700 dark:text-slate-200" aria-label="Legend">
       <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-4 rounded-sm border" style={{ borderColor: color, backgroundColor: color, opacity: 0.35 }} aria-hidden="true" /><span>Invited</span></li>
       <li className="flex items-center gap-1.5">
-        <svg width="16" height="12" aria-hidden="true" focusable="false">{typePatternDefs(prefix, dark, [type])}<rect width="16" height="12" rx="2" fill={patternFill(prefix, type)} /></svg><span>Confirmed</span>
+        <svg width="16" height="12" aria-hidden="true" focusable="false">{typePatternDefs(legendPrefix, dark, [type])}<rect width="16" height="12" rx="2" fill={patternFill(legendPrefix, type)} /></svg><span>Confirmed</span>
       </li>
       <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-4 rounded-sm" style={{ backgroundColor: color }} aria-hidden="true" /><span>Arrived</span></li>
       <li className="flex items-center gap-1.5">
@@ -52,7 +53,7 @@ export default function DriveTrendChart({ points, type, today }: { points: Trend
             <Tooltip cursor={TOOLTIP_CURSOR} isAnimationActive={v.motion.animate} content={({ active, payload }) => {
               const p = payload?.[0]?.payload as CountPoint | undefined;
               if (!active || !p) return null;
-              return <TooltipCard title={p.label} lines={[{ label: "Invited", value: String(p.invited) }, { label: "Confirmed", value: String(p.confirmed) }, { label: "Arrived", value: String(p.arrived) }, { label: "Wanted", value: String(p.wanted) }]} />;
+              return <TooltipCard title={p.label} lines={[{ label: "Invited", value: String(p.invited) }, { label: "Confirmed", value: String(p.confirmed) }, { label: "Arrived", value: p.arrived === null ? "–" : String(p.arrived) }, { label: "Wanted", value: String(p.wanted) }]} />;
             }} />
             <Bar dataKey="invited" name="Invited" fill={color} fillOpacity={0.35} stroke={color} isAnimationActive={v.motion.animate} animationDuration={v.motion.durationMs} />
             <Bar dataKey="confirmed" name="Confirmed" fill={patternFill(prefix, type)} stroke={color} isAnimationActive={v.motion.animate} animationDuration={v.motion.durationMs} />
@@ -63,7 +64,7 @@ export default function DriveTrendChart({ points, type, today }: { points: Trend
       </ChartFrame>
       <ChartFrame
         title="Show rate each drive day" subtitle={`${label}: arrived as a share of confirmed, days so far`}
-        table={v.rateTable} empty={v.showRate.length === 0} aria={`${label} show rate per drive day so far: ${v.showRate.length} days`}
+        table={v.rateTable} empty={v.showRate.length === 0} emptyText={v.noneYet ? "No drive day has happened yet" : undefined} aria={`${label} show rate per drive day so far: ${v.showRate.length} days`}
       >
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={v.showRate} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
@@ -71,11 +72,11 @@ export default function DriveTrendChart({ points, type, today }: { points: Trend
             <XAxis dataKey="label" tick={axisTick(dark)} axisLine={false} tickLine={false} minTickGap={12} />
             <YAxis tick={axisTick(dark)} axisLine={false} tickLine={false} domain={[0, 100]} tickFormatter={(n: number) => `${n}%`} width={40} />
             <Tooltip cursor={TOOLTIP_CURSOR} isAnimationActive={v.motion.animate} content={({ active, payload }) => {
-              const p = payload?.[0]?.payload as RatePoint | undefined;
+              const p = payload?.[0]?.payload as RateChartPoint | undefined;
               if (!active || !p) return null;
-              return <TooltipCard title={p.label} lines={[{ label: "Show rate", value: `${p.pct}%` }]} />;
+              return <TooltipCard title={p.label} lines={[{ label: "Show rate", value: p.pct === null ? "–" : `${p.pct}%` }]} />;
             }} />
-            <Line type="monotone" dataKey="pct" name="Show rate" stroke={color} strokeWidth={2} dot={dot} activeDot={false} isAnimationActive={v.motion.animate} animationDuration={v.motion.durationMs} />
+            <Line type="monotone" connectNulls={false} dataKey="pct" name="Show rate" stroke={color} strokeWidth={2} dot={dot} activeDot={false} isAnimationActive={v.motion.animate} animationDuration={v.motion.durationMs} />
           </ComposedChart>
         </ResponsiveContainer>
       </ChartFrame>

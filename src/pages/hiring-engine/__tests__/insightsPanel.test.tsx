@@ -104,7 +104,7 @@ describe("InsightsPanel markup", () => {
     expect(html).toContain(">Open the plan<");
     expect(html).toContain('aria-label="Open the plan: Title b"');
     expect(html.match(/<article /g)).toHaveLength(2);
-    expect(html.match(/aria-labelledby="insight-[ab]"/g)).toHaveLength(2);
+    expect(html.match(/aria-labelledby="insight-\d+-[ab]"/g)).toHaveLength(2);
     expect(html).toContain('aria-label="Dismiss: Title a"');
     expect(html).toContain('aria-label="Dismiss: Title b"');
     expect(html.match(/<button[^>]*>\s*Open the plan/g)).toHaveLength(1); // the "none" card has no action button
@@ -152,5 +152,19 @@ describe("InsightsPanel markup", () => {
     expect(html).toContain(long);
     expect(html).toContain("break-words");
     expect(html).toContain("min-w-0");
+  });
+});
+
+describe("InsightsPanel ids and live regions", () => {
+  it("ids that differ only in special characters get distinct heading ids", () => {
+    const html = render([ins("a/b", "warn"), ins("a:b", "warn")]);
+    const ids = (html.match(/aria-labelledby="insight-[^"]+"/g) ?? []);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+  it("the incomplete-result message is a status, not a second alert", () => {
+    const html = render([ins("a", "warn")], { partial: true });
+    expect(html).toContain(INCOMPLETE_MESSAGE);
+    expect(html).not.toContain('role="alert"');
   });
 });

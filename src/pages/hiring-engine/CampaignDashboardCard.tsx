@@ -36,8 +36,8 @@ export function DrivesBox({ groups, failed, today }: { groups: DriveGroup[] | un
     <div className="rounded-lg border border-slate-200 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Drives: requisition by requisition</h3>
-          <p className="mb-2 text-xs text-slate-600">One row per requisition and drive type with totals across the window. Open a row for the day-by-day trend.</p>
+          <h3 className="text-sm font-semibold text-slate-900">Drives: yesterday to the next 3 days</h3>
+          <p className="mb-2 text-xs text-slate-600">Walk-ins wanted against people lined up, invited, confirmed, arrived and missed: one row per requisition and drive type. Open a row for the day-by-day trend.</p>
         </div>
         <button type="button" onClick={() => { window.location.hash = "drives:summary"; }}
           className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-lg border border-blue-700 bg-white px-3 text-xs font-semibold text-blue-800 transition-colors duration-150 hover:bg-blue-50 motion-reduce:transition-none focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:min-h-8">

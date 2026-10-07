@@ -33,7 +33,7 @@ export function DayTable({ trend, today }: { trend: DriveTrend; today: string })
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-max border-collapse text-left text-xs text-slate-800 dark:text-slate-100">
-        <caption className="mb-1 text-left text-xs text-slate-600 dark:text-slate-300">Day by day across the whole window; days still to come show only lined up and invited</caption>
+        <caption className="mb-1 text-left text-xs text-slate-600 dark:text-slate-300">Day by day across the whole window; days still to come show wanted, lined up, invited and confirmed only</caption>
         <thead>
           <tr className="border-b border-slate-200 dark:border-slate-700">
             {DAY_COLUMNS.map((c, i) => <th key={c} scope="col" className={`px-2 py-1 font-semibold ${i === 0 ? "" : "text-right"}`}>{c}</th>)}
@@ -117,7 +117,7 @@ export default function DriveGroupRow({ group, compact = false, today, initially
   const bodyId = `group-${useId().replaceAll(":", "")}`;
   const state = windowState(group, today);
   const StateIcon = STATE_ICON[state];
-  const cells = collapsedCells(group);
+  const cells = collapsedCells(group, today);
   return (
     <li className="min-w-0 rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       <button

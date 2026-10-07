@@ -11,7 +11,7 @@ export interface GroupDetail {
   reload: () => void;
 }
 
-/** Loads only while `open`; closing and reopening keeps what was loaded. A stale response is never applied. */
+/** Loads when first opened. The row unmounts its body on close, so reopening starts a fresh load. A stale response is never applied. */
 export function useGroupDetail(group: DriveGroup, open: boolean): GroupDetail {
   const seq = useRef(createRequestSequencer());
   const [trend, setTrend] = useState<DriveTrend | null>(null);
