@@ -26,7 +26,7 @@ describe("params", () => {
   });
   it("collapses newlines in values", () => expect(buildParams("he_optout_ack", "en", { candidate_name: "A\nB" })).toEqual(["A B"]));
   it("renders", () => expect(renderBody("he_optout_ack", "en", { candidate_name: "Rahul" })).toContain("Candidate: Rahul"));
-  it("location template buttons are quick replies (no URL button) as approved", () => expect(getTemplate("he_reminder_2h_location").buttons.en).toEqual(["I'm on my way", "My Location"]));
+  it("location template: approved dynamic URL button, then My Location", () => expect(getTemplate("he_reminder_2h_location").buttons.en).toEqual(["URL: I'm on my way -> https://<domain>/w/{location_token}", "My Location"]));
 });
 
 describe("Meta-approved English templates (T1-T11)", () => {

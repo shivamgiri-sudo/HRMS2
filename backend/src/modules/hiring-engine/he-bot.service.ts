@@ -61,7 +61,7 @@ export async function answerCandidateQuestion(leadId: string, text: string, o: {
   return { action: "answered", kind };
 }
 
-/** The T4 buttons ("I'm on my way" / "My Location") are quick replies, so the tap arrives as a reply and gets the sharing page link as the answer. */
+/** The T4 "My Location" button is a quick reply, so the tap arrives as a reply and gets the sharing page link as the answer (the "I'm on my way" URL button opens the page itself). */
 export const isLocationTap = (text: string) => /^\s*(i'?m on my way|my location|main nikal gaya|meri location)\s*[.!]?\s*$/i.test(text);
 export async function sendLocationLink(leadId: string): Promise<BotOutcome> {
   if (sendsPaused()) return { action: "skipped", reason: "paused" };
