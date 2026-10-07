@@ -132,6 +132,7 @@ describe("requeueTransientFailures", () => {
     query.mockResolvedValueOnce([[failed()]]);
     execute
       .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{ affectedRows: 0 }])
       .mockResolvedValueOnce([{}]);
     const r = await requeueTransientFailures();
     expect(r.requeued).toEqual(["BATCH-1"]);
@@ -139,8 +140,11 @@ describe("requeueTransientFailures", () => {
       "WHERE id = ? AND batch_status = 'failed'",
     );
     expect(execute.mock.calls[0][1]).toContain(1);
-    expect(execute.mock.calls[1][0]).toContain("INSERT INTO bulk_import_queue");
-    expect(execute.mock.calls[1][1]).toEqual([
+    // Force-errored rows go back to 'valid' so the retry has something to import.
+    expect(execute.mock.calls[1][0]).toContain("SET row_status = 'valid'");
+    expect(execute.mock.calls[1][1]).toEqual(["b1", "%never reached a final outcome%"]);
+    expect(execute.mock.calls[2][0]).toContain("INSERT INTO bulk_import_queue");
+    expect(execute.mock.calls[2][1]).toEqual([
       "b1",
       "import_gs1_email_daily_batch",
       "u2",
@@ -166,7 +170,7 @@ describe("requeueTransientFailures", () => {
       error_summary: "Import stopped without completing. The job tracking it was lost - most likely a server restart",
     });
     query.mockResolvedValueOnce([[lost]]);
-    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([{}]);
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]).mockResolvedValueOnce([{ affectedRows: 2618 }]).mockResolvedValueOnce([{}]);
     const r = await requeueTransientFailures();
     expect(r.requeued).toEqual(["BATCH-1"]);
     expect(r.needsHuman).toEqual([]);

@@ -143,6 +143,36 @@ describe("POST /batches/:id/import — concurrency guard", () => {
     }
   });
 
+  it("fails a batch that the importer returned from without moving it off 'importing'", async () => {
+    // BATCH-1791372390102: every row had been force-marked 'error', the importer found nothing to import,
+    // returned, and the batch sat 'importing' for 30+ minutes until the stale-job check flagged it.
+    let claimed = false;
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("UPDATE bulk_import_queue SET claimed_at")) {
+        if (claimed) return [{ affectedRows: 0 }, []];
+        claimed = true;
+        return [{ affectedRows: 1 }, []];
+      }
+      if (q.includes("FROM bulk_import_queue")) {
+        return [[{ id: "queue-1", batch_id: BATCH_ID, rpc_name: RPC, user_id: ACTOR }], []];
+      }
+      if (q.includes("SELECT batch_status FROM upload_batch")) return [[{ batch_status: "importing" }], []];
+      return [{ affectedRows: 1 }, []];
+    });
+    startBulkImportWorker();
+    try {
+      await vi.waitFor(() => {
+        const failed = execute.mock.calls.find((c) => /SET batch_status = 'failed'/.test(sqlOf(c)));
+        expect(failed).toBeDefined();
+        expect(String(failed![0])).toContain("batch_status = 'importing'");
+        expect(failed![1]).toEqual([BATCH_ID]);
+      }, { timeout: 5000 });
+    } finally {
+      stopBulkImportWorker();
+    }
+  });
+
   it("rejects a second concurrent import of the same batch with 409, without running the service", async () => {
     execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // stale-claim release: nothing to release
     execute.mockResolvedValueOnce([{ affectedRows: 0 }, []]); // claim fails — already importing

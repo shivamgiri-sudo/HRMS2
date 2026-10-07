@@ -79,6 +79,8 @@ export const MAX_AUTO_RETRIES = 2;
  * a larger allowance; every other transient failure keeps MAX_AUTO_RETRIES.
  */
 export const MAX_RESTART_RETRIES = 6;
+/** Text reconcileStuckRows (bulk-approval.service.ts) writes on a row the import never reached. */
+export const NEVER_REACHED_MARKER = "never reached a final outcome";
 /** Leave a failure alone this long first, so a person already retrying it is not raced. */
 export const RETRY_AFTER_MINUTES = 3;
 /** Older failures are history, not something to resurrect. */
@@ -226,6 +228,18 @@ async function requeueOne(
     [note, attempt, b.id],
   );
   if (claim.affectedRows === 0) return false;
+
+  // Rows that reconcileStuckRows force-marked 'error' because the lost job never reached them are
+  // invisible to the importer (it only takes 'valid'/'pending'), so without this the retry finds nothing,
+  // returns, and the batch sits 'importing' until it is flagged lost again. BATCH-1791372390102 (2,618
+  // rows) cycled like that for hours. Only that exact message is reset; real row errors are untouched.
+  await db.execute(
+    `UPDATE upload_batch_row
+        SET row_status = 'valid', error_messages = NULL
+      WHERE upload_batch_id = ? AND row_status = 'error'
+        AND error_messages LIKE ?`,
+    [b.id, `%${NEVER_REACHED_MARKER}%`],
+  );
 
   const userId = b.import_user || b.uploaded_by;
   await db.execute(
