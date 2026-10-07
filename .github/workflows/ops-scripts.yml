@@ -74,7 +74,6 @@ on:
           - process-scope-diagnose
           - process-code-search
           - ops-nudge-stats
-          - approval-pending-audit
           - ops-pending-audit
           - ops-pending-evidence
           - ops-pending-person
@@ -410,10 +409,6 @@ jobs:
             ops-pending-audit)
               # Read-only: status distributions behind the Ops Control Tower joiner lists.
               npx tsx scripts/ops-pending-audit.ts
-              ;;
-            approval-pending-audit)
-              # Read-only: aggregate counts of pending GRN / budget / top-up / bulk-upload approvals by stage.
-              npx tsx scripts/approval-pending-audit.ts
               ;;
             ops-nudge-stats)
               # Read-only: nudge send counts and errors.
