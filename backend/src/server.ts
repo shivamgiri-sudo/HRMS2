@@ -480,6 +480,11 @@ function startServer() {
       }
     } else {
       console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
+      // deploy.yml starts the API with WORKERS_PROCESS=external ENABLE_SCHEDULERS=false, and the
+      // workers process does not own the Meta lead sync (outreach would run twice). Gating it behind
+      // ENABLE_SCHEDULERS meant it never started in production: no lead arrived after 2026-09-30.
+      // Idempotent: the scheduler ignores a second start.
+      if (WORKERS_EXTERNAL) startMetaLeadSyncScheduler();
     }
     console.log(`MCN HRMS backend running on http://localhost:${env.PORT}`);
   });
