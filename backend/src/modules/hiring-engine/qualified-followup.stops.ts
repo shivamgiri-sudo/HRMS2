@@ -3,7 +3,7 @@ import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
 import { requisitionClosedReason } from "../meta-campaign/lead-screener.service.js";
 import type { RowTag } from "./qualified-followup.policy.js";
-import { decideStop, SENDING_STALE_MIN, type StopReason } from "./qualified-followup.rules.js";
+import { decideStop, OUTCOME_UNKNOWN_ERROR, SENDING_STALE_MIN, type StopReason } from "./qualified-followup.rules.js";
 
 const C = "COLLATE utf8mb4_unicode_ci";
 
@@ -90,7 +90,7 @@ export async function syncWaReceipts(tag: RowTag): Promise<number> {
 // so it becomes terminal 'failed' (attempts untouched, never picked up by the retry path).
 export async function expireStaleClaims(tag: RowTag, now: Date): Promise<number> {
   const cutoff = new Date(now.getTime() - SENDING_STALE_MIN * 60_000);
-  const err = "outcome unknown (process stopped mid-send)";
+  const err = OUTCOME_UNKNOWN_ERROR;
   let n = 0;
   for (const [status, error] of [["email_status", "email_error"], ["wa_status", "wa_error"]] as const) {
     const [res] = await db.execute<any>(

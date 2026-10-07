@@ -5,7 +5,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../logger.js";
-import { maskMobile, metaErrorCode } from "./qualified-followup.rules.js";
+import { maskMobile, metaErrorCode, OUTCOME_UNKNOWN_ERROR } from "./qualified-followup.rules.js";
 import type { SourceType } from "./qualified-followup.types.js";
 
 export type AttentionChannel = "email" | "whatsapp" | "call";
@@ -13,6 +13,8 @@ export type AttentionChannel = "email" | "whatsapp" | "call";
 export interface AttentionRow {
   id: string; name: string | null; mobileMasked: string; requisitionId: string; sourceType: SourceType;
   error: string | null; attempts: number; updatedAt: string;
+  /** The send may already have happened (process died mid-send); retry is refused. */
+  outcomeUnknown: boolean;
 }
 export interface AttentionGroup { channel: AttentionChannel; cause: string; count: number; rows: AttentionRow[] }
 
@@ -51,6 +53,7 @@ export async function listAttention(limitPerGroup = 50): Promise<AttentionGroup[
         g.rows.push({
           id: String(r.id), name: r.full_name ?? null, mobileMasked: maskMobile(String(r.mobile10 ?? "")), requisitionId: String(r.requisition_id),
           sourceType: r.source_type as SourceType, error, attempts: Number(r.attempts ?? 0), updatedAt: String(r.updated_at ?? ""),
+          outcomeUnknown: error === OUTCOME_UNKNOWN_ERROR,
         });
       }
     }
@@ -68,18 +71,21 @@ const RESET_SQL: Record<AttentionChannel, string> = {
 const RETRYABLE_SQL: Record<AttentionChannel, string> = {
   email: "email_status IN ('failed','test_sent')",
   whatsapp: "wa_status IN ('failed','test_sent')",
-  call: "call_error IS NOT NULL AND call_state IN ('pending','in_file')",
+  // An in_file row is already stamped into a sent calling file: resetting it would queue a second call.
+  call: "call_error IS NOT NULL AND call_state IN ('pending','in_file') AND call_file_batch_id IS NULL",
 };
+const ERROR_COL: Record<AttentionChannel, string> = { email: "email_error", whatsapp: "wa_error", call: "call_error" };
 
-export async function retryFollowupStep(id: string, channel: AttentionChannel): Promise<"ok" | "not_found" | "not_retryable" | "stopped"> {
+export async function retryFollowupStep(id: string, channel: AttentionChannel): Promise<"ok" | "not_found" | "not_retryable" | "stopped" | "outcome_unknown"> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, stopped_reason, (${RETRYABLE_SQL[channel]}) AS retryable FROM qualified_followup WHERE id = ? LIMIT 1`, [id]);
+    `SELECT id, stopped_reason, (${RETRYABLE_SQL[channel]}) AS retryable, ${ERROR_COL[channel]} AS err FROM qualified_followup WHERE id = ? LIMIT 1`, [id]);
   const r = rows[0];
   if (!r) return "not_found";
   if (r.stopped_reason) return "stopped";
+  if (r.err === OUTCOME_UNKNOWN_ERROR) return "outcome_unknown";
   if (!Number(r.retryable)) return "not_retryable";
   const [res] = await db.execute<any>(
-    `UPDATE qualified_followup SET ${RESET_SQL[channel]} WHERE id = ? AND stopped_reason IS NULL AND (${RETRYABLE_SQL[channel]})`, [id]);
+    `UPDATE qualified_followup SET ${RESET_SQL[channel]} WHERE id = ? AND stopped_reason IS NULL AND (${RETRYABLE_SQL[channel]}) AND COALESCE(${ERROR_COL[channel]}, '') <> ?`, [id, OUTCOME_UNKNOWN_ERROR]);
   return Number(res?.affectedRows ?? 0) > 0 ? "ok" : "not_retryable";
 }
 

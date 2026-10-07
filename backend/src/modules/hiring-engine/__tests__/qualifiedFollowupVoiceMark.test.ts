@@ -37,6 +37,11 @@ describe("recordVoiceResult marks the follow-up row called", () => {
     expect(markCalled).toHaveBeenCalledTimes(1);
     expect(markCalled).toHaveBeenCalledWith("9876543210");
   });
+  it("does not mark when the call failed (person not reached) but still records it", async () => {
+    const out = await recordVoiceResult({ leadId: "lead-1", providerCallId: "pc-f", result: { failedReason: "no_answer" } as never } as never);
+    expect(out?.outcome).toBe("CALL_FAILED:no_answer");
+    expect(markCalled).not.toHaveBeenCalled();
+  });
   it("does not for a duplicate provider call", async () => {
     execute.mockImplementation(async (sql: string) => {
       const q = String(sql);

@@ -222,8 +222,9 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
     throw err;
   }
   // A call result exists for this number, so a row waiting in a calling file or the bot queue is done (never blocks the result).
+  // A failed call (not reached) leaves the row waiting; an incomplete one reached the person.
   const callMobile = (lead as { mobile10?: string | null }).mobile10;
-  if (callMobile) {
+  if (callMobile && !r.failedReason) {
     try { await markFollowupCalled(callMobile); }
     catch (err) { logger.warn({ leadId: l.id, err: (err as Error).message }, "[hiring-engine] mark follow-up called failed"); }
   }

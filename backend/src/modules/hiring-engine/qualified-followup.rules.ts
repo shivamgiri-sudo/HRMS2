@@ -117,3 +117,6 @@ export function nextWorkingDayIst(now: Date): string {
   } while (t.getUTCDay() === 0);
   return t.toISOString().slice(0, 10);
 }
+
+/** Stale-claim error: a send may already have happened, so the step is never retried automatically or by hand. */
+export const OUTCOME_UNKNOWN_ERROR = "outcome unknown (process stopped mid-send)";

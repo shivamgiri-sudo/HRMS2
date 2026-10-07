@@ -42,6 +42,14 @@ describe("listAttention", () => {
     expect(JSON.stringify(groups)).not.toMatch(/\d{10}/);
   });
 
+  it("flags stale-claim rows with outcomeUnknown", async () => {
+    execute.mockImplementation(async (sql: string) =>
+      String(sql).includes("qf.wa_status = 'failed'") ? [[waRow("outcome unknown (process stopped mid-send)", 1), waRow("(#132018) a", 2)]] : [[]]);
+    const rows = (await listAttention()).flatMap((g) => g.rows);
+    expect(rows.find((r) => r.id === "id-1")?.outcomeUnknown).toBe(true);
+    expect(rows.find((r) => r.id === "id-2")?.outcomeUnknown).toBe(false);
+  });
+
   it("uses text before the first colon for email and call causes and keeps open rows only", async () => {
     execute.mockImplementation(async (sql: string) => {
       const q = String(sql);
@@ -62,7 +70,7 @@ describe("retryFollowupStep", () => {
     const upd = sqls(/^UPDATE/)[0];
     expect(String(upd[0])).toContain("wa_attempts = 0");
     expect(String(upd[0])).toContain("wa_status IN ('failed','test_sent')");
-    expect(upd[1]).toEqual([ID]);
+    expect(upd[1]).toEqual([ID, "outcome unknown (process stopped mid-send)"]);
   });
   it("refuses a step that is not failed, a stopped row and an unknown id", async () => {
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 0 }]]);
@@ -72,6 +80,22 @@ describe("retryFollowupStep", () => {
     execute.mockResolvedValueOnce([[]]);
     expect(await retryFollowupStep(ID, "email")).toBe("not_found");
     expect(sqls(/^UPDATE/)).toHaveLength(0);
+  });
+  it("a call retry only touches rows not yet stamped into a calling file", async () => {
+    execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "bot_unavailable" }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
+    expect(await retryFollowupStep(ID, "call")).toBe("ok");
+    expect(String(sqls(/^UPDATE/)[0][0])).toContain("call_file_batch_id IS NULL");
+    expect(String(sqls(/^SELECT/)[0][0])).toContain("call_file_batch_id IS NULL");
+  });
+  it("refuses a step whose outcome is unknown (stale claim) and never updates", async () => {
+    execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "outcome unknown (process stopped mid-send)" }]]);
+    expect(await retryFollowupStep(ID, "whatsapp")).toBe("outcome_unknown");
+    expect(sqls(/^UPDATE/)).toHaveLength(0);
+    execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "(#132018) x" }]]).mockResolvedValueOnce([{ affectedRows: 1 }]);
+    expect(await retryFollowupStep(ID, "whatsapp")).toBe("ok");
+    const upd = sqls(/^UPDATE/)[0];
+    expect(String(upd[0])).toContain("wa_error, '') <> ?");
+    expect(upd[1]).toEqual([ID, "outcome unknown (process stopped mid-send)"]);
   });
   it("is idempotent: a lost race (0 rows updated) reports not_retryable", async () => {
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1 }]]).mockResolvedValueOnce([{ affectedRows: 0 }]);
@@ -103,6 +127,10 @@ describe("routes", () => {
     expect(ok.body).toEqual({ success: true });
     execute.mockResolvedValueOnce([[]]);
     expect((await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" })).status).toBe(404);
+    execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: null, retryable: 1, err: "outcome unknown (process stopped mid-send)" }]]);
+    const unknown = await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" });
+    expect(unknown.status).toBe(409);
+    expect(unknown.body.message).toBe("outcome_unknown");
     execute.mockResolvedValueOnce([[{ id: ID, stopped_reason: "replied", retryable: 1 }]]);
     const stopped = await request(appFor("admin")).post(`/api/he/qualified-followup/${ID}/retry`).send({ channel: "email" });
     expect(stopped.status).toBe(409);
