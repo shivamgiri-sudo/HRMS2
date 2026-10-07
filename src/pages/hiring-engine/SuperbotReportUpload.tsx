@@ -5,6 +5,7 @@
 import { useRef, useState } from "react";
 import { FileUp } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { parseReportFile, parseReportText, type XlsxLike } from "./superbotReportParse";
 import { num } from "@/components/analytics/analytics-kit";
 
 interface Summary { rows: number; matched: number; unmatched: number; unreadable: number; alreadyLoaded: number; outcomes: Record<string, number>; humanFollowUps: number; problems: Array<{ row: number; reason: string }> }
@@ -15,21 +16,31 @@ export default function SuperbotReportUpload() {
   const [fileName, setFileName] = useState("");
   const [preview, setPreview] = useState<Summary | null>(null);
   const [busy, setBusy] = useState<"read" | "apply" | null>(null);
+  const [pasted, setPasted] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const reset = () => { setRows([]); setPreview(null); setFileName(""); if (ref.current) ref.current.value = ""; };
+  const reset = () => { setRows([]); setPreview(null); setFileName(""); setPasted(""); if (ref.current) ref.current.value = ""; };
+  const load = async (data: Array<Record<string, unknown>>) => {
+    if (!data.length) { setMsg({ ok: false, text: "No call rows found. The report needs a header row with Reference ID or Phone Number, followed by the calls. Try pasting the table below instead." }); return; }
+    if (data.length > 5000) { setMsg({ ok: false, text: `The report has ${num(data.length)} rows; upload at most 5,000 at a time.` }); return; }
+    setRows(data);
+    setPreview((await hrmsApi.post<{ data: Summary }>("/api/he/superbot-report/preview", { rows: data }, 180000)).data);
+  };
   const onFile = async (f: File | undefined) => {
     if (!f) return;
     setBusy("read"); setMsg(null); setPreview(null); setFileName(f.name);
     try {
       const XLSX = await import("xlsx");
-      const wb = /\.csv$/i.test(f.name) ? XLSX.read(await f.text(), { type: "string", raw: true }) : XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: false });
-      const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false }).filter((r) => Object.values(r).some((v) => String(v).trim() !== ""));
-      if (!data.length) { setMsg({ ok: false, text: "The file has no rows." }); return; }
-      if (data.length > 5000) { setMsg({ ok: false, text: `The file has ${num(data.length)} rows; upload at most 5,000 at a time.` }); return; }
-      setRows(data);
-      setPreview((await hrmsApi.post<{ data: Summary }>("/api/he/superbot-report/preview", { rows: data }, 180000)).data);
+      await load(parseReportFile(XLSX as unknown as XlsxLike, await f.arrayBuffer(), f.name));
     } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Could not read that file." }); }
+    finally { setBusy(null); }
+  };
+  const onPaste = async () => {
+    setBusy("read"); setMsg(null); setPreview(null); setFileName("pasted rows");
+    try {
+      const XLSX = await import("xlsx");
+      await load(parseReportText(XLSX as unknown as XlsxLike, pasted));
+    } catch (e: unknown) { setMsg({ ok: false, text: (e as { message?: string })?.message || "Could not read the pasted rows." }); }
     finally { setBusy(null); }
   };
   const apply = async () => {
@@ -54,6 +65,14 @@ export default function SuperbotReportUpload() {
         </label>
         {preview && <button type="button" onClick={reset} className="cursor-pointer rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Cancel</button>}
       </div>
+      {!preview && (
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer text-slate-600 hover:text-slate-900">Or paste the table here</summary>
+          <label htmlFor="sb-paste" className="sr-only">Paste the call report rows</label>
+          <textarea id="sb-paste" value={pasted} onChange={(e) => setPasted(e.target.value)} rows={5} placeholder="Copy the rows from the report in Excel, including the header row, and paste them here" className="mt-2 w-full rounded-lg border border-slate-300 p-2 font-mono text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" />
+          <button type="button" disabled={busy != null || !pasted.trim()} onClick={() => void onPaste()} className="mt-2 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">{busy === "read" ? "Reading…" : "Read pasted rows"}</button>
+        </details>
+      )}
       {preview && (
         <div className="mt-4 space-y-3 text-sm" aria-label="What the report will do">
           <p className="text-slate-800"><b className="tabular-nums">{num(preview.rows)}</b> rows · <b className="tabular-nums text-emerald-700">{num(fresh)}</b> new calls to record{preview.alreadyLoaded > 0 && <> · {num(preview.alreadyLoaded)} already loaded</>}{preview.unmatched > 0 && <span className="text-amber-700"> · {num(preview.unmatched)} not matched to a candidate</span>}{preview.unreadable > 0 && <span className="text-amber-700"> · {num(preview.unreadable)} unreadable</span>}</p>
