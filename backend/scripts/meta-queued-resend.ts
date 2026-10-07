@@ -98,7 +98,7 @@ interface Row extends RowDataPacket {
 
   const byAge: Record<string, number> = {};
   for (const r of rows) {
-    const d = r.created_at.toISOString().slice(0, 10);
+    const d = String(r.created_at).replace(" ", "T").slice(0, 10);
     byAge[d] = (byAge[d] ?? 0) + 1;
   }
   const summary = {
@@ -114,7 +114,7 @@ interface Row extends RowDataPacket {
   console.log("SUMMARY", JSON.stringify(summary));
   for (const r of rows.slice(0, 80)) {
     console.log(
-      `MSG ${r.id.slice(0, 8)} lead=${r.lead_id.slice(0, 8)} ${r.created_at.toISOString().slice(0, 16)} ${r.sender_type} ` +
+      `MSG ${r.id.slice(0, 8)} lead=${r.lead_id.slice(0, 8)} ${String(r.created_at).replace(" ", "T").slice(0, 16)} ${r.sender_type} ` +
         `${r.screening_result} phone=${last4(r.parsed_phone)} window=${r.inbound_24h > 0} superseded=${r.superseded > 0} ` +
         `text="${r.message_text.replace(/\s+/g, " ").slice(0, 70)}"`
     );
