@@ -25,8 +25,8 @@ const render = (insights: DriveInsight[] | undefined, over: { partial?: boolean;
 describe("insightActionTarget", () => {
   const cases: Array<[string, InsightAction, unknown]> = [
     ["open_plan", { type: "open_plan", requisitionId: R, date: "2026-10-15" }, { section: "plan", requisitionId: R, date: "2026-10-15", intent: "open_plan", label: "Open the plan" }],
-    // TODO Task 15: plan_now still lands on the Plan section; flip this expectation when Task 15 gives it its own control.
-    ["plan_now", { type: "plan_now", requisitionId: R, date: "2026-10-15" }, { section: "plan", requisitionId: R, date: "2026-10-15", intent: "plan_now", label: "Preview Plan now" }],
+    // Task 15: plan_now opens the Plan section for the requisition and runs the dry-run preview of Plan now (preview: true).
+    ["plan_now", { type: "plan_now", requisitionId: R, date: "2026-10-15" }, { section: "plan", requisitionId: R, date: "2026-10-15", intent: "plan_now", label: "Preview Plan now", preview: true }],
     // Task 14: extend and create open their real dialogs for the requisition, no navigation to the Plan placeholder.
     ["extend_stream", { type: "extend_stream", streamId: "s1", requisitionId: R }, { section: null, dialog: "extend_stream", requisitionId: R, streamId: "s1", intent: "extend", label: "Extend the stream" }],
     ["create_stream old", { type: "create_stream", requisitionId: R, sourceType: "meta_old" }, { section: null, dialog: "create_stream", requisitionId: R, sourceType: "meta_old", intent: "create_stream", label: "Add an old-data re-run" }],

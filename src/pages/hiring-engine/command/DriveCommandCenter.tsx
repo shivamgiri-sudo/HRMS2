@@ -26,6 +26,7 @@ import { insightNavHash, type ActionTarget } from "./insightsPanelModel";
 import CreateStreamDialog from "./CreateStreamDialog";
 import { StreamDialog } from "./RowStreamActions";
 import type { SourceType } from "./driveCommandTypes";
+import PlanSection from "./PlanSection";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
 
@@ -133,11 +134,11 @@ function SummaryCharts({ analytics, insights }: { analytics: DriveAnalytics; ins
 }
 
 /** Analytics-dependent panels (gated) and panels that must not wait for analytics (children). */
-export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions): { gated: ReactNode; always: ReactNode } {
+export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode, actions?: SectionActions, plan?: ReactNode): { gated: ReactNode; always: ReactNode } {
   if (section === "summary") {
     return { gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} />}<Placeholder title="Follow-up pipeline" /></>, always: null };
   }
-  if (section === "plan") return { gated: null, always: <Placeholder title="Plan" /> };
+  if (section === "plan") return { gated: null, always: plan ?? null }; // the Plan section loads its own data
   if (section === "he") {
     return {
       gated: analytics && <DriveTypeSection type="he" groups={analytics.groups ?? []} today={istTodayClient()} title="Hiring Engine drives" actions={actions} />,
@@ -177,10 +178,13 @@ export default function DriveCommandCenter() {
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
   const dismiss = useCallback((id: string) => setDismissed((d) => new Set(d).add(id)), []);
   const restore = useCallback(() => setDismissed(new Set()), []);
-  // Extend and create-stream open their real dialogs over the current section; the rest navigate (Plan now gets its control in Task 15).
+  // Extend and create-stream open their real dialogs over the current section; Plan now opens the Plan section with its dry-run preview.
   const [dialog, setDialog] = useState<{ kind: "extend_stream"; streamId: string } | { kind: "create_stream"; requisitionId: string; sourceType: SourceType } | null>(null);
+  const [planIntent, setPlanIntent] = useState<{ requisitionId: string; date?: string; nonce: number } | null>(null);
+  useEffect(() => { if (section !== "plan") setPlanIntent(null); }, [section]); // a later visit to Plan does not re-run the preview
   const act = useCallback((t: ActionTarget) => {
     if (t.dialog === "extend_stream" && t.streamId) { setDialog({ kind: "extend_stream", streamId: t.streamId }); return; }
+    if (t.preview && t.requisitionId) setPlanIntent({ requisitionId: t.requisitionId, date: t.date, nonce: Date.now() });
     if (t.dialog === "create_stream" && t.requisitionId && t.sourceType) { setDialog({ kind: "create_stream", requisitionId: t.requisitionId, sourceType: t.sourceType }); return; }
     const next = insightNavHash(t, filters, section);
     if (window.location.hash !== next) window.location.hash = next;
@@ -191,7 +195,11 @@ export default function DriveCommandCenter() {
   const actions: SectionActions = { requisitions, requisitionId: filters.requisitionId, onChanged: reload };
   const [pageNote, setPageNote] = useState<string | null>(null);
   const today = istTodayClient();
-  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions);
+  const plan = section === "plan" ? (
+    <PlanSection requisitionId={filters.requisitionId} groups={data?.groups ?? null} groupsLoading={loading} requisitions={requisitions}
+      onPick={(id) => go("plan", { ...filters, requisitionId: id })} onChanged={reload} autoPreview={planIntent} />
+  ) : null;
+  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />, actions, plan);
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />

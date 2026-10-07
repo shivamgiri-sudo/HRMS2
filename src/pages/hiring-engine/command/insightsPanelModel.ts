@@ -12,6 +12,8 @@ export interface ActionTarget {
   section: SectionId | null;
   /** The real dialog this action opens (Task 14): the stream's Extend menu or the create-stream dialog for the requisition. */
   dialog?: "extend_stream" | "create_stream";
+  /** Plan now (Task 15): the Plan section opens for the requisition and runs the dry-run preview of Plan now, focusing its result. */
+  preview?: boolean;
   requisitionId?: string;
   streamId?: string;
   sourceType?: SourceType;
@@ -28,8 +30,8 @@ const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim
 
 /**
  * Maps an engine action to the control that serves it. Total: an unknown type, a missing field or a non-object gives null (no button).
- * Extend and create stream open their real dialogs for the requisition (no navigation). Open plan / Plan now still land on the Plan
- * section until Task 15 builds it (TODO Task 15: re-point plan_now to its control); the follow-up panel lives on Summary.
+ * Extend and create stream open their real dialogs for the requisition (no navigation). Open plan opens the Plan section for the
+ * requisition; Plan now opens it with the dry-run preview of Plan now for that requisition and day. The follow-up panel lives on Summary.
  */
 export function insightActionTarget(action: unknown): ActionTarget | null {
   if (!action || typeof action !== "object") return null;
@@ -37,7 +39,7 @@ export function insightActionTarget(action: unknown): ActionTarget | null {
   const req = str(a.requisitionId);
   switch (a.type) {
     case "open_plan": return req ? { section: "plan", requisitionId: req, date: str(a.date), intent: "open_plan", label: "Open the plan" } : null;
-    case "plan_now": return req ? { section: "plan", requisitionId: req, date: str(a.date), intent: "plan_now", label: "Preview Plan now" } : null;
+    case "plan_now": return req ? { section: "plan", requisitionId: req, date: str(a.date), intent: "plan_now", label: "Preview Plan now", preview: true } : null;
     case "extend_stream": {
       const streamId = str(a.streamId);
       return req && streamId ? { section: null, dialog: "extend_stream", requisitionId: req, streamId, intent: "extend", label: "Extend the stream" } : null;
