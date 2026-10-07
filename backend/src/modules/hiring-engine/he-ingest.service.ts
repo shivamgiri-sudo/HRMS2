@@ -181,6 +181,8 @@ export interface VoiceCallbackInput {
   transcript?: string | null;
   summary?: string | null;
   recordingUrl?: string | null;
+  /** The call connected and the person was right, but ended before they answered the walk-in question: recorded, nobody is marked declined. */
+  incomplete?: boolean;
 }
 
 export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId: string; outcome: string } | null> {
@@ -197,7 +199,7 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
   const r = p.result;
   const outcome = callOutcome(r);
   const match = await activeMatch(l.id);
-  const outcomeText = r.failedReason ? `CALL_FAILED:${r.failedReason}` : outcome;
+  const outcomeText = p.incomplete ? "CALL_INCOMPLETE" : r.failedReason ? `CALL_FAILED:${r.failedReason}` : outcome;
   // get_next_slot already reserved the replacement on the match mid-call; that is the slot that was offered.
   let offeredSlotAt = p.offeredSlotAt ?? null;
   if (!offeredSlotAt && r.offeredSlotAnswer && match) {
@@ -219,6 +221,14 @@ export async function recordVoiceResult(p: VoiceCallbackInput): Promise<{ leadId
     throw err;
   }
   await persistSignals(l.id, signalsFromVoice(r), p.providerCallId ?? null);
+  if (p.incomplete) {
+    // No answer to the walk-in question, so no state change (and above all no "declined"): just note it and keep the Meta mirror current.
+    await addEvent(l.id, "call_incomplete", { channel: "voice", detail: (p.summary ?? "ended before the walk-in question").slice(0, 200) });
+    if (l.meta_lead_id) await db.execute("UPDATE meta_lead_raw SET voice_call_outcome = ?, voice_called_at = COALESCE(?, NOW()) WHERE id = ?", [outcomeText, p.startedAt ?? null, l.meta_lead_id]);
+    await recomputeInsight(l.id);
+    await refreshLeadHistoryById(l.id);
+    return { leadId: l.id, outcome: outcomeText };
+  }
   const plan = planFromCallOutcome(l.status, outcome);
   await applyPlan(l.id, l.status, plan, { matchId: match?.id ?? null, channel: "voice", detail: outcomeText, metaLeadId: l.meta_lead_id, replyText: null });
   // A rescheduled call moves the slot to the one the slot service reserved mid-call (never invented here).

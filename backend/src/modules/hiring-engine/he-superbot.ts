@@ -29,6 +29,8 @@ export interface MappedFeedback {
   result: VoiceResult; summary: string | null; recordingUrl: string | null;
   /** A person should call this candidate (asked for HR, a callback, or was unsure); null when nothing is needed. */
   humanFollowUp: string | null;
+  /** Answered and the right person, but no answer to the walk-in question (call ended early, or "maybe"): record it, never mark declined. */
+  incomplete: boolean;
 }
 
 export function mapSuperbotFeedback(f: SuperbotFeedback): MappedFeedback {
@@ -40,9 +42,9 @@ export function mapSuperbotFeedback(f: SuperbotFeedback): MappedFeedback {
   const base = { referenceId: ref, phone: f.phone ? String(f.phone) : null, providerCallId: `${ref ?? f.phone ?? "unknown"}:${f.time ?? ""}`.slice(0, 120), startedAt: f.time ? String(f.time).slice(0, 19).replace("T", " ") : null,
     recordingUrl: f.call_recording_url ? String(f.call_recording_url) : null, summary: f.disposition ? String(f.disposition).slice(0, 1000) : f.call_status ? String(f.call_status) : null };
 
-  if (status === "failed") return { ...base, result: { answered: false, durationS, failedReason: String(f.call_status || "failed").slice(0, 60) }, humanFollowUp: null };
+  if (status === "failed") return { ...base, result: { answered: false, durationS, failedReason: String(f.call_status || "failed").slice(0, 60) }, humanFollowUp: null, incomplete: false };
   // Answered by a machine or hung up before the conversation: treated as not answered (the engine retries and falls back to WhatsApp).
-  if (outcome === "voicemail" || outcome === "abandoned") return { ...base, result: { answered: false, durationS }, humanFollowUp: null };
+  if (outcome === "voicemail" || outcome === "abandoned") return { ...base, result: { answered: false, durationS }, humanFollowUp: null, incomplete: false };
 
   const name = val(f, "name_confirmation");
   const attendance = val(f, "walkin_interview_attendance");
@@ -66,7 +68,10 @@ export function mapSuperbotFeedback(f: SuperbotFeedback): MappedFeedback {
   if (hr === "yes" || hr === "later") ask.push(`asked to talk to HR${hr === "later" ? " later" : ""}`);
   if (callback) ask.push(`callback requested${val(f, "callback_details") ? ` (${String(f.feedback?.callback_details?.value).slice(0, 60)})` : ""}`);
   if (done === "already_done") ask.push("says the interview is already done");
-  return { ...base, result, humanFollowUp: ask.length ? `Voice call: ${ask.join("; ")}` : null };
+  const identityOk = result.identityConfirmed === "yes";
+  const incomplete = identityOk && attendance !== "yes" && attendance !== "no";
+  if (incomplete && attendance !== "maybe") ask.push("call ended before the walk-in question");
+  return { ...base, result, incomplete, humanFollowUp: ask.length ? `Voice call: ${ask.join("; ")}` : null };
 }
 
 /** Superbot's error replies for a queued call, as the integration doc lists them. */

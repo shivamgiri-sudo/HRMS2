@@ -13,6 +13,7 @@ import { EmptyState, StatTile, num } from "@/components/analytics/analytics-kit"
 import CallingFileExport from "./CallingFileExport";
 import CallResultsImport from "./CallResultsImport";
 import { useMetaRecruitment } from "./MetaRecruitmentStrip";
+import SuperbotReportUpload from "./SuperbotReportUpload";
 
 interface PreviewRow { display: { phone: string; name: string; role: string; when: string }; rowNo: number; ok: boolean; errors: string[]; warnings: string[]; notes: string[]; row?: { mobile10: string; name: string; role: string; interviewAt: string; branchAddress: string; referenceId: string } }
 interface Preview { missingColumns: string[]; tooMany: boolean; rows: PreviewRow[]; summary: { total: number; valid: number; rejected: number; willSkip: number } }
@@ -169,6 +170,7 @@ export default function BulkCallsTab() {
 
   return (
     <div className="space-y-6">
+      <SuperbotReportUpload />
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="Prepare from Meta campaigns">
         <h2 className="flex items-center gap-2 font-semibold text-slate-900"><ListChecks className="h-4 w-4 text-blue-600" aria-hidden /> Prepare from Meta campaigns</h2>
         <div role="radiogroup" aria-label="Who to call" className="mt-3 inline-flex rounded-lg border border-slate-200 p-0.5 text-sm">

@@ -170,7 +170,7 @@ heWebhookRouter.post("/superbot", async (req, res) => {
     }
     const mobile = !leadId && mapped.phone ? mapped.phone.replace(/\D/g, "").slice(-10) : undefined;
     if (!leadId && !mobile) return res.status(200).json({ success: true, ignored: "lead not found" });
-    const out = await recordVoiceResult({ leadId, mobile, providerCallId: mapped.providerCallId, startedAt: mapped.startedAt, result: mapped.result, summary: mapped.summary, recordingUrl: mapped.recordingUrl });
+    const out = await recordVoiceResult({ leadId, mobile, providerCallId: mapped.providerCallId, startedAt: mapped.startedAt, result: mapped.result, summary: mapped.summary, recordingUrl: mapped.recordingUrl, incomplete: mapped.incomplete });
     if (!out) return res.status(200).json({ success: true, ignored: "lead not found" });
     if (mapped.humanFollowUp && out.outcome !== "duplicate") await addEvent(out.leadId, "human_followup_needed", { channel: "voice", detail: mapped.humanFollowUp, meta: { matchId, disposition: f.disposition ?? null } });
     return res.status(200).json({ success: true, ...out });

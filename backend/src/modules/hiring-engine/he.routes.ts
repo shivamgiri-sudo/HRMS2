@@ -17,6 +17,7 @@ import { placeVoiceCall } from "./he-voice.service.js";
 import { generateWebhookToken, last4, saveSuperbot, superbotConfig, webhookToken } from "./he-secrets.service.js";
 import { testSuperbotConnection } from "./he-superbot.service.js";
 import { buildSuperbotSheet } from "./he-superbot-sheet.service.js";
+import { applySuperbotReport } from "./he-superbot-report.service.js";
 import { cancelBulkBatch, createBulkCallBatch, getBulkBatchJobs, listBulkBatches, previewBulkCalls, runBulkCallJobs, startBulkBatch } from "./he-bulk-call.service.js";
 import { BULK_CALL_MAX_ROWS, sampleCsv } from "./he-bulk-call.js";
 import { listPrepareCampaigns, prepareMissedWalkins, prepareRowsFromCampaigns } from "./he-bulk-call-prepare.service.js";
@@ -828,3 +829,17 @@ heRouter.get("/launches", requireAuth, requireRole(...VIEW_ROLES), async (_req, 
 heRouter.get("/import-batches", requireAuth, requireRole(...VIEW_ROLES), async (_req, res) => {
   try { res.json({ success: true, data: await listBatches() }); } catch (err) { launchError(res, err, "load the upload batches"); }
 });
+
+/** Upload of the Superbot call report (rows parsed in the browser). preview counts what would happen; import records the calls. */
+for (const mode of ["preview", "import"] as const) {
+  heRouter.post(`/superbot-report/${mode}`, requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
+    const rows = (req.body as { rows?: unknown })?.rows;
+    if (!Array.isArray(rows) || rows.length === 0 || !rows.every((r) => r && typeof r === "object" && !Array.isArray(r))) return res.status(400).json({ success: false, message: "rows must be a non-empty list" });
+    if (rows.length > 5000) return res.status(400).json({ success: false, message: "Upload at most 5,000 rows at a time" });
+    try {
+      const data = await applySuperbotReport(rows as Array<Record<string, unknown>>, { dryRun: mode === "preview", actor: (req as AuthenticatedRequest).authUser?.id ?? null });
+      if (mode === "import") logger.info({ rows: data.rows, matched: data.matched, by: (req as AuthenticatedRequest).authUser?.id }, "[he] superbot report imported");
+      res.json({ success: true, data });
+    } catch (err) { logger.error({ err: (err as Error).message }, "[he] superbot report failed"); res.status(500).json({ success: false, message: "Could not read that report" }); }
+  });
+}
