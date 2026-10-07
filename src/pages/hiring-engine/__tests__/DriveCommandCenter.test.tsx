@@ -38,7 +38,7 @@ describe("DriveCommandCenter", () => {
     expect(html.match(/role="tab"/g)).toHaveLength(5);
     expect(html.match(/aria-selected="true"/g)).toHaveLength(1);
     expect(html).toMatch(/id="drive-tab-plan"[^>]*aria-selected="true"[^>]*tabindex="0"/);
-    expect(html.match(/tabindex="-1"/g)).toHaveLength(4);
+    expect(html.match(/tabindex="-1"/g)).toHaveLength(5); // four inactive tabs + the focusable panel (insight actions focus it)
     expect(html.match(/aria-controls="drive-section-panel"/g)).toHaveLength(5);
     expect(html).toMatch(/<div role="tablist"[^>]*class="sticky z-20 /);
     expect(html).toContain("top:var(--topbar-height, 64px)");

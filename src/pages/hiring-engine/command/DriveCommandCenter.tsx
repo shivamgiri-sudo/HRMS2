@@ -20,6 +20,8 @@ import TimingHeatmap from "./charts/TimingHeatmap";
 import ShowRateScatter from "./charts/ShowRateScatter";
 import DropOffWaterfall from "./charts/DropOffWaterfall";
 import CompareTable from "./charts/CompareTable";
+import InsightsPanel from "./InsightsPanel";
+import { insightNavHash, type ActionTarget } from "./insightsPanelModel";
 
 const DrivesTab = lazy(() => import("../DrivesTab"));
 
@@ -66,7 +68,7 @@ export function DriveCommandView({ section, filters, analytics, loading, error, 
     <div className="space-y-0">
       <SectionNav current={section} onSelect={onSection} />
       <FilterBar filters={filters} requisitions={requisitions} branches={branches} onChange={onFilters} />
-      <div id={PANEL_ID} role="tabpanel" aria-labelledby={tabDomId(section)} aria-busy={loading} className="space-y-3">
+      <div id={PANEL_ID} role="tabpanel" tabIndex={-1} aria-labelledby={tabDomId(section)} aria-busy={loading} className="space-y-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
         {firstLoad && <CommandSkeleton />}
         {failed && !firstLoad && (
           <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-700 dark:bg-rose-950 dark:text-rose-200">
@@ -108,10 +110,11 @@ function Placeholder({ title }: { title: string }) {
 }
 
 /** Summary: KPI strip full width, then the comparison charts two per row on large screens. */
-function SummaryCharts({ analytics }: { analytics: DriveAnalytics }) {
+function SummaryCharts({ analytics, insights }: { analytics: DriveAnalytics; insights?: ReactNode }) {
   return (
     <div className="space-y-4">
       <KpiStrip analytics={analytics} />
+      {insights}
       <div className="grid gap-4 lg:grid-cols-2">
         <FunnelCompare analytics={analytics} />
         <YieldChart analytics={analytics} />
@@ -126,9 +129,9 @@ function SummaryCharts({ analytics }: { analytics: DriveAnalytics }) {
 }
 
 /** Analytics-dependent panels (gated) and panels that must not wait for analytics (children). */
-export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null): { gated: ReactNode; always: ReactNode } {
+export function sectionParts(section: SectionId, analytics?: DriveAnalytics | null, insights?: ReactNode): { gated: ReactNode; always: ReactNode } {
   if (section === "summary") {
-    return { gated: <>{analytics && <SummaryCharts analytics={analytics} />}<Placeholder title="Insights" /><Placeholder title="Follow-up pipeline" /></>, always: null };
+    return { gated: <>{analytics && <SummaryCharts analytics={analytics} insights={insights} />}<Placeholder title="Follow-up pipeline" /></>, always: null };
   }
   if (section === "plan") return { gated: null, always: <Placeholder title="Plan" /> };
   if (section === "he") {
@@ -165,7 +168,19 @@ export default function DriveCommandCenter() {
   const { data, error, loading, reload } = useDriveAnalytics(stable);
   const { requisitions, branches } = useFilterOptions();
 
-  const parts = sectionParts(section, data);
+  // Dismissals live in memory only: a reload or a new session shows every suggestion again.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  const dismiss = useCallback((id: string) => setDismissed((d) => new Set(d).add(id)), []);
+  const restore = useCallback(() => setDismissed(new Set()), []);
+  // Plan now / Extend / create-stream dialogs arrive in Tasks 14-15: until then the action opens the Plan section for the requisition.
+  const act = useCallback((t: ActionTarget) => {
+    const next = insightNavHash(t, filters);
+    if (window.location.hash !== next) window.location.hash = next;
+    setState(parseCommandHash(next));
+    window.setTimeout(() => document.getElementById(PANEL_ID)?.focus(), 0);
+  }, [filters]);
+
+  const parts = sectionParts(section, data, <InsightsPanel analytics={data} dismissed={dismissed} onDismiss={dismiss} onRestore={restore} onAction={act} onRetry={reload} />);
   return (
     <div className="space-y-3">
       <PipelineHealthStrip />
